@@ -276,6 +276,15 @@ pub mod plugin {
                 commands::update_test_case_content,
                 commands::update_test_case_status,
                 commands::delete_test_case,
+                commands::skills_scan,
+                commands::skills_tools,
+                commands::skill_read,
+                commands::skill_create,
+                commands::skill_save,
+                commands::skill_delete,
+                commands::skill_set_enabled,
+                commands::skill_validate_name,
+                commands::skill_dir_path,
             ])
             .build()
     }

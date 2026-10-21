@@ -120,6 +120,15 @@ const COMMANDS: &[&str] = &[
     "sync_pull_apply",
     "sync_remote_list_projects",
     "sync_import_project",
+    "skills_scan",
+    "skills_tools",
+    "skill_read",
+    "skill_create",
+    "skill_save",
+    "skill_delete",
+    "skill_set_enabled",
+    "skill_validate_name",
+    "skill_dir_path",
 ];
 
 fn main() {

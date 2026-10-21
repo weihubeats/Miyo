@@ -27,6 +27,7 @@ fox-sync = { path = "../fox-sync" }
 fox-grpc = { path = "../fox-grpc" }
 fox-openapi = { path = "../fox-openapi" }
 fox-test = { path = "../fox-test" }
+fox-skill = { path = "../fox-skill" }
 
 tauri = "2"
 # 仅用于启动失败的阻塞式原生错误弹窗（无窗口阶段也能显示）
