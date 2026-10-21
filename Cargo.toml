@@ -17,6 +17,7 @@ members = [
     "crates/fox-mcp",
     "crates/fox-sign",
     "crates/fox-sync",
+    "crates/fox-skill",
 ]
 
 [workspace.package]

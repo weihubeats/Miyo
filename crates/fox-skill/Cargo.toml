@@ -1,0 +1,23 @@
+[package]
+name = "fox-skill"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Agent Skill 管理：真源扫描 / 跨工具链接启停 / SKILL.md 读写"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_norway = { workspace = true }
+thiserror = { workspace = true }
+dirs = { workspace = true }
+
+# Windows 目录链接：junction 不需要开发者模式/管理员权限，而 symlink_dir 需要。
+[target.'cfg(windows)'.dependencies]
+junction = "2"
+
+[dev-dependencies]
+tempfile = "3"
