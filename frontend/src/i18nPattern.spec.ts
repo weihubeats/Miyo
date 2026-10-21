@@ -41,6 +41,13 @@ const FILE_ALLOWLIST: Record<string, RegExp[]> = {
   'src/utils/environment.ts': [CJK], // 正则匹配用户输入的环境名，非展示文案
   'src/components/SettingsDialog.vue': [/'简体中文'/], // 语言自称
   'src/utils/clipboard.ts': [/console\.error/], // 开发者日志，非 UI 文案
+  // skill 作者写在 description 里的用法标志词（「别名：/触发条件：」），
+  // 属于被解析的数据，不是本应用的界面文案。
+  'src/views/SkillsView.vue': [
+    /别名\|触发条件/,
+    /USAGE_QUOTE_SYNTAX_RE/,
+    /^\s*(别名|触发条件|输入形式|输入形式举例):/,
+  ],
 }
 
 /**
@@ -76,8 +83,8 @@ const TEXT_NODE = />\s*([^<>{}]+?)\s*</g
 /** placeholder 中的示例内容：路径 / JSON / URL / curl / GraphQL 查询片段。 */
 const PLACEHOLDER_EXAMPLE = /^(\/|\{|https?:\/\/|wss?:\/\/|socks5?:\/\/|curl\s|query\s|mutation\s)/
 
-/** 文本节点中的示例内容：路径与各类 URL。 */
-const TEXT_EXAMPLE = /^(\/|https?:\/\/|wss?:\/\/|socks5?:\/\/)/
+/** 文本节点中的示例内容：路径、各类 URL 与文件名（如 SKILL.md）。 */
+const TEXT_EXAMPLE = /^(\/|https?:\/\/|wss?:\/\/|socks5?:\/\/|[A-Za-z0-9_-]+\.[A-Za-z0-9]+$)/
 
 /** 含 2 个以上拉丁字母才算“英文短语”（跳过纯数字 / 符号 / 单字母）。 */
 const HAS_ENGLISH = /[A-Za-z]{2,}/
