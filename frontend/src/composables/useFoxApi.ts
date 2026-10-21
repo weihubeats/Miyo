@@ -63,6 +63,12 @@ import type {
   ResponseExample,
   SeqCounter,
   ServiceCatalog,
+  SkillDoc,
+  SkillIndex,
+  SkillInput,
+  SkillScope,
+  SkillSummary,
+  SkillToolInfo,
   RemoteProjectEntry,
   SyncPullPreview,
   SyncPullResult,
@@ -633,6 +639,55 @@ export function useFoxApi() {
   const grpcDeleteProtoFile = (protoId: string) =>
     run(() => call<void>('grpc_delete_proto_file', { protoId }))
 
+  // ---------- Skill 管理 ----------
+  /** 扫描真源 + 各工具链接状态（global：~/.agents/skills；project：<dir>/.agents/skills）。 */
+  const skillsScan = (scope: SkillScope = 'global', projectDir: string | null = null) =>
+    run(() => call<SkillIndex>('skills_scan', { scope, projectDir }))
+
+  /** 工具清单（根目录 / 链接方式 / 是否已验证）。 */
+  const skillsTools = (scope: SkillScope = 'global', projectDir: string | null = null) =>
+    quiet<SkillToolInfo[]>('skills_tools', { scope, projectDir })
+
+  /** 读取单个 skill 详情。 */
+  const skillRead = (name: string, scope: SkillScope = 'global', projectDir: string | null = null) =>
+    quiet<SkillDoc>('skill_read', { name, scope, projectDir })
+
+  /** 新建 skill（只写真源，不自动启用）。 */
+  const skillCreate = (
+    input: SkillInput,
+    scope: SkillScope = 'global',
+    projectDir: string | null = null,
+  ) => run(() => call<SkillSummary>('skill_create', { input, scope, projectDir }))
+
+  /** 保存 skill（rawExpected 不一致时后端返回 CONFLICT）。 */
+  const skillSave = (
+    name: string,
+    input: SkillInput,
+    scope: SkillScope = 'global',
+    projectDir: string | null = null,
+  ) => run(() => call<SkillSummary>('skill_save', { name, input, scope, projectDir }))
+
+  /** 删除 skill（真源移入 skill-trash，同时断链）。 */
+  const skillDelete = (name: string, scope: SkillScope = 'global', projectDir: string | null = null) =>
+    run(() => call<void>('skill_delete', { name, scope, projectDir }))
+
+  /** 启停某工具下的 skill（建链 / 断链；Drifted 返回 CONFLICT）。 */
+  const skillSetEnabled = (
+    name: string,
+    toolId: string,
+    enabled: boolean,
+    scope: SkillScope = 'global',
+    projectDir: string | null = null,
+  ) => run(() => call<SkillSummary>('skill_set_enabled', { name, toolId, enabled, scope, projectDir }))
+
+  /** 校验 skill 名称（新建表单实时校验）。 */
+  const skillValidateName = (name: string) =>
+    quiet<string>('skill_validate_name', { name })
+
+  /** skill 真源目录绝对路径（交给 opener 插件打开）。 */
+  const skillDirPath = (name: string, scope: SkillScope = 'global', projectDir: string | null = null) =>
+    quiet<string>('skill_dir_path', { name, scope, projectDir })
+
   return {
     pending,
     activeProject,
@@ -752,6 +807,15 @@ export function useFoxApi() {
     grpcListProtoFiles,
     grpcSaveProtoFiles,
     grpcDeleteProtoFile,
+    skillsScan,
+    skillsTools,
+    skillRead,
+    skillCreate,
+    skillSave,
+    skillDelete,
+    skillSetEnabled,
+    skillValidateName,
+    skillDirPath,
   }
 }
 

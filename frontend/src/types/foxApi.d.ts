@@ -29,6 +29,10 @@ export interface CommandError {
     | 'DECRYPT'
     | 'OAUTH2'
     | 'GRPC'
+    | 'CONFLICT'
+    | 'LINK_FAILED'
+    | 'UNSUPPORTED'
+    | 'FORBIDDEN'
   message: string
 }
 
@@ -822,3 +826,86 @@ export interface GrpcInvokeArgs {
   request_id?: string | null
   force_reload?: boolean
 }
+
+// ---------- Skill 管理（fox-skill） ----------
+
+/** 工具目录落盘方式。 */
+export type SkillLinkKind = 'symlink' | 'junction' | 'copyOnly'
+
+/** 单个 (skill, tool) 的生效状态。 */
+export type SkillLinkState = 'linked' | 'missing' | 'drifted' | 'broken'
+
+export interface SkillTargetState {
+  toolId: string
+  toolName: string
+  root: string
+  state: SkillLinkState
+  detail?: string | null
+}
+
+export interface SkillWarning {
+  code: string
+  message: string
+}
+
+export interface SkillSummary {
+  name: string
+  description: string
+  sourceRoot: string
+  dir: string
+  /** SKILL.md 修改时间（Unix 毫秒）。 */
+  updatedAt?: number | null
+  /** 真源目录内除 SKILL.md 外的条目。 */
+  extraEntries: string[]
+  states: SkillTargetState[]
+  warnings: SkillWarning[]
+}
+
+export interface SkillFrontmatter {
+  name: string
+  description: string
+  extra?: Record<string, unknown>
+}
+
+export interface SkillDoc {
+  summary: SkillSummary
+  frontmatter: SkillFrontmatter
+  body: string
+  /** 文件原文（保存时作为 rawExpected 回传，用于并发保护）。 */
+  raw: string
+}
+
+export interface SkillInput {
+  name: string
+  description: string
+  body: string
+  extra?: Record<string, unknown>
+  rawExpected?: string | null
+}
+
+export interface ForeignSkill {
+  name: string
+  toolId: string
+  root: string
+}
+
+export interface SkillToolInfo {
+  id: string
+  displayName: string
+  kind: SkillLinkKind
+  /** 路径是否已实测确认。 */
+  verified: boolean
+  root: string
+  present: boolean
+}
+
+export interface SkillIndex {
+  sourceRoot: string
+  skills: SkillSummary[]
+  foreign: ForeignSkill[]
+  tools: SkillToolInfo[]
+  warnings: SkillWarning[]
+}
+
+/** skill 作用域：全局（~/.agents/skills）或项目目录（<dir>/.agents/skills）。 */
+export type SkillScope = 'global' | 'project'
