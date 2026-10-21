@@ -125,4 +125,13 @@ permissions = [
     "allow-sync-pull-apply",
     "allow-sync-remote-list-projects",
     "allow-sync-import-project",
+    "allow-skills-scan",
+    "allow-skills-tools",
+    "allow-skill-read",
+    "allow-skill-create",
+    "allow-skill-save",
+    "allow-skill-delete",
+    "allow-skill-set-enabled",
+    "allow-skill-validate-name",
+    "allow-skill-dir-path",
 ]

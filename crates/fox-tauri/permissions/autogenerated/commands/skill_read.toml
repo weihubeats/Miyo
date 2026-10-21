@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-skill-read"
+description = "Enables the skill_read command without any pre-configured scope."
+commands.allow = ["skill_read"]
+
+[[permission]]
+identifier = "deny-skill-read"
+description = "Denies the skill_read command without any pre-configured scope."
+commands.deny = ["skill_read"]

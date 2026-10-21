@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-skills-tools"
+description = "Enables the skills_tools command without any pre-configured scope."
+commands.allow = ["skills_tools"]
+
+[[permission]]
+identifier = "deny-skills-tools"
+description = "Denies the skills_tools command without any pre-configured scope."
+commands.deny = ["skills_tools"]

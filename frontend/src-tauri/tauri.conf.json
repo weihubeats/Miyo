@@ -56,6 +56,9 @@
         "https://github.com/weihubeats/RustFox/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5NUU4NUY4NzNGOTkwNzkKUldSNWtQbHorSVZlR1RyZ0M0MmdIWTA3QW91S1NaWWRxamhReFZnaS9XdkplR2ErSWRUUGJheXAK"
+    },
+    "opener": {
+      "requireLiteralLeadingDot": false
     }
   }
 }

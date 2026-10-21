@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-skill-set-enabled"
+description = "Enables the skill_set_enabled command without any pre-configured scope."
+commands.allow = ["skill_set_enabled"]
+
+[[permission]]
+identifier = "deny-skill-set-enabled"
+description = "Denies the skill_set_enabled command without any pre-configured scope."
+commands.deny = ["skill_set_enabled"]

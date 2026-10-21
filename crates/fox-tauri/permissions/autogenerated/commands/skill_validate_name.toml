@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-skill-validate-name"
+description = "Enables the skill_validate_name command without any pre-configured scope."
+commands.allow = ["skill_validate_name"]
+
+[[permission]]
+identifier = "deny-skill-validate-name"
+description = "Denies the skill_validate_name command without any pre-configured scope."
+commands.deny = ["skill_validate_name"]

@@ -124,6 +124,15 @@ RustFox 核心插件的默认权限：允许前端调用全部 fox 命令
 - `allow-sync-pull-apply`
 - `allow-sync-remote-list-projects`
 - `allow-sync-import-project`
+- `allow-skills-scan`
+- `allow-skills-tools`
+- `allow-skill-read`
+- `allow-skill-create`
+- `allow-skill-save`
+- `allow-skill-delete`
+- `allow-skill-set-enabled`
+- `allow-skill-validate-name`
+- `allow-skill-dir-path`
 
 ## Permission Table
 
@@ -2652,6 +2661,240 @@ Enables the set_seq_counter command without any pre-configured scope.
 <td>
 
 Denies the set_seq_counter command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:allow-skill-create`
+
+</td>
+<td>
+
+Enables the skill_create command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:deny-skill-create`
+
+</td>
+<td>
+
+Denies the skill_create command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:allow-skill-delete`
+
+</td>
+<td>
+
+Enables the skill_delete command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:deny-skill-delete`
+
+</td>
+<td>
+
+Denies the skill_delete command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:allow-skill-dir-path`
+
+</td>
+<td>
+
+Enables the skill_dir_path command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:deny-skill-dir-path`
+
+</td>
+<td>
+
+Denies the skill_dir_path command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:allow-skill-read`
+
+</td>
+<td>
+
+Enables the skill_read command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:deny-skill-read`
+
+</td>
+<td>
+
+Denies the skill_read command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:allow-skill-save`
+
+</td>
+<td>
+
+Enables the skill_save command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:deny-skill-save`
+
+</td>
+<td>
+
+Denies the skill_save command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:allow-skill-set-enabled`
+
+</td>
+<td>
+
+Enables the skill_set_enabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:deny-skill-set-enabled`
+
+</td>
+<td>
+
+Denies the skill_set_enabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:allow-skill-validate-name`
+
+</td>
+<td>
+
+Enables the skill_validate_name command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:deny-skill-validate-name`
+
+</td>
+<td>
+
+Denies the skill_validate_name command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:allow-skills-scan`
+
+</td>
+<td>
+
+Enables the skills_scan command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:deny-skills-scan`
+
+</td>
+<td>
+
+Denies the skills_scan command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:allow-skills-tools`
+
+</td>
+<td>
+
+Enables the skills_tools command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`fox-tauri:deny-skills-tools`
+
+</td>
+<td>
+
+Denies the skills_tools command without any pre-configured scope.
 
 </td>
 </tr>

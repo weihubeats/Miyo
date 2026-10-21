@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-skill-delete"
+description = "Enables the skill_delete command without any pre-configured scope."
+commands.allow = ["skill_delete"]
+
+[[permission]]
+identifier = "deny-skill-delete"
+description = "Denies the skill_delete command without any pre-configured scope."
+commands.deny = ["skill_delete"]

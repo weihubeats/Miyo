@@ -14,6 +14,20 @@
     "updater:default",
     "process:allow-restart",
     "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$TEMP/**" },
+        { "path": "$CACHE/**" },
+        { "path": "/Volumes/**" },
+        { "path": "/private/**" },
+        { "path": "/tmp/**" },
+        { "path": "/opt/**" },
+        { "path": "/srv/**" }
+      ],
+      "comment": "「打开目录 / 打开真源」把后端校验过的 skill 目录交给系统打开。open_path 除 ACL 外还做 fs scope 校验，不配 scope 则任何路径都被拒（Not allowed to open path …）。skill 真源与各工具目录都在 $HOME 下；/Volumes、/opt 等覆盖用户在项目级作用域里选的外置项目目录。"
+    },
     "dialog:default"
   ]
 }

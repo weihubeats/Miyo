@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-skill-save"
+description = "Enables the skill_save command without any pre-configured scope."
+commands.allow = ["skill_save"]
+
+[[permission]]
+identifier = "deny-skill-save"
+description = "Denies the skill_save command without any pre-configured scope."
+commands.deny = ["skill_save"]
