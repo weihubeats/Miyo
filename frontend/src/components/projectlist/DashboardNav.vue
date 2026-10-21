@@ -8,21 +8,23 @@
  * 注意：此前「仪表板 / API 项目」曾是两个同路由入口（navActive 恒双真，
  * 两个紫 pill 同时高亮），已合并为单一入口。
  */
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Icon from '../ui/Icon.vue'
 import { useLocaleStore } from '../../stores/locale'
 
+const route = useRoute()
 const router = useRouter()
 const locale = useLocaleStore()
 const t = locale.t
 
 const NAV_ITEMS = [
   { key: 'dashboard', labelKey: 'pnav.dashboard', icon: 'gauge' as const, route: '/projects' },
+  { key: 'skills', labelKey: 'pnav.skills', icon: 'package' as const, route: '/skills' },
 ]
 
-/** 导航仅在仪表板页挂载，唯一入口恒为激活态。 */
-function navActive(): boolean {
-  return true
+/** 当前路由对应的入口高亮。 */
+function navActive(item: (typeof NAV_ITEMS)[number]): boolean {
+  return route.path === item.route
 }
 
 function onNav(item: (typeof NAV_ITEMS)[number]): void {
@@ -36,7 +38,7 @@ function onNav(item: (typeof NAV_ITEMS)[number]): void {
       v-for="item in NAV_ITEMS"
       :key="item.key"
       class="nav-item"
-      :class="{ active: navActive() }"
+      :class="{ active: navActive(item) }"
       type="button"
       @click="onNav(item)"
     >
