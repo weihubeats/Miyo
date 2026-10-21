@@ -32,6 +32,18 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+  windows-skill:
+    name: Test (Windows junction)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Windows 默认走 junction（不需要开发者模式）：建链 / read_link / 删除 / 状态推导
+      # 这些行为只能在 Windows 上真跑，本机（macOS/Linux）只编译不执行 cfg(windows) 分支。
+      - name: Test fox-skill
+        run: cargo test -p fox-skill
+
   fox-tauri:
     name: Check & Test (fox-tauri 插件)
     runs-on: ubuntu-latest
