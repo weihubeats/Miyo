@@ -5,6 +5,7 @@ import { Decoration, EditorView, highlightActiveLine, highlightActiveLineGutter,
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { json, jsonParseLinter } from '@codemirror/lang-json'
+import { markdown } from '@codemirror/lang-markdown'
 import { linter } from '@codemirror/lint'
 import { bracketMatching, defaultHighlightStyle, foldGutter, indentOnInput, syntaxHighlighting, HighlightStyle } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
@@ -20,8 +21,13 @@ const props = withDefaults(
     query?: string
     /** 当前选中的匹配索引（0-based，高亮加深）。 */
     activeMatch?: number
+    /**
+     * 语言模式：json（默认，带 lint）或 markdown（无 lint）。
+     * 组件名沿用历史（Json 专用），实际已是通用 CodeMirror 封装。
+     */
+    language?: 'json' | 'markdown'
   }>(),
-  { readonly: false, placeholderText: '', autofocus: false, query: '', activeMatch: 0 },
+  { readonly: false, placeholderText: '', autofocus: false, query: '', activeMatch: 0, language: 'json' },
 )
 
 const emit = defineEmits<{
@@ -267,10 +273,10 @@ onMounted(() => {
       closeBrackets(),
       highlightActiveLine(),
       keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
-      json(),
+      props.language === 'markdown' ? markdown() : json(),
       themeCompartment.of(currentThemeExtension()),
-      // 大文档跳过实时 lint（见 LARGE_DOC_CHARS 说明）。
-      ...(largeDoc ? [] : [linter(jsonParseLinter())]),
+      // 大文档跳过实时 lint（见 LARGE_DOC_CHARS 说明）；Markdown 不做 JSON lint。
+      ...(largeDoc || props.language === 'markdown' ? [] : [linter(jsonParseLinter())]),
       readOnlyCompartment.of(EditorState.readOnly.of(props.readonly)),
       placeholder(props.placeholderText),
       searchCompartment.of(
