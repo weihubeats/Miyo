@@ -32,7 +32,7 @@
     "@tauri-apps/plugin-dialog": "^2.8.1",
     "@tauri-apps/plugin-opener": "^2.7.0",
     "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.13.1",
+    "@tauri-apps/plugin-updater": "^2.14.0",
     "chart.js": "^4.5.1",
     "pinia": "^3.0.4",
     "sortablejs": "^1.15.7",
