@@ -1880,22 +1880,22 @@ onUnmounted(() => {
 
     </template>
     <!-- 设计 / 文档 / 用例 / Mock：占满工作区主体的**独立视图**（不是并排面板）。
-         用 v-show 只切显隐、不卸载子树——分割态 / 响应结果 / 编辑器滚动位置都能
-         原样保留（v-if 会在切一次表后重新请求、重新拉高度）。
-         不能把 v-show 直接挂在 lazyComponent（异步组件）根节点上：指令会被当成
-         prop 吞掉、面板常驻加载（CI 实测 teardown 后仍在 import），故各包一层。 -->
-    <div v-show="store.activeView === 'design'" class="view-pane">
-      <DesignPanel :draft="draft" @save="save" />
-    </div>
-    <div v-show="store.activeView === 'docs'" class="view-pane">
-      <DocsPanel :draft="draft" :url="requestUrl" />
-    </div>
-    <div v-show="store.activeView === 'cases'" class="view-pane">
-      <TestCasesPanel :draft="draft" />
-    </div>
-    <div v-show="store.activeView === 'mock'" class="view-pane">
-      <MockPanel :draft="draft" @open-manager="showMockRules = true" />
-    </div>
+         这里保持 v-if（按需挂载）：懒加载面板提前挂载没有收益，还会让懒模块的
+         请求越过测试环境 teardown（CI vitest 的 EnvironmentTeardownError 就源于此）。
+         请求/响应栈用 v-show 常驻（见上方 template），分割高度与响应结果本就不丢；
+         本组件另按接口 id 分桶记住自己的高度，切回来自动恢复。 -->
+    <DesignPanel v-else-if="store.activeView === 'design'" :draft="draft" @save="save" />
+    <DocsPanel
+      v-else-if="store.activeView === 'docs'"
+      :draft="draft"
+      :url="requestUrl"
+    />
+    <TestCasesPanel v-else-if="store.activeView === 'cases'" :draft="draft" />
+    <MockPanel
+      v-else-if="store.activeView === 'mock'"
+      :draft="draft"
+      @open-manager="showMockRules = true"
+    />
   </div>
   <div v-else class="editor-empty">
     <Icon name="file" :size="26" class="editor-empty-icon" aria-hidden="true" />
@@ -2604,15 +2604,6 @@ onUnmounted(() => {
 /* 请求卡 + 响应卡合并容器：两卡之间无 gap，接缝由 .rp-splitter 独占一条线。
  * 合并前两卡各带完整边框、相距 editor 的 14px gap，形成两条平行线；
  * 拖拽热区与两条线都不重合，导致「看着有线却拖不动」。 */
-/* 设计 / 文档 / 用例 / Mock 视图容器：撑满工作区主体，内部面板自带内距 */
-.view-pane {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-}
-
 .req-resp-stack {
   position: relative;
   display: flex;

@@ -63,7 +63,7 @@ async function drag(wrapper: Awaited<ReturnType<typeof mount>>, dy: number): Pro
 }
 
 describe('EndpointEditor：分割高度按接口独立', () => {
-  it('调试视图下不挂载设计 / 文档 / 用例 / Mock 面板（v-show 不触发异步面板加载）', async () => {
+  it('切到设计视图再切回调试：高度不回滚，且不重复挂载懒加载面板', async () => {
     const store = setupStore()
     const wrapper = mount(EndpointEditor, {
       global: { directives: { 'tooltip-overflow': {}, 'focus-end': {} } },
@@ -72,10 +72,26 @@ describe('EndpointEditor：分割高度按接口独立', () => {
     store.openEndpoint(endpointA)
     await nextTick()
 
-    // 这四个面板是 lazyComponent：v-if → v-show 曾把指令落到异步组件根节点上，
-    // 指令被当成 prop 吞掉、面板常驻加载（CI 因此在 teardown 后仍在 import）。
+    // 设计/文档/用例/Mock 是懒加载面板：调试视图下不该被提前挂载
     expect(wrapper.find('.editor > .design').exists()).toBe(false)
-    expect(wrapper.find('.miyo-lazy-loading').exists()).toBe(false)
+
+    // 请求卡盒高：jsdom 不排版，手动给一个真实值
+    const box = wrapper.find('.config-box').element as HTMLElement
+    box.getBoundingClientRect = () =>
+      ({ height: 240, width: 500, top: 0, left: 0, right: 500, bottom: 240, x: 0, y: 0 }) as DOMRect
+
+    const dragged = await drag(wrapper, 80)
+    expect(dragged).toBe(320)
+
+    store.setActiveView('design')
+    await nextTick()
+    store.setActiveView('debug')
+    await nextTick()
+    await nextTick()
+
+    const back = wrapper.find('.config-box')
+    expect(back.classes()).not.toContain('grow')
+    expect(inlineHeight(wrapper)).toBe(320)
 
     wrapper.unmount()
   })
