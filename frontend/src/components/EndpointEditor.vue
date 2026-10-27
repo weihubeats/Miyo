@@ -1085,14 +1085,119 @@ const REQUEST_DEFAULT = 200
 /** 请求区最大高度 = 编辑器高度 - MAX_OFFSET，保证响应区至少留 MAX_OFFSET px。 */
 const MAX_OFFSET = 100
 
+/**
+ * 分割条手动态**按接口 id 分桶**：每个接口的请求区高度互相独立（用户实测要求：
+ * 「一个接口改了高度，其他接口不能跟着变」），并且要记住自己拖过的值——切走再
+ * 回来不能回落到默认高度。桶存在模块级 Map 里而不是组件 ref：EndpointEditor 是
+ * 单实例常驻，但视图切换可能整棵重建，组件级状态会随卸载一起丢。
+ */
 const editorEl = ref<HTMLElement | null>(null)
 /** 请求卡（config-box）DOM：未发送期拖分割条时取其实际盒高做拖拽基准。 */
 const configBoxEl = ref<HTMLElement | null>(null)
-const requestBodyHeight = ref(REQUEST_DEFAULT)
+
+/** 每个接口一条手动分割态：高度 + 是否手动拖过（同键写入，一并替换）。 */
+interface SplitState {
+  height: number
+  manual: boolean
+}
+/** 桶上限：只存数字 + 布尔，超限按插入顺序淘汰最旧的（当前接口除外）。 */
+const SPLIT_BUCKET_MAX = 200
+const splitBuckets = new Map<string, SplitState>()
+
+/** 落 localStorage：重启 / 重开窗口后各接口仍沿用自己上次拖好的高度。 */
+const SPLIT_STORE_KEY = 'miyo.request-split-by-endpoint'
+const SPLIT_STORE_LIMIT = 200
+/** 手动高度生效下限：低于它就当作「折叠态」处理（用户拉塌的本意）。 */
+const REQUEST_COLLAPSE_THRESHOLD = 40
+
+/**
+ * 模块求值时读一次上次会话的桶。用块作用域而非 `;` 前置的 IIFE：后者紧跟在
+ * `const … = 40` 之后会被解析成对 40 的调用表达式。
+ */
+{
+  try {
+    const raw = localStorage.getItem(SPLIT_STORE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, SplitState>
+      for (const [id, item] of Object.entries(parsed)) {
+        if (typeof item?.height !== 'number' || !Number.isFinite(item.height)) continue
+        splitBuckets.set(id, { height: item.height, manual: item.manual === true })
+      }
+    }
+  } catch {
+    /* 存储损坏 / 隐私模式：按默认布局走，不阻断编辑器挂载 */
+  }
+}
+
+function persistSplitBuckets(keepId: string): void {
+  try {
+    // 只留最近 SPLIT_STORE_LIMIT 条，避免 localStorage 无限增长
+    while (splitBuckets.size > SPLIT_STORE_LIMIT) {
+      const oldest = splitBuckets.keys().next().value
+      if (oldest === undefined || oldest === keepId) break
+      splitBuckets.delete(oldest)
+    }
+    localStorage.setItem(SPLIT_STORE_KEY, JSON.stringify(Object.fromEntries(splitBuckets)))
+  } catch {
+    /* 配额 / 隐私模式写入失败：仅丢持久化，不影响本次会话 */
+  }
+}
+
+const splitTick = ref(0)
+
+/** 当前接口的分割态（无记录 = 从未拖过，走 grow 贴内容布局）。 */
+function currentSplit(): SplitState | null {
+  const id = draft.value?.id
+  return id ? (splitBuckets.get(id) ?? null) : null
+}
+
+const requestBodyHeight = computed(() => {
+  void splitTick.value
+  return currentSplit()?.height ?? REQUEST_DEFAULT
+})
+/**
+ * 未发送期手动拖过分割条：请求卡从「贴内容 grow」切为分割条分配的固定高。
+ * 阈值用 40 而非 REQUEST_MIN(80)：拖到 80 以下也是用户明确选的「塌下去」，
+ * 若按 80 判定就会回到 grow 贴内容布局，看起来正是「高度重置」。
+ */
+const requestManual = computed(() => {
+  void splitTick.value
+  const cur = currentSplit()
+  return !!cur?.manual && cur.height >= REQUEST_COLLAPSE_THRESHOLD
+})
+const requestBodyCollapsed = computed(() => {
+  void splitTick.value
+  return requestBodyHeight.value <= REQUEST_MIN
+})
+
+/** 写**当前接口**的请求卡固定高（无接口时丢弃：组件未渲染 v-if="draft"）。 */
+function setRequestBodyHeight(px: number): void {
+  const id = draft.value?.id
+  if (!id) return
+  const prev = splitBuckets.get(id)
+  splitBuckets.delete(id) // 重插到末尾 = 刷新「最近使用」序
+  splitBuckets.set(id, { height: px, manual: prev?.manual ?? false })
+  while (splitBuckets.size > SPLIT_BUCKET_MAX) {
+    const oldest = splitBuckets.keys().next().value
+    if (oldest === undefined || oldest === id) break
+    splitBuckets.delete(oldest)
+  }
+  splitTick.value++
+  persistSplitBuckets(id)
+}
+
+/** 标记**当前接口**已进入手动分割态。 */
+function setRequestManual(): void {
+  const id = draft.value?.id
+  if (!id) return
+  const prev = splitBuckets.get(id)
+  splitBuckets.delete(id)
+  splitBuckets.set(id, { height: prev?.height ?? REQUEST_DEFAULT, manual: true })
+  splitTick.value++
+  persistSplitBuckets(id)
+}
+
 const splitterDragging = ref(false)
-/** 未发送期手动拖过分割条：请求卡从「贴内容 grow」切为分割条分配的固定高。 */
-const requestManual = ref(false)
-const requestBodyCollapsed = computed(() => requestBodyHeight.value <= REQUEST_MIN)
 
 /** 正在发送或已有结果时展示响应区（发送中显示请求中占位，见模板）。 */
 const hasResponse = computed(
@@ -1108,32 +1213,54 @@ let splitStartY = 0
 let splitStartHeight = 0
 let splitDragging = false
 
-/** 未发送期从 grow 态切入固定高时量一次：非请求卡 chrome（header/padding/gap）
- * 与占位条 min-height。拖拽上限据此钳制，否则请求卡拖太深会让 .editor 自身
- * 出滚动条（header 被卷走、占位条被裁）。 */
-let growChrome = -1
+/** growChrome 按接口拆存：切接口后再拖该接口时，chrome 才能按「仍在 grow 态」重测，
+ * 否则会误用上一接口测得的 chrome；-1 表示当前接口尚未测量。 */
+const growChromeById = new Map<string, number>()
+let growChromeFor: string | null = null
 let hintMinH = 0
 
-/** 切接口时手动分割态归零（需在 growChrome 声明之后注册，非 immediate 即可）：
- * 新接口无响应应回到 grow 贴内容布局——上一接口拖出的固定高/折叠态若残留，
- * 会把新接口的请求卡锁在小盒里，min-height:0 的 Body 面板被挤成 0 高、
- * 卡片头部叠画在溢出的编辑器上（headless 实测：残留态 panel=0、
- * 编辑区 0 高、与头部重叠 224px；归零后回到 panel=312 / 编辑区 276）。
- * requestBodyHeight 一并回到默认，避免 collapsed 判定带着上一接口的残值。 */
+/** 取当前接口的 chrome 测量值（-1 未测）。 */
+function currentGrowChrome(): number {
+  const id = draft.value?.id ?? null
+  if (id !== growChromeFor) return -1
+  return growChromeById.get(id ?? '') ?? -1
+}
+
+/** 写入当前接口的 chrome 测量值。 */
+function setGrowChrome(v: number): void {
+  const id = draft.value?.id ?? null
+  growChromeFor = id
+  if (id) growChromeById.set(id, v)
+}
+
+/**
+ * 切接口时**不**清手动分割态（原实现整份归零，导致每个接口都记不住自己拖过的
+ * 窗口高度——用户实测：A 拉过 body 弹框，切走再回来又变默认）。分割态按接口 id
+ * 分桶（各自独立、互不影响，落 localStorage）；这里只切「chrome 测量值归属的接口」，
+ * 各接口布局不同，跨接口复用测量值会把请求卡钳到错误的上下限。
+ */
 watch(
   () => draft.value?.id,
-  () => {
-    requestManual.value = false
-    requestBodyHeight.value = REQUEST_DEFAULT
-    growChrome = -1
+  (id) => {
+    // 切到新接口即「尚未测量」；切回自己时保留原测量值（该接口仍处 grow 态）
+    growChromeFor = id ?? null
     closeSettings()
   },
 )
 
+/**
+ * 请求区上限。兜底值只在「量不到编辑器高度」时使用（首帧 / 未排版环境）：
+ * 编辑器高度为 0 会让上限塌成 REQUEST_MIN，拖动怎么拉都停在最小高度，
+ * 表现就是「拖不动 / 一跳回默认」。
+ */
+const EDITOR_FALLBACK_HEIGHT = 600
+
 function requestMaxHeight(): number {
-  const edH = editorEl.value?.clientHeight ?? 600
-  if (!hasResponse.value && growChrome >= 0) {
-    return Math.max(edH - growChrome - hintMinH, REQUEST_MIN + 40)
+  const measured = editorEl.value?.clientHeight ?? 0
+  const edH = measured > 0 ? measured : EDITOR_FALLBACK_HEIGHT
+  const chrome = currentGrowChrome()
+  if (!hasResponse.value && chrome >= 0) {
+    return Math.max(edH - chrome - hintMinH, REQUEST_MIN + 40)
   }
   return Math.max(edH - MAX_OFFSET, REQUEST_MIN + 40)
 }
@@ -1141,35 +1268,49 @@ function requestMaxHeight(): number {
 /** 首次出现响应区时初始化分割：请求区约 35%、响应区 65%（优先放大响应展示空间），
  * 请求区下限钳到 REQUEST_DEFAULT(200px) 保证编辑可用，而非固定 200px 压扁编辑器。
  * 仅在 无响应→有响应 跳变时计算（此时工作区仍是 grow 布局，clientHeight 即可用总高）；
- * 同一响应会话内的手动拖拽在重发时不受影响（hasResponse 保持 true 不再触发）。 */
+ * 同一响应会话内的手动拖拽在重发时不受影响（hasResponse 保持 true 不再触发）。
+ * 已手动分桶过的接口不覆盖：那是用户亲手定的高度，切走再回来必须原样恢复。 */
 watch(hasResponse, (has) => {
   if (!has) return
+  // 该接口手动拖过高度：一律不覆盖（那是用户亲手定的值）。
+  if (requestManual.value) return
   const available = editorEl.value?.clientHeight ?? 0
   if (available <= 0) return
-  requestBodyHeight.value = Math.min(
-    Math.max(Math.round(available * 0.35), REQUEST_DEFAULT),
-    requestMaxHeight(),
+  setRequestBodyHeight(
+    Math.min(Math.max(Math.round(available * 0.35), REQUEST_DEFAULT), requestMaxHeight()),
   )
 })
 
+/** 未手动拖过分割条时，请求卡「贴内容」的实际高度（grow 布局下的盒高）。
+ *  拖动基准必须取这个值：模块级高度偏好可能来自上一个接口 / 上次会话，与当前
+ *  接口此刻的布局无关。 */
+function measuredGrowHeight(): number {
+  const actual = configBoxEl.value?.getBoundingClientRect().height
+  if (actual === undefined || actual <= 0) return REQUEST_DEFAULT
+  // border-box：用 getBoundingClientRect（含边框）与 height 样式同口径
+  return Math.max(Math.min(Math.round(actual), requestMaxHeight()), REQUEST_MIN)
+}
+
 /** 进入手动分割模式（未发送期）：请求卡当前是 grow 贴内容布局，实际盒高 ≠
  * requestBodyHeight 的存值——先以实际盒高对齐基准再切固定高，否则首次拖动会
- * 从旧值（200）跳变。已发送（hasResponse）本就是固定高，直接返回现值。 */
+ * 从旧值（200）跳变。已有响应 / 已是固定高时直接返回现值。 */
 function enterManualSplit(): number {
-  if (hasResponse.value) return requestBodyHeight.value
+  if (hasResponse.value || requestManual.value) return requestBodyHeight.value
   const ed = editorEl.value
   const cb = configBoxEl.value
   const hint = ed?.querySelector<HTMLElement>('.response-hint')
   // grow 态 flex 收敛必不溢出：此刻量 chrome = 总高 − 请求卡 − 占位条
-  if (!requestManual.value && ed && cb && hint) {
-    growChrome = ed.scrollHeight - cb.getBoundingClientRect().height - hint.getBoundingClientRect().height
+  if (ed && cb && hint) {
+    setGrowChrome(
+      ed.scrollHeight - cb.getBoundingClientRect().height - hint.getBoundingClientRect().height,
+    )
     hintMinH = parseFloat(getComputedStyle(hint).minHeight) || hint.offsetHeight
   }
-  // border-box：用 getBoundingClientRect（含边框）与 height 样式同口径
-  const actual = cb?.getBoundingClientRect().height ?? requestBodyHeight.value
-  requestManual.value = true
-  requestBodyHeight.value = Math.min(Math.max(Math.round(actual), REQUEST_MIN), requestMaxHeight())
-  return requestBodyHeight.value
+  const measured = measuredGrowHeight()
+  setRequestManual()
+  setRequestBodyHeight(measured)
+  // 返回本次实测值：调用方在同一调用栈内据此判定折叠态，不隔着 computed 的缓存
+  return measured
 }
 
 /** 分割条 mousedown：开始拖拽，动态调整请求区高度（响应区 flex:1 自动补位）。 */
@@ -1179,7 +1320,11 @@ function onSplitterDown(event: MouseEvent): void {
   splitDragging = true
   splitterDragging.value = true
   splitStartY = event.clientY
-  splitStartHeight = enterManualSplit()
+  // 基准必须取「此刻眼睛看到的盒高」：本接口从未拖过时存量值是默认的 200，
+  // 与 grow 布局的实际高度不一致，直接用会让首拖跳变。固定高态下两者相同。
+  splitStartHeight = hasResponse.value || requestManual.value
+    ? requestBodyHeight.value
+    : measuredGrowHeight()
   document.body.style.userSelect = 'none'
   document.addEventListener('mousemove', onSplitterMove)
   document.addEventListener('mouseup', onSplitterUp)
@@ -1188,7 +1333,10 @@ function onSplitterDown(event: MouseEvent): void {
 function onSplitterMove(event: MouseEvent): void {
   if (!splitDragging) return
   const next = splitStartHeight + (event.clientY - splitStartY)
-  requestBodyHeight.value = Math.min(Math.max(next, REQUEST_MIN), requestMaxHeight())
+  setRequestManual()
+  // 下限先钳再取上限：反序时 Math.max(min, max(...)) 会把低于下限的值又抬回 min，
+  // 拖到折叠区本该停在 REQUEST_MIN，却会反弹成 REQUEST_DEFAULT（折叠态永远拖不到）。
+  setRequestBodyHeight(Math.max(Math.min(next, requestMaxHeight()), REQUEST_MIN))
 }
 
 function onSplitterUp(): void {
@@ -1202,9 +1350,11 @@ function onSplitterUp(): void {
 
 /** 双击分割条 / 点击微调按钮：请求区收缩到最小高度，再点恢复默认高度。 */
 function toggleRequestBody(): void {
-  // 未发送期先以请求卡实际盒高对齐基准（存值可能过期），collapsed 判定才准确
+  // 「折叠」判定用 requestBodyCollapsed 会漏掉用户把高度拖到 40~120 的情形，
+  // 这里直接按固定高 + 实际高度判断，双击语义保持「塌到底 ⇄ 回到默认」。
+  const wasCollapsed = !requestManual.value || requestBodyHeight.value <= REQUEST_MIN
   enterManualSplit()
-  requestBodyHeight.value = requestBodyCollapsed.value ? REQUEST_DEFAULT : REQUEST_MIN
+  setRequestBodyHeight(wasCollapsed ? REQUEST_DEFAULT : REQUEST_MIN)
 }
 
 /** 键盘调高（分割条可 Tab 聚焦）：↑ ↓ 每次 10px，Shift 40px，PgUp/PgDn 更大步长，Home/End 到上下限。 */
@@ -1221,7 +1371,8 @@ function onSplitterKeydown(event: KeyboardEvent): void {
   else if (event.key === 'PageDown') next += step * 4
   else if (event.key === 'Home') next = REQUEST_MIN
   else if (event.key === 'End') next = max
-  requestBodyHeight.value = Math.min(Math.max(next, REQUEST_MIN), max)
+  setRequestManual()
+  setRequestBodyHeight(Math.min(Math.max(next, REQUEST_MIN), max))
 }
 
 // ---------- 响应示例 ----------
@@ -1728,11 +1879,15 @@ onUnmounted(() => {
     </div>
 
     </template>
-    <DesignPanel v-else-if="store.activeView === 'design'" :draft="draft" @save="save" />
-    <DocsPanel v-else-if="store.activeView === 'docs'" :draft="draft" :url="requestUrl" />
-    <TestCasesPanel v-else-if="store.activeView === 'cases'" :draft="draft" />
+    <!-- 设计 / 文档 / 用例 / Mock：占满工作区主体的**独立视图**（不是并排面板）。
+         这类视图下不再挂请求/响应栈（v-show 只切换显隐，避免整棵子树被卸载重建：
+         分割态、响应结果、编辑器滚动位置都能原样保留），否则切一次表就得重新
+         请求、重新拉高度。 -->
+    <DesignPanel v-show="store.activeView === 'design'" :draft="draft" @save="save" />
+    <DocsPanel v-show="store.activeView === 'docs'" :draft="draft" :url="requestUrl" />
+    <TestCasesPanel v-show="store.activeView === 'cases'" :draft="draft" />
     <MockPanel
-      v-else-if="store.activeView === 'mock'"
+      v-show="store.activeView === 'mock'"
       :draft="draft"
       @open-manager="showMockRules = true"
     />
