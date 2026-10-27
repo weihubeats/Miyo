@@ -63,6 +63,23 @@ async function drag(wrapper: Awaited<ReturnType<typeof mount>>, dy: number): Pro
 }
 
 describe('EndpointEditor：分割高度按接口独立', () => {
+  it('调试视图下不挂载设计 / 文档 / 用例 / Mock 面板（v-show 不触发异步面板加载）', async () => {
+    const store = setupStore()
+    const wrapper = mount(EndpointEditor, {
+      global: { directives: { 'tooltip-overflow': {}, 'focus-end': {} } },
+    })
+    await nextTick()
+    store.openEndpoint(endpointA)
+    await nextTick()
+
+    // 这四个面板是 lazyComponent：v-if → v-show 曾把指令落到异步组件根节点上，
+    // 指令被当成 prop 吞掉、面板常驻加载（CI 因此在 teardown 后仍在 import）。
+    expect(wrapper.find('.editor > .design').exists()).toBe(false)
+    expect(wrapper.find('.miyo-lazy-loading').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+
   it('拖 A → 切 B（B 不受影响，仍是贴内容布局）→ 回 A（保持拖动值）→ 再拖从当前值起算', async () => {
     const store = setupStore()
     const wrapper = mount(EndpointEditor, {
