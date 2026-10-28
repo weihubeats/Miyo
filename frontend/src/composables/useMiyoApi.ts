@@ -56,6 +56,7 @@ import type {
   Project,
   ProjectStat,
   ProxyTestResult,
+  TlsSettings,
   RequestExample,
   RequestHistory,
   RequestSpec,
@@ -345,6 +346,10 @@ export function useMiyoApi() {
   const oauthAccessToken = (auth: AuthSpec) =>
     run(() => call<string>('oauth_access_token', { auth }))
 
+  /** 非交互式获取令牌（client_credentials / password 模式）。 */
+  const oauthFetchToken = (auth: AuthSpec) =>
+    run(() => call<OAuth2Token>('oauth_fetch_token', { auth }))
+
   // ---------- 代码生成 ----------
   const codegenRender = (args: {
     lang: CodeLang
@@ -391,6 +396,12 @@ export function useMiyoApi() {
 
   const setHttpTimeoutMs = (timeoutMs: number) =>
     run(() => call<void>('set_http_timeout_ms', { timeoutMs }))
+
+  // ---------- HTTP 设置（TLS：客户端证书 / 自签放行） ----------
+  const getTlsSettings = () => run(() => call<TlsSettings>('get_tls_settings'))
+
+  const setTlsSettings = (args: { identityPath: string | null; acceptInvalidCerts: boolean }) =>
+    run(() => call<void>('set_tls_settings', args))
 
   // ---------- 自增序列 ----------
   const listSeqCounters = () => run(() => call<SeqCounter[]>('list_seq_counters'))
@@ -684,6 +695,7 @@ export function useMiyoApi() {
     deleteTestCase,
     oauthAuthorize,
     oauthAccessToken,
+    oauthFetchToken,
     codegenRender,
     listRequestHistories,
     clearRequestHistories,
@@ -696,6 +708,8 @@ export function useMiyoApi() {
     deleteMockRule,
     getHttpProxy,
     setHttpProxy,
+    getTlsSettings,
+    setTlsSettings,
     getHttpTimeoutMs,
     setHttpTimeoutMs,
     listSeqCounters,

@@ -129,16 +129,18 @@ pub mod plugin {
                     {
                         tracing::warn!("开发种子数据写入失败（不影响应用使用）：{e}");
                     }
-                    // 三项互不依赖（各只读 settings、各自恢复自己的全局态）：
+                    // 四项互不依赖（各只读 settings、各自恢复自己的全局态）：
                     // 代理设置（失败静默保持直连）/ 自增序列 `{{$seq:key}}`
-                    // （失败静默从 1 起）/ MCP 开关（控制面是否随应用自启），
-                    // 合并进一次 block_on 并发执行，替代原来三次串行 block_on。
+                    // （失败静默从 1 起）/ MCP 开关（控制面是否随应用自启）/
+                    // TLS 客户端证书与自签放行（失败静默保持默认），
+                    // 合并进一次 block_on 并发执行，替代原来多次串行 block_on。
                     // 其后的激活态恢复依赖 db 移交 AppState，必须排在后面。
                     let mcp_enabled = tauri::async_runtime::block_on(async {
-                        let ((), (), mcp_enabled) = tokio::join!(
+                        let ((), (), mcp_enabled, ()) = tokio::join!(
                             commands::settings::apply_saved_proxy(&db),
                             commands::seq::apply_saved_seq_counters(&db),
                             commands::agent::read_mcp_enabled(&db),
+                            commands::settings::apply_saved_tls(&db),
                         );
                         mcp_enabled
                     });
@@ -199,6 +201,7 @@ pub mod plugin {
                 commands::delete_request_example,
                 commands::oauth_authorize,
                 commands::oauth_access_token,
+                commands::oauth_fetch_token,
                 commands::codegen_render,
                 commands::cookie_list,
                 commands::cookie_clear,
@@ -265,6 +268,8 @@ pub mod plugin {
                 commands::set_http_proxy,
                 commands::get_http_timeout_ms,
                 commands::set_http_timeout_ms,
+                commands::get_tls_settings,
+                commands::set_tls_settings,
                 commands::get_data_dir,
                 commands::get_default_data_dir,
                 commands::set_data_dir,

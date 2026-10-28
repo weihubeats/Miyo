@@ -667,13 +667,32 @@ struct ClientPair {
     no_follow_no_cookies: Client,
 }
 
-fn build_pair(proxy: Option<&str>) -> Result<ClientPair, String> {
+fn build_pair(proxy: Option<&str>, tls: &TlsOptions) -> Result<ClientPair, String> {
     // 自管 jar：cookies=true 时自动回放 + 可查看/清理；
     // false（单请求禁用）时走空 jar，登录态不附带。
     // jar 全局共享：代理切换不再丢弃登录态（原来随旧客户端一起丢弃）。
     let build = |policy: reqwest::redirect::Policy, cookies: bool| -> Result<Client, String> {
         // 建连限速已按远程意见移除（7cf8cba），避免对慢服务误杀：总超时留给请求本身。
         let base = Client::builder().redirect(policy);
+        // TLS：客户端证书（rustls 栈 → Identity::from_pem，PEM 文件含证书链
+        // 与私钥，顺序不限）与自签放行。构建失败直接报错（配置错误不应
+        // 静默降级为无证书）。
+        let base = if tls.accept_invalid_certs {
+            base.danger_accept_invalid_certs(true)
+        } else {
+            base
+        };
+        let base = match tls.identity_path.as_deref() {
+            Some(path) if !path.trim().is_empty() => {
+                let pem =
+                    std::fs::read(path.trim()).map_err(|e| format!("读取客户端证书失败：{e}"))?;
+                let identity = reqwest::Identity::from_pem(&pem).map_err(|e| {
+                    format!("客户端证书加载失败（PEM 需含证书链与私钥，私钥不支持密码加密）：{e}")
+                })?;
+                base.identity(identity)
+            }
+            _ => base,
+        };
         let with_proxy = match proxy {
             Some(url) => {
                 base.proxy(reqwest::Proxy::all(url).map_err(|e| format!("代理地址无效：{e}"))?)
@@ -740,7 +759,7 @@ impl reqwest::cookie::CookieStore for EmptyJar {
 fn client_pair() -> &'static std::sync::RwLock<ClientPair> {
     static PAIR: OnceLock<std::sync::RwLock<ClientPair>> = OnceLock::new();
     PAIR.get_or_init(|| {
-        let pair = build_pair(None).expect("默认 HTTP 客户端构建不应失败");
+        let pair = build_pair(None, &TlsOptions::default()).expect("默认 HTTP 客户端构建不应失败");
         std::sync::RwLock::new(pair)
     })
 }
@@ -763,16 +782,59 @@ pub fn validate_proxy(url: &str) -> Result<(), AppError> {
         .map_err(|e| AppError::Validation(format!("代理地址无效：{e}")))
 }
 
+/// 全局 TLS 选项：mTLS 客户端证书（rustls 栈 → 单个 PEM 文件含证书链 +
+/// 私钥）与自签 / 无效证书放行（内网调试）。随代理一起触发共享客户端整体重建。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TlsOptions {
+    /// 客户端证书 PEM 文件路径（证书链 + 私钥同文件；空 = 不使用客户端证书）。
+    pub identity_path: Option<String>,
+    /// 放行自签名 / 无效证书（内网自签服务调试）。
+    pub accept_invalid_certs: bool,
+}
+
+/// 共享客户端当前配置（代理 + TLS）：`set_proxy` / `set_tls_options`
+/// 读取对方现值整体重建，避免互相覆盖。
+#[derive(Debug, Clone, Default)]
+struct SharedClientConfig {
+    proxy: Option<String>,
+    tls: TlsOptions,
+}
+
+fn shared_config() -> &'static std::sync::RwLock<SharedClientConfig> {
+    static CFG: OnceLock<std::sync::RwLock<SharedClientConfig>> = OnceLock::new();
+    CFG.get_or_init(|| std::sync::RwLock::new(SharedClientConfig::default()))
+}
+
 /// 设置 / 更换全局 HTTP 代理（`http://host:port` / `socks5://host:port`）。
 ///
 /// `None` 表示直连（并忽略系统代理）。立即生效于后续请求；已建立的
 /// 连接池随旧客户端一起丢弃。
 pub fn set_proxy(proxy: Option<&str>) -> Result<(), AppError> {
-    let pair = build_pair(proxy)
+    let mut cfg = shared_config().write().unwrap_or_else(|e| e.into_inner());
+    cfg.proxy = proxy.map(String::from);
+    let pair = build_pair(cfg.proxy.as_deref(), &cfg.tls)
         .map_err(|e| AppError::Validation(format!("HTTP 客户端初始化失败：{e}")))?;
-    let mut guard = client_pair().write().unwrap_or_else(|e| e.into_inner());
-    *guard = pair;
+    *client_pair().write().unwrap_or_else(|e| e.into_inner()) = pair;
     Ok(())
+}
+
+/// 设置 / 更换全局 TLS 选项（客户端证书 + 自签放行）。立即生效于后续请求。
+pub fn set_tls_options(tls: &TlsOptions) -> Result<(), AppError> {
+    let mut cfg = shared_config().write().unwrap_or_else(|e| e.into_inner());
+    cfg.tls = tls.clone();
+    let pair = build_pair(cfg.proxy.as_deref(), &cfg.tls)
+        .map_err(|e| AppError::Validation(format!("HTTP 客户端初始化失败：{e}")))?;
+    *client_pair().write().unwrap_or_else(|e| e.into_inner()) = pair;
+    Ok(())
+}
+
+/// 读取当前 TLS 选项（设置页回显）。
+pub fn tls_options() -> TlsOptions {
+    shared_config()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .tls
+        .clone()
 }
 
 /// 发送 HTTP 请求。
@@ -1377,6 +1439,9 @@ mod tests {
                 token_url: String::new(), // 测试中动态填入
                 scope: "read".into(),
                 redirect_uri: "http://127.0.0.1:9090/callback".into(),
+                grant: miyo_core::model::OAuth2Grant::default(),
+                username: None,
+                password: None,
                 token: Some(miyo_core::model::OAuth2Token {
                     access_token: "stale-token".into(),
                     token_type: "Bearer".into(),
@@ -1445,6 +1510,9 @@ mod tests {
                 token_url: format!("{base}/token"),
                 scope: String::new(),
                 redirect_uri: String::new(),
+                grant: miyo_core::model::OAuth2Grant::default(),
+                username: None,
+                password: None,
                 token: None,
             },
             ..Default::default()

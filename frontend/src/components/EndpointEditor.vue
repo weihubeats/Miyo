@@ -55,6 +55,7 @@ import PathVariablesPanel from './PathVariablesPanel.vue'
 import Popconfirm from './ui/Popconfirm.vue'
 import ResponsePanel from './ResponsePanel.vue'
 import RequestExamplesPanel from './RequestExamplesPanel.vue'
+import ScriptsPanel from './ScriptsPanel.vue'
 import Tabs from './ui/Tabs.vue'
 import TestCaseModal from './TestCaseModal.vue'
 import Tooltip from './ui/Tooltip.vue'
@@ -210,11 +211,12 @@ type ConfigTabKey =
   | 'body'
   | 'grpc'
   | 'path'
+  | 'scripts'
   | 'examples'
   | 'code'
 
-/** 合法 Tab 集合（历史数据可能持久化过已下线的前置脚本 Scripts / Tests 页签）。 */
-const VALID_TABS: readonly ConfigTabKey[] = ['params', 'auth', 'headers', 'body', 'grpc', 'path', 'examples', 'code']
+/** 合法 Tab 集合（历史数据可能持久化过已下线的 Scripts / Tests 页签）。 */
+const VALID_TABS: readonly ConfigTabKey[] = ['params', 'auth', 'headers', 'body', 'grpc', 'path', 'scripts', 'examples', 'code']
 
 /** 未保存 active_tab 时的智能默认（不写回草稿，避免标记脏）。 */
 const smartTab = ref<ConfigTabKey>('params')
@@ -267,6 +269,7 @@ const configTabs = computed<TabItem[]>(() => {
       count: bodyMode !== 'none' ? 1 : undefined,
     },
     { key: 'path', label: t('editor.tabPath'), count: d.request.path_variables?.length ?? 0 },
+    { key: 'scripts', label: t('editor.tabScripts') },
     { key: 'examples', label: t('editor.tabExamples') },
     { key: 'code', label: t('editor.tabCode') },
   ]
@@ -1763,6 +1766,7 @@ onUnmounted(() => {
         <GrpcPanel v-else-if="activeTab === 'grpc'" :draft="draft" />
         <PathVariablesPanel v-else-if="activeTab === 'path'" :draft="draft" />
         <RequestExamplesPanel v-else-if="activeTab === 'examples'" :draft="draft" />
+        <ScriptsPanel v-else-if="activeTab === 'scripts'" :draft="draft" />
         <CodePanel
           v-else
           :method="draft.method"

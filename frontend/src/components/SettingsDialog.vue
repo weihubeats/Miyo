@@ -192,6 +192,14 @@ onMounted(async () => {
     proxyEnabled.value = false
   }
   try {
+    const tls = await api.getTlsSettings()
+    tlsIdentityPath.value = tls.identityPath ?? ''
+    tlsAcceptInvalid.value = !!tls.acceptInvalidCerts
+  } catch {
+    tlsIdentityPath.value = ''
+    tlsAcceptInvalid.value = false
+  }
+  try {
     const ms = await api.getHttpTimeoutMs()
     timeoutSec.value = ms != null ? Math.round(ms / 1000) : DEFAULT_TIMEOUT_SEC
   } catch {
@@ -232,6 +240,33 @@ const proxyEnabled = ref(false)
 const proxyBusy = ref(false)
 const proxyTesting = ref(false)
 const proxyTest = ref<{ ok: boolean; message: string } | null>(null)
+
+// ---------- TLS：客户端证书（mTLS）与自签放行 ----------
+const tlsIdentityPath = ref('')
+const tlsAcceptInvalid = ref(false)
+const tlsBusy = ref(false)
+
+/** 保存 TLS 设置（证书路径变更 / 自签开关切换共用；后端立即重建共享客户端）。 */
+async function saveTls(): Promise<void> {
+  tlsBusy.value = true
+  try {
+    await api.setTlsSettings({
+      identityPath: tlsIdentityPath.value.trim() || null,
+      acceptInvalidCerts: tlsAcceptInvalid.value,
+    })
+    toast.success(t('settings.tlsSaved'))
+  } catch (err) {
+    toast.error(t('settings.tlsSaveFail'), { message: err instanceof Error ? err.message : String(err) })
+  } finally {
+    tlsBusy.value = false
+  }
+}
+
+/** 自签放行开关：翻转后立即保存（行为变化即时生效）。 */
+async function toggleTlsInsecure(): Promise<void> {
+  tlsAcceptInvalid.value = !tlsAcceptInvalid.value
+  await saveTls()
+}
 
 async function applyProxy(url: string | null): Promise<boolean> {
   proxyBusy.value = true
@@ -1170,6 +1205,48 @@ const projectSummary = computed(() => {
                       {{ proxyTesting ? t('settings.proxyTesting') : t('settings.proxyTest') }}
                     </button>
                   </div>
+                </div>
+              </div>
+
+              <!-- TLS：客户端证书（mTLS）与自签放行 -->
+              <div class="mt-5 rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-5 dark:border-white/[0.06] dark:bg-zinc-900/40">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="max-w-md">
+                    <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.tlsIdentity') }}</div>
+                    <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                      {{ t('settings.tlsIdentityDesc') }}
+                    </p>
+                  </div>
+                  <input
+                    v-model="tlsIdentityPath"
+                    class="miyo-input h-8 w-72 shrink-0 font-mono text-xs"
+                    type="text"
+                    placeholder="/path/to/client.pem"
+                    spellcheck="false"
+                    @change="saveTls"
+                  />
+                </div>
+                <div class="mt-5 flex items-center justify-between gap-4 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
+                  <div class="max-w-md">
+                    <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.tlsInsecure') }}</div>
+                    <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                      {{ t('settings.tlsInsecureDesc') }}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    :aria-checked="tlsAcceptInvalid"
+                    :disabled="tlsBusy"
+                    class="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
+                    :class="tlsAcceptInvalid ? 'bg-purple-500' : 'border border-zinc-300 bg-zinc-200 dark:border-white/10 dark:bg-white/10'"
+                    @click="toggleTlsInsecure"
+                  >
+                    <span
+                      class="absolute top-1/2 h-[16px] w-[16px] -translate-y-1/2 rounded-full bg-white shadow transition-all duration-150"
+                      :class="tlsAcceptInvalid ? 'left-[21px]' : 'left-[2px]'"
+                    />
+                  </button>
                 </div>
               </div>
             </section>

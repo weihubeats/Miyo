@@ -303,9 +303,9 @@ pub async fn save_global_variables(
     state: State<'_, AppState>,
     variables: Vec<miyo_core::model::EnvironmentVariable>,
 ) -> CommandResult<()> {
-    repo::save_global_variables(&state.db, &variables)
-        .await
-        .map_err(Into::into)
+    repo::save_global_variables(&state.db, &variables).await?;
+    state.invalidate_global_settings();
+    Ok(())
 }
 
 /// 读取全局参数（每个请求自动注入的 query / header）。
@@ -322,7 +322,7 @@ pub async fn save_global_params(
     state: State<'_, AppState>,
     params: Vec<miyo_core::model::GlobalParam>,
 ) -> CommandResult<()> {
-    repo::save_global_params(&state.db, &params)
-        .await
-        .map_err(Into::into)
+    repo::save_global_params(&state.db, &params).await?;
+    state.invalidate_global_settings();
+    Ok(())
 }

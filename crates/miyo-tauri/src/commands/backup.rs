@@ -153,6 +153,8 @@ pub async fn backup_restore(
         tracing::warn!("备份全局维度合并失败（项目数据已落库）：{e}");
         GlobalRestoreSummary::default()
     });
+    // 恢复可能合入全局变量 / 参数 / 超时：作废进程内缓存，下一次请求重新查库。
+    state.invalidate_global_settings();
 
     Ok(serde_json::json!({
         "id": restored.project.id,

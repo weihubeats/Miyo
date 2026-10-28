@@ -105,6 +105,12 @@ export type AuthSpec =
       token_url: string
       scope: string
       redirect_uri: string
+      /** 授权模式（缺省 = authorization_code，旧数据零迁移）。 */
+      grant?: OAuth2Grant
+      /** password 模式：资源所有者用户名（其他模式忽略）。 */
+      username?: string | null
+      /** password 模式：资源所有者密码（其他模式忽略）。 */
+      password?: string | null
       token?: OAuth2Token
     }
   /** HTTP Digest 认证（RFC 7616）：401 质询后自动应答重发。 */
@@ -126,6 +132,9 @@ export type AuthSpec =
 
 
 /** OAuth2 令牌（`expires_at` 为 UTC 时刻）。 */
+/** OAuth2 授权模式（Rust `OAuth2Grant`，snake_case 序列化）。 */
+export type OAuth2Grant = 'authorization_code' | 'client_credentials' | 'password'
+
 export interface OAuth2Token {
   access_token: string
   token_type?: string
@@ -231,6 +240,32 @@ export interface RequestSpec {
   disable_cookies?: boolean
   /** JSON Body 字段文档（JSON Pointer → 注释；设计页结构化编辑器用，发送时忽略）。 */
   body_docs?: Record<string, FieldDoc>
+  /** Pre / Post 脚本（pm.* 沙箱执行；缺省 = 无脚本，旧数据零迁移）。 */
+  scripts?: ScriptsSpec | null
+}
+
+/** Pre / Post 请求脚本（Rust `ScriptsSpec`，Postman 风格 pm.* API）。 */
+export interface ScriptsSpec {
+  /** 请求发送前执行：可改请求头、读写变量。 */
+  pre_request: string
+  /** 响应到达后执行：可断言（pm.test）、读响应。 */
+  post_response: string
+}
+
+/** 单条 pm.test 断言结果（Rust `ScriptTestOutcome`）。 */
+export interface ScriptTestOutcome {
+  name: string
+  passed: boolean
+  error?: string | null
+}
+
+/** 一个阶段的脚本运行摘要（Rust `ScriptRunSummary`）。 */
+export interface ScriptRunSummary {
+  phase: 'pre_request' | 'post_response'
+  /** 脚本本身执行失败（语法 / 运行时 / 超时）；post 阶段失败不吞响应。 */
+  error?: string | null
+  tests: ScriptTestOutcome[]
+  logs: string[]
 }
 
 /** 自增序列（Rust `SeqCounter`）；value 为下一次输出值，key 为空表示全局 `$seq`。 */
@@ -245,6 +280,14 @@ export interface ProxyTestResult {
   status: number
   duration_ms: number
   message: string
+}
+
+/** TLS 设置（Rust `TlsSettings`，get/set_tls_settings 命令）。 */
+export interface TlsSettings {
+  /** 客户端证书 PEM 文件路径（证书链 + 私钥同文件；`null` = 不使用）。 */
+  identityPath?: string | null
+  /** 放行自签名 / 无效证书（内网调试）。 */
+  acceptInvalidCerts?: boolean
 }
 
 /** Agent 控制面状态（Rust `AgentStatusInfo`；字段 snake_case）。 */
@@ -494,6 +537,8 @@ export interface ExecuteResponse {
   body_omitted?: boolean
   /** 本次请求实际发出的形态（旧后端 / 手工构造场景缺失）。 */
   request?: RequestSnapshot | null
+  /** Pre / Post 脚本运行摘要（无脚本时缺失，旧后端兼容）。 */
+  scripts?: ScriptRunSummary[]
 }
 
 /** cURL 命令解析结果（Rust `CurlParsed`，miyo-tauri `parse_curl_command` 返回）。 */

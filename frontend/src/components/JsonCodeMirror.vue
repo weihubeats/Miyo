@@ -44,24 +44,20 @@ function onThemeEvent(e: Event): void {
   if (mode === 'dark' || mode === 'light') theme.value = mode
 }
 
-const darkHighlight = HighlightStyle.define([
-  { tag: [tags.propertyName], color: '#c084fc' },
-  { tag: [tags.string], color: '#34d399' },
-  { tag: [tags.number], color: '#38bdf8' },
-  { tag: [tags.bool, tags.null], color: '#fbbf24' },
-  { tag: [tags.punctuation, tags.bracket, tags.brace], color: '#94a3b8' },
-  { tag: [tags.invalid], color: '#f87171' },
-  { tag: [tags.lineComment], color: '#64748b' },
-])
-
-const lightHighlight = HighlightStyle.define([
-  { tag: [tags.propertyName], color: '#7c3aed' },
-  { tag: [tags.string], color: '#059669' },
-  { tag: [tags.number], color: '#2563eb' },
-  { tag: [tags.bool, tags.null], color: '#b45309' },
-  { tag: [tags.punctuation, tags.bracket, tags.brace], color: '#6b7280' },
-  { tag: [tags.invalid], color: '#dc2626' },
-  { tag: [tags.lineComment], color: '#9ca3af' },
+/**
+ * 语法色唯一真源是 style.css 的 --tok-*（深浅各一套，随 data-theme 联动），
+ * 这里只引用 var()：同一份 JSON 在请求编辑器与响应树两侧颜色一致，
+ * 组件内不再维护第二套硬编码色。
+ */
+const syntaxHighlight = HighlightStyle.define([
+  { tag: [tags.propertyName], color: 'var(--tok-key)' },
+  { tag: [tags.string], color: 'var(--tok-str)' },
+  { tag: [tags.number], color: 'var(--tok-num)' },
+  { tag: [tags.bool], color: 'var(--tok-bool)' },
+  { tag: [tags.null], color: 'var(--tok-null)' },
+  { tag: [tags.punctuation, tags.bracket, tags.brace], color: 'var(--tok-punct)' },
+  { tag: [tags.invalid], color: 'var(--danger)' },
+  { tag: [tags.lineComment], color: 'var(--tok-gutter)' },
 ])
 
 const darkTheme = EditorView.theme({
@@ -233,13 +229,9 @@ function clearSearchDecorations(): void {
     effects: searchCompartment.reconfigure(EditorView.decorations.of(Decoration.none)),
   })
 }
-/** 当前生效主题对应的扩展集（主题样式 + 高亮规则）。 */
+/** 当前生效主题对应的扩展集（主题样式 + 语法高亮；高亮本身走 --tok-* 随主题联动）。 */
 function currentThemeExtension() {
-  const dark = theme.value === 'dark'
-  return [
-    dark ? darkTheme : lightTheme,
-    syntaxHighlighting(dark ? darkHighlight : lightHighlight),
-  ]
+  return [theme.value === 'dark' ? darkTheme : lightTheme, syntaxHighlighting(syntaxHighlight)]
 }
 
 /**

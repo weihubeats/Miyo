@@ -41,7 +41,7 @@ const locale = useLocaleStore()
 const t = locale.t
 
 // ---------- 状态 ----------
-const activeTab = ref<'request' | 'body' | 'headers' | 'cookies' | 'examples'>('body')
+const activeTab = ref<'request' | 'body' | 'headers' | 'cookies' | 'scripts' | 'examples'>('body')
 type ViewMode = 'pretty' | 'raw' | 'preview'
 const viewMode = ref<ViewMode>('pretty')
 
@@ -259,6 +259,12 @@ const cookies = computed<Cookie[]>(() => {
   return out
 })
 
+// ---------- 脚本运行摘要（pre/post；无脚本时为空，页签不显示） ----------
+const scriptSummaries = computed(() => props.response.scripts ?? [])
+const scriptTestCount = computed(() =>
+  scriptSummaries.value.reduce((n, s) => n + s.tests.length, 0),
+)
+
 const responseTabs = computed<TabItem[]>(() => [
   { key: 'body', label: t('response.tabBody') },
   { key: 'headers', label: t('response.tabHeaders'), count: headerRows.value.length },
@@ -267,6 +273,16 @@ const responseTabs = computed<TabItem[]>(() => [
   // 内容由宿主经 #examples 插槽注入，本组件不持有其数据。
   ...(props.examplesCount && props.examplesCount > 0
     ? [{ key: 'examples', label: t('response.tabExamples'), count: props.examplesCount }]
+    : []),
+  // 「脚本」页签：本次请求带脚本运行摘要（断言 + console）时才显示。
+  ...(scriptSummaries.value.length
+    ? [
+        {
+          key: 'scripts',
+          label: t('response.tabScripts'),
+          count: scriptTestCount.value || undefined,
+        },
+      ]
     : []),
   // 「请求」置末：主视图以响应为主，实际发出报文是排查时的补充信息（无快照不占位）。
   ...(request.value ? [{ key: 'request', label: t('response.tabRequest') }] : []),
@@ -748,6 +764,38 @@ onUnmounted(() => {
       <p v-if="!cookies.length" class="rp-empty">{{ t('response.noCookies') }}</p>
     </div>
 
+    <!-- 脚本运行摘要：pre/post 两段各一张卡，断言逐条 pass/fail + console 输出 -->
+    <div v-show="!collapsed" v-else-if="activeTab === 'scripts'" class="rp-scroll">
+      <div v-for="(s, i) in scriptSummaries" :key="`${s.phase}-${i}`" class="script-card">
+        <div class="script-card-head">
+          <span class="script-phase">{{
+            s.phase === 'pre_request' ? t('scripts.phasePre') : t('scripts.phasePost')
+          }}</span>
+          <span
+            v-if="s.tests.length"
+            class="script-count"
+            :class="{ 'script-count-fail': s.tests.some((x) => !x.passed) }"
+          >
+            {{
+              t('scripts.testCount', {
+                pass: s.tests.filter((x) => x.passed).length,
+                total: s.tests.length,
+              })
+            }}
+          </span>
+        </div>
+        <p v-if="s.error" class="script-error">{{ s.error }}</p>
+        <ul v-if="s.tests.length" class="script-tests">
+          <li v-for="(test, j) in s.tests" :key="j" class="script-test" :class="{ fail: !test.passed }">
+            <span class="script-dot" aria-hidden="true"></span>
+            <span class="script-test-name">{{ test.name }}</span>
+            <span v-if="test.error" class="script-test-err">{{ test.error }}</span>
+          </li>
+        </ul>
+        <pre v-if="s.logs.length" class="script-logs">{{ s.logs.join('\n') }}</pre>
+      </div>
+    </div>
+
     <!-- 响应示例：内容由宿主持有（#examples 插槽），本组件只提供页签与滚动容器 -->
     <div v-show="!collapsed" v-else-if="activeTab === 'examples'" class="rp-scroll">
       <slot name="examples" />
@@ -1223,5 +1271,96 @@ onUnmounted(() => {
   gap: 4px 14px;
   font-size: var(--fs-xxs);
   color: var(--text-3);
+}
+
+/* ---- 脚本运行摘要（pre/post 断言 + console 输出） ---- */
+.script-card {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.script-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.script-phase {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.script-count {
+  font-size: var(--fs-xxs);
+  color: var(--success);
+}
+
+.script-count-fail {
+  color: var(--danger);
+}
+
+.script-error {
+  margin: 6px 0 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--danger);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.script-tests {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.script-test {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-1);
+  min-width: 0;
+}
+
+.script-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.script-test.fail .script-dot {
+  background: var(--danger);
+}
+
+.script-test-name {
+  word-break: break-all;
+}
+
+.script-test-err {
+  color: var(--text-3);
+  word-break: break-all;
+}
+
+.script-logs {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-code);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xxs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

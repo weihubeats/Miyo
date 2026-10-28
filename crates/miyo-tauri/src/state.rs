@@ -7,12 +7,13 @@
 //!   切换项目时各自保持自己的激活环境。
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
-use miyo_core::model::{Environment, Project};
+use miyo_core::model::{Environment, GlobalParam, Project};
 use miyo_core::VariableMap;
 use sqlx::SqlitePool;
-use tokio::sync::RwLock;
+use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -74,11 +75,11 @@ pub struct ActiveContext {
 pub struct AppState {
     pub db: SqlitePool,
     /// 激活上下文（读写并发安全）。
-    pub active: RwLock<ActiveContext>,
+    pub active: AsyncRwLock<ActiveContext>,
     /// 正在运行的 Mock 服务（未启动为 `None`）。
-    pub mock: RwLock<Option<miyo_mock::server::MockServer>>,
+    pub mock: AsyncRwLock<Option<miyo_mock::server::MockServer>>,
     /// 正在运行的 Agent 控制面服务（未启动为 `None`）。
-    pub agent: RwLock<Option<miyo_agent::server::AgentServer>>,
+    pub agent: AsyncRwLock<Option<miyo_agent::server::AgentServer>>,
     /// 在途请求的取消令牌注册表（request_id → token；「取消请求」时触发中止）。
     /// 持有期间不 await，普通 `Mutex` 即可。
     pub request_cancels: Mutex<HashMap<String, CancellationToken>>,
@@ -86,15 +87,36 @@ pub struct AppState {
     /// 压测 `cancel_load_test` 与集合测试 `cancel_test_collection` 共用）。
     pub run_cancels: Mutex<HashMap<String, CancellationToken>>,
     /// WebSocket 会话（connection_id → 会话；含事件转发任务句柄）。
-    pub ws: RwLock<HashMap<String, crate::commands::ws::WsSession>>,
+    pub ws: AsyncRwLock<HashMap<String, crate::commands::ws::WsSession>>,
     /// SSE 订阅任务（connection_id → 转发任务句柄；断开即 abort）。
-    pub sse: RwLock<HashMap<String, tokio::task::JoinHandle<()>>>,
+    pub sse: AsyncRwLock<HashMap<String, tokio::task::JoinHandle<()>>>,
     /// 在途 gRPC 服务端流（stream_id → 取消令牌 + 消费任务句柄）。
     /// 与 `request_cancels` 同为普通 Mutex：持有期间不 await。
     pub grpc_streams: Mutex<HashMap<String, (CancellationToken, tokio::task::JoinHandle<()>)>>,
     /// 被 IPC 预览截断（>2MB）的响应全文缓存（request_id → 全文）：
     /// 前端复制 / 保存示例时经 `get_response_body` 按需取回。
     pub response_bodies: Mutex<ResponseBodyCache>,
+    /// 全局设置缓存（详见 [`GlobalSettings`]）：`None` = 未构建。
+    pub global_settings_cache: RwLock<Option<Arc<GlobalSettings>>>,
+    /// 全局设置代数：写路径失效时自增。缓存构建前后比对，
+    /// 防止「构建期间恰好发生保存」的旧快照回填（cache-aside 竞态）。
+    settings_gen: AtomicU64,
+    /// 脚本沙箱（惰性初始化：首个带脚本的请求才启动工作线程 + QuickJS 引擎；
+    /// 初始化失败缓存 `None`，后续请求统一报沙箱错误）。
+    pub script_sandbox: std::sync::OnceLock<Option<miyo_http::script_sandbox::ScriptSandbox>>,
+}
+
+/// 请求热路径的全局设置快照：命中时免去每次请求 2~3 次 settings SELECT +
+/// AES-GCM 解密 + JSON 反序列化（压测高并发下随请求数线性放大的固定税）。
+/// 写路径（保存全局变量 / 参数、设置超时、备份恢复合并）成功后必须
+/// `invalidate_global_settings`，否则后续请求会用到旧值。
+#[derive(Debug)]
+pub struct GlobalSettings {
+    /// 启用项过滤后的全局变量合并表（环境 / 项目变量在其上叠加）。
+    pub global_vars: VariableMap,
+    pub global_params: Arc<Vec<GlobalParam>>,
+    /// 全局请求超时（毫秒）；`None` = 未配置，由调用方兜底内置默认。
+    pub http_timeout_ms: Option<u64>,
 }
 
 /// 响应全文缓存：容量 4 条 + 10 分钟 TTL，超限 / 过期即弃，
@@ -155,16 +177,81 @@ impl AppState {
     pub fn new(db: SqlitePool) -> Self {
         AppState {
             db,
-            active: RwLock::new(ActiveContext::default()),
-            mock: RwLock::new(None),
-            agent: RwLock::new(None),
+            active: AsyncRwLock::new(ActiveContext::default()),
+            mock: AsyncRwLock::new(None),
+            agent: AsyncRwLock::new(None),
             request_cancels: Mutex::new(HashMap::new()),
             run_cancels: Mutex::new(HashMap::new()),
-            ws: RwLock::new(HashMap::new()),
-            sse: RwLock::new(HashMap::new()),
+            ws: AsyncRwLock::new(HashMap::new()),
+            sse: AsyncRwLock::new(HashMap::new()),
             grpc_streams: Mutex::new(HashMap::new()),
             response_bodies: Mutex::new(ResponseBodyCache::new()),
+            global_settings_cache: RwLock::new(None),
+            settings_gen: AtomicU64::new(0),
+            script_sandbox: std::sync::OnceLock::new(),
         }
+    }
+
+    /// 脚本沙箱（惰性创建；引擎初始化失败返回错误）。
+    pub fn script_sandbox(&self) -> CommandResult<&miyo_http::script_sandbox::ScriptSandbox> {
+        self.script_sandbox
+            .get_or_init(|| miyo_http::script_sandbox::ScriptSandbox::new().ok())
+            .as_ref()
+            .ok_or_else(|| crate::error::CommandError::with_code("INTERNAL", "脚本沙箱初始化失败"))
+    }
+
+    /// 全局设置快照：缓存命中零查询；未命中查库构建并回填。
+    ///
+    /// 查库在锁外完成：std RwLock 只包住快照引用读写，不跨 await
+    /// （tokio 运行时下持 std 锁跨 await 会阻塞工作线程）。
+    /// 构建前后比对代数：期间发生写路径（保存 / 恢复）则放弃回填，
+    /// 下一次请求重新构建，避免旧快照长期驻留。
+    pub async fn global_settings(&self) -> CommandResult<Arc<GlobalSettings>> {
+        if let Some(snap) = self
+            .global_settings_cache
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+        {
+            return Ok(snap);
+        }
+        let gen_before = self.settings_gen.load(Ordering::Relaxed);
+        let (vars, params, timeout) = tokio::join!(
+            repo::get_global_variables(&self.db),
+            repo::get_global_params(&self.db),
+            crate::commands::settings::read_http_timeout_ms(&self.db),
+        );
+        let snap = Arc::new(GlobalSettings {
+            // 先求值再 move key：`(v.key, v.effective_value()…)` 会因 key 先
+            // 被 move 触发 E0382（借用了部分 move 的 v）。
+            global_vars: vars?
+                .into_iter()
+                .filter(|v| v.enabled)
+                .map(|v| {
+                    let value = v.effective_value().to_string();
+                    (v.key, value)
+                })
+                .collect(),
+            global_params: Arc::new(params?),
+            http_timeout_ms: timeout?,
+        });
+        if self.settings_gen.load(Ordering::Relaxed) == gen_before {
+            *self
+                .global_settings_cache
+                .write()
+                .unwrap_or_else(|p| p.into_inner()) = Some(snap.clone());
+        }
+        Ok(snap)
+    }
+
+    /// 全局设置写路径（保存全局变量 / 参数、设置超时、备份恢复合并）成功后
+    /// 必须调用：代数自增 + 清空缓存，下一次请求重新查库构建。
+    pub fn invalidate_global_settings(&self) {
+        self.settings_gen.fetch_add(1, Ordering::Relaxed);
+        *self
+            .global_settings_cache
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = None;
     }
 
     /// 当前激活项目（缓存命中直接返回；否则查询并写回缓存）。
@@ -335,15 +422,8 @@ impl AppState {
             Some(id) => Some(repo::get_environment(&self.db, id).await?),
             None => self.active_environment().await?,
         };
-        let global_vars: VariableMap = repo::get_global_variables(&self.db)
-            .await?
-            .into_iter()
-            .filter(|v| v.enabled)
-            .map(|v| {
-                let value = v.effective_value().to_string();
-                (v.key, value)
-            })
-            .collect();
+        // 全局变量走进程内缓存（含启用项过滤），命中时零 DB 往返。
+        let global_vars: VariableMap = self.global_settings().await?.global_vars.clone();
         let project_vars = project.map(|p| p.variables).unwrap_or_default();
         let mut environment_vars: VariableMap = environment
             .as_ref()

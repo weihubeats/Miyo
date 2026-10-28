@@ -76,6 +76,12 @@ function cap<T>(arr: T[]): T[] {
   if (arr.length > MAX_LOG) arr.splice(0, arr.length - MAX_LOG)
   return arr
 }
+/**
+ * 日志行单调 id：头部裁剪（cap）会使后续所有行的索引整体前移，
+ * 若 v-for 用 index 作 key，列表满后每来一条消息 500 行全部重新 patch；
+ * 稳定 key 下只卸载被裁掉的行。popout 新窗口各自从 0 计数，无跨窗共享。
+ */
+let logSeq = 0
 function nowTime(): string {
   return formatTime(new Date(), { hour12: false })
 }
@@ -124,6 +130,7 @@ function toSubprotocols(raw: string): string[] {
 }
 
 interface WsLogItem {
+  seq: number
   t: string
   dir: 'in' | 'out' | 'sys'
   frame: string
@@ -132,7 +139,7 @@ interface WsLogItem {
 const wsLog = ref<WsLogItem[]>([])
 
 function wsPush(dir: WsLogItem['dir'], frame: string, text: string): void {
-  wsLog.value.push({ t: nowTime(), dir, frame, text })
+  wsLog.value.push({ seq: logSeq++, t: nowTime(), dir, frame, text })
   cap(wsLog.value)
 }
 
@@ -221,9 +228,11 @@ const sseBuffer = ref('')
 const sseLastId = ref('')
 
 interface SseLogItem {
+  seq: number
   t: string
   event: string
   data: string
+  /** SSE `id:` 行的事件 id（续传位点），非列表 key。 */
   id: string
 }
 const sseLog = ref<SseLogItem[]>([])
@@ -248,7 +257,7 @@ function parseSseFrames(): void {
     }
     if (dataLines.length === 0) continue
     if (id) sseLastId.value = id
-    sseLog.value.push({ t: nowTime(), event, data: dataLines.join('\n'), id })
+    sseLog.value.push({ seq: logSeq++, t: nowTime(), event, data: dataLines.join('\n'), id })
     cap(sseLog.value)
   }
 }
@@ -282,7 +291,7 @@ async function sseDisconnect(silent = false): Promise<void> {
   }
   sseStatus.value = 'closed'
   if (!silent) {
-    sseLog.value.push({ t: nowTime(), event: 'sys', data: t('realtime.sseUnsubscribed'), id: '' })
+    sseLog.value.push({ seq: logSeq++, t: nowTime(), event: 'sys', data: t('realtime.sseUnsubscribed'), id: '' })
     cap(sseLog.value)
   }
 }
@@ -291,7 +300,7 @@ function onSseEvent(payload: SseEventPayload): void {
   if (payload.connection_id !== sseConnId.value) return
   if (payload.kind === 'open') {
     sseStatus.value = 'open'
-    sseLog.value.push({ t: nowTime(), event: 'sys', data: t('realtime.sseOpened'), id: '' })
+    sseLog.value.push({ seq: logSeq++, t: nowTime(), event: 'sys', data: t('realtime.sseOpened'), id: '' })
   } else if (payload.kind === 'chunk') {
     sseBuffer.value += payload.chunk
     // 单块超 1MB 未成帧：截断防内存膨胀（畸形流保护）。
@@ -299,11 +308,11 @@ function onSseEvent(payload: SseEventPayload): void {
     parseSseFrames()
   } else if (payload.kind === 'error') {
     sseStatus.value = 'error'
-    sseLog.value.push({ t: nowTime(), event: 'sys', data: t('realtime.sseError', { v: payload.message }), id: '' })
+    sseLog.value.push({ seq: logSeq++, t: nowTime(), event: 'sys', data: t('realtime.sseError', { v: payload.message }), id: '' })
   } else {
     sseStatus.value = 'closed'
     sseConnId.value = null
-    sseLog.value.push({ t: nowTime(), event: 'sys', data: t('realtime.sseClosedByServer'), id: '' })
+    sseLog.value.push({ seq: logSeq++, t: nowTime(), event: 'sys', data: t('realtime.sseClosedByServer'), id: '' })
   }
   cap(sseLog.value)
 }
@@ -436,7 +445,7 @@ onUnmounted(() => {
 
       <div class="rt-log">
         <div v-if="!wsLog.length"><EmptyState icon="terminal" :title="t('realtime.wsEmpty')" compact /></div>
-        <div v-for="(m, i) in wsLog" :key="i" class="rt-line" :class="`dir-${m.dir}`">
+        <div v-for="m in wsLog" :key="m.seq" class="rt-line" :class="`dir-${m.dir}`">
           <span class="rt-time">{{ m.t }}</span>
           <span class="rt-dir">{{ m.dir === 'in' ? '↓' : m.dir === 'out' ? '↑' : '•' }}</span>
           <span class="rt-frame">{{ m.frame }}</span>
@@ -513,7 +522,7 @@ onUnmounted(() => {
 
       <div class="rt-log">
         <div v-if="!sseLog.length"><EmptyState icon="terminal" :title="t('realtime.sseEmpty')" compact /></div>
-        <div v-for="(m, i) in sseLog" :key="i" class="rt-line dir-in">
+        <div v-for="m in sseLog" :key="m.seq" class="rt-line dir-in">
           <span class="rt-time">{{ m.t }}</span>
           <span class="rt-frame">{{ m.event }}</span>
           <span v-if="m.id" class="rt-id">#{{ m.id }}</span>

@@ -477,6 +477,10 @@ async function commitEdit(): Promise<void> {
     }
   } catch (err) {
     console.error('[EndpointTree.commitEdit]', err)
+    toast.error(
+      ed.kind === 'create-folder' ? t('tree.createFolderFail') : t('tree.renameFail'),
+      { message: err instanceof Error ? err.message : String(err) },
+    )
   } finally {
     cancelEdit()
   }
@@ -487,6 +491,7 @@ async function removeFolder(id: string): Promise<void> {
     await store.deleteFolder(id)
   } catch (err) {
     console.error('[EndpointTree.removeFolder]', err)
+    toast.error(t('tree.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
   } finally {
     treeSelection.folders.delete(id)
   }
@@ -497,6 +502,7 @@ async function removeEndpoint(e: Endpoint): Promise<void> {
     await store.deleteEndpoint(e.id)
   } catch (err) {
     console.error('[EndpointTree.removeEndpoint]', err)
+    toast.error(t('tree.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
   } finally {
     treeSelection.endpoints.delete(e.id)
   }
@@ -507,6 +513,7 @@ async function duplicate(e: Endpoint): Promise<void> {
     await store.duplicateEndpoint(e.id)
   } catch (err) {
     console.error('[EndpointTree.duplicate]', err)
+    toast.error(t('tree.duplicateFail'), { message: err instanceof Error ? err.message : String(err) })
   }
 }
 
@@ -829,6 +836,7 @@ async function batchDelete(): Promise<void> {
     await store.batchDelete(epIds, folderIds)
   } catch (err) {
     console.error('[EndpointTree.batchDelete]', err)
+    toast.error(t('tree.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
   }
 }
 
@@ -841,6 +849,7 @@ async function batchMove(targetFolderId: string | null): Promise<void> {
     await store.batchMoveEndpoints(epIds, targetFolderId)
   } catch (err) {
     console.error('[EndpointTree.batchMove]', err)
+    toast.error(t('tree.batchMoveFail'), { message: err instanceof Error ? err.message : String(err) })
   }
 }
 

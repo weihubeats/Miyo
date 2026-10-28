@@ -263,6 +263,11 @@ export const zh = {
   'tree.folderMoved': '文件夹已移动',
   'tree.endpointMoved': '接口已移动',
   'tree.moveFail': '移动失败',
+  'tree.createFolderFail': '创建文件夹失败',
+  'tree.renameFail': '重命名失败',
+  'tree.deleteFail': '删除失败',
+  'tree.duplicateFail': '复制失败',
+  'tree.batchMoveFail': '批量移动失败',
   'tree.newEndpoint': '新建接口',
   'tree.importCurl': '导入 cURL',
   'tree.newSubfolder': '新建子文件夹',
@@ -303,6 +308,16 @@ export const zh = {
   'editor.tabExamples': 'Examples',
   'editor.tabCode': 'Code',
   'editor.tabPath': 'Path',
+  'editor.tabScripts': '脚本',
+  // 脚本页签（Scripts）：Postman 风格 pm.* 脚本，后端沙箱执行
+  'editor.scriptsPreTitle': 'Pre-request · 请求发送前执行',
+  'editor.scriptsPostTitle': 'Post-response · 收到响应后执行',
+  'editor.scriptsPrePh':
+    '// 例：动态注入请求头\npm.request.headers.add({ key: \'X-Sign\', value: \'abc\' });\n// 例：读写变量\npm.environment.set(\'token\', \'xxx\');\nconst v = pm.environment.get(\'token\');',
+  'editor.scriptsPostPh':
+    '// 例：断言响应\nconst body = pm.response.json();\npm.test(\'状态码 200\', () => pm.expect(pm.response.code).to.equal(200));',
+  'editor.scriptsHint':
+    '可用 API：pm.request.headers.add / method / url / body、pm.environment.get / set / unset、pm.response.code / json / headers（仅请求后）、pm.test(name, fn) + pm.expect、console.log；单段脚本最长 2 秒。',
   // 路径变量页签（Path）：发送前把路径里的 {id} / {{id}} 换成取值
   'editor.pathCount': '路径变量 ({n})',
   'editor.pathExtract': '从路径抽取',
@@ -398,6 +413,11 @@ export const zh = {
   'response.tabCookies': 'Cookies',
   'response.tabExamples': '示例',
   'response.tabRequest': '请求',
+  'response.tabScripts': '脚本',
+  // 脚本运行摘要（Scripts 页签）：断言结果 + console 输出
+  'scripts.phasePre': '请求前脚本',
+  'scripts.phasePost': '响应后脚本',
+  'scripts.testCount': '{pass}/{total} 通过',
   'response.reqUrl': '请求地址',
   'response.reqTemplate': '请求模板',
   'response.reqHeaders': '请求头',
@@ -447,6 +467,12 @@ export const zh = {
   'auth.authorizedAuto': '已授权（发送时自动刷新）',
   'auth.authorizing': '授权中…',
   'auth.authorizeNow': '立即授权',
+  // OAuth2 授权模式与非交互式换 token（client_credentials / password）
+  'auth.grantAuthCode': '授权码模式',
+  'auth.grantClientCreds': '客户端凭证',
+  'auth.grantPassword': '密码模式',
+  'auth.fetchToken': '获取令牌',
+  'auth.fetchingToken': '获取中…',
   'auth.oauthOk': 'OAuth2 授权成功，请保存 (⌘S) 持久化',
   'auth.oauthFail': 'OAuth2 授权失败',
   'auth.secretWarn': 'App-Secret 仅用于签名计算，不会明文发送或存储',
@@ -678,6 +704,14 @@ export const zh = {
   'settings.proxyTestTitle': '连通性测试',
   'settings.proxyTestDesc': '经当前代理请求一次公开目标，验证可用性。',
   'settings.proxyTest': '测试连通性',
+  // TLS：客户端证书（mTLS）与自签放行
+  'settings.tlsIdentity': '客户端证书（mTLS）',
+  'settings.tlsIdentityDesc':
+    'PEM 文件路径，须同时包含证书链与私钥（私钥不支持密码加密）；双向认证的内网 HTTPS 服务用。留空不使用。',
+  'settings.tlsInsecure': '放行自签名 / 无效证书',
+  'settings.tlsInsecureDesc': '跳过证书校验（内网自签服务调试用），公网环境开启有中间人风险。',
+  'settings.tlsSaved': 'TLS 设置已保存',
+  'settings.tlsSaveFail': 'TLS 设置保存失败',
   'settings.proxyTesting': '测试中…',
   'settings.sequencesTitle': '自增序列与变量',
   'settings.seqDescA': '请求中写',

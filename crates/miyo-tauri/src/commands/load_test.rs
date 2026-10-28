@@ -8,7 +8,6 @@ use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use miyo_core::model::{Endpoint, HttpMethod, RequestSpec};
-use miyo_storage::repository as repo;
 
 use crate::commands::request::{apply_global_params, render_spec, resolve_timeout_ms};
 use crate::error::{CommandError, CommandResult};
@@ -29,17 +28,18 @@ pub async fn test_endpoint(
     args: TestEndpointArgs,
 ) -> CommandResult<miyo_test::runner::EndpointResult> {
     // 三路独立查询同波次并发（原来串行 3~4 次 DB 往返）。
-    let (vars, global_params, timeout_ms) = tokio::join!(
+    // 全局参数 / 超时走进程内缓存，命中时零 DB 往返。
+    let (vars, settings, timeout_ms) = tokio::join!(
         state.variables_for(args.environment_id),
-        repo::get_global_params(&state.db),
+        state.global_settings(),
         resolve_timeout_ms(&args.endpoint.request, &state),
     );
     let vars = vars?;
-    let global_params = global_params?;
+    let settings = settings?;
     let timeout_ms = timeout_ms?;
     let url = miyo_core::resolve_variables(&args.url, &vars);
     let mut spec = render_spec(&args.endpoint.request, &vars);
-    apply_global_params(&mut spec, &global_params, &vars);
+    apply_global_params(&mut spec, &settings.global_params, &vars);
     let mut runtime = std::collections::HashMap::new();
     let (result, _) = miyo_test::runner::run_endpoint(
         &args.endpoint,
@@ -49,10 +49,13 @@ pub async fn test_endpoint(
         Some(timeout_ms),
     )
     .await;
-    // 自增序列若被本次测试推进，回写磁盘（尽力而为）。
-    if let Err(e) = super::seq::sync_seq_counters_if_dirty(&state.db).await {
-        tracing::warn!("[test_endpoint] 同步自增序列失败：{e}");
-    }
+    // 自增序列若被本次测试推进，回写磁盘（尽力而为）。后台执行，不加在返回路径上。
+    let db = state.db.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = super::seq::sync_seq_counters_if_dirty(&db).await {
+            tracing::warn!("[test_endpoint] 同步自增序列失败：{e}");
+        }
+    });
     Ok(result)
 }
 
@@ -89,17 +92,17 @@ pub async fn load_test(
     let concurrency = args.concurrency.unwrap_or(20).clamp(1, 500);
     let total = args.total.unwrap_or(200).clamp(1, 100_000);
     // 三路独立查询同波次并发（原来串行 3~4 次 DB 往返）。
-    let (vars, global_params, timeout_ms) = tokio::join!(
+    let (vars, settings, timeout_ms) = tokio::join!(
         state.variables_for(args.environment_id),
-        repo::get_global_params(&state.db),
+        state.global_settings(),
         resolve_timeout_ms(&args.spec, &state),
     );
     let vars = vars?;
-    let global_params = global_params?;
+    let settings = settings?;
     let timeout_ms = timeout_ms?;
     let url = miyo_core::resolve_variables(&args.url, &vars);
     let mut spec = render_spec(&args.spec, &vars);
-    apply_global_params(&mut spec, &global_params, &vars);
+    apply_global_params(&mut spec, &settings.global_params, &vars);
     let cfg = miyo_test::load::LoadConfig { concurrency, total };
 
     // 注册取消令牌（前端「取消压测」→ `cancel_load_test` 触发中止）。
@@ -221,13 +224,13 @@ pub async fn test_collection(
         return Err(CommandError::validation("单次集合测试最多 2000 个接口"));
     }
     // 三路独立查询同波次并发。
-    let (vars, global_params, timeout_ms) = tokio::join!(
+    let (vars, settings, timeout_ms) = tokio::join!(
         state.variables_for(args.environment_id),
-        repo::get_global_params(&state.db),
+        state.global_settings(),
         resolve_timeout_ms(&args.items[0].spec, &state),
     );
     let vars = vars?;
-    let global_params = global_params?;
+    let settings = settings?;
     let timeout_ms = timeout_ms?;
 
     let items: Vec<miyo_test::runner::CollectionItem> = args
@@ -236,7 +239,7 @@ pub async fn test_collection(
         .map(|it| {
             let url = miyo_core::resolve_variables(&it.url, &vars);
             let mut spec = render_spec(&it.spec, &vars);
-            apply_global_params(&mut spec, &global_params, &vars);
+            apply_global_params(&mut spec, &settings.global_params, &vars);
             miyo_test::runner::CollectionItem {
                 endpoint: it.endpoint.clone(),
                 url,

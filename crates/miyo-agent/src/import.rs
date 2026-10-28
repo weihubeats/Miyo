@@ -90,6 +90,7 @@ pub fn endpoint_from_curl(
             tests: None,
             disable_cookies: false,
             body_docs: std::collections::HashMap::new(),
+            scripts: None,
         },
         created_at: now,
         updated_at: now,

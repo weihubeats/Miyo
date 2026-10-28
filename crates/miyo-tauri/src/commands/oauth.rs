@@ -29,6 +29,16 @@ pub async fn oauth_access_token(
         .map_err(CommandError::from)
 }
 
+/// 非交互式获取令牌（client_credentials / password 模式）：直接向 token_url
+/// 换取并返回（结果同时写入进程内缓存，发送时直接复用）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn oauth_fetch_token(
+    _state: State<'_, AppState>,
+    auth: AuthSpec,
+) -> CommandResult<OAuth2Token> {
+    client::fetch_token(&auth).await.map_err(CommandError::from)
+}
+
 impl From<OAuth2Error> for CommandError {
     fn from(err: OAuth2Error) -> Self {
         CommandError {

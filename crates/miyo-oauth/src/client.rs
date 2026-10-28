@@ -1,4 +1,5 @@
-//! OAuth2 授权码流核心：浏览器授权、code 换取 token、refresh_token 静默刷新。
+//! OAuth2 授权核心：浏览器授权码流、code 换取 token、refresh_token 静默刷新、
+//! 非交互式模式（client_credentials / password）直接换取令牌。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -8,7 +9,7 @@ use axum::extract::Query;
 use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
-use miyo_core::model::{AuthSpec, OAuth2Token};
+use miyo_core::model::{AuthSpec, OAuth2Grant, OAuth2Token};
 use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
 use url::Url;
 
@@ -90,6 +91,9 @@ fn oauth2_fields(auth: &AuthSpec) -> Result<OAuth2Fields, OAuth2Error> {
         token_url,
         scope,
         redirect_uri,
+        grant,
+        username,
+        password,
         ..
     } = auth
     else {
@@ -112,6 +116,9 @@ fn oauth2_fields(auth: &AuthSpec) -> Result<OAuth2Fields, OAuth2Error> {
         } else {
             redirect_uri.clone()
         },
+        grant: *grant,
+        username: username.clone(),
+        password: password.clone(),
     })
 }
 
@@ -122,6 +129,9 @@ struct OAuth2Fields {
     token_url: String,
     scope: String,
     redirect_uri: String,
+    grant: OAuth2Grant,
+    username: Option<String>,
+    password: Option<String>,
 }
 
 /// 取 access token：缓存有效（未过期且未临近过期）直接返回；
@@ -145,20 +155,118 @@ pub async fn access_token_for(auth: &AuthSpec) -> Result<String, OAuth2Error> {
         }
     }
     let cached = cache::cached_token(&fields.client_id, &fields.token_url);
+    // 非交互式模式（client_credentials / password）：无凭据或过期 → 直接重取
+    // （这类模式通常不返回 refresh_token，整体重取即续期）。
+    let interactive = fields.grant == OAuth2Grant::AuthorizationCode;
     match cached {
-        // 有效但即将过期 → 走刷新（静默续期）。
-        Some(t) if !t.is_expired() && t.expires_within(REFRESH_AHEAD) => {
-            refresh_with_dedupe(&fields, t).await
+        // 有效直接用；交互模式临近过期走静默刷新续期。
+        Some(t) if !t.is_expired() => {
+            if interactive && t.expires_within(REFRESH_AHEAD) {
+                refresh_with_dedupe(&fields, t).await
+            } else {
+                Ok(t.access_token)
+            }
         }
-        // 已过期 → 必须刷新。
-        Some(t) if t.is_expired() => refresh_with_dedupe(&fields, t).await,
-        // 有 token 的情况上面都已覆盖；这里是「有效」提前返回兜底。
-        Some(t) => Ok(t.access_token),
-        // 无任何凭据 → 未授权。
-        None => Err(OAuth2Error::Unauthorized(
-            "尚未完成 OAuth2 授权，请先在认证页点击「立即授权」".to_string(),
-        )),
+        // 已过期：交互模式刷新；非交互模式由下方兜底重取。
+        Some(t) if interactive => refresh_with_dedupe(&fields, t).await,
+        // 已过期（非交互）或无凭据：非交互模式直接重取；交互模式报未授权。
+        Some(_) | None => {
+            if !interactive {
+                fetch_token_with_fields(&fields)
+                    .await
+                    .map(|t| t.access_token)
+            } else {
+                Err(OAuth2Error::Unauthorized(
+                    "尚未完成 OAuth2 授权，请先在认证页点击「立即授权」".to_string(),
+                ))
+            }
+        }
     }
+}
+
+/// 非交互式获取令牌（client_credentials / password 模式）：直接向 token_url
+/// 换取，结果写入进程内缓存并返回（调用方可写回 AuthSpec 展示有效期）。
+/// authorization_code 模式不走这里（需浏览器授权，见 [`authorize`]）。
+pub async fn fetch_token(auth: &AuthSpec) -> Result<OAuth2Token, OAuth2Error> {
+    let fields = oauth2_fields(auth)?;
+    fetch_token_with_fields(&fields).await
+}
+
+/// [`fetch_token`] 的字段预提取版（access_token_for 内避免二次解析）。
+async fn fetch_token_with_fields(fields: &OAuth2Fields) -> Result<OAuth2Token, OAuth2Error> {
+    let fresh = match fields.grant {
+        OAuth2Grant::ClientCredentials => exchange_client_credentials(fields).await?,
+        OAuth2Grant::Password => exchange_password(fields).await?,
+        OAuth2Grant::AuthorizationCode => {
+            return Err(OAuth2Error::Config(
+                "authorization_code 模式请在认证页点击「立即授权」走浏览器流程".to_string(),
+            ));
+        }
+    };
+    cache::store_token(&fields.client_id, &fields.token_url, fresh.clone());
+    Ok(fresh)
+}
+
+/// client_credentials：POST token_url（form：grant_type=client_credentials）。
+async fn exchange_client_credentials(fields: &OAuth2Fields) -> Result<OAuth2Token, OAuth2Error> {
+    let mut form = vec![
+        ("grant_type", "client_credentials"),
+        ("client_id", fields.client_id.as_str()),
+        ("client_secret", fields.client_secret.as_str()),
+    ];
+    if !fields.scope.trim().is_empty() {
+        form.push(("scope", fields.scope.trim()));
+    }
+    request_token(fields, &form).await
+}
+
+/// password：POST token_url（form：grant_type=password + 资源所有者凭据）。
+async fn exchange_password(fields: &OAuth2Fields) -> Result<OAuth2Token, OAuth2Error> {
+    let username = fields
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| OAuth2Error::Config("password 模式需要填写用户名".to_string()))?;
+    let password = fields.password.as_deref().unwrap_or("");
+    let mut form = vec![
+        ("grant_type", "password"),
+        ("username", username),
+        ("password", password),
+        ("client_id", fields.client_id.as_str()),
+        ("client_secret", fields.client_secret.as_str()),
+    ];
+    if !fields.scope.trim().is_empty() {
+        form.push(("scope", fields.scope.trim()));
+    }
+    request_token(fields, &form).await
+}
+
+/// 发送 token 请求并解析响应（成功 → OAuth2Token；401/400 → 凭据被拒）。
+async fn request_token(
+    fields: &OAuth2Fields,
+    form: &[(&str, &str)],
+) -> Result<OAuth2Token, OAuth2Error> {
+    let resp = token_client()
+        .post(&fields.token_url)
+        .form(form)
+        .send()
+        .await
+        .map_err(|e| OAuth2Error::Exchange(format!("令牌请求失败：{e}")))?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_else(|_| String::new());
+    if !(200..300).contains(&status) {
+        if status == 401 || status == 400 {
+            return Err(OAuth2Error::Unauthorized(format!(
+                "令牌请求被拒绝（HTTP {status}），请检查 client_id / secret / 用户名密码"
+            )));
+        }
+        return Err(OAuth2Error::Exchange(format!(
+            "令牌请求失败（HTTP {status}）：{}",
+            text.chars().take(200).collect::<String>()
+        )));
+    }
+    parse_token_payload(&text).map_err(OAuth2Error::Exchange)
 }
 
 /// 带去重的刷新：同一 key 的并发调用共享一次网络刷新。
@@ -509,6 +617,9 @@ mod tests {
             token_url: token_url.into(),
             scope: "read".into(),
             redirect_uri: crate::DEFAULT_REDIRECT_URI.to_string(),
+            grant: OAuth2Grant::default(),
+            username: None,
+            password: None,
             token: None,
         }
     }

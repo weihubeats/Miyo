@@ -23,6 +23,84 @@ pub async fn read_http_timeout_ms(db: &sqlx::SqlitePool) -> CommandResult<Option
     }
 }
 
+/// settings 表中 TLS 客户端证书路径键；值为 JSON 字符串（`null` = 不使用）。
+const TLS_IDENTITY_KEY: &str = "tls_identity_path";
+/// settings 表中「放行自签 / 无效证书」键；值为 JSON bool。
+const TLS_ACCEPT_INVALID_KEY: &str = "tls_accept_invalid_certs";
+
+/// TLS 设置（设置页回显结构）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TlsSettings {
+    /// 客户端证书 PEM 文件路径（证书链 + 私钥同文件；`null` = 不使用）。
+    pub identity_path: Option<String>,
+    /// 放行自签名 / 无效证书（内网调试）。
+    pub accept_invalid_certs: bool,
+}
+
+/// 读取 TLS 设置（settings 表回显）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_tls_settings(state: State<'_, AppState>) -> CommandResult<TlsSettings> {
+    let identity = repo::get_setting(&state.db, TLS_IDENTITY_KEY).await?;
+    let accept = repo::get_setting(&state.db, TLS_ACCEPT_INVALID_KEY).await?;
+    Ok(TlsSettings {
+        identity_path: identity
+            .and_then(|v| serde_json::from_str::<Option<String>>(&v).ok().flatten()),
+        accept_invalid_certs: accept
+            .and_then(|v| serde_json::from_str::<bool>(&v).ok())
+            .unwrap_or(false),
+    })
+}
+
+/// 保存 TLS 设置并立即应用到共享 HTTP 客户端（整体重建，代理设置保持）。
+///
+/// 证书在本命令内先读取并解析一次：失败即报错，不落库（避免坏配置静默
+/// 生效到后续所有请求）。路径只存本机 settings 表（不进备份 / 同步键集）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn set_tls_settings(
+    state: State<'_, AppState>,
+    identity_path: Option<String>,
+    accept_invalid_certs: bool,
+) -> CommandResult<()> {
+    let identity = identity_path
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty());
+    miyo_http::client::set_tls_options(&miyo_http::client::TlsOptions {
+        identity_path: identity.clone(),
+        accept_invalid_certs,
+    })
+    .map_err(|e| CommandError::validation(e.user_message()))?;
+    let identity_json = serde_json::to_string(&identity)
+        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+    repo::set_setting(&state.db, TLS_IDENTITY_KEY, &identity_json).await?;
+    repo::set_setting(
+        &state.db,
+        TLS_ACCEPT_INVALID_KEY,
+        &accept_invalid_certs.to_string(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// 启动时恢复 TLS 设置（失败静默保持默认：无证书 + 标准校验）。
+pub async fn apply_saved_tls(db: &sqlx::SqlitePool) {
+    let identity = match repo::get_setting(db, TLS_IDENTITY_KEY).await {
+        Ok(Some(v)) => serde_json::from_str::<Option<String>>(&v).ok().flatten(),
+        _ => None,
+    };
+    let accept = match repo::get_setting(db, TLS_ACCEPT_INVALID_KEY).await {
+        Ok(Some(v)) => serde_json::from_str::<bool>(&v).unwrap_or(false),
+        _ => false,
+    };
+    if identity.is_none() && !accept {
+        return;
+    }
+    let _ = miyo_http::client::set_tls_options(&miyo_http::client::TlsOptions {
+        identity_path: identity,
+        accept_invalid_certs: accept,
+    });
+}
+
 /// 读取全局请求超时（毫秒；未设置时返回 None，前端展示用）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_http_timeout_ms(state: State<'_, AppState>) -> CommandResult<Option<u64>> {
@@ -38,6 +116,7 @@ pub async fn set_http_timeout_ms(state: State<'_, AppState>, timeout_ms: u64) ->
     let json = serde_json::to_string(&Some(timeout_ms))
         .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, HTTP_TIMEOUT_KEY, &json).await?;
+    state.invalidate_global_settings();
     Ok(())
 }
 

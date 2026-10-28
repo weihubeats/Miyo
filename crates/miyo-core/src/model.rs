@@ -276,6 +276,17 @@ impl Default for DynamicSignatureConfig {
     }
 }
 
+/// OAuth2 授权模式：authorization_code（浏览器授权，默认）/ client_credentials /
+/// password（非交互式，向 token_url 直接换取令牌）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuth2Grant {
+    #[default]
+    AuthorizationCode,
+    ClientCredentials,
+    Password,
+}
+
 /// 认证方式。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -311,12 +322,23 @@ pub enum AuthSpec {
         client_id: String,
         client_secret: String,
         /// 授权页地址（GET，追加 response_type=code / state / redirect_uri / scope）。
+        /// 仅 authorization_code 模式需要。
         auth_url: String,
         /// 换取与刷新 token 的地址（POST，form 编码）。
         token_url: String,
         scope: String,
         /// 回调地址，须与授权服务注册的一致（默认 http://127.0.0.1:9090/callback）。
+        /// 仅 authorization_code 模式需要。
         redirect_uri: String,
+        /// 授权模式（缺省 = authorization_code，旧数据零迁移）。
+        #[serde(default)]
+        grant: OAuth2Grant,
+        /// password 模式：资源所有者用户名（其他模式忽略）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        username: Option<String>,
+        /// password 模式：资源所有者密码（其他模式忽略）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        password: Option<String>,
         /// 已获取的令牌；授权成功后写入，刷新后由缓存回填。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         token: Option<OAuth2Token>,
@@ -589,6 +611,18 @@ pub struct FieldDoc {
 /// 测试配置（pre_request / extract / assertions），存储为 JSON。
 pub type TestConfig = serde_json::Value;
 
+/// Pre / Post 请求脚本（Postman 风格 `pm.*` API，引擎见 miyo-http 脚本沙箱）。
+/// 两段均为空时序列化整体省略（`Option::is_none`），旧数据零迁移。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ScriptsSpec {
+    /// 请求发送前执行：可改请求头（`pm.request.headers.*`）、读写变量。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pre_request: String,
+    /// 响应到达后执行：可断言（`pm.test`）、读响应、读写变量（变量不落库，仅本次运行可见）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub post_response: String,
+}
+
 /// 统一请求结构。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RequestSpec {
@@ -619,6 +653,9 @@ pub struct RequestSpec {
     /// JSON Body 字段文档（JSON Pointer → 注释；设计页结构化编辑器用，发送时忽略）。
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub body_docs: HashMap<String, FieldDoc>,
+    /// Pre / Post 脚本（pm.* 沙箱执行；None / 空 = 不执行）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scripts: Option<ScriptsSpec>,
 }
 
 impl Default for RequestSpec {
@@ -635,6 +672,7 @@ impl Default for RequestSpec {
             tests: None,
             disable_cookies: false,
             body_docs: HashMap::new(),
+            scripts: None,
         }
     }
 }
@@ -1178,6 +1216,9 @@ mod tests {
             token_url: "https://idp.example.com/token".into(),
             scope: "openid profile".into(),
             redirect_uri: "http://127.0.0.1:9090/callback".into(),
+            grant: OAuth2Grant::default(),
+            username: None,
+            password: None,
             token: Some(OAuth2Token {
                 access_token: "at-1".into(),
                 token_type: "Bearer".into(),
@@ -1202,6 +1243,9 @@ mod tests {
             token_url: String::new(),
             scope: String::new(),
             redirect_uri: String::new(),
+            grant: OAuth2Grant::default(),
+            username: None,
+            password: None,
             token: None,
         };
         let json = serde_json::to_value(&auth).unwrap();
@@ -1217,6 +1261,9 @@ mod tests {
             token_url: String::new(),
             scope: String::new(),
             redirect_uri: String::new(),
+            grant: OAuth2Grant::default(),
+            username: None,
+            password: None,
             token: Some(OAuth2Token {
                 access_token: String::new(),
                 token_type: String::new(),
@@ -1233,6 +1280,9 @@ mod tests {
             token_url: String::new(),
             scope: String::new(),
             redirect_uri: String::new(),
+            grant: OAuth2Grant::default(),
+            username: None,
+            password: None,
             token: Some(OAuth2Token {
                 access_token: String::new(),
                 token_type: String::new(),
@@ -1249,6 +1299,9 @@ mod tests {
             token_url: String::new(),
             scope: String::new(),
             redirect_uri: String::new(),
+            grant: OAuth2Grant::default(),
+            username: None,
+            password: None,
             token: Some(OAuth2Token {
                 access_token: String::new(),
                 token_type: String::new(),
@@ -1265,6 +1318,9 @@ mod tests {
             token_url: String::new(),
             scope: String::new(),
             redirect_uri: String::new(),
+            grant: OAuth2Grant::default(),
+            username: None,
+            password: None,
             token: None,
         };
         assert_eq!(none.oauth2_status(), Some(OAuth2Status::Unauthorized));

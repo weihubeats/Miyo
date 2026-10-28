@@ -47,6 +47,28 @@ pub struct ExecuteResponse {
     /// 本次请求实际发出的形态（临时随响应返回，不落历史）：
     /// 前端「请求」页签据此定位 URL / 头 / Cookie / 体的问题。
     pub request: Option<RequestSnapshot>,
+    /// Pre / Post 脚本运行摘要（无脚本时为空、序列化省略）。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<ScriptRunSummary>,
+}
+
+/// 单条 `pm.test` 断言结果（序列化给前端展示）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ScriptTestOutcome {
+    pub name: String,
+    pub passed: bool,
+    pub error: Option<String>,
+}
+
+/// 一个阶段（pre_request / post_response）的脚本运行摘要。
+#[derive(Debug, Clone, Serialize)]
+pub struct ScriptRunSummary {
+    /// 执行阶段：`pre_request` / `post_response`。
+    pub phase: &'static str,
+    /// 脚本本身执行失败（语法 / 运行时 / 超时）。post 阶段失败不吞掉已到达的响应。
+    pub error: Option<String>,
+    pub tests: Vec<ScriptTestOutcome>,
+    pub logs: Vec<String>,
 }
 
 /// IPC 正文预览上限：webview 对 invoke 返回值做同步 `JSON.parse`，
@@ -73,18 +95,25 @@ pub async fn execute_request(
     args: ExecuteRequestArgs,
 ) -> CommandResult<ExecuteResponse> {
     // 1. 加载变量（环境 > 项目 > 全局），渲染 URL 与请求规格；再注入全局参数。
-    //    三路独立查询同波次并发（原来串行 3~4 次 DB 往返）。
-    let (vars, global_params, timeout_ms) = tokio::join!(
+    //    全局设置（变量/参数/超时）走进程内缓存：命中时零 DB 往返（原来是
+    //    每请求 2~3 次 settings SELECT + 2 次 AES-GCM 解密 + JSON 反序列化）。
+    let (vars, settings, timeout_ms) = tokio::join!(
         state.variables_for(args.environment_id),
-        repo::get_global_params(&state.db),
+        state.global_settings(),
         resolve_timeout_ms(&args.spec, &state),
     );
     let vars = vars?;
-    let global_params = global_params?;
+    let settings = settings?;
     let timeout_ms = timeout_ms?;
     let url = miyo_core::resolve_variables(&args.url, &vars);
     let mut spec = render_spec(&args.spec, &vars);
-    apply_global_params(&mut spec, &global_params, &vars);
+    apply_global_params(&mut spec, &settings.global_params, &vars);
+
+    // 1.5 脚本两段代码先取出（后续 spec.headers 会被 pre 脚本结果改写）。
+    let (pre_code, post_code) = match &spec.scripts {
+        Some(s) => (s.pre_request.clone(), s.post_response.clone()),
+        None => (String::new(), String::new()),
+    };
 
     // 2. 参数校验：URL 必填、必须是 http/https。
     if url.trim().is_empty() {
@@ -98,6 +127,46 @@ pub async fn execute_request(
             return Err(CommandError::validation(format!(
                 "不支持的协议：{other}（仅支持 http/https）"
             )));
+        }
+    }
+
+    // 2.5 Pre-request 脚本：变量渲染后、发送前执行（放取消令牌注册之前，
+    //     脚本失败早期返回不会泄漏令牌）。脚本可改头（回传完整列表并回规格）、
+    //     读写变量（并入本次运行变量表，供 post-response 延续；不落库）。
+    //     脚本执行出错则中止本次发送（与 Postman 语义一致）。
+    let mut script_summaries: Vec<ScriptRunSummary> = Vec::new();
+    let mut runtime_vars = vars;
+    if !pre_code.trim().is_empty() {
+        let sandbox = state.script_sandbox()?;
+        let snapshot =
+            miyo_http::script_sandbox::ScriptRequestData::from_spec(args.method, &url, &spec);
+        match sandbox
+            .run(miyo_http::script_sandbox::ScriptInput {
+                code: pre_code,
+                environment: runtime_vars.clone(),
+                request: snapshot,
+                response: None,
+            })
+            .await
+        {
+            Ok(r) => {
+                apply_script_headers(&mut spec, &r.headers);
+                for (k, v) in r.environment {
+                    runtime_vars.insert(k, v);
+                }
+                script_summaries.push(ScriptRunSummary {
+                    phase: "pre_request",
+                    error: None,
+                    tests: r.tests.into_iter().map(Into::into).collect(),
+                    logs: r.logs,
+                });
+            }
+            Err(e) => {
+                return Err(CommandError::with_code(
+                    "SCRIPT",
+                    format!("Pre-request 脚本执行失败：{}", e.user_message()),
+                ));
+            }
         }
     }
 
@@ -134,11 +203,44 @@ pub async fn execute_request(
         let full = resp.body_text();
         let (body, body_omitted) = cap_ipc_body(&full);
         let content_type = resp.content_type();
+
+        // 5.05 Post-response 脚本：响应到达后执行，pm.test 断言与 console
+        //     输出随响应返回；脚本失败不吞掉已到达的响应（记入 summary.error）。
+        //     须在 `resp.request` 被 move 前执行（脚本快照要借用 resp）。
+        if !post_code.trim().is_empty() {
+            let summary = match run_post_response_script(
+                state.inner(),
+                args.method,
+                &url,
+                &spec,
+                &resp,
+                post_code,
+                &runtime_vars,
+            )
+            .await
+            {
+                Ok((tests, logs)) => ScriptRunSummary {
+                    phase: "post_response",
+                    error: None,
+                    tests,
+                    logs,
+                },
+                Err(e) => ScriptRunSummary {
+                    phase: "post_response",
+                    error: Some(e.message),
+                    tests: Vec::new(),
+                    logs: Vec::new(),
+                },
+            };
+            script_summaries.push(summary);
+        }
+
         // 请求快照补上渲染前模板：前端据此对照变量替换结果（一致时不展示）。
         let mut request = resp.request;
         if let Some(snap) = request.as_mut() {
             snap.url_template = Some(args.url.clone());
         }
+
         let response = ExecuteResponse {
             status: resp.status,
             headers: resp.headers,
@@ -149,6 +251,7 @@ pub async fn execute_request(
             truncated: resp.truncated,
             body_omitted,
             request,
+            scripts: std::mem::take(&mut script_summaries),
         };
 
         // 5.1 被截断的全文入缓存：前端复制 / 保存示例按 request_id 取回。
@@ -197,11 +300,85 @@ pub async fn execute_request(
     }
 
     // 8. 自增序列若被本次请求推进，回写磁盘（尽力而为，失败仅告警不阻断）。
-    if let Err(e) = super::seq::sync_seq_counters_if_dirty(&state.db).await {
-        tracing::warn!("[execute_request] 同步自增序列失败：{e}");
-    }
+    //    后台执行：一次 settings 读改写不再加在响应返回路径上（历史保存同法）。
+    let db = state.db.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = super::seq::sync_seq_counters_if_dirty(&db).await {
+            tracing::warn!("[execute_request] 同步自增序列失败：{e}");
+        }
+    });
 
     result
+}
+
+/// Post-response 脚本执行：返回断言与 console 输出（执行失败由调用方记入 summary）。
+async fn run_post_response_script(
+    state: &AppState,
+    method: HttpMethod,
+    url: &str,
+    spec: &RequestSpec,
+    resp: &HttpResponseData,
+    code: String,
+    vars: &VariableMap,
+) -> CommandResult<(Vec<ScriptTestOutcome>, Vec<String>)> {
+    let sandbox = state.script_sandbox()?;
+    let snapshot = miyo_http::script_sandbox::ScriptRequestData::from_spec(method, url, spec);
+    let response = miyo_http::script_sandbox::ScriptResponseData::from_response(resp);
+    let r = sandbox
+        .run(miyo_http::script_sandbox::ScriptInput {
+            code,
+            environment: vars.clone(),
+            request: snapshot,
+            response: Some(response),
+        })
+        .await?;
+    Ok((r.tests.into_iter().map(Into::into).collect(), r.logs))
+}
+
+impl From<miyo_http::script_sandbox::TestResult> for ScriptTestOutcome {
+    fn from(t: miyo_http::script_sandbox::TestResult) -> Self {
+        ScriptTestOutcome {
+            name: t.name,
+            passed: t.passed,
+            error: t.error,
+        }
+    }
+}
+
+/// 把脚本回传的头列表并回规格：
+/// - 启用行按脚本结果更新（大小写不敏感匹配，含脚本改写后的新 key 拼写）；
+/// - 脚本删除的头（结果列表缺失）从启用集中移除；
+/// - 脚本新增的头追加（description 标记「脚本」）；
+/// - 禁用行原样保留（脚本头列表本就不含禁用行）。
+fn apply_script_headers(spec: &mut RequestSpec, headers: &[(String, String)]) {
+    let mut used = std::collections::HashSet::new();
+    let mut out: Vec<KeyValue> = Vec::with_capacity(spec.headers.len() + 4);
+    for kv in std::mem::take(&mut spec.headers) {
+        if !kv.enabled {
+            out.push(kv);
+            continue;
+        }
+        if let Some((k, v)) = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(kv.key.trim()))
+        {
+            used.insert(k.to_ascii_lowercase());
+            out.push(KeyValue {
+                key: k.clone(),
+                value: v.clone(),
+                enabled: true,
+                ..kv
+            });
+        }
+    }
+    for (k, v) in headers {
+        if !used.contains(&k.to_ascii_lowercase()) {
+            let mut kv = KeyValue::new(k.clone(), v.clone());
+            kv.description = "脚本".into();
+            out.push(kv);
+        }
+    }
+    spec.headers = out;
 }
 
 /// 取消一个在途请求（`request_id` 不存在或已完成时返回 `false`）。
@@ -339,6 +516,9 @@ pub(crate) fn render_spec(spec: &RequestSpec, vars: &VariableMap) -> RequestSpec
                 token_url,
                 scope,
                 redirect_uri,
+                grant,
+                username,
+                password,
                 token,
             } => AuthSpec::OAuth2 {
                 client_id: miyo_core::resolve_variables(client_id, vars),
@@ -347,6 +527,9 @@ pub(crate) fn render_spec(spec: &RequestSpec, vars: &VariableMap) -> RequestSpec
                 token_url: miyo_core::resolve_variables(token_url, vars),
                 scope: miyo_core::resolve_variables(scope, vars),
                 redirect_uri: miyo_core::resolve_variables(redirect_uri, vars),
+                grant: *grant,
+                username: username.clone(),
+                password: password.clone(),
                 token: token.clone(),
             },
             AuthSpec::Digest { username, password } => AuthSpec::Digest {
@@ -443,16 +626,19 @@ pub(crate) fn render_spec(spec: &RequestSpec, vars: &VariableMap) -> RequestSpec
         tests: spec.tests.clone(),
         disable_cookies: spec.disable_cookies,
         body_docs: spec.body_docs.clone(),
+        scripts: spec.scripts.clone(),
     }
 }
 
-/// 解析请求超时（毫秒）：接口级 `spec.timeout_ms` 优先，其次全局设置，最后默认 300 秒。
+/// 解析请求超时（毫秒）：接口级 `spec.timeout_ms` 优先，其次全局设置（走缓存），最后默认 300 秒。
 pub(crate) async fn resolve_timeout_ms(spec: &RequestSpec, state: &AppState) -> CommandResult<u64> {
     if let Some(ms) = spec.timeout_ms {
         return Ok(ms);
     }
-    Ok(super::settings::read_http_timeout_ms(&state.db)
+    Ok(state
+        .global_settings()
         .await?
+        .http_timeout_ms
         .unwrap_or(miyo_http::client::DEFAULT_TIMEOUT_MS))
 }
 
@@ -522,6 +708,52 @@ mod tests {
     use super::*;
     use miyo_core::model::GlobalParamLocation;
     use std::collections::HashMap;
+
+    /// 脚本头回写：改写（大小写不敏感）、删除、新增、禁用行保留四路齐全。
+    #[test]
+    fn script_headers_reconcile_with_spec() {
+        let mut disabled = KeyValue::new("X-Off", "0");
+        disabled.enabled = false;
+        let mut spec = RequestSpec {
+            headers: vec![
+                KeyValue::new("Authorization", "old"),
+                KeyValue::new("X-Drop", "gone"),
+                disabled,
+            ],
+            ..Default::default()
+        };
+        apply_script_headers(
+            &mut spec,
+            &[
+                ("authorization".to_string(), "Bearer fresh".to_string()),
+                ("X-Script".to_string(), "1".to_string()),
+            ],
+        );
+        // 脚本改写（大小写不敏感匹配）、删除、新增、禁用行原样保留。
+        let enabled: Vec<(String, String)> = spec
+            .headers
+            .iter()
+            .filter(|kv| kv.enabled)
+            .map(|kv| (kv.key.clone(), kv.value.clone()))
+            .collect();
+        assert_eq!(
+            enabled,
+            vec![
+                ("authorization".to_string(), "Bearer fresh".to_string()),
+                ("X-Script".to_string(), "1".to_string()),
+            ]
+        );
+        assert!(spec
+            .headers
+            .iter()
+            .any(|kv| !kv.enabled && kv.key == "X-Off"));
+        let added = spec
+            .headers
+            .iter()
+            .find(|kv| kv.key == "X-Script")
+            .expect("脚本新增头应存在");
+        assert_eq!(added.description, "脚本");
+    }
 
     /// IPC 预览截断：小正文原样；超限截到 2MB 内；截断点落多字节字符时退字符边界。
     #[test]
@@ -623,6 +855,7 @@ mod tests {
             tests: None,
             disable_cookies: false,
             body_docs: HashMap::new(),
+            scripts: None,
         };
         let response = ExecuteResponse {
             status: 200,
@@ -634,6 +867,7 @@ mod tests {
             truncated: false,
             body_omitted: false,
             request: None,
+            scripts: Vec::new(),
         };
         let history = build_history(
             Uuid::new_v4(),

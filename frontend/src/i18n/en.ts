@@ -267,6 +267,11 @@ export const en: Record<ZhKey, string> = {
   'tree.folderMoved': 'Folder moved',
   'tree.endpointMoved': 'Endpoint moved',
   'tree.moveFail': 'Move failed',
+  'tree.createFolderFail': 'Failed to create folder',
+  'tree.renameFail': 'Failed to rename',
+  'tree.deleteFail': 'Failed to delete',
+  'tree.duplicateFail': 'Failed to duplicate',
+  'tree.batchMoveFail': 'Failed to move endpoints',
   'tree.newEndpoint': 'New endpoint',
   'tree.importCurl': 'Import cURL',
   'tree.newSubfolder': 'New subfolder',
@@ -307,6 +312,16 @@ export const en: Record<ZhKey, string> = {
   'editor.tabExamples': 'Examples',
   'editor.tabCode': 'Code',
   'editor.tabPath': 'Path',
+  'editor.tabScripts': 'Scripts',
+  // Scripts tab: Postman-style pm.* scripts, executed in the backend sandbox
+  'editor.scriptsPreTitle': 'Pre-request · runs before sending',
+  'editor.scriptsPostTitle': 'Post-response · runs after the response',
+  'editor.scriptsPrePh':
+    "// e.g. inject a header\npm.request.headers.add({ key: 'X-Sign', value: 'abc' });\n// e.g. read/write variables\npm.environment.set('token', 'xxx');\nconst v = pm.environment.get('token');",
+  'editor.scriptsPostPh':
+    "// e.g. assert the response\nconst body = pm.response.json();\npm.test('status is 200', () => pm.expect(pm.response.code).to.equal(200));",
+  'editor.scriptsHint':
+    'Available: pm.request.headers.add / method / url / body, pm.environment.get / set / unset, pm.response.code / json / headers (post only), pm.test(name, fn) + pm.expect, console.log; each script is capped at 2 seconds.',
   // Path-variables tab: {id} / {{id}} in the path are replaced before sending
   'editor.pathCount': 'Path variables ({n})',
   'editor.pathExtract': 'Extract from path',
@@ -402,6 +417,11 @@ export const en: Record<ZhKey, string> = {
   'response.tabCookies': 'Cookies',
   'response.tabExamples': 'Examples',
   'response.tabRequest': 'Request',
+  'response.tabScripts': 'Scripts',
+  // Script run summary (Scripts tab): assertions + console output
+  'scripts.phasePre': 'Pre-request script',
+  'scripts.phasePost': 'Post-response script',
+  'scripts.testCount': '{pass}/{total} passed',
   'response.reqUrl': 'Request URL',
   'response.reqTemplate': 'URL template',
   'response.reqHeaders': 'Request headers',
@@ -451,6 +471,12 @@ export const en: Record<ZhKey, string> = {
   'auth.authorizedAuto': 'Authorized (auto-refresh on send)',
   'auth.authorizing': 'Authorizing…',
   'auth.authorizeNow': 'Authorize now',
+  // OAuth2 grant types and non-interactive token fetch (client_credentials / password)
+  'auth.grantAuthCode': 'Authorization code',
+  'auth.grantClientCreds': 'Client credentials',
+  'auth.grantPassword': 'Password',
+  'auth.fetchToken': 'Fetch token',
+  'auth.fetchingToken': 'Fetching…',
   'auth.oauthOk': 'OAuth2 authorized. Save (⌘S) to persist',
   'auth.oauthFail': 'OAuth2 authorization failed',
   'auth.secretWarn': 'App-Secret is only used for signing, never sent or stored in plain text',
@@ -521,7 +547,7 @@ export const en: Record<ZhKey, string> = {
 
   'testcase.title': 'Save as test case',
   'testcase.name': 'Case name',
-  'testcase.namePh': 'e.g. 小奏技术',
+  'testcase.namePh': 'e.g. Login check',
   'testcase.category': 'Category',
 
   'codegen.copyFailPreview': 'Copy failed. Code preview opened, please copy manually',
@@ -681,6 +707,15 @@ export const en: Record<ZhKey, string> = {
   'settings.proxyTestTitle': 'Connection test',
   'settings.proxyTestDesc': 'Sends one request to a public target through the current proxy to verify availability.',
   'settings.proxyTest': 'Test connection',
+  // TLS: client certificate (mTLS) and insecure skip-verify
+  'settings.tlsIdentity': 'Client certificate (mTLS)',
+  'settings.tlsIdentityDesc':
+    'Path to a PEM file containing both the certificate chain and the private key (encrypted keys are not supported); for mutual-TLS intranet services. Leave empty to disable.',
+  'settings.tlsInsecure': 'Allow self-signed / invalid certificates',
+  'settings.tlsInsecureDesc':
+    'Skips certificate verification (for intranet self-signed services); enabling this on public networks risks man-in-the-middle attacks.',
+  'settings.tlsSaved': 'TLS settings saved',
+  'settings.tlsSaveFail': 'Failed to save TLS settings',
   'settings.proxyTesting': 'Testing…',
   'settings.sequencesTitle': 'Sequences & variables',
   'settings.seqDescA': 'Write',

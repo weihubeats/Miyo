@@ -81,7 +81,46 @@ export function defaultRequestSpec(): Endpoint['request'] {
   }
 }
 
+/**
+ * 脏检查比较：先做廉价前置短路（标量、数组长度、大字段长度），不等直接判「不同」，
+ * 全相等才回落全量 JSON.stringify。编辑场景几乎每次键入都命中短路——大 body
+ * 草稿不再逐键双侧整包序列化；只有「改后改回原样」的确认相等路径走全量比较。
+ * 短路只能提前返回 false（确有差异），不能提前返回 true，等价性不弱于全量比较。
+ */
 function eq(a: Endpoint, b: Endpoint): boolean {
+  if (
+    a.name !== b.name ||
+    a.method !== b.method ||
+    a.path !== b.path ||
+    a.description !== b.description ||
+    a.status !== b.status ||
+    a.folder_id !== b.folder_id ||
+    a.sort_order !== b.sort_order ||
+    a.request.active_tab !== b.request.active_tab ||
+    a.request.timeout_ms !== b.request.timeout_ms ||
+    a.request.follow_redirects !== b.request.follow_redirects ||
+    a.request.disable_cookies !== b.request.disable_cookies ||
+    a.request.params.length !== b.request.params.length ||
+    a.request.headers.length !== b.request.headers.length ||
+    a.request.path_variables.length !== b.request.path_variables.length ||
+    a.request.body.mode !== b.request.body.mode
+  ) {
+    return false
+  }
+  const ab = a.request.body
+  const bb = b.request.body
+  // 大体积字段长度不等即不同（长度相等仍可能内容不同，交由下方全量比较）
+  if (ab.mode === 'json' && bb.mode === 'json') {
+    if (ab.raw.length !== bb.raw.length) return false
+  } else if (ab.mode === 'text' && bb.mode === 'text') {
+    if (ab.raw.length !== bb.raw.length) return false
+  } else if (ab.mode === 'urlencoded' && bb.mode === 'urlencoded') {
+    if (ab.fields.length !== bb.fields.length) return false
+  } else if (ab.mode === 'multipart' && bb.mode === 'multipart') {
+    if (ab.fields.length !== bb.fields.length) return false
+  } else if (ab.mode === 'binary' && bb.mode === 'binary') {
+    if (ab.path !== bb.path) return false
+  }
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
@@ -317,13 +356,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   /** 初始化：取激活项目（无则返回 null，调用方负责跳回项目列表）；同时恢复标签栏。 */
   async function init(): Promise<Project | null> {
-    await ensureOpenProjectsRestored()
-    const p = await api.getActiveProject()
+    // 标签栏恢复与激活项目查询互不依赖，并行一轮往返；
+    // 项目内数据（folders/endpoints）与环境/全局变量也无依赖，同样并行。
+    const [, p] = await Promise.all([ensureOpenProjectsRestored(), api.getActiveProject()])
     if (!p) return null
     project.value = p
     restoreSessionBaseUrl()
-    await load(p.id, p)
-    await loadEnvironments()
+    await Promise.all([load(p.id, p), loadEnvironments()])
     return p
   }
 
@@ -533,8 +572,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       histories.value = []
       historyOnlyCurrent.value = false
       loadError.value = null
-      await load(p.id, p)
-      await loadEnvironments()
+      await Promise.all([load(p.id, p), loadEnvironments()])
     }
     upsertOpenTab(p.id, p.name)
   }
@@ -1126,6 +1164,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     openTabs.value.splice(idx, 1)
     drafts.value.delete(id)
     pristineBaselines.delete(id)
+    dirtyCache.delete(id)
     // 示例缓存随标签释放（每条含完整响应 body），重开标签时懒加载重建。
     examples.value.delete(id)
     requestExamples.value.delete(id)

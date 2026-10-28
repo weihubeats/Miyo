@@ -70,6 +70,7 @@ fn request_spec() -> RequestSpec {
         tests: None,
         disable_cookies: false,
         body_docs: std::collections::HashMap::new(),
+        scripts: None,
     }
 }
 

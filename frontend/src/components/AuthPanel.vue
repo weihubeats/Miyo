@@ -15,6 +15,7 @@ import type {
   AuthSpec,
   DynamicSignatureConfig,
   Endpoint,
+  OAuth2Grant,
   OAuth2Token,
   SignatureAlgorithm,
   SignatureEncoding,
@@ -90,6 +91,8 @@ type EditableAuth = AuthSpec & {
   token_url?: string
   scope?: string
   redirect_uri?: string
+  /** OAuth2 授权模式（缺省 authorization_code，兼容旧数据）。 */
+  grant?: OAuth2Grant
   key_id?: string
   access_key?: string
   secret_key?: string
@@ -105,6 +108,40 @@ type EditableAuth = AuthSpec & {
 const authAny = computed(() => props.draft?.request.auth as EditableAuth)
 const authorizing = ref(false)
 const advancedOpen = ref(false)
+
+/** OAuth2 授权模式选项（随语言刷新）。 */
+const OAUTH_GRANT_OPTIONS = computed<Array<{ value: OAuth2Grant; label: string }>>(() => [
+  { value: 'authorization_code', label: t('auth.grantAuthCode') },
+  { value: 'client_credentials', label: t('auth.grantClientCreds') },
+  { value: 'password', label: t('auth.grantPassword') },
+])
+
+/** 当前 OAuth2 授权模式（缺省补 authorization_code，兼容旧数据）。 */
+const oauthGrant = computed<OAuth2Grant>({
+  get: () => authAny.value?.grant ?? 'authorization_code',
+  set: (v) => {
+    if (authAny.value) authAny.value.grant = v
+  },
+})
+
+/** 非交互式换 token 进行中。 */
+const fetchingToken = ref(false)
+
+/** 非交互式获取令牌（client_credentials / password）：换 token 写回草稿展示有效期。 */
+async function oauthFetch(): Promise<void> {
+  if (!props.draft) return
+  fetchingToken.value = true
+  try {
+    const token = await api.oauthFetchToken(authAny.value as AuthSpec)
+    const req = props.draft.request
+    req.auth = { ...authAny.value, token } as AuthSpec
+    toast.success(t('auth.oauthOk'))
+  } catch (err) {
+    toast.error(t('auth.oauthFail'), { message: err instanceof Error ? err.message : String(err) })
+  } finally {
+    fetchingToken.value = false
+  }
+}
 
 /** 动态签名高级配置面板是否可展开（仅该类型下展示）。 */
 const isSignature = computed(() => authAny.value?.type === 'dynamic_signature')
@@ -212,6 +249,9 @@ function setAuthType(type: string): void {
         token_url: '',
         scope: '',
         redirect_uri: '',
+        grant: 'authorization_code',
+        username: '',
+        password: '',
       }
       break
     case 'digest':
@@ -270,7 +310,9 @@ function setAuthType(type: string): void {
     <div v-else-if="authAny?.type === 'oauth2'" class="oauth-form">
       <p class="oauth-hint">
         <span class="oauth-status" :class="{ ok: oauthStatus !== t('auth.unauthorized') }">{{ oauthStatus }}</span>
+        <!-- 授权码模式走浏览器授权；client_credentials / password 直接换 token -->
         <button
+          v-if="oauthGrant === 'authorization_code'"
           class="miyo-btn miyo-btn-sm"
           type="button"
           :disabled="authorizing"
@@ -278,18 +320,34 @@ function setAuthType(type: string): void {
         >
           {{ authorizing ? t('auth.authorizing') : t('auth.authorizeNow') }}
         </button>
+        <button
+          v-else
+          class="miyo-btn miyo-btn-sm"
+          type="button"
+          :disabled="fetchingToken"
+          @click="oauthFetch"
+        >
+          {{ fetchingToken ? t('auth.fetchingToken') : t('auth.fetchToken') }}
+        </button>
       </p>
+      <div class="kv-row">
+        <CustomSelect v-model="oauthGrant" :options="OAUTH_GRANT_OPTIONS" size="sm" class="auth-in-select" />
+      </div>
       <div class="kv-row">
         <input v-model="authAny.client_id" class="miyo-input miyo-input-sm kv-key" :placeholder="t('auth.clientIdPh')" />
         <input v-model="authAny.client_secret" class="miyo-input miyo-input-sm kv-value" :placeholder="t('auth.clientSecretPh')" type="password" />
       </div>
+      <div v-if="oauthGrant === 'password'" class="kv-row">
+        <input v-model="authAny.username" class="miyo-input miyo-input-sm kv-key" :placeholder="t('auth.username')" spellcheck="false" />
+        <input v-model="authAny.password" class="miyo-input miyo-input-sm kv-value" :placeholder="t('auth.password')" type="password" />
+      </div>
       <div class="kv-row">
-        <input v-model="authAny.auth_url" class="miyo-input miyo-input-sm kv-key" :placeholder="t('auth.authUrlPh')" />
-        <input v-model="authAny.token_url" class="miyo-input miyo-input-sm kv-value" :placeholder="t('auth.tokenUrlPh')" />
+        <input v-if="oauthGrant === 'authorization_code'" v-model="authAny.auth_url" class="miyo-input miyo-input-sm kv-key" :placeholder="t('auth.authUrlPh')" />
+        <input v-model="authAny.token_url" class="miyo-input miyo-input-sm" :class="oauthGrant === 'authorization_code' ? 'kv-value' : 'kv-key'" :placeholder="t('auth.tokenUrlPh')" />
       </div>
       <div class="kv-row">
         <input v-model="authAny.scope" class="miyo-input miyo-input-sm kv-key" :placeholder="t('auth.scopePh')" />
-        <input v-model="authAny.redirect_uri" class="miyo-input miyo-input-sm kv-value" :placeholder="t('auth.redirectUriPh')" />
+        <input v-if="oauthGrant === 'authorization_code'" v-model="authAny.redirect_uri" class="miyo-input miyo-input-sm kv-value" :placeholder="t('auth.redirectUriPh')" />
       </div>
     </div>
     <div v-else-if="authAny?.type === 'apikey'" class="kv-row">

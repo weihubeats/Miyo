@@ -41,6 +41,9 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-delete-example`
 - `allow-oauth-authorize`
 - `allow-oauth-access-token`
+- `allow-oauth-fetch-token`
+- `allow-get-tls-settings`
+- `allow-set-tls-settings`
 - `allow-codegen-render`
 - `allow-cookie-list`
 - `allow-cookie-clear`
@@ -1281,6 +1284,32 @@ Denies the get_response_body command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-get-tls-settings`
+
+</td>
+<td>
+
+Enables the get_tls_settings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-get-tls-settings`
+
+</td>
+<td>
+
+Denies the get_tls_settings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-grpc-delete-proto-file`
 
 </td>
@@ -2061,6 +2090,32 @@ Denies the oauth_authorize command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-oauth-fetch-token`
+
+</td>
+<td>
+
+Enables the oauth_fetch_token command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-oauth-fetch-token`
+
+</td>
+<td>
+
+Denies the oauth_fetch_token command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-parse-curl-command`
 
 </td>
@@ -2652,6 +2707,32 @@ Enables the set_seq_counter command without any pre-configured scope.
 <td>
 
 Denies the set_seq_counter command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-set-tls-settings`
+
+</td>
+<td>
+
+Enables the set_tls_settings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-set-tls-settings`
+
+</td>
+<td>
+
+Denies the set_tls_settings command without any pre-configured scope.
 
 </td>
 </tr>
