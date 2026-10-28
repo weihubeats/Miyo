@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# 录制 README/官网用的快速上手演示 GIF：项目列表 → 工作台 → 选中接口 → 发送 → 响应。
+# 录制 README/官网用的快速上手演示 GIF：
+# 搜索「开放演示」项目 → 打开 → 选中「文章列表」→ 发送 → 公网 JSON 响应。
 #
 # 前置条件：
-#   1. cliclick（brew install cliclick）——仅使用鼠标点击（规避中文输入法）；
+#   1. cliclick（brew install cliclick）；
 #   2. Python3 + Pillow（装配 GIF 帧）；
-#   3. 开发应用已在运行：cd frontend && npm run tauri dev（另开终端）。
+#   3. 开发应用已在运行：cd frontend && npm run tauri dev（另开终端）；
+#   4. 网络可达 jsonplaceholder.typicode.com（演示走公网真实接口）。
 #
 # 稳定性设计：
-#   - 每步点击后用 AX（辅助功能）轮询「目标元素已出现」才走下一步，
-#     未出现则重试点击——固定 sleep 追不上可变渲染时间，这是早期脚本的
-#     主要翻车点；
-#   - 后端用脚本自起的 node HTTP 服务顶在环境默认 Base URL 端口（4010），
-#     并做可达性预检（绑定失败会静默死亡）；
-#   - 录制前点「全部折叠」归一化接口树（展开状态会持久化）。
+#   - 全程 AX（辅助功能）定位元素坐标后 cliclick 点击，每步轮询验证目标
+#     出现才走下一步——固定 sleep + 盲点坐标是早期脚本的两大翻车点；
+#   - 键入一律走剪贴板粘贴（合成按键会被中文输入法截获）；
+#   - 演示后端为公网真实服务，无需本地 Mock / 环境切换。
 #
 # 用法：bash scripts/make_demo_gif.sh
 # 产物：docs/imags/demo-debug.gif（720×400，逐帧步进式演示）
@@ -22,28 +22,21 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$ROOT/docs/imags/demo-debug.gif"
 FRAMES="$(mktemp -d)"
-DEMO_PID=""
 
-cleanup() {
-  if [[ -n "${DEMO_PID:-}" ]]; then kill "$DEMO_PID" 2>/dev/null || true; fi
-  rm -rf "$FRAMES"
-}
+cleanup() { rm -rf "$FRAMES"; }
 trap cleanup EXIT
 
 say() { echo "==> $*"; }
 
-# 清理上一次运行残留在 4010 的演示服务
-lsof -t -iTCP:4010 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
-sleep 0.3
-
-# ---------- AX 轮询：等待名称为 $1 的元素出现（$2 = 超时秒） ----------
+# ---------- AX 工具 ----------
+# 轮询等待名称含 $1 的元素出现（$2 = 超时秒）。
 wait_el() {
   local name="$1" timeout="${2:-10}" script
   script="tell application \"System Events\" to tell process \"miyo\"
     set els to entire contents of window 1
     repeat with e in els
       try
-        if name of e is \"$name\" then return true
+        if name of e contains \"$name\" then return true
       end try
     end repeat
     return false
@@ -56,24 +49,41 @@ wait_el() {
   return 1
 }
 
-shot() { screencapture -R0,25,1440,800 "$FRAMES/$1.png"; }
+# 输出名称含 $1 的第一个元素的点击中心坐标（"x,y"），找不到返回空。
+ax_pos() {
+  local name="$1" script
+  script="tell application \"System Events\" to tell process \"miyo\"
+    set els to entire contents of window 1
+    repeat with e in els
+      try
+        if role of e is not \"AXTextField\" and name of e contains \"$name\" then
+          set {px, py} to position of e
+          set {sx, sy} to size of e
+          return (px + (sx div 2) as string) & \",\" & ((py + (sy div 2)) as string)
+        end if
+      end try
+    end repeat
+    return \"\"
+  end tell"
+  osascript -e "$script" 2>/dev/null
+}
 
-# ---------- 后端：环境默认 Base URL 端口（4010）上起确定性 JSON 服务 ----------
-node -e '
-require("http").createServer((q, s) => {
-  s.setHeader("content-type", "application/json");
-  s.end(JSON.stringify({ data: [{ id: 1, name: "miyo" }, { id: 2, name: "demo" }] }));
-}).listen(4010); // 不绑 host：双栈监听，localhost(::1) 与 127.0.0.1 都可达
-' 2>/dev/null &
-DEMO_PID=$!
-for attempt in 1 2 3 4 5; do
-  if curl -sf -m 2 http://127.0.0.1:4010/users >/dev/null; then
-    say "演示后端就绪（127.0.0.1:4010）"
-    break
-  fi
-  if [[ $attempt == 5 ]]; then echo "✗ 演示后端未就绪，中止" >&2; exit 1; fi
-  sleep 1
-done
+# AX 定位坐标后 cliclick 点击中心（带轮询重试）。
+ax_click() { # $1=名称子串 $2=超时秒
+  local pos="" deadline=$((SECONDS + ${2:-10})) attempt=1
+  while (( SECONDS < deadline )); do
+    pos=$(ax_pos "$1")
+    if [[ -n "$pos" ]]; then
+      cliclick c:"$pos"
+      return 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
+shot() { screencapture -R0,25,1440,800 "$FRAMES/$1.png"; }
 
 # ---------- 前置：窗口定位 ----------
 osascript -e 'tell application "System Events" to tell process "miyo" to set frontmost to true' \
@@ -81,60 +91,73 @@ osascript -e 'tell application "System Events" to tell process "miyo" to set fro
           -e 'tell application "System Events" to tell process "miyo" to set size of window 1 to {1440, 800}'
 sleep 1
 
+say "回到仪表盘（点品牌 Logo，AX 定位）"
+ax_click "Miyo API 调试工具" 8 || cliclick c:184,59
+sleep 1.5
+
 say "帧 1：项目列表（首页仪表盘）"
 shot f1
 
-say "帧 2：进入工作台（点击用户服务项目卡，AX 确认树出现）"
-for attempt in 1 2 3; do
-  cliclick c:384,545
-  if wait_el "账号管理" 12; then break; fi
-  say "  重试项目卡点击（$attempt）"
-done
-wait_el "账号管理" 5 || { echo "✗ 工作台未就绪" >&2; exit 1; }
-shot f2
-
-say "归一化接口树（全部折叠）"
-cliclick c:268,141
+say "搜索过滤：开放演示"
+cliclick c:330,330
+sleep 0.5
+osascript -e 'set the clipboard to "开放演示"'
+osascript -e 'tell application "System Events" to keystroke "a" using command down'
+sleep 0.2
+osascript -e 'tell application "System Events" to keystroke "v" using command down'
 sleep 1.2
 
-say "帧 3：展开接口树（账号管理，AX 确认接口行出现）"
-for attempt in 1 2 3; do
-  cliclick c:68,179
-  if wait_el "用户列表" 8; then break; fi
-  say "  重试展开点击（${attempt}）"
-done
-wait_el "用户列表" 5 || { echo "✗ 接口树未展开" >&2; exit 1; }
+say "帧 2：点击开放演示项目卡（AX 定位）"
+ax_click "开放演示" 12 || { echo "✗ 未找到开放演示项目卡" >&2; exit 1; }
+wait_el "文章列表" 12 || { echo "✗ 工作台未就绪" >&2; exit 1; }
+shot f2
+
+say "帧 3：选中接口（文章列表，AX 定位）"
+ax_click "文章列表" 10 || { echo "✗ 未找到文章列表接口" >&2; exit 1; }
+wait_el "发送" 10 || { echo "✗ 编辑器未就绪" >&2; exit 1; }
+sleep 1
 shot f3
 
-say "帧 4：选中接口（用户列表，AX 确认发送按钮出现）"
+say "帧 4：发送请求（真实公网接口，AX 确认响应格式化按钮出现）"
+osascript <<'OSA' 2>&1
+tell application "System Events" to tell process "miyo"
+  set els to entire contents of window 1
+  repeat with e in els
+    try
+      if role of e is "AXButton" and name of e is "发送" then
+        click e
+        return "sent"
+      end if
+    end try
+  end repeat
+  return "发送 not found"
+end tell
+OSA
 for attempt in 1 2 3; do
-  cliclick c:110,209
-  if wait_el "发送" 8; then break; fi
-  say "  重试接口点击（${attempt}）"
-done
-wait_el "发送" 5 || { echo "✗ 编辑器未就绪" >&2; exit 1; }
-sleep 1
-shot f4
-
-say "选择 Base URL（草稿里持久化的旧值 localhost → 切到 4010 环境）"
-cliclick c:466,219
-sleep 1.5
-cliclick c:478,321
-sleep 1.5
-
-say "帧 5：发送请求（AX 确认响应格式化按钮出现 = 请求成功）"
-for attempt in 1 2 3; do
-  cliclick c:1032,219
-  if wait_el "格式化" 15; then break; fi
+  if wait_el "格式化" 12; then break; fi
   say "  重试发送（${attempt}）"
+  osascript <<'OSA' 2>&1
+tell application "System Events" to tell process "miyo"
+  set els to entire contents of window 1
+  repeat with e in els
+    try
+      if role of e is "AXButton" and name of e is "发送" then
+        click e
+        exit repeat
+      end if
+    end try
+  end repeat
+end tell
+OSA
+  sleep 2
 done
 wait_el "格式化" 10 || { echo "✗ 响应未出现" >&2; exit 1; }
 sleep 0.8
-shot f5
+shot f4
 
-say "帧 6：镜头停在响应 JSON"
+say "帧 5：镜头停在响应 JSON"
 sleep 1.5
-shot f6
+shot f5
 
 # ---------- 装配 ----------
 say "装配 GIF → $OUT"
@@ -148,9 +171,9 @@ frames = []
 for f in files:
     im = Image.open(f).convert("RGB").resize((720, 400), Image.LANCZOS)
     frames.append(im)
-durations = [1400, 1000, 900, 1100, 900, 2200][: len(frames)]
+durations = [1400, 1000, 1000, 900, 2400][: len(frames)]
 if len(durations) < len(frames):
-    durations += [1800] * (len(frames) - len(durations))
+    durations += [2000] * (len(frames) - len(durations))
 frames[0].save(out, save_all=True, append_images=frames[1:], duration=durations, loop=0)
 print(f"frames={len(frames)} -> {out}")
 PY
