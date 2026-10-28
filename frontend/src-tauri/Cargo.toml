@@ -1,6 +1,6 @@
 [package]
 name = "miyo"
-version = "0.0.47"
+version = "0.0.48"
 edition = "2021"
 description = "Miyo Tauri 2 应用壳：装配 miyo-tauri 插件与窗口生命周期"
 license = "Apache-2.0"

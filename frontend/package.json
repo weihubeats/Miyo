@@ -1,7 +1,7 @@
 {
   "name": "miyo",
   "private": true,
-  "version": "0.0.47",
+  "version": "0.0.48",
   "description": "Miyo — lightweight cross-platform API debugging client (Tauri 2 + Vue 3 frontend)",
   "license": "Apache-2.0",
   "repository": {
