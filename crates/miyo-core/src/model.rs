@@ -689,6 +689,45 @@ pub struct Team {
     pub updated_at: DateTime<Utc>,
 }
 
+/// 场景步骤：引用一个接口 + 步骤级提取 / 断言。
+///
+/// 引用式（而非接口快照）：URL / 头 / 体用接口当前配置，接口更新后场景
+/// 自动跟随；`extract` / `assertions` 与接口 `tests` 里的对应字段同构
+/// （miyo-test 的 ExtractSpec / AssertionSpec 数组），JSON 透传、运行时解析。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScenarioStep {
+    pub endpoint_id: Uuid,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub extract: serde_json::Value,
+    #[serde(default)]
+    pub assertions: serde_json::Value,
+}
+
+/// 集成测试场景：项目级接口链路。
+///
+/// 按步骤顺序串行执行：前一步提取的变量（runtime）与环境静态变量合并后
+/// 渲染下一步的 URL / 规格，`{{var}}` 即成链路数据流。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Scenario {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub sort_order: i64,
+    #[serde(default)]
+    pub steps: Vec<ScenarioStep>,
+    /// 自定义脚本（脚本视图编辑后的持久化版本）；None / 空 = 未自定义，
+    /// 脚本视图实时由 steps 生成。手动步骤始终是执行真源。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// 同步远端类型（存储层枚举，与 miyo-sync::RemoteKind 对应）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

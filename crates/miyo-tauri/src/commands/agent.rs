@@ -7,7 +7,7 @@
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 
-use miyo_agent::server::AgentState;
+use miyo_agent::server::{AgentState, MCP_DISABLED_TOOLS_KEY};
 use miyo_storage::repository as repo;
 
 use crate::error::{CommandError, CommandResult};
@@ -16,6 +16,15 @@ use crate::state::AppState;
 /// settings 表中的 MCP（Agent 控制面）开关键；值为 JSON bool。
 /// 缺失时视为 `true`，保持「随应用自动拉起」的历史默认行为。
 const MCP_ENABLED_KEY: &str = "mcp_enabled";
+
+/// MCP 工具启停状态（IPC 出参，snake_case 遵守序列化契约）。
+#[derive(Debug, serde::Serialize)]
+pub struct McpToolStatus {
+    pub name: String,
+    /// read = 只读信息；write = 会落库。
+    pub kind: &'static str,
+    pub enabled: bool,
+}
 
 /// settings 表中的 MCP 监听起始端口键；值为 JSON 数字。
 /// 缺失时回退默认 4110（与 `miyo_agent::DEFAULT_AGENT_PORT` 一致）。
@@ -159,6 +168,49 @@ pub async fn set_mcp_enabled(
     let json = serde_json::to_string(&enabled)
         .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, MCP_ENABLED_KEY, &json).await?;
+    Ok(())
+}
+
+/// MCP 工具清单及启停状态（设置页「工具权限」回显）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_mcp_tools(state: State<'_, AppState>) -> CommandResult<Vec<McpToolStatus>> {
+    let disabled = match repo::get_setting(&state.db, MCP_DISABLED_TOOLS_KEY).await {
+        Ok(Some(raw)) => serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    Ok(miyo_agent::server::MCP_TOOLS
+        .iter()
+        .map(|t| McpToolStatus {
+            name: t.name.to_string(),
+            kind: t.kind,
+            enabled: !disabled.iter().any(|n| n == t.name),
+        })
+        .collect())
+}
+
+/// 设置单个 MCP 工具的启停（实时生效：控制面与 miyo-mcp 每次调用实时读 settings）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn set_mcp_tool_enabled(
+    state: State<'_, AppState>,
+    name: String,
+    enabled: bool,
+) -> CommandResult<()> {
+    if !miyo_agent::server::MCP_TOOLS.iter().any(|t| t.name == name) {
+        return Err(CommandError::validation(format!("未知工具：{name}")));
+    }
+    let mut disabled: Vec<String> = match repo::get_setting(&state.db, MCP_DISABLED_TOOLS_KEY).await
+    {
+        Ok(Some(raw)) => serde_json::from_str(&raw).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    if enabled {
+        disabled.retain(|n| n != &name);
+    } else if !disabled.iter().any(|n| n == &name) {
+        disabled.push(name);
+    }
+    let json = serde_json::to_string(&disabled)
+        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+    repo::set_setting(&state.db, MCP_DISABLED_TOOLS_KEY, &json).await?;
     Ok(())
 }
 

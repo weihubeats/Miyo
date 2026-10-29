@@ -12,7 +12,10 @@ use miyo_core::model::{Endpoint, Project};
 use reqwest::Client;
 use uuid::Uuid;
 
-use crate::server::{ImportCurlResult, MAX_PORT_TRIES};
+use crate::server::{
+    ImportCurlResult, McpToolState, SaveScenarioScriptResult, ScenarioDetail, ScenarioSummary,
+    MAX_PORT_TRIES,
+};
 
 /// 默认起始端口（与服务端一致）。
 pub const DEFAULT_AGENT_PORT: u16 = crate::server::DEFAULT_AGENT_PORT;
@@ -126,6 +129,40 @@ impl ControlClient {
             .await
     }
 
+    /// 场景列表（projectId 缺省时：唯一项目自动选中，多项目报错列候选）。
+    pub async fn list_scenarios(
+        &self,
+        project_id: Option<Uuid>,
+    ) -> Result<Vec<ScenarioSummary>, AppError> {
+        let path = match project_id {
+            Some(id) => format!("/agent/scenarios?projectId={id}"),
+            None => "/agent/scenarios".to_string(),
+        };
+        self.get_json(&path).await
+    }
+
+    /// 场景详情：步骤 + 引用接口当前配置 + 链路变量 + 项目变量——AI 写脚本的完整上下文。
+    pub async fn get_scenario(&self, scenario_id: Uuid) -> Result<ScenarioDetail, AppError> {
+        self.get_json(&format!("/agent/scenarios/{scenario_id}"))
+            .await
+    }
+
+    /// MCP 工具及启停状态（miyo-mcp 的 tools/list 过滤数据源）。
+    pub async fn list_tool_states(&self) -> Result<Vec<McpToolState>, AppError> {
+        self.get_json("/agent/tools").await
+    }
+
+    /// 写入 / 清除场景自定义脚本（null 或空串 = 清除，回到实时生成）。
+    pub async fn save_scenario_script(
+        &self,
+        scenario_id: Uuid,
+        script: Option<&str>,
+    ) -> Result<SaveScenarioScriptResult, AppError> {
+        let body = serde_json::json!({ "script": script });
+        self.put_json(&format!("/agent/scenarios/{scenario_id}/script"), body)
+            .await
+    }
+
     async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, AppError> {
         let res = self
             .http
@@ -145,6 +182,22 @@ impl ControlClient {
         let res = self
             .http
             .post(format!("{}{path}", self.base))
+            .header("Authorization", self.auth())
+            .json(&body)
+            .send()
+            .await
+            .map_err(AppError::from_reqwest)?;
+        decode(res).await
+    }
+
+    async fn put_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+    ) -> Result<T, AppError> {
+        let res = self
+            .http
+            .put(format!("{}{path}", self.base))
             .header("Authorization", self.auth())
             .json(&body)
             .send()

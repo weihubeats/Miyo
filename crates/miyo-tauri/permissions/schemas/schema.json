@@ -379,6 +379,18 @@
           "markdownDescription": "Denies the cancel_request command without any pre-configured scope."
         },
         {
+          "description": "Enables the cancel_scenario_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-scenario-run",
+          "markdownDescription": "Enables the cancel_scenario_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_scenario_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-scenario-run",
+          "markdownDescription": "Denies the cancel_scenario_run command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cancel_test_collection command without any pre-configured scope.",
           "type": "string",
           "const": "allow-cancel-test-collection",
@@ -545,6 +557,18 @@
           "type": "string",
           "const": "deny-delete-request-example",
           "markdownDescription": "Denies the delete_request_example command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_scenario command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-scenario",
+          "markdownDescription": "Enables the delete_scenario command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_scenario command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-scenario",
+          "markdownDescription": "Denies the delete_scenario command without any pre-configured scope."
         },
         {
           "description": "Enables the delete_seq_counter command without any pre-configured scope.",
@@ -799,6 +823,18 @@
           "markdownDescription": "Denies the get_mcp_port command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_mcp_tools command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-mcp-tools",
+          "markdownDescription": "Enables the get_mcp_tools command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_mcp_tools command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-mcp-tools",
+          "markdownDescription": "Denies the get_mcp_tools command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_projects command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-projects",
@@ -1027,6 +1063,18 @@
           "markdownDescription": "Denies the list_request_histories command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_scenarios command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-scenarios",
+          "markdownDescription": "Enables the list_scenarios command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_scenarios command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-scenarios",
+          "markdownDescription": "Denies the list_scenarios command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_seq_counters command without any pre-configured scope.",
           "type": "string",
           "const": "allow-list-seq-counters",
@@ -1243,6 +1291,18 @@
           "markdownDescription": "Denies the reset_data_dir command without any pre-configured scope."
         },
         {
+          "description": "Enables the run_scenario command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-run-scenario",
+          "markdownDescription": "Enables the run_scenario command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the run_scenario command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-run-scenario",
+          "markdownDescription": "Denies the run_scenario command without any pre-configured scope."
+        },
+        {
           "description": "Enables the save_endpoint command without any pre-configured scope.",
           "type": "string",
           "const": "allow-save-endpoint",
@@ -1349,6 +1409,18 @@
           "type": "string",
           "const": "deny-save-request-example",
           "markdownDescription": "Denies the save_request_example command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_scenario command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-scenario",
+          "markdownDescription": "Enables the save_scenario command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_scenario command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-scenario",
+          "markdownDescription": "Denies the save_scenario command without any pre-configured scope."
         },
         {
           "description": "Enables the save_test_case command without any pre-configured scope.",
@@ -1469,6 +1541,18 @@
           "type": "string",
           "const": "deny-set-mcp-port",
           "markdownDescription": "Denies the set_mcp_port command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_mcp_tool_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-mcp-tool-enabled",
+          "markdownDescription": "Enables the set_mcp_tool_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_mcp_tool_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-mcp-tool-enabled",
+          "markdownDescription": "Denies the set_mcp_tool_enabled command without any pre-configured scope."
         },
         {
           "description": "Enables the set_seq_counter command without any pre-configured scope.",
@@ -1747,10 +1831,10 @@
           "markdownDescription": "Denies the ws_send command without any pre-configured scope."
         },
         {
-          "description": "Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令\n（项目 / 接口 / 文件夹 / 环境 / cURL 解析 / 请求执行）。\n命令的 allow-* 权限由 tauri-build 依据 invoke_handler 自动生成。\n\n#### This default permission set includes:\n\n- `allow-get-projects`\n- `allow-save-project`\n- `allow-update-projects-order`\n- `allow-delete-project`\n- `allow-set-active-project`\n- `allow-get-active-project`\n- `allow-list-project-stats`\n- `allow-list-endpoints`\n- `allow-get-endpoint`\n- `allow-save-endpoint`\n- `allow-delete-endpoint`\n- `allow-duplicate-endpoint`\n- `allow-list-folders`\n- `allow-save-folder`\n- `allow-delete-folder`\n- `allow-parse-curl-command`\n- `allow-list-environments`\n- `allow-save-environment`\n- `allow-set-active-environment`\n- `allow-get-active-environment`\n- `allow-delete-environment`\n- `allow-export-environment`\n- `allow-import-environment`\n- `allow-get-global-variables`\n- `allow-save-global-variables`\n- `allow-get-global-params`\n- `allow-save-global-params`\n- `allow-execute-request`\n- `allow-cancel-request`\n- `allow-get-response-body`\n- `allow-list-examples`\n- `allow-save-example`\n- `allow-delete-example`\n- `allow-oauth-authorize`\n- `allow-oauth-access-token`\n- `allow-oauth-fetch-token`\n- `allow-get-tls-settings`\n- `allow-set-tls-settings`\n- `allow-codegen-render`\n- `allow-cookie-list`\n- `allow-cookie-clear`\n- `allow-clipboard-write-text`\n- `allow-list-request-histories`\n- `allow-clear-request-histories`\n- `allow-mock-start`\n- `allow-mock-stop`\n- `allow-mock-status`\n- `allow-mock-reload`\n- `allow-agent-start`\n- `allow-agent-stop`\n- `allow-agent-status`\n- `allow-get-mcp-enabled`\n- `allow-set-mcp-enabled`\n- `allow-get-mcp-port`\n- `allow-set-mcp-port`\n- `allow-backup-export`\n- `allow-backup-restore`\n- `allow-import-document`\n- `allow-read-text-file`\n- `allow-export-openapi`\n- `allow-export-docs`\n- `allow-export-smoke-docs`\n- `allow-save-text-file`\n- `allow-test-endpoint`\n- `allow-load-test`\n- `allow-cancel-load-test`\n- `allow-test-collection`\n- `allow-cancel-test-collection`\n- `allow-log-files`\n- `allow-log-tail`\n- `allow-log-dir-path`\n- `allow-get-log-retention-days`\n- `allow-set-log-retention-days`\n- `allow-grpc-list-services`\n- `allow-grpc-invoke`\n- `allow-grpc-stream-close`\n- `allow-grpc-list-proto-files`\n- `allow-grpc-save-proto-files`\n- `allow-grpc-delete-proto-file`\n- `allow-ws-connect`\n- `allow-ws-send`\n- `allow-ws-disconnect`\n- `allow-sse-connect`\n- `allow-sse-disconnect`\n- `allow-list-mock-rules`\n- `allow-save-mock-rule`\n- `allow-delete-mock-rule`\n- `allow-get-http-proxy`\n- `allow-set-http-proxy`\n- `allow-get-http-timeout-ms`\n- `allow-set-http-timeout-ms`\n- `allow-get-data-dir`\n- `allow-get-default-data-dir`\n- `allow-set-data-dir`\n- `allow-reset-data-dir`\n- `allow-list-seq-counters`\n- `allow-set-seq-counter`\n- `allow-delete-seq-counter`\n- `allow-test-http-proxy`\n- `allow-list-request-examples`\n- `allow-save-request-example`\n- `allow-delete-request-example`\n- `allow-list-test-cases`\n- `allow-save-test-case`\n- `allow-update-test-case-meta`\n- `allow-update-test-case-content`\n- `allow-update-test-case-status`\n- `allow-delete-test-case`\n- `allow-list-teams`\n- `allow-create-team`\n- `allow-update-team`\n- `allow-delete-team`\n- `allow-move-project-to-team`\n- `allow-sync-remote-list`\n- `allow-sync-remote-create`\n- `allow-sync-remote-delete`\n- `allow-sync-push`\n- `allow-sync-pull-preview`\n- `allow-sync-pull-apply`\n- `allow-sync-remote-list-projects`\n- `allow-sync-import-project`",
+          "description": "Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令\n（项目 / 接口 / 文件夹 / 环境 / cURL 解析 / 请求执行）。\n命令的 allow-* 权限由 tauri-build 依据 invoke_handler 自动生成。\n\n#### This default permission set includes:\n\n- `allow-get-projects`\n- `allow-save-project`\n- `allow-update-projects-order`\n- `allow-delete-project`\n- `allow-set-active-project`\n- `allow-get-active-project`\n- `allow-list-project-stats`\n- `allow-list-endpoints`\n- `allow-get-endpoint`\n- `allow-save-endpoint`\n- `allow-delete-endpoint`\n- `allow-duplicate-endpoint`\n- `allow-list-folders`\n- `allow-save-folder`\n- `allow-delete-folder`\n- `allow-parse-curl-command`\n- `allow-list-environments`\n- `allow-save-environment`\n- `allow-set-active-environment`\n- `allow-get-active-environment`\n- `allow-delete-environment`\n- `allow-export-environment`\n- `allow-import-environment`\n- `allow-get-global-variables`\n- `allow-save-global-variables`\n- `allow-get-global-params`\n- `allow-save-global-params`\n- `allow-execute-request`\n- `allow-cancel-request`\n- `allow-get-response-body`\n- `allow-list-examples`\n- `allow-save-example`\n- `allow-delete-example`\n- `allow-oauth-authorize`\n- `allow-oauth-access-token`\n- `allow-oauth-fetch-token`\n- `allow-get-tls-settings`\n- `allow-set-tls-settings`\n- `allow-get-mcp-tools`\n- `allow-set-mcp-tool-enabled`\n- `allow-list-scenarios`\n- `allow-save-scenario`\n- `allow-delete-scenario`\n- `allow-run-scenario`\n- `allow-cancel-scenario-run`\n- `allow-codegen-render`\n- `allow-cookie-list`\n- `allow-cookie-clear`\n- `allow-clipboard-write-text`\n- `allow-list-request-histories`\n- `allow-clear-request-histories`\n- `allow-mock-start`\n- `allow-mock-stop`\n- `allow-mock-status`\n- `allow-mock-reload`\n- `allow-agent-start`\n- `allow-agent-stop`\n- `allow-agent-status`\n- `allow-get-mcp-enabled`\n- `allow-set-mcp-enabled`\n- `allow-get-mcp-port`\n- `allow-set-mcp-port`\n- `allow-backup-export`\n- `allow-backup-restore`\n- `allow-import-document`\n- `allow-read-text-file`\n- `allow-export-openapi`\n- `allow-export-docs`\n- `allow-export-smoke-docs`\n- `allow-save-text-file`\n- `allow-test-endpoint`\n- `allow-load-test`\n- `allow-cancel-load-test`\n- `allow-test-collection`\n- `allow-cancel-test-collection`\n- `allow-log-files`\n- `allow-log-tail`\n- `allow-log-dir-path`\n- `allow-get-log-retention-days`\n- `allow-set-log-retention-days`\n- `allow-grpc-list-services`\n- `allow-grpc-invoke`\n- `allow-grpc-stream-close`\n- `allow-grpc-list-proto-files`\n- `allow-grpc-save-proto-files`\n- `allow-grpc-delete-proto-file`\n- `allow-ws-connect`\n- `allow-ws-send`\n- `allow-ws-disconnect`\n- `allow-sse-connect`\n- `allow-sse-disconnect`\n- `allow-list-mock-rules`\n- `allow-save-mock-rule`\n- `allow-delete-mock-rule`\n- `allow-get-http-proxy`\n- `allow-set-http-proxy`\n- `allow-get-http-timeout-ms`\n- `allow-set-http-timeout-ms`\n- `allow-get-data-dir`\n- `allow-get-default-data-dir`\n- `allow-set-data-dir`\n- `allow-reset-data-dir`\n- `allow-list-seq-counters`\n- `allow-set-seq-counter`\n- `allow-delete-seq-counter`\n- `allow-test-http-proxy`\n- `allow-list-request-examples`\n- `allow-save-request-example`\n- `allow-delete-request-example`\n- `allow-list-test-cases`\n- `allow-save-test-case`\n- `allow-update-test-case-meta`\n- `allow-update-test-case-content`\n- `allow-update-test-case-status`\n- `allow-delete-test-case`\n- `allow-list-teams`\n- `allow-create-team`\n- `allow-update-team`\n- `allow-delete-team`\n- `allow-move-project-to-team`\n- `allow-sync-remote-list`\n- `allow-sync-remote-create`\n- `allow-sync-remote-delete`\n- `allow-sync-push`\n- `allow-sync-pull-preview`\n- `allow-sync-pull-apply`\n- `allow-sync-remote-list-projects`\n- `allow-sync-import-project`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令\n（项目 / 接口 / 文件夹 / 环境 / cURL 解析 / 请求执行）。\n命令的 allow-* 权限由 tauri-build 依据 invoke_handler 自动生成。\n\n#### This default permission set includes:\n\n- `allow-get-projects`\n- `allow-save-project`\n- `allow-update-projects-order`\n- `allow-delete-project`\n- `allow-set-active-project`\n- `allow-get-active-project`\n- `allow-list-project-stats`\n- `allow-list-endpoints`\n- `allow-get-endpoint`\n- `allow-save-endpoint`\n- `allow-delete-endpoint`\n- `allow-duplicate-endpoint`\n- `allow-list-folders`\n- `allow-save-folder`\n- `allow-delete-folder`\n- `allow-parse-curl-command`\n- `allow-list-environments`\n- `allow-save-environment`\n- `allow-set-active-environment`\n- `allow-get-active-environment`\n- `allow-delete-environment`\n- `allow-export-environment`\n- `allow-import-environment`\n- `allow-get-global-variables`\n- `allow-save-global-variables`\n- `allow-get-global-params`\n- `allow-save-global-params`\n- `allow-execute-request`\n- `allow-cancel-request`\n- `allow-get-response-body`\n- `allow-list-examples`\n- `allow-save-example`\n- `allow-delete-example`\n- `allow-oauth-authorize`\n- `allow-oauth-access-token`\n- `allow-oauth-fetch-token`\n- `allow-get-tls-settings`\n- `allow-set-tls-settings`\n- `allow-codegen-render`\n- `allow-cookie-list`\n- `allow-cookie-clear`\n- `allow-clipboard-write-text`\n- `allow-list-request-histories`\n- `allow-clear-request-histories`\n- `allow-mock-start`\n- `allow-mock-stop`\n- `allow-mock-status`\n- `allow-mock-reload`\n- `allow-agent-start`\n- `allow-agent-stop`\n- `allow-agent-status`\n- `allow-get-mcp-enabled`\n- `allow-set-mcp-enabled`\n- `allow-get-mcp-port`\n- `allow-set-mcp-port`\n- `allow-backup-export`\n- `allow-backup-restore`\n- `allow-import-document`\n- `allow-read-text-file`\n- `allow-export-openapi`\n- `allow-export-docs`\n- `allow-export-smoke-docs`\n- `allow-save-text-file`\n- `allow-test-endpoint`\n- `allow-load-test`\n- `allow-cancel-load-test`\n- `allow-test-collection`\n- `allow-cancel-test-collection`\n- `allow-log-files`\n- `allow-log-tail`\n- `allow-log-dir-path`\n- `allow-get-log-retention-days`\n- `allow-set-log-retention-days`\n- `allow-grpc-list-services`\n- `allow-grpc-invoke`\n- `allow-grpc-stream-close`\n- `allow-grpc-list-proto-files`\n- `allow-grpc-save-proto-files`\n- `allow-grpc-delete-proto-file`\n- `allow-ws-connect`\n- `allow-ws-send`\n- `allow-ws-disconnect`\n- `allow-sse-connect`\n- `allow-sse-disconnect`\n- `allow-list-mock-rules`\n- `allow-save-mock-rule`\n- `allow-delete-mock-rule`\n- `allow-get-http-proxy`\n- `allow-set-http-proxy`\n- `allow-get-http-timeout-ms`\n- `allow-set-http-timeout-ms`\n- `allow-get-data-dir`\n- `allow-get-default-data-dir`\n- `allow-set-data-dir`\n- `allow-reset-data-dir`\n- `allow-list-seq-counters`\n- `allow-set-seq-counter`\n- `allow-delete-seq-counter`\n- `allow-test-http-proxy`\n- `allow-list-request-examples`\n- `allow-save-request-example`\n- `allow-delete-request-example`\n- `allow-list-test-cases`\n- `allow-save-test-case`\n- `allow-update-test-case-meta`\n- `allow-update-test-case-content`\n- `allow-update-test-case-status`\n- `allow-delete-test-case`\n- `allow-list-teams`\n- `allow-create-team`\n- `allow-update-team`\n- `allow-delete-team`\n- `allow-move-project-to-team`\n- `allow-sync-remote-list`\n- `allow-sync-remote-create`\n- `allow-sync-remote-delete`\n- `allow-sync-push`\n- `allow-sync-pull-preview`\n- `allow-sync-pull-apply`\n- `allow-sync-remote-list-projects`\n- `allow-sync-import-project`"
+          "markdownDescription": "Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令\n（项目 / 接口 / 文件夹 / 环境 / cURL 解析 / 请求执行）。\n命令的 allow-* 权限由 tauri-build 依据 invoke_handler 自动生成。\n\n#### This default permission set includes:\n\n- `allow-get-projects`\n- `allow-save-project`\n- `allow-update-projects-order`\n- `allow-delete-project`\n- `allow-set-active-project`\n- `allow-get-active-project`\n- `allow-list-project-stats`\n- `allow-list-endpoints`\n- `allow-get-endpoint`\n- `allow-save-endpoint`\n- `allow-delete-endpoint`\n- `allow-duplicate-endpoint`\n- `allow-list-folders`\n- `allow-save-folder`\n- `allow-delete-folder`\n- `allow-parse-curl-command`\n- `allow-list-environments`\n- `allow-save-environment`\n- `allow-set-active-environment`\n- `allow-get-active-environment`\n- `allow-delete-environment`\n- `allow-export-environment`\n- `allow-import-environment`\n- `allow-get-global-variables`\n- `allow-save-global-variables`\n- `allow-get-global-params`\n- `allow-save-global-params`\n- `allow-execute-request`\n- `allow-cancel-request`\n- `allow-get-response-body`\n- `allow-list-examples`\n- `allow-save-example`\n- `allow-delete-example`\n- `allow-oauth-authorize`\n- `allow-oauth-access-token`\n- `allow-oauth-fetch-token`\n- `allow-get-tls-settings`\n- `allow-set-tls-settings`\n- `allow-get-mcp-tools`\n- `allow-set-mcp-tool-enabled`\n- `allow-list-scenarios`\n- `allow-save-scenario`\n- `allow-delete-scenario`\n- `allow-run-scenario`\n- `allow-cancel-scenario-run`\n- `allow-codegen-render`\n- `allow-cookie-list`\n- `allow-cookie-clear`\n- `allow-clipboard-write-text`\n- `allow-list-request-histories`\n- `allow-clear-request-histories`\n- `allow-mock-start`\n- `allow-mock-stop`\n- `allow-mock-status`\n- `allow-mock-reload`\n- `allow-agent-start`\n- `allow-agent-stop`\n- `allow-agent-status`\n- `allow-get-mcp-enabled`\n- `allow-set-mcp-enabled`\n- `allow-get-mcp-port`\n- `allow-set-mcp-port`\n- `allow-backup-export`\n- `allow-backup-restore`\n- `allow-import-document`\n- `allow-read-text-file`\n- `allow-export-openapi`\n- `allow-export-docs`\n- `allow-export-smoke-docs`\n- `allow-save-text-file`\n- `allow-test-endpoint`\n- `allow-load-test`\n- `allow-cancel-load-test`\n- `allow-test-collection`\n- `allow-cancel-test-collection`\n- `allow-log-files`\n- `allow-log-tail`\n- `allow-log-dir-path`\n- `allow-get-log-retention-days`\n- `allow-set-log-retention-days`\n- `allow-grpc-list-services`\n- `allow-grpc-invoke`\n- `allow-grpc-stream-close`\n- `allow-grpc-list-proto-files`\n- `allow-grpc-save-proto-files`\n- `allow-grpc-delete-proto-file`\n- `allow-ws-connect`\n- `allow-ws-send`\n- `allow-ws-disconnect`\n- `allow-sse-connect`\n- `allow-sse-disconnect`\n- `allow-list-mock-rules`\n- `allow-save-mock-rule`\n- `allow-delete-mock-rule`\n- `allow-get-http-proxy`\n- `allow-set-http-proxy`\n- `allow-get-http-timeout-ms`\n- `allow-set-http-timeout-ms`\n- `allow-get-data-dir`\n- `allow-get-default-data-dir`\n- `allow-set-data-dir`\n- `allow-reset-data-dir`\n- `allow-list-seq-counters`\n- `allow-set-seq-counter`\n- `allow-delete-seq-counter`\n- `allow-test-http-proxy`\n- `allow-list-request-examples`\n- `allow-save-request-example`\n- `allow-delete-request-example`\n- `allow-list-test-cases`\n- `allow-save-test-case`\n- `allow-update-test-case-meta`\n- `allow-update-test-case-content`\n- `allow-update-test-case-status`\n- `allow-delete-test-case`\n- `allow-list-teams`\n- `allow-create-team`\n- `allow-update-team`\n- `allow-delete-team`\n- `allow-move-project-to-team`\n- `allow-sync-remote-list`\n- `allow-sync-remote-create`\n- `allow-sync-remote-delete`\n- `allow-sync-push`\n- `allow-sync-pull-preview`\n- `allow-sync-pull-apply`\n- `allow-sync-remote-list-projects`\n- `allow-sync-import-project`"
         }
       ]
     }

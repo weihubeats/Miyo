@@ -44,6 +44,13 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-oauth-fetch-token`
 - `allow-get-tls-settings`
 - `allow-set-tls-settings`
+- `allow-get-mcp-tools`
+- `allow-set-mcp-tool-enabled`
+- `allow-list-scenarios`
+- `allow-save-scenario`
+- `allow-delete-scenario`
+- `allow-run-scenario`
+- `allow-cancel-scenario-run`
 - `allow-codegen-render`
 - `allow-cookie-list`
 - `allow-cookie-clear`
@@ -315,6 +322,32 @@ Enables the cancel_request command without any pre-configured scope.
 <td>
 
 Denies the cancel_request command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-cancel-scenario-run`
+
+</td>
+<td>
+
+Enables the cancel_scenario_run command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-cancel-scenario-run`
+
+</td>
+<td>
+
+Denies the cancel_scenario_run command without any pre-configured scope.
 
 </td>
 </tr>
@@ -679,6 +712,32 @@ Enables the delete_request_example command without any pre-configured scope.
 <td>
 
 Denies the delete_request_example command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-delete-scenario`
+
+</td>
+<td>
+
+Enables the delete_scenario command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-delete-scenario`
+
+</td>
+<td>
+
+Denies the delete_scenario command without any pre-configured scope.
 
 </td>
 </tr>
@@ -1232,6 +1291,32 @@ Denies the get_mcp_port command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-get-mcp-tools`
+
+</td>
+<td>
+
+Enables the get_mcp_tools command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-get-mcp-tools`
+
+</td>
+<td>
+
+Denies the get_mcp_tools command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-get-projects`
 
 </td>
@@ -1726,6 +1811,32 @@ Denies the list_request_histories command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-list-scenarios`
+
+</td>
+<td>
+
+Enables the list_scenarios command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-scenarios`
+
+</td>
+<td>
+
+Denies the list_scenarios command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-list-seq-counters`
 
 </td>
@@ -2194,6 +2305,32 @@ Denies the reset_data_dir command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-run-scenario`
+
+</td>
+<td>
+
+Enables the run_scenario command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-run-scenario`
+
+</td>
+<td>
+
+Denies the run_scenario command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-save-endpoint`
 
 </td>
@@ -2421,6 +2558,32 @@ Enables the save_request_example command without any pre-configured scope.
 <td>
 
 Denies the save_request_example command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-save-scenario`
+
+</td>
+<td>
+
+Enables the save_scenario command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-save-scenario`
+
+</td>
+<td>
+
+Denies the save_scenario command without any pre-configured scope.
 
 </td>
 </tr>
@@ -2681,6 +2844,32 @@ Enables the set_mcp_port command without any pre-configured scope.
 <td>
 
 Denies the set_mcp_port command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-set-mcp-tool-enabled`
+
+</td>
+<td>
+
+Enables the set_mcp_tool_enabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-set-mcp-tool-enabled`
+
+</td>
+<td>
+
+Denies the set_mcp_tool_enabled command without any pre-configured scope.
 
 </td>
 </tr>

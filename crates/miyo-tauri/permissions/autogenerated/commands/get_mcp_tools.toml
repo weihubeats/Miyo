@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-get-mcp-tools"
+description = "Enables the get_mcp_tools command without any pre-configured scope."
+commands.allow = ["get_mcp_tools"]
+
+[[permission]]
+identifier = "deny-get-mcp-tools"
+description = "Denies the get_mcp_tools command without any pre-configured scope."
+commands.deny = ["get_mcp_tools"]

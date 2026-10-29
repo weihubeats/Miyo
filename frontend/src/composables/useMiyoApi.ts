@@ -55,6 +55,7 @@ import type {
   OAuth2Token,
   Project,
   ProjectStat,
+  McpToolStatus,
   ProxyTestResult,
   TlsSettings,
   RequestExample,
@@ -62,6 +63,8 @@ import type {
   RequestSpec,
   ProtoFile,
   ResponseExample,
+  Scenario,
+  ScenarioRunResult,
   SeqCounter,
   ServiceCatalog,
   RemoteProjectEntry,
@@ -350,6 +353,31 @@ export function useMiyoApi() {
   const oauthFetchToken = (auth: AuthSpec) =>
     run(() => call<OAuth2Token>('oauth_fetch_token', { auth }))
 
+  // ---------- 场景（集成链路测试） ----------
+  const listScenarios = (projectId: string) =>
+    run(() => call<Scenario[]>('list_scenarios', { projectId }))
+
+  const saveScenario = (scenario: Scenario) =>
+    run(() => call<Scenario>('save_scenario', { scenario }))
+
+  const deleteScenario = (id: string) => run(() => call<void>('delete_scenario', { id }))
+
+  const runScenario = (args: {
+    steps: {
+      endpoint: Endpoint
+      url: string
+      enabled: boolean
+      extract: unknown
+      assertions: unknown
+    }[]
+    environmentId?: string | null
+    stopOnFailure: boolean
+    runId: string
+  }) => run(() => call<ScenarioRunResult>('run_scenario', { args }))
+
+  const cancelScenarioRun = (runId: string) =>
+    run(() => call<boolean>('cancel_scenario_run', { runId }))
+
   // ---------- 代码生成 ----------
   const codegenRender = (args: {
     lang: CodeLang
@@ -402,6 +430,12 @@ export function useMiyoApi() {
 
   const setTlsSettings = (args: { identityPath: string | null; acceptInvalidCerts: boolean }) =>
     run(() => call<void>('set_tls_settings', args))
+
+  // ---------- MCP 工具权限 ----------
+  const getMcpTools = () => run(() => call<McpToolStatus[]>('get_mcp_tools'))
+
+  const setMcpToolEnabled = (args: { name: string; enabled: boolean }) =>
+    run(() => call<void>('set_mcp_tool_enabled', args))
 
   // ---------- 自增序列 ----------
   const listSeqCounters = () => run(() => call<SeqCounter[]>('list_seq_counters'))
@@ -696,6 +730,11 @@ export function useMiyoApi() {
     oauthAuthorize,
     oauthAccessToken,
     oauthFetchToken,
+    listScenarios,
+    saveScenario,
+    deleteScenario,
+    runScenario,
+    cancelScenarioRun,
     codegenRender,
     listRequestHistories,
     clearRequestHistories,
@@ -710,6 +749,8 @@ export function useMiyoApi() {
     setHttpProxy,
     getTlsSettings,
     setTlsSettings,
+    getMcpTools,
+    setMcpToolEnabled,
     getHttpTimeoutMs,
     setHttpTimeoutMs,
     listSeqCounters,

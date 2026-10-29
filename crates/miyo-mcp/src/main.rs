@@ -1,7 +1,8 @@
 //! miyo-mcp：Miyo 的 Model Context Protocol 服务器。
 //!
-//! stdio transport（换行分隔 JSON-RPC 2.0），把 Agent 控制面暴露为 4 个工具：
-//! `save_curl` / `list_projects` / `list_endpoints` / `agent_info`。
+//! stdio transport（换行分隔 JSON-RPC 2.0），把 Agent 控制面暴露为 7 个工具：
+//! `save_curl` / `list_projects` / `list_endpoints` / `list_scenarios` /
+//! `get_scenario` / `save_scenario_script` / `agent_info`。
 //!
 //! Claude Code 配置示例（`.mcp.json`）：
 //!

@@ -41,6 +41,9 @@ const FILE_ALLOWLIST: Record<string, RegExp[]> = {
   'src/utils/environment.ts': [CJK], // 正则匹配用户输入的环境名，非展示文案
   'src/components/SettingsDialog.vue': [/'简体中文'/], // 语言自称
   'src/utils/clipboard.ts': [/console\.error/], // 开发者日志，非 UI 文案
+  // 场景脚本生成器：产物是独立可运行的 JS（无法走 t()），中文为生成物文案
+  //（与 Rust 侧 export/markdown 生成器同性质）
+  'src/utils/scenarioScript.ts': [CJK],
 }
 
 /**

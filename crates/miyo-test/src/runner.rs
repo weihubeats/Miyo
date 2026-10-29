@@ -34,6 +34,9 @@ pub struct EndpointResult {
     pub request_error: Option<String>,
     /// 断言明细。
     pub outcomes: Vec<Outcome>,
+    /// 本步提取到的变量（场景链路的时间线展示与调试用）。
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub extracted: HashMap<String, String>,
 }
 
 impl EndpointResult {
@@ -48,6 +51,7 @@ impl EndpointResult {
             duration_ms: None,
             request_error: Some(reason.into()),
             outcomes: Vec::new(),
+            extracted: HashMap::new(),
         }
     }
 }
@@ -106,11 +110,25 @@ async fn run_one(
                 duration_ms: None,
                 request_error: Some("无测试配置（跳过）".into()),
                 outcomes: Vec::new(),
+                extracted: HashMap::new(),
             },
             None,
         );
     }
+    run_one_core(ep, url, spec, config, runtime, timeout_ms).await
+}
 
+/// 四步核心（pre→send→assert→extract），测试配置由调用方给定：
+/// 单接口路径读自 `endpoint.tests`；场景步骤传步骤级配置
+///（即使为空也照常发送——场景步骤断言可选，发送本身不能跳过）。
+async fn run_one_core(
+    ep: &Endpoint,
+    url: &str,
+    spec: &RequestSpec,
+    config: TestSpec,
+    runtime: &AsyncMutex<HashMap<String, String>>,
+    timeout_ms: Option<u64>,
+) -> (EndpointResult, Option<HttpResponseData>) {
     // 1. pre_request：快照→本地解析→回写（值支持 {{$timestamp}} 与已提取变量）。
     let snapshot = runtime.lock().await.clone();
     let mut injected = HashMap::with_capacity(config.pre_request.len());
@@ -152,7 +170,7 @@ async fn run_one(
     let extracted: HashMap<String, String> =
         extract_variables(&config.extract, &resp, body_value.as_ref());
     if !extracted.is_empty() {
-        runtime.lock().await.extend(extracted);
+        runtime.lock().await.extend(extracted.clone());
     }
 
     (
@@ -166,6 +184,7 @@ async fn run_one(
             duration_ms: Some(resp.duration_ms),
             request_error: None,
             outcomes,
+            extracted,
         },
         Some(resp),
     )
@@ -268,6 +287,102 @@ pub async fn run_collection(
     CollectionResult {
         results,
         cancelled: cancel.as_ref().is_some_and(|c| c.is_cancelled()),
+    }
+}
+
+/// 场景步骤输入：URL / 规格保留**渲染前模板**（执行期用 runtime 二次渲染，
+/// 前步提取的变量即可成为后续请求的入参），提取与断言为步骤级配置
+///（不读 `endpoint.tests`）。
+#[derive(Debug, Clone)]
+pub struct ScenarioStepInput {
+    pub endpoint: Endpoint,
+    pub url_template: String,
+    pub spec_template: RequestSpec,
+    pub extract: Vec<crate::config::ExtractSpec>,
+    pub assertions: Vec<crate::config::AssertionSpec>,
+}
+
+/// 场景运行选项。
+#[derive(Debug, Clone, Default)]
+pub struct ScenarioOptions {
+    pub timeout_ms: Option<u64>,
+    pub cancel: Option<tokio_util::sync::CancellationToken>,
+    /// 失败即停：某步请求失败或断言不过时，不再执行后续步骤。
+    pub stop_on_failure: bool,
+}
+
+/// 场景运行结果。
+#[derive(Debug, serde::Serialize)]
+pub struct ScenarioRunResult {
+    pub results: Vec<EndpointResult>,
+    /// 因取消而中止（未跑完剩余步骤）。
+    pub cancelled: bool,
+    /// 因失败即停而中止（results 末步即失败步）。
+    pub stopped_on_failure: bool,
+    /// 全部步骤结束后的运行时变量（链路产物；含环境静态变量的兜底值）。
+    pub variables: HashMap<String, String>,
+}
+
+/// 运行集成测试场景：严格按步骤顺序串行执行。
+///
+/// 每步执行前用「环境静态变量 + runtime 快照（提取值优先）」渲染该步的
+/// URL / 规格模板——这就是链路数据流的打通点：A 步 extract 出 `token`，
+/// B 步模板里的 `{{token}}` 即取到 A 的响应值。
+pub async fn run_scenario(
+    steps: Vec<ScenarioStepInput>,
+    base_vars: &HashMap<String, String>,
+    options: &ScenarioOptions,
+    progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+) -> ScenarioRunResult {
+    let total = steps.len();
+    // runtime 以环境静态变量为底，提取值按步覆盖（runtime 优先级更高）。
+    let runtime = AsyncMutex::new(base_vars.clone());
+    let mut results = Vec::with_capacity(total);
+    for (idx, step) in steps.iter().enumerate() {
+        if options.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+            return ScenarioRunResult {
+                results,
+                cancelled: true,
+                stopped_on_failure: false,
+                variables: runtime.into_inner(),
+            };
+        }
+        let render_vars = runtime.lock().await.clone();
+        let url = miyo_core::resolve_variables(&step.url_template, &render_vars);
+        let spec = miyo_core::render_spec(&step.spec_template, &render_vars);
+        let config = TestSpec {
+            pre_request: Vec::new(),
+            extract: step.extract.clone(),
+            assertions: step.assertions.clone(),
+        };
+        let (result, _) = run_one_core(
+            &step.endpoint,
+            &url,
+            &spec,
+            config,
+            &runtime,
+            options.timeout_ms,
+        )
+        .await;
+        let failed = !result.ok;
+        results.push(result);
+        if let Some(cb) = progress {
+            cb(idx + 1, total);
+        }
+        if failed && options.stop_on_failure {
+            return ScenarioRunResult {
+                results,
+                cancelled: false,
+                stopped_on_failure: true,
+                variables: runtime.into_inner(),
+            };
+        }
+    }
+    ScenarioRunResult {
+        results,
+        cancelled: false,
+        stopped_on_failure: false,
+        variables: runtime.into_inner(),
     }
 }
 

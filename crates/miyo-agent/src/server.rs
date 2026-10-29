@@ -5,13 +5,13 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::extract::{Path as AxumPath, Request, State};
+use axum::extract::{Path as AxumPath, Query, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use miyo_core::model::{Endpoint, Project};
+use miyo_core::model::{Endpoint, Project, RequestSpec, Scenario};
 use miyo_storage::repository as repo;
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
@@ -20,6 +20,58 @@ use crate::import::endpoint_from_curl;
 
 /// 默认端口（4110 起探测；与 Mock 的 4010~4029 错开）。用户可在设置中改起始端口。
 pub const DEFAULT_AGENT_PORT: u16 = 4110;
+
+/// MCP 工具注册表：名称 → 读 / 写类别。设置页的「工具权限」与控制面、
+/// miyo-mcp 三处共用此清单；停用按名存于 settings（[`MCP_DISABLED_TOOLS_KEY`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct McpToolDef {
+    pub name: &'static str,
+    /// read = 只读信息；write = 会落库。
+    pub kind: &'static str,
+}
+
+pub const MCP_TOOLS: &[McpToolDef] = &[
+    McpToolDef {
+        name: "save_curl",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "list_projects",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "list_endpoints",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "list_scenarios",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "get_scenario",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "save_scenario_script",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "agent_info",
+        kind: "read",
+    },
+];
+
+/// settings 表中「已停用 MCP 工具」的键；值为 JSON 字符串数组。
+pub const MCP_DISABLED_TOOLS_KEY: &str = "mcp_disabled_tools";
+
+/// GET `/agent/tools` 列表项。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolState {
+    pub name: String,
+    pub kind: String,
+    pub enabled: bool,
+}
 /// 起始端口被占用时最多尝试的次数（自定义端口同样顺延）。
 pub const MAX_PORT_TRIES: u16 = 20;
 
@@ -57,6 +109,19 @@ impl AgentState {
     pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
         self.events.subscribe()
     }
+
+    /// 已停用的 MCP 工具名集合（每次实时读 settings：开关即时生效、免重启）。
+    pub async fn disabled_tools(&self) -> Vec<String> {
+        match repo::get_setting(&self.db, MCP_DISABLED_TOOLS_KEY).await {
+            Ok(Some(raw)) => serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// 工具是否被停用（[`Self::disabled_tools`] 的单工具版）。
+    pub async fn tool_disabled(&self, name: &str) -> bool {
+        self.disabled_tools().await.iter().any(|n| n == name)
+    }
 }
 
 // ---------- 请求 / 响应体 ----------
@@ -93,6 +158,87 @@ pub struct ImportCurlResult {
     /// 非致命提示（如项目已有不同 base_url），Agent 应转达用户。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+}
+
+// ---------- 场景（脚本协作）DTO ----------
+
+/// GET `/agent/scenarios` 列表项。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScenarioSummary {
+    pub id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub name: String,
+    pub description: String,
+    pub step_count: usize,
+    /// 是否存在自定义脚本（scenario.script 非空）。
+    pub has_custom_script: bool,
+    pub updated_at: String,
+}
+
+impl ScenarioSummary {
+    fn from_scenario(s: &Scenario) -> Self {
+        ScenarioSummary {
+            id: s.id,
+            project_id: s.project_id,
+            name: s.name.clone(),
+            description: s.description.clone(),
+            step_count: s.steps.len(),
+            has_custom_script: s.script.as_deref().is_some_and(|v| !v.trim().is_empty()),
+            updated_at: s.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// 场景步骤 + 引用接口的当前配置（AI 写脚本的完整上下文）。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScenarioStepDetail {
+    pub endpoint_id: uuid::Uuid,
+    pub endpoint_name: String,
+    pub method: String,
+    /// 接口当前路径（含 {{var}} 占位，未做路径变量代入）。
+    pub path: String,
+    pub enabled: bool,
+    pub extract: serde_json::Value,
+    pub assertions: serde_json::Value,
+    /// 接口当前请求规格（头 / Body / 认证形态），写脚本时照抄。
+    pub request: RequestSpec,
+}
+
+/// GET `/agent/scenarios/{id}` 详情。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScenarioDetail {
+    pub id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub name: String,
+    pub description: String,
+    pub steps: Vec<ScenarioStepDetail>,
+    /// 启用步骤将提取的变量名（链路变量，按步序去重）。
+    pub chain_variables: Vec<String>,
+    /// 项目变量（含 base_url——脚本里服务地址的兜底）。
+    pub project_variables: std::collections::HashMap<String, String>,
+    /// 当前自定义脚本；None = 未自定义（视图实时由步骤生成）。
+    pub script: Option<String>,
+}
+
+/// PUT `/agent/scenarios/{id}/script` 请求体。
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveScenarioScriptRequest {
+    /// 自定义脚本全文；null / 空 = 清除自定义（回到实时生成）。
+    #[serde(default)]
+    pub script: Option<String>,
+}
+
+/// PUT `/agent/scenarios/{id}/script` 响应体。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveScenarioScriptResult {
+    pub id: uuid::Uuid,
+    /// true = 已写入自定义脚本；false = 已清除。
+    pub script_set: bool,
 }
 
 /// 统一错误响应体 `{ code, message }`。
@@ -174,7 +320,41 @@ async fn health() -> &'static str {
     "ok"
 }
 
+/// 工具停用守卫：停用后控制面路由直接 403（MCP 层的 tools/list 过滤是
+/// 第一层，这里是绕过 MCP 直连 HTTP 的兜底）。
+async fn ensure_tool_enabled(
+    state: &AgentState,
+    name: &str,
+) -> Result<(), (StatusCode, Json<ApiErrorBody>)> {
+    if state.tool_disabled(name).await {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorBody {
+                code: "TOOL_DISABLED".into(),
+                message: format!("工具 {name} 已在 Miyo 设置 → MCP 服务中停用"),
+            }),
+        ));
+    }
+    Ok(())
+}
+
+/// GET `/agent/tools`：MCP 工具及启停状态（miyo-mcp 的 tools/list 过滤数据源）。
+async fn list_tools_handler(State(state): State<AgentState>) -> ApiResult<Vec<McpToolState>> {
+    let disabled = state.disabled_tools().await;
+    Ok(Json(
+        MCP_TOOLS
+            .iter()
+            .map(|t| McpToolState {
+                name: t.name.to_string(),
+                kind: t.kind.to_string(),
+                enabled: !disabled.iter().any(|n| n == t.name),
+            })
+            .collect(),
+    ))
+}
+
 async fn list_projects_handler(State(state): State<AgentState>) -> ApiResult<Vec<Project>> {
+    ensure_tool_enabled(&state, "list_projects").await?;
     repo::list_projects(&state.db)
         .await
         .map(Json)
@@ -185,10 +365,142 @@ async fn list_endpoints_handler(
     State(state): State<AgentState>,
     AxumPath(project_id): AxumPath<uuid::Uuid>,
 ) -> ApiResult<Vec<Endpoint>> {
+    ensure_tool_enabled(&state, "list_endpoints").await?;
     repo::list_endpoints(&state.db, project_id)
         .await
         .map(Json)
         .map_err(api_error)
+}
+
+// ---------- 场景（脚本协作）Handlers ----------
+
+/// 读路径的项目解析：projectId 缺省时唯一项目自动选中（多项目报错列候选；
+/// 不像导入路径那样自动建项目——GET 不应有写副作用）。
+async fn resolve_project_read(
+    db: &SqlitePool,
+    project_id: Option<uuid::Uuid>,
+) -> Result<Project, miyo_core::AppError> {
+    if let Some(id) = project_id {
+        return repo::get_project(db, id).await;
+    }
+    let projects = repo::list_projects(db).await?;
+    match projects.len() {
+        1 => Ok(projects.into_iter().next().unwrap()),
+        n => Err(miyo_core::AppError::Validation(format!(
+            "存在 {n} 个项目且未指定 projectId，请先 GET /agent/projects 后在请求中指定。候选：{}",
+            projects
+                .iter()
+                .take(5)
+                .map(|p| format!("{}({})", p.name, p.id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
+}
+
+async fn list_scenarios_handler(
+    State(state): State<AgentState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> ApiResult<Vec<ScenarioSummary>> {
+    ensure_tool_enabled(&state, "list_scenarios").await?;
+    let project_id = match params.get("projectId").filter(|s| !s.is_empty()) {
+        Some(raw) => Some(raw.parse::<uuid::Uuid>().map_err(|_| {
+            api_error(miyo_core::AppError::Validation(
+                "projectId 不是合法 UUID".into(),
+            ))
+        })?),
+        None => None,
+    };
+    let project = resolve_project_read(&state.db, project_id)
+        .await
+        .map_err(api_error)?;
+    let scenarios = repo::list_scenarios(&state.db, project.id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(
+        scenarios
+            .iter()
+            .map(ScenarioSummary::from_scenario)
+            .collect(),
+    ))
+}
+
+async fn get_scenario_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<ScenarioDetail> {
+    ensure_tool_enabled(&state, "get_scenario").await?;
+    let scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+    let mut steps = Vec::with_capacity(scenario.steps.len());
+    let mut chain_variables: Vec<String> = Vec::new();
+    for step in &scenario.steps {
+        // 引用式步骤：接口已删除时保留占位（AI 生成脚本可据此提示用户）。
+        let (endpoint_name, method, path, request) =
+            match repo::get_endpoint(&state.db, step.endpoint_id).await {
+                Ok(ep) => (ep.name, ep.method.to_string(), ep.path, ep.request),
+                Err(_) => (
+                    "（接口已删除）".to_string(),
+                    "GET".to_string(),
+                    String::new(),
+                    RequestSpec::default(),
+                ),
+            };
+        if step.enabled {
+            if let Some(rules) = step.extract.as_array() {
+                for rule in rules {
+                    if let Some(n) = rule.get("name").and_then(|v| v.as_str()) {
+                        if !n.trim().is_empty() && !chain_variables.iter().any(|v| v == n) {
+                            chain_variables.push(n.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        steps.push(ScenarioStepDetail {
+            endpoint_id: step.endpoint_id,
+            endpoint_name,
+            method,
+            path,
+            enabled: step.enabled,
+            extract: step.extract.clone(),
+            assertions: step.assertions.clone(),
+            request,
+        });
+    }
+    let project = repo::get_project(&state.db, scenario.project_id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(ScenarioDetail {
+        id: scenario.id,
+        project_id: scenario.project_id,
+        name: scenario.name,
+        description: scenario.description,
+        steps,
+        chain_variables,
+        project_variables: project.variables,
+        script: scenario.script,
+    }))
+}
+
+async fn save_scenario_script_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    Json(body): Json<SaveScenarioScriptRequest>,
+) -> ApiResult<SaveScenarioScriptResult> {
+    ensure_tool_enabled(&state, "save_scenario_script").await?;
+    let mut scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+    let trimmed = body
+        .script
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let script_set = trimmed.is_some();
+    scenario.script = trimmed.map(String::from);
+    scenario.updated_at = chrono::Utc::now();
+    repo::save_scenario(&state.db, &scenario)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(SaveScenarioScriptResult { id, script_set }))
 }
 
 /// 解析目标项目：显式 id 校验存在性；缺省时按「唯一项目自动选中 /
@@ -261,6 +573,7 @@ async fn import_curl_handler(
     State(state): State<AgentState>,
     Json(req): Json<ImportCurlRequest>,
 ) -> ApiResult<ImportCurlResult> {
+    ensure_tool_enabled(&state, "save_curl").await?;
     let parsed = miyo_core::parse_curl(&req.command).map_err(api_error)?;
     let project = resolve_project(&state.db, req.project_id)
         .await
@@ -308,6 +621,13 @@ pub fn build_router(state: AgentState) -> Router {
         .route("/agent/projects", get(list_projects_handler))
         .route("/agent/endpoints/{project_id}", get(list_endpoints_handler))
         .route("/agent/curl", post(import_curl_handler))
+        .route("/agent/scenarios", get(list_scenarios_handler))
+        .route("/agent/scenarios/{id}", get(get_scenario_handler))
+        .route(
+            "/agent/scenarios/{id}/script",
+            put(save_scenario_script_handler),
+        )
+        .route("/agent/tools", get(list_tools_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth))
         .with_state(state)
 }
@@ -400,6 +720,180 @@ mod tests {
 
     fn client() -> reqwest::Client {
         reqwest::Client::new()
+    }
+
+    #[tokio::test]
+    async fn disabled_tool_blocks_route_and_reflects_in_tools_endpoint() {
+        let (url, token, db, _state) = spawn_test_server().await;
+        let auth = format!("Bearer {token}");
+
+        // 停用 list_projects
+        repo::set_setting(
+            &db,
+            MCP_DISABLED_TOOLS_KEY,
+            &serde_json::json!(["list_projects"]).to_string(),
+        )
+        .await
+        .unwrap();
+
+        // /agent/tools 如实反映
+        let res = client()
+            .get(format!("{url}/agent/tools"))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        let tools: Vec<serde_json::Value> = res.json().await.unwrap();
+        let lp = tools.iter().find(|t| t["name"] == "list_projects").unwrap();
+        assert_eq!(lp["enabled"], false);
+        assert_eq!(lp["kind"], "read");
+        let sc = tools.iter().find(|t| t["name"] == "save_curl").unwrap();
+        assert_eq!(sc["enabled"], true);
+
+        // 路由 403（TOOL_DISABLED）
+        let res = client()
+            .get(format!("{url}/agent/projects"))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        let body: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(body["code"], "TOOL_DISABLED");
+
+        // 其他工具不受影响（health 免检）
+        let res = client()
+            .get(format!("{url}/agent/health"))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // 重新启用 → 路由恢复
+        repo::set_setting(
+            &db,
+            MCP_DISABLED_TOOLS_KEY,
+            &serde_json::json!([]).to_string(),
+        )
+        .await
+        .unwrap();
+        let res = client()
+            .get(format!("{url}/agent/projects"))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn scenario_script_collaboration_flow() {
+        use miyo_core::model::{Scenario, ScenarioStep};
+        use serde_json::json;
+
+        let (url, token, db, _state) = spawn_test_server().await;
+        let project = repo::create_project(&db, "链路", "").await.unwrap();
+        let ep = miyo_core::model::Endpoint {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            folder_id: None,
+            name: "文章详情".into(),
+            method: miyo_core::model::HttpMethod::GET,
+            path: "/posts/1".into(),
+            description: String::new(),
+            status: miyo_core::model::EndpointStatus::Developing,
+            sort_order: 0,
+            request: miyo_core::model::RequestSpec::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_endpoint(&db, &ep).await.unwrap();
+        let scenario = Scenario {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            name: "链路演示".into(),
+            description: String::new(),
+            sort_order: 0,
+            steps: vec![ScenarioStep {
+                endpoint_id: ep.id,
+                enabled: true,
+                extract: json!([{ "name": "userId", "from": "body", "path": "$.userId" }]),
+                assertions: json!([]),
+            }],
+            script: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_scenario(&db, &scenario).await.unwrap();
+
+        let auth = format!("Bearer {token}");
+
+        // 列表（projectId 缺省 → 唯一项目自动选中）
+        let res = client()
+            .get(format!("{url}/agent/scenarios"))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let list: Vec<serde_json::Value> = res.json().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["stepCount"], 1);
+        assert_eq!(list[0]["hasCustomScript"], false);
+
+        // 详情：链路变量 + 接口配置内嵌
+        let res = client()
+            .get(format!("{url}/agent/scenarios/{}", scenario.id))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let detail: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(detail["chainVariables"], json!(["userId"]));
+        assert_eq!(detail["steps"][0]["endpointName"], "文章详情");
+        assert_eq!(detail["steps"][0]["path"], "/posts/1");
+        assert!(detail["script"].is_null());
+
+        // 写脚本 → 持久化；再传空串 → 清除
+        let res = client()
+            .put(format!("{url}/agent/scenarios/{}/script", scenario.id))
+            .header("Authorization", &auth)
+            .json(&json!({ "script": "const BASE = 'https://x';" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let result: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(result["scriptSet"], true);
+        let reloaded = repo::get_scenario(&db, scenario.id).await.unwrap();
+        assert_eq!(
+            reloaded.script.as_deref(),
+            Some("const BASE = 'https://x';")
+        );
+
+        let res = client()
+            .put(format!("{url}/agent/scenarios/{}/script", scenario.id))
+            .header("Authorization", &auth)
+            .json(&json!({ "script": "  " }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let result: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(result["scriptSet"], false);
+        let reloaded = repo::get_scenario(&db, scenario.id).await.unwrap();
+        assert!(reloaded.script.is_none());
+
+        // 不存在的场景 → 404
+        let res = client()
+            .get(format!("{url}/agent/scenarios/{}", uuid::Uuid::new_v4()))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

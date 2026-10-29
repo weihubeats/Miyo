@@ -4,9 +4,8 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
-use miyo_core::model::{
-    AuthSpec, BodySpec, DynamicSignatureConfig, HttpMethod, KeyValue, RequestHistory, RequestSpec,
-};
+use miyo_core::model::{HttpMethod, KeyValue, RequestHistory, RequestSpec};
+use miyo_core::render_spec;
 use miyo_core::VariableMap;
 use miyo_http::client::{HttpResponseData, RequestSnapshot};
 use miyo_storage::repository as repo;
@@ -485,151 +484,6 @@ fn byte_truncate(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
-/// 渲染请求规格中的全部变量（key/value、认证、body）。
-pub(crate) fn render_spec(spec: &RequestSpec, vars: &VariableMap) -> RequestSpec {
-    RequestSpec {
-        params: render_kv(&spec.params, vars),
-        headers: render_kv(&spec.headers, vars),
-        path_variables: render_kv(&spec.path_variables, vars),
-        auth: match &spec.auth {
-            AuthSpec::None => AuthSpec::None,
-            AuthSpec::Bearer { token } => AuthSpec::Bearer {
-                token: miyo_core::resolve_variables(token, vars),
-            },
-            AuthSpec::Basic { username, password } => AuthSpec::Basic {
-                username: miyo_core::resolve_variables(username, vars),
-                password: miyo_core::resolve_variables(password, vars),
-            },
-            AuthSpec::ApiKey {
-                key,
-                value,
-                location,
-            } => AuthSpec::ApiKey {
-                key: miyo_core::resolve_variables(key, vars),
-                value: miyo_core::resolve_variables(value, vars),
-                location: *location,
-            },
-            AuthSpec::OAuth2 {
-                client_id,
-                client_secret,
-                auth_url,
-                token_url,
-                scope,
-                redirect_uri,
-                grant,
-                username,
-                password,
-                token,
-            } => AuthSpec::OAuth2 {
-                client_id: miyo_core::resolve_variables(client_id, vars),
-                client_secret: miyo_core::resolve_variables(client_secret, vars),
-                auth_url: miyo_core::resolve_variables(auth_url, vars),
-                token_url: miyo_core::resolve_variables(token_url, vars),
-                scope: miyo_core::resolve_variables(scope, vars),
-                redirect_uri: miyo_core::resolve_variables(redirect_uri, vars),
-                grant: *grant,
-                username: username.clone(),
-                password: password.clone(),
-                token: token.clone(),
-            },
-            AuthSpec::Digest { username, password } => AuthSpec::Digest {
-                username: miyo_core::resolve_variables(username, vars),
-                password: miyo_core::resolve_variables(password, vars),
-            },
-            AuthSpec::Hawk { key_id, key } => AuthSpec::Hawk {
-                key_id: miyo_core::resolve_variables(key_id, vars),
-                key: miyo_core::resolve_variables(key, vars),
-            },
-            AuthSpec::AwsV4 {
-                access_key,
-                secret_key,
-                region,
-                service,
-                session_token,
-            } => AuthSpec::AwsV4 {
-                access_key: miyo_core::resolve_variables(access_key, vars),
-                secret_key: miyo_core::resolve_variables(secret_key, vars),
-                region: miyo_core::resolve_variables(region, vars),
-                service: miyo_core::resolve_variables(service, vars),
-                session_token: session_token
-                    .as_deref()
-                    .map(|t| miyo_core::resolve_variables(t, vars)),
-            },
-            AuthSpec::Hmac {
-                access_key,
-                secret_key,
-            } => AuthSpec::Hmac {
-                access_key: miyo_core::resolve_variables(access_key, vars),
-                secret_key: miyo_core::resolve_variables(secret_key, vars),
-            },
-            // 动态签名：Key/Secret 支持 {{变量}} 插值（如 {{$app_key}}）；
-            // 模板本身也参与渲染，便于把环境变量拼进载荷。时间戳在发送时生成。
-            AuthSpec::DynamicSignature { config } => AuthSpec::DynamicSignature {
-                config: DynamicSignatureConfig {
-                    app_key: miyo_core::resolve_variables(&config.app_key, vars),
-                    app_secret: miyo_core::resolve_variables(&config.app_secret, vars),
-                    key_header: miyo_core::resolve_variables(&config.key_header, vars),
-                    timestamp_header: miyo_core::resolve_variables(&config.timestamp_header, vars),
-                    sig_header: miyo_core::resolve_variables(&config.sig_header, vars),
-                    algorithm: config.algorithm,
-                    encoding: config.encoding,
-                    payload_template: miyo_core::resolve_variables(&config.payload_template, vars),
-                },
-            },
-        },
-        body: match &spec.body {
-            BodySpec::None => BodySpec::None,
-            BodySpec::Json { raw } => BodySpec::Json {
-                raw: miyo_core::resolve_variables(raw, vars),
-            },
-            BodySpec::Text { raw } => BodySpec::Text {
-                raw: miyo_core::resolve_variables(raw, vars),
-            },
-            BodySpec::UrlEncoded { fields } => BodySpec::UrlEncoded {
-                fields: render_kv(fields, vars),
-            },
-            BodySpec::Multipart { fields } => BodySpec::Multipart {
-                fields: fields
-                    .iter()
-                    .map(|f| miyo_core::model::MultipartField {
-                        key: miyo_core::resolve_variables(&f.key, vars),
-                        value_type: f.value_type,
-                        value: miyo_core::resolve_variables(&f.value, vars),
-                        enabled: f.enabled,
-                    })
-                    .collect(),
-            },
-            BodySpec::GraphQL { spec } => BodySpec::GraphQL {
-                spec: miyo_core::model::GraphQLSpec {
-                    query: miyo_core::resolve_variables(&spec.query, vars),
-                    variables: miyo_core::resolve_variables(&spec.variables, vars),
-                    operation_name: miyo_core::resolve_variables(&spec.operation_name, vars),
-                },
-            },
-            // 文件路径同样支持 {{变量}}（与 multipart 文件字段一致）。
-            BodySpec::Binary { path } => BodySpec::Binary {
-                path: miyo_core::resolve_variables(path, vars),
-            },
-            BodySpec::Grpc { spec } => BodySpec::Grpc {
-                spec: miyo_core::model::GrpcSpec {
-                    service: miyo_core::resolve_variables(&spec.service, vars),
-                    method: miyo_core::resolve_variables(&spec.method, vars),
-                    message: miyo_core::resolve_variables(&spec.message, vars),
-                    use_tls: spec.use_tls,
-                    proto_ids: spec.proto_ids.clone(),
-                },
-            },
-        },
-        active_tab: spec.active_tab.clone(),
-        timeout_ms: spec.timeout_ms,
-        follow_redirects: spec.follow_redirects,
-        tests: spec.tests.clone(),
-        disable_cookies: spec.disable_cookies,
-        body_docs: spec.body_docs.clone(),
-        scripts: spec.scripts.clone(),
-    }
-}
-
 /// 解析请求超时（毫秒）：接口级 `spec.timeout_ms` 优先，其次全局设置（走缓存），最后默认 300 秒。
 pub(crate) async fn resolve_timeout_ms(spec: &RequestSpec, state: &AppState) -> CommandResult<u64> {
     if let Some(ms) = spec.timeout_ms {
@@ -640,23 +494,6 @@ pub(crate) async fn resolve_timeout_ms(spec: &RequestSpec, state: &AppState) -> 
         .await?
         .http_timeout_ms
         .unwrap_or(miyo_http::client::DEFAULT_TIMEOUT_MS))
-}
-
-/// 渲染键值对列表（Query / Header / Path 变量）。
-fn render_kv(items: &[KeyValue], vars: &VariableMap) -> Vec<KeyValue> {
-    items
-        .iter()
-        .map(|kv| KeyValue {
-            key: miyo_core::resolve_variables(&kv.key, vars),
-            value: miyo_core::resolve_variables(&kv.value, vars),
-            enabled: kv.enabled,
-            description: kv.description.clone(),
-            // 设计元数据（类型/必填/示例）随环境变量渲染原样保留。
-            field_type: kv.field_type,
-            required: kv.required,
-            example: kv.example.clone(),
-        })
-        .collect()
 }
 
 /// 全局参数注入：将启用的全局参数并入请求规格（query → params，header → headers）。
@@ -706,7 +543,7 @@ pub(crate) fn apply_global_params(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miyo_core::model::GlobalParamLocation;
+    use miyo_core::model::{AuthSpec, BodySpec, GlobalParamLocation};
     use std::collections::HashMap;
 
     /// 脚本头回写：改写（大小写不敏感）、删除、新增、禁用行保留四路齐全。

@@ -4,6 +4,7 @@ import { Compartment, EditorState } from '@codemirror/state'
 import { Decoration, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers, placeholder } from '@codemirror/view'
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { javascript } from '@codemirror/lang-javascript'
 import { json, jsonParseLinter } from '@codemirror/lang-json'
 import { linter } from '@codemirror/lint'
 import { bracketMatching, defaultHighlightStyle, foldGutter, indentOnInput, syntaxHighlighting, HighlightStyle } from '@codemirror/language'
@@ -20,8 +21,17 @@ const props = withDefaults(
     query?: string
     /** 当前选中的匹配索引（0-based，高亮加深）。 */
     activeMatch?: number
+    /** 语言：json（默认，带实时 lint）/ javascript。 */
+    language?: 'json' | 'javascript'
   }>(),
-  { readonly: false, placeholderText: '', autofocus: false, query: '', activeMatch: 0 },
+  {
+    readonly: false,
+    placeholderText: '',
+    autofocus: false,
+    query: '',
+    activeMatch: 0,
+    language: 'json',
+  },
 )
 
 const emit = defineEmits<{
@@ -259,10 +269,10 @@ onMounted(() => {
       closeBrackets(),
       highlightActiveLine(),
       keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
-      json(),
+      props.language === 'javascript' ? javascript() : json(),
       themeCompartment.of(currentThemeExtension()),
-      // 大文档跳过实时 lint（见 LARGE_DOC_CHARS 说明）。
-      ...(largeDoc ? [] : [linter(jsonParseLinter())]),
+      // 大文档跳过实时 lint（见 LARGE_DOC_CHARS 说明）；JS 无 JSON lint。
+      ...(props.language === 'javascript' || largeDoc ? [] : [linter(jsonParseLinter())]),
       readOnlyCompartment.of(EditorState.readOnly.of(props.readonly)),
       placeholder(props.placeholderText),
       searchCompartment.of(

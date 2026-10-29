@@ -9,9 +9,10 @@ use uuid::Uuid;
 
 use miyo_core::model::{Endpoint, HttpMethod, RequestSpec};
 
-use crate::commands::request::{apply_global_params, render_spec, resolve_timeout_ms};
+use crate::commands::request::{apply_global_params, resolve_timeout_ms};
 use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
+use miyo_core::render_spec;
 
 /// `test_endpoint` 入参。
 #[derive(Debug, Clone, Deserialize)]

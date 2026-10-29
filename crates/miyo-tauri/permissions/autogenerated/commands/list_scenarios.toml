@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-list-scenarios"
+description = "Enables the list_scenarios command without any pre-configured scope."
+commands.allow = ["list_scenarios"]
+
+[[permission]]
+identifier = "deny-list-scenarios"
+description = "Denies the list_scenarios command without any pre-configured scope."
+commands.deny = ["list_scenarios"]

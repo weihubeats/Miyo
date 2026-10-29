@@ -282,6 +282,14 @@ export interface ProxyTestResult {
   message: string
 }
 
+/** MCP 工具启停状态（Rust `McpToolStatus`，get/set_mcp_tools 命令）。 */
+export interface McpToolStatus {
+  name: string
+  /** read = 只读信息；write = 会落库。 */
+  kind: 'read' | 'write'
+  enabled: boolean
+}
+
 /** TLS 设置（Rust `TlsSettings`，get/set_tls_settings 命令）。 */
 export interface TlsSettings {
   /** 客户端证书 PEM 文件路径（证书链 + 私钥同文件；`null` = 不使用）。 */
@@ -315,6 +323,81 @@ export interface Team {
   name: string
   created_at: string
   updated_at: string
+}
+
+/** 场景步骤：引用接口 + 步骤级提取 / 断言（URL/头/体用接口当前配置）。 */
+export interface ScenarioStep {
+  endpoint_id: string
+  enabled: boolean
+  /** 提取规则（ExtractSpec 数组形状，JSON 透传）。 */
+  extract: unknown
+  /** 断言规则（AssertionSpec 数组形状，JSON 透传）。 */
+  assertions: unknown
+}
+
+/** 集成测试场景（Rust `Scenario`）：项目级接口链路。 */
+export interface Scenario {
+  id: string
+  project_id: string
+  name: string
+  description: string
+  sort_order: number
+  steps: ScenarioStep[]
+  /** 自定义脚本（脚本视图编辑后持久化）；缺省 = 未自定义，视图实时由 steps 生成。 */
+  script?: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 提取规则编辑形状（与后端 ExtractSpec 同构）。 */
+export interface ScenarioExtractRule {
+  name: string
+  from: 'body' | 'header'
+  path: string
+}
+
+/** 断言规则编辑形状（与后端 AssertionSpec 同构）。 */
+export interface ScenarioAssertionRule {
+  name?: string | null
+  type: 'status' | 'header' | 'jsonpath' | 'response_time_ms'
+  path?: string | null
+  op?:
+    | 'eq'
+    | 'neq'
+    | 'contains'
+    | 'not_contains'
+    | 'gt'
+    | 'gte'
+    | 'lt'
+    | 'lte'
+    | 'exists'
+    | 'not_exists'
+    | 'empty'
+    | 'not_empty'
+    | null
+  expected?: unknown
+}
+
+/** 场景单步结果（Rust `EndpointResult`）。 */
+export interface ScenarioStepResult {
+  endpoint_id: string
+  endpoint_name: string
+  method: string
+  path: string
+  ok: boolean
+  status?: number | null
+  duration_ms?: number | null
+  request_error?: string | null
+  outcomes: { description: string; passed: boolean; reason?: string | null }[]
+  extracted?: Record<string, string>
+}
+
+/** 场景运行结果（Rust `ScenarioRunResult`）。 */
+export interface ScenarioRunResult {
+  results: ScenarioStepResult[]
+  cancelled: boolean
+  stopped_on_failure: boolean
+  variables: Record<string, string>
 }
 
 /** 同步远端类型。 */

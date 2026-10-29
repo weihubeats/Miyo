@@ -10,7 +10,8 @@ use axum::routing::{get, post};
 use axum::Router;
 use chrono::Utc;
 use miyo_core::model::{Endpoint, EndpointStatus, HttpMethod, RequestSpec};
-use miyo_test::runner::run_endpoint;
+use miyo_test::config::{AssertionSpec, ExtractSpec};
+use miyo_test::runner::{run_endpoint, run_scenario, ScenarioOptions, ScenarioStepInput};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -46,6 +47,10 @@ async fn spawn_server() -> SocketAddr {
             ),
         )
         .route("/echo", post(handle_echo))
+        .route(
+            "/login",
+            post(|| async { axum::Json(json!({"token": "tok-9"})) }),
+        )
         .route(
             "/slow",
             get(async || {
@@ -219,4 +224,124 @@ async fn runner_sends_request_and_extracts() {
     .await;
     assert!(!r2.ok);
     assert!(r2.request_error.is_some());
+}
+
+#[tokio::test]
+async fn scenario_chain_flows_extracted_vars() {
+    let addr = spawn_server().await;
+    let base = format!("http://{addr}");
+
+    // A：登录 → 提取 token；B：URL 模板用 {{token}}，echo 原样返回供断言。
+    let steps = vec![
+        ScenarioStepInput {
+            endpoint: make_ep("登录", HttpMethod::POST, "/login", serde_json::Value::Null),
+            url_template: format!("{base}/login"),
+            spec_template: RequestSpec::default(),
+            extract: vec![ExtractSpec {
+                name: "token".into(),
+                from: "body".into(),
+                path: "$.token".into(),
+            }],
+            assertions: vec![AssertionSpec {
+                name: None,
+                r#type: "status".into(),
+                path: None,
+                op: Some("eq".into()),
+                expected: Some(json!(200)),
+            }],
+        },
+        ScenarioStepInput {
+            endpoint: make_ep("回显", HttpMethod::POST, "/echo", serde_json::Value::Null),
+            url_template: format!("{base}/echo?env={{{{token}}}}"),
+            spec_template: RequestSpec::default(),
+            extract: vec![],
+            assertions: vec![AssertionSpec {
+                name: None,
+                r#type: "jsonpath".into(),
+                path: Some("$.env".into()),
+                op: Some("eq".into()),
+                expected: Some(json!("tok-9")),
+            }],
+        },
+    ];
+    let mut base_vars = HashMap::new();
+    base_vars.insert("static_v".to_string(), "s1".to_string());
+    let result = run_scenario(
+        steps,
+        &base_vars,
+        &ScenarioOptions {
+            timeout_ms: None,
+            cancel: None,
+            stop_on_failure: true,
+        },
+        None,
+    )
+    .await;
+
+    assert!(!result.cancelled);
+    assert!(!result.stopped_on_failure, "{:?}", result.results);
+    assert!(
+        result.results.iter().all(|r| r.ok),
+        "全部步骤应通过：{:?}",
+        result.results
+    );
+    // A 步提取成果上报 + 进入 runtime。
+    assert_eq!(
+        result.results[0].extracted.get("token").map(String::as_str),
+        Some("tok-9")
+    );
+    assert_eq!(
+        result.variables.get("token").map(String::as_str),
+        Some("tok-9")
+    );
+    // 环境静态变量作为兜底仍在变量池中。
+    assert_eq!(
+        result.variables.get("static_v").map(String::as_str),
+        Some("s1")
+    );
+}
+
+#[tokio::test]
+async fn scenario_stops_on_failure() {
+    let addr = spawn_server().await;
+    let base = format!("http://{addr}");
+
+    // 第一步断言失败（期望 201 实际 200）+ 失败即停 → 第二步不执行。
+    let steps = vec![
+        ScenarioStepInput {
+            endpoint: make_ep("登录", HttpMethod::POST, "/login", serde_json::Value::Null),
+            url_template: format!("{base}/login"),
+            spec_template: RequestSpec::default(),
+            extract: vec![],
+            assertions: vec![AssertionSpec {
+                name: None,
+                r#type: "status".into(),
+                path: None,
+                op: Some("eq".into()),
+                expected: Some(json!(201)),
+            }],
+        },
+        ScenarioStepInput {
+            endpoint: make_ep("回显", HttpMethod::GET, "/echo", serde_json::Value::Null),
+            url_template: format!("{base}/echo"),
+            spec_template: RequestSpec::default(),
+            extract: vec![],
+            assertions: vec![],
+        },
+    ];
+    let result = run_scenario(
+        steps,
+        &HashMap::new(),
+        &ScenarioOptions {
+            timeout_ms: None,
+            cancel: None,
+            stop_on_failure: true,
+        },
+        None,
+    )
+    .await;
+
+    assert!(result.stopped_on_failure);
+    assert_eq!(result.results.len(), 1, "失败即停：第二步不应执行");
+    assert!(!result.results[0].ok);
 }

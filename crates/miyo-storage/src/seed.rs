@@ -14,6 +14,8 @@
 //! - 6 个轻量演示项目同样铺齐内容：带请求参数（query / 路径变量 / JSON Body）
 //!   的接口 + 响应示例（文档素材）+ 测试用例（正向 / 负向 / 边界值）+
 //!   请求用例 + 开发 / 测试双环境，每个项目打开都有完整内容可看；
+//! - 「小奏技术 · 开放演示」含集成测试场景：文章详情 → 提取 userId →
+//!   用户文章 / 用户详情（真实公网 API，激活场景页签即可直接运行链路）；
 //! - 「小奏技术 · 边界场景」：大数据量 / 极端输入的 UI 压测素材——大 JSON Body
 //!   （约 200 行）、超大 Body（>200KB 触发前端大文档降级）、长 urlencoded 表单、
 //!   大响应示例、长请求头 / Query 列表；
@@ -29,7 +31,7 @@ use uuid::Uuid;
 use miyo_core::model::{
     BodySpec, Endpoint, EndpointStatus, Environment, EnvironmentVariable, Folder, GlobalParam,
     GlobalParamLocation, GraphQLSpec, GrpcSpec, HttpMethod, KeyValue, MockMatchItem, MockRule,
-    Project, RequestExample, RequestSpec, TestCase, TestCaseStatus,
+    Project, RequestExample, RequestSpec, Scenario, ScenarioStep, TestCase, TestCaseStatus,
 };
 use miyo_core::Result;
 
@@ -941,6 +943,65 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
         repo::save_endpoint(db, &ep).await?;
         open_endpoints.insert(name.to_string(), ep);
     }
+
+    // ---- 集成场景：链路演示（真实公网 API，无需启动 Mock） ----
+    // 专供场景演示的链路端点：路径直接引用 {{userId}}（由前一步提取；
+    // 无对应路径变量行，applyPathVars 不改写，执行期由 runtime 渲染）。
+    let chain_ep = endpoint(
+        &open_demo,
+        None,
+        "用户文章",
+        HttpMethod::GET,
+        "/users/{{userId}}/posts",
+        "链路演示：{{userId}} 由场景前一步从「文章详情」响应中提取",
+        EndpointStatus::Released,
+        open_endpoints.len() as i64,
+        RequestSpec::default(),
+    );
+    repo::save_endpoint(db, &chain_ep).await?;
+    let now = Utc::now();
+    let scenario = Scenario {
+        id: Uuid::new_v4(),
+        project_id: open_demo.id,
+        name: "文章链路：详情 → 该作者的文章 → 作者详情".into(),
+        description:
+            "第一步提取 userId，后续步骤的 URL 与断言期望用 {{userId}} 引用——链路变量传递演示。"
+                .into(),
+        sort_order: 0,
+        steps: vec![
+            ScenarioStep {
+                endpoint_id: open_endpoints["文章详情"].id,
+                enabled: true,
+                extract: serde_json::json!([
+                    { "name": "userId", "from": "body", "path": "$.userId" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 }
+                ]),
+            },
+            ScenarioStep {
+                endpoint_id: chain_ep.id,
+                enabled: true,
+                extract: serde_json::json!([]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 },
+                    { "type": "jsonpath", "path": "$[0].userId", "op": "eq", "expected": "{{userId}}" }
+                ]),
+            },
+            ScenarioStep {
+                endpoint_id: open_endpoints["用户详情"].id,
+                enabled: true,
+                extract: serde_json::json!([]),
+                assertions: serde_json::json!([
+                    { "type": "jsonpath", "path": "$.id", "op": "eq", "expected": "{{userId}}" }
+                ]),
+            },
+        ],
+        script: None,
+        created_at: now,
+        updated_at: now,
+    };
+    repo::save_scenario(db, &scenario).await?;
 
     // ---- GraphQL：公共接口 ----
     let mut graphql_endpoints: HashMap<String, Endpoint> = HashMap::new();

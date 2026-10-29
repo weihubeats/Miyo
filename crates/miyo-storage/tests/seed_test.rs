@@ -116,8 +116,8 @@ async fn seeds_full_fixture_set() {
         .find(|p| p.name == "小奏技术 · 开放演示")
         .expect("开放演示项目存在");
     let open_endpoints = repo::list_endpoints(&db, open_demo.id).await.unwrap();
-    // 6 个 HTTP（JSONPlaceholder）+ 2 个 gRPC（grpcb.in 反射演示）
-    assert_eq!(open_endpoints.len(), 8);
+    // 7 个 HTTP（JSONPlaceholder + 链路演示端点）+ 2 个 gRPC（grpcb.in 反射演示）
+    assert_eq!(open_endpoints.len(), 9);
     assert_eq!(
         open_endpoints
             .iter()
@@ -126,6 +126,11 @@ async fn seeds_full_fixture_set() {
         2,
         "gRPC 演示端点（unary + 服务端流）应存在"
     );
+    // 集成场景：链路演示（3 步，引用真实公网接口）
+    let scenarios = repo::list_scenarios(&db, open_demo.id).await.unwrap();
+    assert_eq!(scenarios.len(), 1, "开放演示应含 1 条链路演示场景");
+    assert_eq!(scenarios[0].steps.len(), 3);
+
     // 开放演示含 3 条测试用例（文章分页 / 发布周报 / 不存在文章负向）+ 1 条请求用例
     let mut open_case_total = 0usize;
     for e in &open_endpoints {

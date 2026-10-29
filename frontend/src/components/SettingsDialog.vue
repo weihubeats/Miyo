@@ -46,7 +46,14 @@ import Icon, { type IconName } from './ui/Icon.vue'
 import CustomNumberInput from './ui/CustomNumberInput.vue'
 import CustomSelect from './ui/CustomSelect.vue'
 import { envBaseUrl } from '../utils/environment'
-import type { Environment, LogFile, Project, ProjectStat, SeqCounter } from '../types/miyoApi'
+import type {
+  Environment,
+  LogFile,
+  McpToolStatus,
+  Project,
+  ProjectStat,
+  SeqCounter,
+} from '../types/miyoApi'
 
 // 环境管理是独立大弹窗：设置面板只在点「编辑 / 新建环境」时才需要它的 chunk。
 const EnvironmentManager = lazyComponent(() => import('./EnvironmentManager.vue'))
@@ -192,6 +199,11 @@ onMounted(async () => {
     proxyEnabled.value = false
   }
   try {
+    mcpTools.value = await api.getMcpTools()
+  } catch {
+    mcpTools.value = []
+  }
+  try {
     const tls = await api.getTlsSettings()
     tlsIdentityPath.value = tls.identityPath ?? ''
     tlsAcceptInvalid.value = !!tls.acceptInvalidCerts
@@ -240,6 +252,25 @@ const proxyEnabled = ref(false)
 const proxyBusy = ref(false)
 const proxyTesting = ref(false)
 const proxyTest = ref<{ ok: boolean; message: string } | null>(null)
+
+// ---------- MCP 工具权限 ----------
+const mcpTools = ref<McpToolStatus[]>([])
+const mcpToolBusy = ref<string | null>(null)
+
+const mcpReadTools = computed(() => mcpTools.value.filter((x) => x.kind === 'read'))
+const mcpWriteTools = computed(() => mcpTools.value.filter((x) => x.kind === 'write'))
+
+async function toggleMcpTool(tool: McpToolStatus): Promise<void> {
+  mcpToolBusy.value = tool.name
+  try {
+    await api.setMcpToolEnabled({ name: tool.name, enabled: !tool.enabled })
+    tool.enabled = !tool.enabled
+  } catch (err) {
+    toast.error(t('settings.mcpToolSaveFail'), { message: err instanceof Error ? err.message : String(err) })
+  } finally {
+    mcpToolBusy.value = null
+  }
+}
 
 // ---------- TLS：客户端证书（mTLS）与自签放行 ----------
 const tlsIdentityPath = ref('')
@@ -1300,6 +1331,55 @@ const projectSummary = computed(() => {
                         :disabled="mcpBusy"
                         @change="saveMcpPort"
                       />
+                    </div>
+                  </div>
+
+                  <!-- 工具权限：逐个停用 MCP 工具，停用后 AI 不可见且控制面拒绝调用 -->
+                  <div class="mt-5 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
+                    <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.mcpToolsTitle') }}</div>
+                    <p class="mt-0.5 mb-4 text-xs text-zinc-600 dark:text-zinc-400">
+                      {{ t('settings.mcpToolsDesc') }}
+                    </p>
+                    <div
+                      v-for="group in [
+                        { key: 'read', label: t('settings.mcpGroupRead'), tools: mcpReadTools },
+                        { key: 'write', label: t('settings.mcpGroupWrite'), tools: mcpWriteTools },
+                      ]"
+                      :key="group.key"
+                      class="mb-4 last:mb-0"
+                    >
+                      <div class="mb-2 text-xxs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                        {{ group.label }}
+                      </div>
+                      <div class="flex flex-col gap-2">
+                        <div
+                          v-for="tool in group.tools"
+                          :key="tool.name"
+                          class="flex items-center justify-between gap-4 rounded-lg border border-zinc-200/70 px-3.5 py-2.5 dark:border-white/[0.06]"
+                        >
+                          <div class="min-w-0">
+                            <div class="text-xs font-medium text-zinc-900 dark:text-zinc-100">
+                              {{ t(`settings.mcpTool.${tool.name}`) }}
+                            </div>
+                            <code class="font-mono text-xxs text-zinc-500 dark:text-zinc-400">{{ tool.name }}</code>
+                          </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            :aria-checked="tool.enabled"
+                            :aria-label="t(`settings.mcpTool.${tool.name}`)"
+                            :disabled="mcpToolBusy === tool.name"
+                            class="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
+                            :class="tool.enabled ? 'bg-purple-500' : 'border border-zinc-300 bg-zinc-200 dark:border-white/10 dark:bg-white/10'"
+                            @click="toggleMcpTool(tool)"
+                          >
+                            <span
+                              class="absolute top-1/2 h-[16px] w-[16px] -translate-y-1/2 rounded-full bg-white shadow transition-all duration-150"
+                              :class="tool.enabled ? 'left-[21px]' : 'left-[2px]'"
+                            />
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>

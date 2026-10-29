@@ -46,6 +46,7 @@ import type {
   RequestExample,
   RequestHistory,
   ResponseExample,
+  Scenario,
   TestCase,
   TestCaseCategory,
   TestCaseStatus,
@@ -328,6 +329,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   /** 标签页标题：新建伪页签 > 草稿名 > 保存名 > method+path。 */
   const titleOf = (id: string): string => {
     if (isCreateTab(id)) return t('tabbar.createTab')
+    if (isScenarioTab(id)) {
+      return (
+        scenarioIndex.value.get(id.slice(SCENARIO_TAB_PREFIX.length))?.name ??
+        t('tabbar.scenarioTab')
+      )
+    }
     const d = drafts.value.get(id)
     if (d?.name) return d.name
     if (d) return `${d.method} ${d.path}`
@@ -362,7 +369,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!p) return null
     project.value = p
     restoreSessionBaseUrl()
-    await Promise.all([load(p.id, p), loadEnvironments()])
+    await Promise.all([load(p.id, p), loadEnvironments(), loadScenarios(p.id)])
     return p
   }
 
@@ -384,10 +391,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
    */
   async function reloadAfterOverwrite(): Promise<void> {
     if (!project.value) return
+    const pid = project.value.id
     const [p, f, e] = await Promise.all([
       api.getActiveProject(),
-      api.listFolders(project.value.id),
-      api.listEndpoints(project.value.id),
+      api.listFolders(pid),
+      api.listEndpoints(pid),
     ])
     project.value = p
     folders.value = f
@@ -398,6 +406,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if (!valid.has(id) && !isCreateTab(id)) closeTab(id)
     }
     await loadEnvironments()
+    await loadScenarios(pid)
   }
 
   /**
@@ -559,6 +568,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       histories.value = snap.histories
       historyOnlyCurrent.value = snap.historyOnlyCurrent
       loadError.value = null
+      void loadScenarios(p.id)
     } else {
       project.value = p
       openTabs.value = []
@@ -572,7 +582,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       histories.value = []
       historyOnlyCurrent.value = false
       loadError.value = null
-      await Promise.all([load(p.id, p), loadEnvironments()])
+      await Promise.all([load(p.id, p), loadEnvironments(), loadScenarios(p.id)])
     }
     upsertOpenTab(p.id, p.name)
   }
@@ -1318,6 +1328,91 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   /** 加载当前项目的环境列表 + 激活环境 + 全局变量 + 全局参数。 */
+  // ---------- 场景（集成链路测试） ----------
+  /** 场景页签前缀（内容区据此渲染场景编排视图而非接口编辑器）。 */
+  const SCENARIO_TAB_PREFIX = 'scenario:'
+
+  const scenarios = ref<Scenario[]>([])
+  const scenarioIndex = computed(
+    () => new Map(scenarios.value.map((s) => [s.id, s] as const)),
+  )
+
+  function isScenarioTab(id: string): boolean {
+    return id.startsWith(SCENARIO_TAB_PREFIX)
+  }
+
+  async function loadScenarios(pid: string): Promise<void> {
+    try {
+      scenarios.value = await api.listScenarios(pid)
+    } catch {
+      scenarios.value = []
+    }
+  }
+
+  /** 打开场景编排页（伪页签：scenario:{id}，不持久化编辑态）。 */
+  function openScenario(id: string): void {
+    const tabId = `${SCENARIO_TAB_PREFIX}${id}`
+    if (!openTabs.value.includes(tabId)) openTabs.value.push(tabId)
+    activeTabId.value = tabId
+  }
+
+  /** 新建场景（默认名，落库后打开编排页）。 */
+  async function createScenario(): Promise<Scenario | null> {
+    if (!project.value) return null
+    const now = new Date().toISOString()
+    const scenario: Scenario = {
+      id: crypto.randomUUID(),
+      project_id: project.value.id,
+      name: t('scenario.untitled'),
+      description: '',
+      sort_order: scenarios.value.length,
+      steps: [],
+      created_at: now,
+      updated_at: now,
+    }
+    try {
+      const saved = await api.saveScenario(scenario)
+      scenarios.value.push(saved)
+      return saved
+    } catch (err) {
+      toast.error(t('scenario.saveFail'), {
+        message: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
+  }
+
+  /** 保存场景（整体覆盖；本地列表同步）。 */
+  async function upsertScenario(scenario: Scenario): Promise<Scenario | null> {
+    try {
+      const saved = await api.saveScenario(scenario)
+      const idx = scenarios.value.findIndex((s) => s.id === saved.id)
+      if (idx === -1) scenarios.value.push(saved)
+      else scenarios.value[idx] = saved
+      return saved
+    } catch (err) {
+      toast.error(t('scenario.saveFail'), {
+        message: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
+  }
+
+  /** 删除场景（挂着的编排页签一并关闭）。 */
+  async function removeScenario(id: string): Promise<void> {
+    try {
+      await api.deleteScenario(id)
+      scenarios.value = scenarios.value.filter((s) => s.id !== id)
+      const tabId = `${SCENARIO_TAB_PREFIX}${id}`
+      if (openTabs.value.includes(tabId)) closeTab(tabId)
+      toast.success(t('scenario.deleted'))
+    } catch (err) {
+      toast.error(t('scenario.deleteFail'), {
+        message: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   async function loadEnvironments(): Promise<void> {
     const pid = project.value?.id
     if (!pid) return
@@ -2165,6 +2260,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     refreshAfterRestore,
     send,
     loadEnvironments,
+    loadScenarios,
+    scenarios,
+    scenarioIndex,
+    isScenarioTab,
+    openScenario,
+    createScenario,
+    upsertScenario,
+    removeScenario,
     setEnvironment,
     createEnvironment,
     updateEnvironment,

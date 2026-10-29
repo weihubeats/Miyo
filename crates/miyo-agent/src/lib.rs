@@ -23,6 +23,9 @@
 //! | POST | `/agent/curl` | 导入 cURL 为接口 |
 //! | GET  | `/agent/projects` | 项目列表（供 Agent 选择目标项目） |
 //! | GET  | `/agent/endpoints/{project_id}` | 项目下的接口列表 |
+//! | GET  | `/agent/scenarios?projectId=` | 场景列表（脚本协作） |
+//! | GET  | `/agent/scenarios/{id}` | 场景详情（步骤 + 接口配置 + 链路变量 + 项目变量） |
+//! | PUT  | `/agent/scenarios/{id}/script` | 写入 / 清除场景自定义脚本 |
 
 pub mod client;
 pub mod import;
@@ -31,5 +34,9 @@ pub mod server;
 pub mod token;
 
 pub use client::{default_data_dir, ControlClient};
-pub use server::{start, AgentEvent, AgentServer, AgentState};
+pub use server::{
+    start, AgentEvent, AgentServer, AgentState, McpToolDef, McpToolState,
+    SaveScenarioScriptRequest, SaveScenarioScriptResult, ScenarioDetail, ScenarioStepDetail,
+    ScenarioSummary, MCP_DISABLED_TOOLS_KEY, MCP_TOOLS,
+};
 pub use token::load_or_create_token;

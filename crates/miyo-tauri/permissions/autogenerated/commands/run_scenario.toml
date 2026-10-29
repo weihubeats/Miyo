@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-run-scenario"
+description = "Enables the run_scenario command without any pre-configured scope."
+commands.allow = ["run_scenario"]
+
+[[permission]]
+identifier = "deny-run-scenario"
+description = "Denies the run_scenario command without any pre-configured scope."
+commands.deny = ["run_scenario"]

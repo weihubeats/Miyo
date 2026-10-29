@@ -87,16 +87,22 @@ v0.0.10+ 安装包的二进制**不在 PATH**，推荐直接填 §3.1 表中绝�
 
 **Cursor** — Settings → MCP → Add Server，Command 填绝对路径 `/Applications/Miyo.app/Contents/MacOS/miyo-mcp`（macOS）或对应平台路径。
 
-配置后重启客户端 / 重载会话，工具列表出现 4 个工具即成功：
+配置后重启客户端 / 重载会话，工具列表出现 7 个工具即成功：
 
 | 工具 | 说明 |
 | --- | --- |
 | `save_curl` | 解析 cURL 并保存为接口（返回 endpointId） |
 | `list_projects` | 项目列表 |
 | `list_endpoints` | 项目下的接口列表（需 projectId） |
+| `list_scenarios` | 集成测试场景列表（projectId 可选） |
+| `get_scenario` | 场景详情：步骤 + 接口当前配置 + 链路变量 + 项目变量（AI 写脚本的完整上下文） |
+| `save_scenario_script` | 写入 / 清除场景自定义脚本（空串 = 清除） |
 | `agent_info` | 控制面地址与令牌路径 |
 
 之后对话里说「把这个 curl 存到 Miyo」即可；导入成功桌面端侧栏自动刷新并弹提示。
+场景脚本协作：让 AI 先 `get_scenario` 拿上下文（每步接口配置 + 链路变量 +
+base_url），再 `save_scenario_script` 写回——脚本在桌面端「场景 → 脚本」页签
+可见、可继续手改；应用内运行始终以手动步骤为准。
 
 ### 3.3 save_curl 参数说明
 
