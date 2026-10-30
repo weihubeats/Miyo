@@ -1,0 +1,9 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "extensions": [
+      { "ext": ".vue", "engine": "html" }
+    ]
+  }
+}
