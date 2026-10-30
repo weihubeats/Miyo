@@ -64,7 +64,7 @@ const t = locale.t
 
 .tool-hint {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

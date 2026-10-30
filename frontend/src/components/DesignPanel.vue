@@ -1006,7 +1006,7 @@ onBeforeUnmount(() => {
   padding: 2px 9px;
   border-radius: 6px;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -1041,7 +1041,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--warning);
 }
 
@@ -1142,7 +1142,7 @@ onBeforeUnmount(() => {
 }
 
 .fld-label {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -1247,7 +1247,7 @@ onBeforeUnmount(() => {
 }
 
 .json-state {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--success);
 }
 .json-state.bad {
@@ -1295,7 +1295,7 @@ onBeforeUnmount(() => {
 }
 
 .resp-count {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -1344,7 +1344,7 @@ onBeforeUnmount(() => {
 .resp-status {
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--success);
 }
 .resp-status.err {

@@ -590,7 +590,7 @@ const showExport = ref(false)
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
@@ -606,7 +606,7 @@ const showExport = ref(false)
 .auth-badge {
   padding: 2px 10px;
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--accent);
   background: var(--accent-tint);

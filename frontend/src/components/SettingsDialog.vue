@@ -43,6 +43,7 @@ import {
 } from '../composables/useAutoUpdate'
 import Modal from './ui/Modal.vue'
 import Icon, { type IconName } from './ui/Icon.vue'
+import Popconfirm from './ui/Popconfirm.vue'
 import CustomNumberInput from './ui/CustomNumberInput.vue'
 import CustomSelect from './ui/CustomSelect.vue'
 import { envBaseUrl } from '../utils/environment'
@@ -312,17 +313,21 @@ async function applyProxy(url: string | null): Promise<boolean> {
   }
 }
 
-/** 启用开关：关闭 → 直连；开启 → 沿用已有地址（为空则仅展开输入框）。 */
+/** 启用开关：关闭 → 直连；开启 → 沿用已有地址（为空则不落「开」态，聚焦输入框待配置）。 */
 async function toggleProxy(): Promise<void> {
   if (proxyEnabled.value) {
     proxyEnabled.value = false
     if (await applyProxy(null)) toast.success(t('settings.proxyDirect'))
     proxyTest.value = null
   } else {
-    proxyEnabled.value = true
-    if (proxyUrl.value.trim()) {
-      if (await applyProxy(proxyUrl.value.trim())) toast.success(t('settings.proxyEnabledToast'))
+    if (!proxyUrl.value.trim()) {
+      // 空地址不落「开」态：开关显示开启而后端仍直连，是状态与事实相反的误导。
+      // 展开输入框并提示，填好失焦（saveProxyUrl）校验通过后由用户再开启。
+      toast.warning(t('settings.proxyEmptyHint'), { duration: 6000 })
+      return
     }
+    proxyEnabled.value = true
+    if (await applyProxy(proxyUrl.value.trim())) toast.success(t('settings.proxyEnabledToast'))
   }
 }
 
@@ -662,6 +667,13 @@ async function onImportFile(event: Event): Promise<void> {
 // ---------- 日志查看 ----------
 const logFiles = ref<LogFile[]>([])
 const logSelected = ref<string>('')
+/** 下拉选项：文件名 + 大小（与原原生 option 文案一致）。 */
+const logFileOptions = computed(() =>
+  logFiles.value.map((f) => ({
+    value: f.name,
+    label: `${f.name}${t('settings.logSize', { v: (f.size_bytes / 1024).toFixed(1) })}`,
+  })),
+)
 const logContent = ref('')
 const logLoading = ref(false)
 /** 保留天数：已持久化值（change 同值跳过保存）。 */
@@ -1574,15 +1586,19 @@ const projectSummary = computed(() => {
                               >
                                 <Icon name="refresh" :size="12" />
                               </button>
-                              <button
-                                class="miyo-btn miyo-btn-sm miyo-btn-ghost text-zinc-500 hover:text-red-500 dark:text-zinc-400 dark:hover:text-red-400"
-                                type="button"
+                              <Popconfirm
                                 :title="t('settings.seqDeleteTitle')"
-                                :aria-label="t('settings.seqDeleteTitle')"
-                                @click="deleteSeq(c)"
+                                :confirm-text="t('common.delete')"
+                                @confirm="deleteSeq(c)"
                               >
-                                <Icon name="trash" :size="12" />
-                              </button>
+                                <button
+                                  class="miyo-btn miyo-btn-sm miyo-btn-ghost text-zinc-500 hover:text-red-500 dark:text-zinc-400 dark:hover:text-red-400"
+                                  type="button"
+                                  :aria-label="t('settings.seqDeleteTitle')"
+                                >
+                                  <Icon name="trash" :size="12" />
+                                </button>
+                              </Popconfirm>
                             </div>
                           </td>
                         </tr>
@@ -1819,15 +1835,13 @@ const projectSummary = computed(() => {
               </div>
 
               <div class="mb-3 flex items-center gap-2">
-                <select
+                <CustomSelect
                   v-model="logSelected"
-                  class="miyo-input miyo-input-sm max-w-60 flex-1"
-                  @change="loadLogTail"
-                >
-                  <option v-for="f in logFiles" :key="f.name" :value="f.name">
-                    {{ f.name }}{{ t('settings.logSize', { v: (f.size_bytes / 1024).toFixed(1) }) }}
-                  </option>
-                </select>
+                  :options="logFileOptions"
+                  size="sm"
+                  class="max-w-60 flex-1"
+                  @update:model-value="loadLogTail"
+                />
                 <button class="miyo-btn miyo-btn-sm" type="button" :disabled="logLoading" @click="loadLogTail">
                   <Icon name="refresh" :size="13" /> {{ logLoading ? t('common.loading') : t('common.refresh') }}
                 </button>

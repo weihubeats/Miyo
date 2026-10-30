@@ -238,7 +238,7 @@ function shortValue(v: string): string {
   color: var(--text-1);
 }
 .cp-group-count {
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
 }
 .cp-row {
@@ -246,7 +246,7 @@ function shortValue(v: string): string {
   align-items: baseline;
   gap: 8px;
   padding: 4px 10px 4px 16px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 .cp-row:hover {
   background: var(--bg-hover);
@@ -285,7 +285,7 @@ function shortValue(v: string): string {
   color: var(--info);
 }
 .cp-exp {
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
 }
 .cp-foot {

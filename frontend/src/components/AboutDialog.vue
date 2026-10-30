@@ -261,7 +261,7 @@ function skipVersion(): void {
   padding: 1px 9px;
   border-radius: 999px;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--accent);
   background: var(--accent-tint, rgba(168, 85, 247, 0.14));
 }
@@ -357,7 +357,7 @@ function skipVersion(): void {
   width: 100%;
   height: 6px;
   border-radius: 999px;
-  background: var(--bg-3, rgba(127, 127, 127, 0.2));
+  background: var(--bg-3);
   overflow: hidden;
 }
 
@@ -383,7 +383,7 @@ function skipVersion(): void {
 
 .a-update-status {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 

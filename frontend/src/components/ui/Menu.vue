@@ -321,7 +321,7 @@ defineExpose({ openAt, close })
   border-radius: 4px;
   background: var(--bg-hover);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   line-height: 1.3;
   color: var(--text-3);
 }
@@ -371,7 +371,7 @@ defineExpose({ openAt, close })
 .miyo-menu-confirm-hint {
   /* 与标题左缘对齐：徽章 22 + gap 8 */
   margin: 5px 0 0 30px;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   line-height: 1.4;
   color: var(--text-3);
 }

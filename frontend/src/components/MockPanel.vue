@@ -146,7 +146,7 @@ const others = (): MockRule[] =>
 }
 
 .mkp-sec-label {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -197,7 +197,7 @@ const others = (): MockRule[] =>
 
 .mkp-status {
   flex-shrink: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .mkp-status.on {
@@ -207,7 +207,7 @@ const others = (): MockRule[] =>
 .mkp-code {
   flex-shrink: 0;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

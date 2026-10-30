@@ -293,7 +293,7 @@ function shortTime(iso: string): string {
   background: transparent;
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   padding: 0 0 0 8px;
   cursor: pointer;
   transition: color var(--dur) var(--ease);
@@ -394,7 +394,7 @@ function shortTime(iso: string): string {
   border-style: solid;
   border-radius: var(--radius);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   font-weight: 700;
   line-height: 1.4;
   letter-spacing: 0.04em;
@@ -418,7 +418,7 @@ function shortTime(iso: string): string {
   padding: 1px 6px;
   border-radius: var(--radius);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;

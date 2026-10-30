@@ -182,7 +182,7 @@ async function sendScratch(): Promise<void> {
   padding: 1px 9px;
   border-radius: 999px;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 .sr-status.ok {

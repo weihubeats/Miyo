@@ -145,7 +145,7 @@ function guardClose(): boolean {
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--bg-3, rgba(127, 127, 127, 0.2));
+  background: var(--bg-3);
 }
 .rn-progress-bar {
   height: 100%;
@@ -166,7 +166,7 @@ function guardClose(): boolean {
 }
 .rn-status {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .rn-error {

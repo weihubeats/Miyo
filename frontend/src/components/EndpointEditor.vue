@@ -1443,8 +1443,10 @@ function onUrlKeydown(event: KeyboardEvent): void {
     event.stopPropagation()
     if (!sending.value) void send()
   } else if (event.key === 'Escape') {
+    // Esc = 收起（失焦），不清空：程序化赋值不进撤销栈，误触会静默丢整条路径；
+    // 清空只留给显式 ✕ 按钮（clearPath）。
     event.preventDefault()
-    if (draft.value) draft.value.path = ''
+    el.blur()
   }
 }
 
@@ -1518,6 +1520,7 @@ onUnmounted(() => {
           class="crumb-name"
           :placeholder="t('editor.endpointNamePh')"
           spellcheck="false"
+          maxlength="60"
           :title="t('editor.endpointNameHint')"
         />
       </span>
@@ -2034,7 +2037,7 @@ onUnmounted(() => {
   padding: 0 5px;
   border-radius: 999px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   line-height: 16px;
   text-align: center;
   color: var(--accent);
@@ -2269,7 +2272,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   text-align: right;
 }
 .base-url-manage {
@@ -2284,7 +2287,7 @@ onUnmounted(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-3);
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   line-height: 15px;
 }
 /* 「无环境」行的会话前缀重置入口：仅在值偏离内置默认时渲染 */
@@ -2482,7 +2485,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .req-loading-skel {

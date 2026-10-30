@@ -272,11 +272,15 @@ async function loadCounts(): Promise<void> {
     const { counts: nextCounts, latest: nextLatest } = aggregateProjectStats(stats)
     counts.value = nextCounts
     latestEndpoints.value = nextLatest
+    statsError.value = false
   } catch {
-    counts.value = {}
-    latestEndpoints.value = {}
+    // 失败保留旧值不清零（静默归零会让用户误以为数据丢失），并给出重试入口
+    statsError.value = true
   }
 }
+
+/** 统计加载失败标记（内联重试，避免静默归零误导「数据丢了」）。 */
+const statsError = ref(false)
 
 async function load(): Promise<void> {
   if (loading.value) return
@@ -537,7 +541,17 @@ useWindowDrag(topBarEl)
               <div class="stat-body">
                 <div class="hero-greet">
                   <p class="hero-title">{{ greeting }}</p>
-                  <p class="hero-sub">{{ t('projectlist.heroSub') }}</p>
+                  <p class="hero-sub">
+                    {{ t('projectlist.heroSub') }}
+                    <button
+                      v-if="statsError"
+                      class="stats-retry"
+                      type="button"
+                      @click="loadCounts"
+                    >
+                      <Icon name="refresh" :size="11" /> {{ t('projectlist.statsRetry') }}
+                    </button>
+                  </p>
                 </div>
                 <div class="hero-stats">
                   <div class="hero-stat">
@@ -613,7 +627,17 @@ useWindowDrag(topBarEl)
                   class="toolbar-filter-input"
                   :placeholder="t('projectlist.filterPh')"
                   spellcheck="false"
+                  @keydown.esc="search = ''"
                 />
+                <button
+                  v-if="search"
+                  class="toolbar-filter-clear"
+                  type="button"
+                  :aria-label="t('common.clearSearch')"
+                  @click="search = ''"
+                >
+                  <Icon name="x" :size="12" />
+                </button>
               </div>
               <CustomSelect
                 v-model="teamFilter"
@@ -695,14 +719,17 @@ useWindowDrag(topBarEl)
             </div>
           </div>
 
-          <!-- 底部 Dropzone：拖入文档直接导入，或点击按钮创建 / 选择文件 -->
+          <!-- 底部 Dropzone：拖入文档直接导入；点击任意处 / 选择文件按钮同样打开导入 -->
           <div
-            v-if="filtered.length && !loading"
+            v-if="!loading"
             ref="dropEl"
             class="add-card"
             :class="{ 'drop-active': dropActive }"
-            role="group"
+            role="button"
+            tabindex="0"
             :aria-label="t('projectlist.dropzoneAria')"
+            @click="droppedText = ''; showImport = true"
+            @keydown.enter="droppedText = ''; showImport = true"
           >
             <span class="add-icon">
               <Icon :name="dropActive ? 'download' : 'folder-plus'" :size="20" />
@@ -713,9 +740,17 @@ useWindowDrag(topBarEl)
                 {{ t('projectlist.dropHint') }}
               </template>
             </p>
+            <button
+              v-if="!dropActive"
+              class="miyo-btn miyo-btn-sm"
+              type="button"
+              @click.stop="droppedText = ''; showImport = true"
+            >
+              <Icon name="download" :size="13" /> {{ t('projectlist.pickFile') }}
+            </button>
           </div>
 
-          <div v-else-if="!filtered.length && !loading" class="dash-empty">
+          <div v-if="!filtered.length && !loading" class="dash-empty">
             <span class="empty-icon"><Icon name="folder" :size="30" /></span>
             <p class="empty-title">{{ search ? t('projectlist.noMatchTitle') : t('projectlist.emptyTitle') }}</p>
             <p class="empty-hint">
@@ -954,7 +989,7 @@ useWindowDrag(topBarEl)
 
 .hero-sub {
   margin: 3px 0 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -997,7 +1032,7 @@ useWindowDrag(topBarEl)
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
@@ -1014,7 +1049,7 @@ useWindowDrag(topBarEl)
 }
 
 .stat-sub {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -1245,6 +1280,45 @@ useWindowDrag(topBarEl)
   gap: 8px;
 }
 
+.toolbar-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 0;
+}
+
+.toolbar-filter-clear:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+.stats-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  border: none;
+  background: none;
+  color: var(--danger);
+  font-size: var(--fs-xxs);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.stats-retry:hover {
+  background: var(--bg-hover);
+}
+
 .toolbar-filter {
   /* w-60：固定宽度 */
   width: 240px;
@@ -1397,7 +1471,7 @@ useWindowDrag(topBarEl)
 }
 .team-badge {
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   font-family: var(--font-mono);
   color: var(--text-3);
   background: var(--bg-hover);

@@ -199,7 +199,7 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 999px;

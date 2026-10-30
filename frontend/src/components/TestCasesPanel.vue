@@ -537,7 +537,7 @@ watch(
 
 .tcp-count {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
 }
 .tcp-filter.active .tcp-count {
@@ -628,7 +628,7 @@ watch(
 .tcp-head {
   height: 30px;
   background: var(--bg-2);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   /* 表头不随内容滚动折断：固定列宽与数据行同源，避免「名称」被挤掉 */
   white-space: nowrap;
@@ -662,7 +662,7 @@ watch(
   width: 34px;
   flex-shrink: 0;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -702,7 +702,7 @@ watch(
   border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
   background: color-mix(in srgb, currentColor 12%, transparent);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   font-weight: 700;
   letter-spacing: 0.3px;
 }
@@ -745,7 +745,7 @@ watch(
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 .tcp-status-meta.tone-ok {
   color: var(--ok);

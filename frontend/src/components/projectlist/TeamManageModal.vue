@@ -232,7 +232,7 @@ async function removeTeam(team: Team): Promise<void> {
   color: var(--text-1);
 }
 .team-row-tag {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);

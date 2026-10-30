@@ -677,7 +677,7 @@ async function copyJson(): Promise<void> {
   gap: 4px;
   padding: 1px 6px;
   border-radius: 9999px;
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   font-weight: 500;
   line-height: 1.4;
 }

@@ -194,11 +194,11 @@ function shortTime(iso: string): string {
 }
 .simport-sub2 {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
 }
 .simport-exists {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   flex-shrink: 0;
 }
 .simport-import {

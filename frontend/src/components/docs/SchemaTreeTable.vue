@@ -258,7 +258,7 @@ function toggle(key: string, expandable: boolean): void {
   padding: 2px 6px;
   border-radius: 4px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   line-height: 1.6;
   border: 1px solid transparent;
   white-space: nowrap;
@@ -307,7 +307,7 @@ function toggle(key: string, expandable: boolean): void {
 
 .desc-example {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -316,7 +316,7 @@ function toggle(key: string, expandable: boolean): void {
   max-width: 320px;
 }
 .desc-hint {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

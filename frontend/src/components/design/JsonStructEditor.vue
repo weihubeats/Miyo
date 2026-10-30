@@ -362,7 +362,7 @@ const canAdd = computed(() => isContainer(root.value) || root.value.type === 'ob
   background: transparent;
   color: var(--text-2);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   cursor: pointer;
 }
 .jse-type:hover:not(:disabled) {

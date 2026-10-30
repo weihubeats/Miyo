@@ -532,7 +532,7 @@ function setAuthType(type: string): void {
 
 .auth-hint {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 

@@ -315,7 +315,7 @@ function gridStyle(): Record<string, string> | undefined {
   /* 表头带走 --bg-code（slate-50/深 #121318）：--bg-panel 改白后与数据行
      同色仅剩 border-bottom，恢复「白卡内浅灰表头带」的层次 */
   background: var(--bg-code);
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;

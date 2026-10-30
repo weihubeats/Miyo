@@ -86,7 +86,7 @@ function extract(): void {
 }
 
 .pv-count {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -96,7 +96,7 @@ function extract(): void {
   border: none;
   background: none;
   border-radius: var(--radius-sm);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   color: var(--text-2);
   cursor: pointer;

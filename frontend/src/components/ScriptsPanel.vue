@@ -110,7 +110,7 @@ const postResponse = computed({
 
 .script-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   line-height: 1.6;
   color: var(--text-3);
 }

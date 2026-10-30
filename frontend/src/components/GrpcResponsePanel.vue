@@ -291,7 +291,7 @@ function metaRows(metadata: [string, string][]): Array<{ key: string; value: str
   opacity: 0.75;
 }
 .grpc-meta {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
 }
 .method-chip {
@@ -309,7 +309,7 @@ function metaRows(metadata: [string, string][]): Array<{ key: string; value: str
 }
 .section-label {
   margin: 0 0 4px;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
   letter-spacing: 0.02em;
 }

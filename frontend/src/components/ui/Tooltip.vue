@@ -168,7 +168,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--overflow-tip-border);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   color: var(--overflow-tip-text);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   pointer-events: none;
   white-space: normal;

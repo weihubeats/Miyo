@@ -184,7 +184,7 @@ function onAction(item: ToastItem): void {
   background: var(--bg-hover);
   color: var(--text-1);
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   cursor: pointer;
   transition:

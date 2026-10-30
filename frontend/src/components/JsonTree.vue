@@ -442,11 +442,11 @@ defineExpose({ expandAll, collapseAll, matchCount })
   color: var(--tok-punct);
 }
 :deep(.jt-tok.jt-dots) {
-  color: #888;
+  color: var(--tok-gutter);
   font-style: italic;
 }
 :deep(.jt-tok.jt-meta) {
-  color: #888;
+  color: var(--tok-gutter);
   font-style: italic;
   font-size: var(--fs-xxs);
 }

@@ -100,7 +100,7 @@ const notesHtml = computed(() => renderMarkdownLite(props.notes))
   border-radius: 4px;
   background: color-mix(in srgb, var(--text-1) 8%, transparent);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 .rn-notes :deep(pre) {
   margin: 0 0 6px;

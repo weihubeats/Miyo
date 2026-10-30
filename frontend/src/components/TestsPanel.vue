@@ -136,7 +136,7 @@ function onCodeKeydown(e: KeyboardEvent): void {
 }
 
 .tp-hint {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 

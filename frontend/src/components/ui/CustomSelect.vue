@@ -412,7 +412,7 @@ defineExpose({ close })
   padding: 4px 12px 5px;
   margin-top: 4px;
   border-top: 1px solid color-mix(in srgb, var(--border-strong) 80%, transparent);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   font-weight: 500;
   color: var(--text-3);
   letter-spacing: 0.06em;

@@ -302,7 +302,7 @@ async function startExport(): Promise<void> {
   color: var(--text-1);
 }
 .scope-desc {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;

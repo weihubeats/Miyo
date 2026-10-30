@@ -233,7 +233,7 @@ async function fillFromMock(): Promise<void> {
 }
 
 .rep-count {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -257,7 +257,7 @@ async function fillFromMock(): Promise<void> {
   border-radius: 999px;
   background: var(--bg-card);
   color: var(--text-2);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   transition:
     color var(--dur) var(--ease),
@@ -277,7 +277,7 @@ async function fillFromMock(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 

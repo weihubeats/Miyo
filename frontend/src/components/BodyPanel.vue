@@ -739,7 +739,7 @@ defineExpose({
   height: 28px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -871,7 +871,7 @@ defineExpose({
 
 .binary-hint {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-3);
 }

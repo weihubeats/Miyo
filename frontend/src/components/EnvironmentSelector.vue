@@ -382,7 +382,7 @@ defineExpose({ openManager })
 .es-search-empty {
   padding: 10px 8px 2px;
   text-align: center;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -427,7 +427,7 @@ defineExpose({ openManager })
 /* URL 次级降噪：muted 灰 + mono，不与名称争视觉焦点 */
 .env-opt-url {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   line-height: 1.3;
   color: var(--text-3);
   min-width: 0;

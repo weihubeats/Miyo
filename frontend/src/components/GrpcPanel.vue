@@ -349,7 +349,7 @@ const streamBadge = computed(() => {
   min-width: 180px;
 }
 .grpc-label {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
   letter-spacing: 0.02em;
 }
@@ -392,11 +392,11 @@ const streamBadge = computed(() => {
   min-height: 24px;
 }
 .catalog-source {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
 }
 .catalog-error {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   color: var(--danger);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -404,7 +404,7 @@ const streamBadge = computed(() => {
   max-width: 60%;
 }
 .stream-badge {
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   padding: 1px 7px;
   border-radius: 999px;
   color: var(--grpc);
@@ -423,7 +423,7 @@ const streamBadge = computed(() => {
   gap: 8px;
 }
 .grpc-io {
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
   font-family: var(--font-mono, monospace);
   overflow: hidden;
@@ -454,7 +454,7 @@ const streamBadge = computed(() => {
 }
 .grpc-proto-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
 }
 .proto-list {
@@ -489,7 +489,7 @@ const streamBadge = computed(() => {
 }
 .proto-empty {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
   padding: 2px 6px;
 }

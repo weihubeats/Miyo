@@ -301,7 +301,7 @@ const listTitle = computed(() => t('mockrule.listTitle', { n: rules.value.length
 }
 
 .rule-meta {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 

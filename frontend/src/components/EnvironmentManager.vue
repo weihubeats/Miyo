@@ -1213,7 +1213,7 @@ async function remove(env: Environment): Promise<void> {
 
 .em-global-count {
   margin-left: auto;
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   color: var(--accent);
   background: var(--accent-tint);
   border-radius: 999px;
@@ -1228,7 +1228,7 @@ async function remove(env: Environment): Promise<void> {
 
 .em-global-soon {
   margin-left: auto;
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   letter-spacing: 0.04em;
   color: var(--text-3);
   border: 1px solid var(--border);
@@ -1297,7 +1297,7 @@ async function remove(env: Environment): Promise<void> {
 
 .em-row-url {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
   max-width: 70px;
   overflow: hidden;
@@ -1307,7 +1307,7 @@ async function remove(env: Environment): Promise<void> {
 }
 
 .em-row-active {
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   line-height: 1.6;
   color: var(--accent);
   background: var(--accent-tint);
@@ -1450,7 +1450,7 @@ async function remove(env: Environment): Promise<void> {
 }
 
 .em-section-hint {
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
 }
 
@@ -1466,7 +1466,7 @@ async function remove(env: Environment): Promise<void> {
   align-items: center;
   gap: 8px;
   padding: 2px 8px 6px;
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
   color: var(--text-3);
   text-transform: uppercase;

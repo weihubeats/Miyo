@@ -831,7 +831,7 @@ function onSplitterDblClick(): void {
 
 .drw-sec-title {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.5px;
   text-transform: uppercase;
@@ -946,7 +946,7 @@ function onSplitterDblClick(): void {
   border-radius: 5px;
   background: none;
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   cursor: pointer;
   transition:
@@ -993,7 +993,7 @@ function onSplitterDblClick(): void {
 
 .drw-body-warn {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--warning);
 }
 
@@ -1004,7 +1004,7 @@ function onSplitterDblClick(): void {
   border-radius: 6px;
   background: none;
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
   transition:
@@ -1115,7 +1115,7 @@ function onSplitterDblClick(): void {
 
 .drw-meta {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -1132,7 +1132,7 @@ function onSplitterDblClick(): void {
   border-radius: 6px;
   background: none;
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
   transition:

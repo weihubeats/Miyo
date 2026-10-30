@@ -165,7 +165,7 @@ function onKeydown(event: KeyboardEvent): void {
   padding: 0 5px;
   border-radius: 999px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
   line-height: 1;
   font-variant-numeric: tabular-nums;

@@ -186,7 +186,7 @@
 
   /* ---- 字体 ---- */
   --font-ui:
-    'Geist Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'HarmonyOS Sans SC',
     'Microsoft YaHei', sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', Consolas, ui-monospace, monospace,
@@ -200,6 +200,8 @@
   --tok-null: #56b6c2;
   --tok-punct: #abb2bf;
   --tok-gutter: #5c6370;
+  /* 弹层 / 次级面板底（此前两处组件靠 fallback 碰巧可用，现转正为 token） */
+  --bg-3: rgba(255, 255, 255, 0.06);
 
   /* ---- 行号槽几何（请求编辑器 / 响应树 / 响应行视图三处共用）----
    * 代码左缘 = 行号槽 + 折叠列，两侧同值，逐像素对齐：
@@ -347,6 +349,7 @@
   --tok-null: #986801;
   --tok-punct: #5c6670;
   --tok-gutter: #94a3b8;
+  --bg-3: rgba(0, 0, 0, 0.05);
 
   /* ---- 代码编辑区表面（JsonEditor 覆盖层，slate-50） ---- */
   --code-bg: #f8fafc;

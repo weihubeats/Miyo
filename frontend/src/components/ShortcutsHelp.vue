@@ -57,7 +57,7 @@ const contextual = [
 }
 .sc-group-title {
   margin: 0 0 6px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-3);
   text-transform: uppercase;

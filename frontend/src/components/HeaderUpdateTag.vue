@@ -184,7 +184,7 @@ onBeforeUnmount(() => {
 
 /* 火箭微亮呼吸：prefers-reduced-motion 由 style.css 全局兜底关闭 */
 .miyo-update-tag-icon {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   line-height: 1;
   animation: miyo-update-tag-glow 1.8s ease-in-out infinite;
 }

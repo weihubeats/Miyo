@@ -110,8 +110,24 @@ function clearApiSearch(): void {
 const SIDEBAR_MIN = 220
 const SIDEBAR_MAX = 520
 const SIDEBAR_DEFAULT = 300
+/** 侧栏宽度持久化键：与请求区高度等「用户布局偏好」同一策略（localStorage）。 */
+const SIDEBAR_WIDTH_KEY = 'miyo.sidebar-width'
 
-const sidebarWidth = ref(SIDEBAR_DEFAULT)
+function clampSidebarWidth(v: number): number {
+  return Math.min(Math.max(v, SIDEBAR_MIN), SIDEBAR_MAX)
+}
+
+function persistSidebarWidth(): void {
+  try {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(sidebarWidth.value)))
+  } catch {
+    // 存储不可用时静默：仅影响重启后的宽度恢复
+  }
+}
+
+const sidebarWidth = ref(
+  clampSidebarWidth(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || SIDEBAR_DEFAULT),
+)
 const sidebarResizing = ref(false)
 let sidebarDragging = false
 let resizeStartX = 0
@@ -139,6 +155,7 @@ function onSidebarResizeUp(): void {
   if (!sidebarDragging) return
   sidebarDragging = false
   sidebarResizing.value = false
+  persistSidebarWidth()
   document.body.style.userSelect = ''
   document.removeEventListener('mousemove', onSidebarResizeMove)
   document.removeEventListener('mouseup', onSidebarResizeUp)
@@ -156,6 +173,7 @@ function onSidebarKeydown(event: KeyboardEvent): void {
   else return
   event.preventDefault()
   sidebarWidth.value = Math.min(Math.max(next, SIDEBAR_MIN), SIDEBAR_MAX)
+  persistSidebarWidth()
 }
 
 // ---------- 侧栏页签：接口目录 / 请求历史 ----------
@@ -538,10 +556,22 @@ onBeforeUnmount(() => {
       <span class="tb-divider" aria-hidden="true"></span>
 
       <div class="tb-region tb-right">
-        <button ref="docsBtn" class="miyo-btn miyo-btn-sm tb-action" type="button" @click="openDocsMenu">
+        <button
+          ref="docsBtn"
+          class="miyo-btn miyo-btn-sm tb-action"
+          type="button"
+          aria-haspopup="menu"
+          @click="openDocsMenu"
+        >
           <Icon name="file" :size="13" /> {{ t('workspace.docs') }} <Icon name="chevron-down" :size="12" />
         </button>
-        <button ref="mockBtn" class="miyo-btn miyo-btn-sm tb-action" type="button" @click="openMockMenu">
+        <button
+          ref="mockBtn"
+          class="miyo-btn miyo-btn-sm tb-action"
+          type="button"
+          aria-haspopup="menu"
+          @click="openMockMenu"
+        >
           <span class="mock-dot" :class="{ on: mockAddress }"></span>
           Mock <Icon name="chevron-down" :size="12" />
         </button>

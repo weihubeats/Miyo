@@ -9,31 +9,33 @@
  * - 字重 400/500/700：全仓 font-medium 37 处 + 多个组件 font-weight 500，
  *   保留 500；600 不保留——CSS 字体匹配会回退到已有的 700 真字面（非合成加粗），
  *   标题仅轻微变粗，换来 2 个文件 / 约 57KB。
+ * - IBM Plex Sans（2026-10 自 Geist Sans 换型）：为技术型产品设计的字面，
+ *   小字号（11–13px 的密集 UI）可读性好、字形辨识度高；OFL 许可。
  *
  * 字体族名与 style.css 的 --font-ui / --font-mono 保持一致。
  */
 
-/* ---- Geist Sans（UI 正文字体） ---- */
+/* ---- IBM Plex Sans（UI 正文字体） ---- */
 @font-face {
-  font-family: 'Geist Sans';
+  font-family: 'IBM Plex Sans';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url('@fontsource/geist-sans/files/geist-sans-latin-400-normal.woff2') format('woff2');
+  src: url('@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Geist Sans';
+  font-family: 'IBM Plex Sans';
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url('@fontsource/geist-sans/files/geist-sans-latin-500-normal.woff2') format('woff2');
+  src: url('@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-500-normal.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Geist Sans';
+  font-family: 'IBM Plex Sans';
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url('@fontsource/geist-sans/files/geist-sans-latin-700-normal.woff2') format('woff2');
+  src: url('@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-700-normal.woff2') format('woff2');
 }
 
 /* ---- JetBrains Mono（输入框 / 代码字体） ---- */

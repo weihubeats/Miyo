@@ -178,7 +178,7 @@ async function onRetry(): Promise<void> {
   border-radius: 6px;
   background: var(--miyo-input-bg);
   border: 1px solid var(--miyo-border);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--miyo-text-secondary);
   white-space: pre-wrap;

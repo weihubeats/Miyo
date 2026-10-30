@@ -270,7 +270,7 @@ onBeforeUnmount(() => {
 
 .qv-env-url {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
   margin-left: auto;
   max-width: 180px;
@@ -334,7 +334,7 @@ onBeforeUnmount(() => {
 
 .qv-row-head {
   padding: 2px 12px 6px;
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
   color: var(--text-3);
   text-transform: uppercase;

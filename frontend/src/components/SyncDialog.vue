@@ -421,7 +421,7 @@ function shortRev(rev: string | null): string {
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -438,7 +438,7 @@ function shortRev(rev: string | null): string {
 .sync-meta {
   margin: 2px 0 0;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
 }
 .sync-del {
   border: none;
@@ -486,7 +486,7 @@ function shortRev(rev: string | null): string {
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   color: var(--text-3);
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   text-transform: none;
 }
 .sync-hint.soon {
@@ -500,7 +500,7 @@ function shortRev(rev: string | null): string {
 }
 .sync-field span {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
 }
 .sync-field input {
   padding: 6px 8px;
@@ -525,7 +525,7 @@ function shortRev(rev: string | null): string {
 .sync-hint {
   margin: 8px 0 0;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
 }
 .sync-preview,
 .sync-redact {

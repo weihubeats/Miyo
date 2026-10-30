@@ -930,7 +930,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   padding: 1px 8px;
   border-radius: 999px;
-  font-size: 10.5px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
   color: var(--warning);
   background: var(--warning-tint);
@@ -1095,7 +1095,7 @@ onUnmounted(() => {
 .rp-note {
   margin: 0;
   padding: 6px 12px 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--warning);
 }
 
@@ -1107,7 +1107,7 @@ onUnmounted(() => {
   border-top: 1px dashed var(--border);
   background: none;
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--accent);
   cursor: pointer;
 }
@@ -1123,7 +1123,7 @@ onUnmounted(() => {
   align-items: baseline;
   padding: 5px 12px;
   border-bottom: 1px dashed var(--border);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 .rp-header-row:last-child {
   border-bottom: none;
@@ -1164,7 +1164,7 @@ onUnmounted(() => {
 .rp-req-template {
   margin: 0;
   padding: 6px 12px 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   word-break: break-all;
   overflow-wrap: anywhere;
@@ -1180,7 +1180,7 @@ onUnmounted(() => {
   align-items: baseline;
   gap: 6px;
   padding: 10px 12px 2px;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1205,7 +1205,7 @@ onUnmounted(() => {
   border-radius: var(--radius-sm);
   background: var(--bg-panel);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   color: var(--text-2);
   white-space: pre-wrap;
@@ -1245,7 +1245,7 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   word-break: break-all;
 }
@@ -1259,7 +1259,7 @@ onUnmounted(() => {
 .rp-flag {
   padding: 1px 6px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
   color: var(--info);
   background: var(--info-tint, var(--accent-tint));

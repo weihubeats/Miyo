@@ -287,7 +287,7 @@ th.col-en {
   background: transparent;
   color: var(--text-2);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   transition: border-color var(--dur) var(--ease);
 }
