@@ -398,8 +398,14 @@ body {
   outline-offset: 1px;
 }
 
-/* ---- 减少动态效果：JS 计时器类动画由各自组件的媒体查询处理，
- * 此处一刀切关闭 CSS 动画/过渡（组件内的媒体查询可逐步清理）。 ---- */
+/* ---- 减少动态效果（分层策略）----
+ * 基线：全局 kill 装饰性 CSS 动画/过渡——进出场瞬变到末态，状态信息保留。
+ * 例外层（见「字体」段之前的 miyo-reduced-pulse）：状态承载动画（旋转
+ * spinner / 运行指示灯 / 骨架微光）改为低幅透明度脉冲——旋转被冻结成
+ * 静止箭头时，用户无法区分「进行中」与「卡死」。脉冲无位移无缩放，前庭
+ * 安全（WCAG 2.3.3）。JS 动画：图表已 animation:false；请求计时为文本，
+ * 天然合规。组件自带媒体查询继续生效，其 animation:none 被例外层的
+ * !important 覆盖为脉冲。 ---- */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -407,6 +413,34 @@ body {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- 例外层：状态承载动画在 reduce 下以低幅透明度脉冲保持「进行中」可感知 ---- */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes miyo-reduced-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+  /* 旋转 spinner（发送按钮 / 用例运行 / 导出菜单 / 抽屉 / 加载环）、
+   * gRPC 流运行指示灯、快捷键录制态、发送条脉冲、骨架条。 */
+  .btn-spinner,
+  .drw-spinner,
+  .tcp-spinner,
+  .ce-spin,
+  .req-loading-ring,
+  .req-progress::after,
+  .stream-dot,
+  .sc-key-btn.recording,
+  .bar-send.is-sending,
+  .sk-bar {
+    animation: miyo-reduced-pulse 1.6s ease-in-out infinite !important;
   }
 }
 
@@ -924,14 +958,4 @@ body.dragging-dnd {
   flex-shrink: 0;
 }
 
-/* ---- 动效偏好：系统开启减少动态时，压缩全部过渡/动画（无障碍合规） ---- */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
+/* 动效偏好：统一在「减少动态效果（分层策略）」基线块处理（:focus-visible 之后）。
