@@ -32,6 +32,7 @@ const showAbout = ref(false)
 /** 独立版本更新详情弹窗（顶部更新 Tag / 设置更新卡片 / 更新 toast 动作打开）。 */
 const showRelease = ref(false)
 let unlistenAbout: UnlistenFn | null = null
+let unlistenClose: UnlistenFn | null = null
 let stopAutoUpdate: (() => void) | null = null
 
 /** 设置更新行 → 打开关于弹窗（一键下载安装）。 */
@@ -100,12 +101,37 @@ onMounted(async () => {
   } catch {
     // 非 Tauri（浏览器预览）环境：忽略
   }
+
+  // 关窗兜底：存在未保存草稿时先确认（dialog ask），防误触 ⌘W / 关闭按钮
+  // 静默丢失编辑现场。确认放弃则 destroy() 直关（不再触发本回调）。
+  try {
+    if ('__TAURI_INTERNALS__' in window) {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      if (getCurrentWindow().label === 'main') {
+        const { ask } = await import('@tauri-apps/plugin-dialog')
+        unlistenClose = await getCurrentWindow().onCloseRequested(async (event) => {
+          const { useWorkspaceStore } = await import('./stores/workspace')
+          if (!useWorkspaceStore().hasDirtyDrafts()) return
+          event.preventDefault()
+          const quit = await ask(t('app.quitDirtyConfirm'), {
+            title: 'Miyo',
+            okLabel: t('app.quitDiscard'),
+            cancelLabel: t('common.cancel'),
+          })
+          if (quit) void getCurrentWindow().destroy()
+        })
+      }
+    }
+  } catch {
+    // 非 Tauri 或插件不可用：跳过兜底（页签/草稿已持久化，重启可恢复）
+  }
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('error', onWindowError)
   window.removeEventListener('unhandledrejection', onWindowRejection)
   unlistenAbout?.()
+  unlistenClose?.()
   stopAutoUpdate?.()
 })
 </script>

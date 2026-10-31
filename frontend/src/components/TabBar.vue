@@ -10,10 +10,12 @@
  * - 键盘：容器 role=tablist、页签 role=tab + roving tabindex，←/→ 与
  *   Home/End 切换，Enter/Space 激活，Delete 关闭（脏页签走既有确认）。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import Sortable from 'sortablejs'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useLocaleStore } from '../stores/locale'
 import { methodTone } from '../utils/methodTone'
+import { ensureSwapMounted } from '../utils/sortable'
 import Icon from './ui/Icon.vue'
 import IconButton from './ui/IconButton.vue'
 import Menu, { type MenuItem } from './ui/Menu.vue'
@@ -33,13 +35,50 @@ function close(id: string): void {
   store.closeTab(id)
 }
 
-/** 中键直接关闭（对标浏览器标签页；mousedown 阶段拦截以抑制中键自动滚动）。 */
-function onTabMouseDown(event: MouseEvent, id: string): void {
+/** 中键直接关闭（对标浏览器标签页；mousedown 阶段拦截以抑制中键自动滚动）。
+ *  经由关闭按钮同链路：干净页签立即关闭，脏页签弹 Popconfirm 二次确认——
+ *  原先中键直连 close()，会绕过未保存确认静默丢草稿。 */
+function onTabMouseDown(event: MouseEvent): void {
   if (event.button === 1) {
     event.preventDefault()
-    close(id)
+    closeViaButton(event.currentTarget as HTMLElement)
   }
 }
+
+// ---------- 页签拖拽排序 ----------
+// SortableJS + 落点按 DOM 顺序回写 store（与 ProjectList / ScenarioEditor 同款收口）。
+// filter 挡住关闭钮等交互元素；空标签拖拽期间 click 激活不受影响（fallback 容差）。
+const tabListEl = ref<HTMLElement | null>(null)
+let tabSortable: Sortable | null = null
+
+function initTabSortable(): void {
+  if (!tabListEl.value || tabSortable) return
+  ensureSwapMounted()
+  tabSortable = Sortable.create(tabListEl.value, {
+    animation: 150,
+    easing: 'cubic-bezier(0.2, 0, 0, 1)',
+    forceFallback: true,
+    fallbackTolerance: 3,
+    ghostClass: 'tab-ghost',
+    chosenClass: 'tab-chosen',
+    filter: 'button, input, select, textarea',
+    preventOnFilter: false,
+    onEnd: () => {
+      const root = tabListEl.value
+      if (!root) return
+      const ordered = [...root.querySelectorAll<HTMLElement>('.tab[data-tab-id]')]
+        .map((el) => el.dataset.tabId)
+        .filter((id): id is string => !!id)
+      store.reorderTabs(ordered)
+    },
+  })
+}
+
+onMounted(() => nextTick(initTabSortable))
+onBeforeUnmount(() => {
+  tabSortable?.destroy()
+  tabSortable = null
+})
 
 // ---------- 激活标签滚动到可视区 ----------
 const barEl = ref<HTMLElement | null>(null)
@@ -62,6 +101,7 @@ const tabs = computed(() =>
   store.openTabs.map((id) => ({
     id,
     create: store.isCreateTab(id),
+    scenario: store.isScenarioTab(id),
     method: store.draftOf(id)?.method ?? 'GET',
     title: store.titleOf(id),
     dirty: store.isDirty(id),
@@ -195,7 +235,7 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
 
 <template>
   <div ref="barEl" class="tab-bar">
-    <div class="tab-scroll" role="tablist" @keydown="onTabListKeydown">
+    <div ref="tabListEl" class="tab-scroll" role="tablist" @keydown="onTabListKeydown">
       <div
         v-for="tab in tabs"
         :key="tab.id"
@@ -206,11 +246,18 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
         :aria-selected="store.activeTabId === tab.id"
         :tabindex="tabbableId() === tab.id ? 0 : -1"
         @click="store.activeTabId = tab.id"
-        @mousedown="onTabMouseDown($event, tab.id)"
+        @mousedown="onTabMouseDown($event)"
         @keydown="onTabActivateKey($event, tab.id)"
       >
         <!-- 「新建」伪页签：无方法徽章，闪电指代“待创建” -->
         <span v-if="tab.create" class="tab-spark" aria-hidden="true"><Icon name="zap" :size="12" /></span>
+        <!-- 「场景」伪页签：主题色烧瓶徽章区分于接口方法页签 -->
+        <span
+          v-else-if="tab.scenario"
+          class="tab-scenario-tag"
+          :title="t('tabbar.scenarioTab')"
+          aria-hidden="true"
+        ><Icon name="beaker" :size="12" /></span>
         <span v-else class="method-tag" :class="methodTone(tab.method)">{{ tab.method }}</span>
         <span class="tab-title" v-tooltip-overflow="tab.title">{{ tab.title }}</span>
         <span v-if="tab.dirty" class="tab-dirty" :title="t('tabbar.unsaved')"><Icon name="dot" :size="8" /></span>
@@ -389,6 +436,19 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
   color: var(--accent);
 }
 
+/* 「场景」伪页签：主题色淡底烧瓶胶囊（区别于接口的方法色文字徽章） */
+.tab-scenario-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
 .tab-title {
   flex: 1;
   min-width: 0;
@@ -405,6 +465,14 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
 }
 .tab:hover .tab-dirty {
   opacity: 0;
+}
+
+/* 拖拽排序反馈（Sortable ghost/chosen） */
+.tab-ghost {
+  opacity: 0.4;
+}
+.tab-chosen {
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.3);
 }
 
 .tab-close {

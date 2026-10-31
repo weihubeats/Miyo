@@ -60,6 +60,14 @@ export const SHORTCUT_DEFAULTS: ShortcutDefault[] = [
     binding: { mod: 'ctrl', shift: false, alt: false, key: '/' },
   },
   {
+    id: 'workspace.quick-search',
+    group: 'shortcutGroup.common',
+    description: 'shortcut.quickSearch',
+    // 命令面板的意义就在「任何地方可唤起」：地址栏 / 表单聚焦时同样生效。
+    inInput: true,
+    binding: { mod: 'ctrl', shift: false, alt: false, key: 'k' },
+  },
+  {
     id: 'editor.save',
     group: 'shortcutGroup.editor',
     description: 'shortcut.save',

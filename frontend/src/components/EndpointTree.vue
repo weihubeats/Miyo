@@ -103,6 +103,8 @@ import { useWorkspaceStore } from '../stores/workspace'
 import { useToast } from '../composables/useToast'
 import { useLocaleStore } from '../stores/locale'
 import { escapeHtml } from '../utils/highlight'
+import { useTreeExpanded } from './endpointTreeExpanded'
+import { fuzzyScore } from '../utils/fuzzyMatch'
 import { methodTone } from '../utils/methodTone'
 import Icon from './ui/Icon.vue'
 import IconButton from './ui/IconButton.vue'
@@ -132,7 +134,13 @@ const toast = useToast()
 const locale = useLocaleStore()
 const t = locale.t
 
-const expanded = ref<Set<string>>(new Set())
+const { expanded, loadExpanded } = useTreeExpanded()
+// 项目切换（含首挂）加载持久化的展开集；递归实例重复调用幂等。
+watch(
+  () => store.project?.id,
+  (pid) => loadExpanded(pid ?? null),
+  { immediate: true },
+)
 
 /**
  * 行内编辑（新建文件夹 / 重命名）状态在整棵递归树中共享：
@@ -192,8 +200,11 @@ const searchActive = computed(() => query.value.length > 0)
 
 function endpointMatches(e: Endpoint): boolean {
   if (!searchActive.value) return true
-  const name = (e.name || e.path).toLowerCase()
-  return name.includes(query.value) || e.path.toLowerCase().includes(query.value)
+  const q = props.search.trim()
+  const name = e.name || e.path
+  // 模糊匹配（子序列 + 词首加分 + 多词过滤，utils/fuzzyMatch）；query 为连续
+  // 子串时 highlightName 仍按原逻辑加 <mark>，散点命中不高亮但不漏结果。
+  return fuzzyScore(name, q) != null || fuzzyScore(e.path, q) != null
 }
 
 /** 文件夹（或其子孙）是否包含匹配的接口（经索引取直属子项，逐层 O(子项数)）。 */
@@ -895,6 +906,7 @@ function onBatchMenuSelect(item: MenuItem): void {
         :data-dnd-id="f.id"
         @pointerdown="onRowPointerDown($event, 'folder', f.id)"
         @click="onFolderRowClick(f, $event)"
+        @contextmenu.prevent="openFolderMenu($event, f)"
       >
         <span
           class="tree-chevron"
@@ -969,6 +981,7 @@ function onBatchMenuSelect(item: MenuItem): void {
         :data-dnd-index="i"
         @pointerdown="onRowPointerDown($event, 'endpoint', e.id)"
         @click="onEndpointRowClick(e, i, $event)"
+        @contextmenu.prevent="openEndpointMenu($event, e)"
       >
         <template v-if="editing?.kind === 'rename-endpoint' && editing.id === e.id">
           <input

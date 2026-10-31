@@ -28,6 +28,7 @@ import CreatePanel, { type CreateActionKey } from '../components/CreatePanel.vue
 import CreateChoicePage from '../components/CreateChoicePage.vue'
 import Modal from '../components/ui/Modal.vue'
 import ShortcutsHelp from '../components/ShortcutsHelp.vue'
+import QuickSearch from '../components/QuickSearch.vue'
 import TabBar from '../components/TabBar.vue'
 import Tabs, { type TabItem } from '../components/ui/Tabs.vue'
 import Tooltip from '../components/ui/Tooltip.vue'
@@ -79,7 +80,19 @@ useShortcuts([
   shortcutDef('workspace.shortcuts-help', () => {
     showShortcuts.value = true
   }),
+  shortcutDef('workspace.quick-search', () => {
+    quickSearchOpen.value = true
+  }),
 ])
+
+// ---------- 全局命令面板（⌘K） ----------
+const quickSearchOpen = ref(false)
+
+/** 面板动作分发：设置 / Mock 依赖本视图的弹窗与忙标志状态。 */
+function onQuickAction(key: 'open-settings' | 'toggle-mock'): void {
+  if (key === 'open-settings') showSettings.value = true
+  else if (key === 'toggle-mock') void toggleMock()
+}
 
 /**
  * 侧栏搜索：输入即时回显（v-model），过滤词经 200ms 防抖下发。
@@ -814,6 +827,10 @@ onBeforeUnmount(() => {
       @applied="onSyncApplied"
     />
     <ShortcutsHelp :open="showShortcuts" @update:open="showShortcuts = $event" />
+    <QuickSearch
+      v-model:open="quickSearchOpen"
+      @action="onQuickAction"
+    />
   </div>
 </template>
 

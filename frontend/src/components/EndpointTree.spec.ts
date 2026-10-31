@@ -40,6 +40,9 @@ function folder(id: string, name: string, parentId: string | null): Folder {
 }
 
 async function mountTree() {
+  // 展开态为模块级共享（跨用例存活）：每例复位避免串现场
+  ;(globalThis as { __resetTreeExpanded?: () => void }).__resetTreeExpanded?.()
+  localStorage.removeItem('miyo.tree-expanded.proj-test-1')
   setActivePinia(createPinia())
   // 文案断言锁定中文（jsdom 默认语言为英文，跟随系统会解析出英文）
   useLocaleStore().setMode('zh')
@@ -107,6 +110,8 @@ describe('EndpointTree：行间无点击死区', () => {
 describe('EndpointTree：整行可点击（文本外空白也响应）', () => {
   async function mountWithEndpoint() {
     document.body.innerHTML = ''
+    ;(globalThis as { __resetTreeExpanded?: () => void }).__resetTreeExpanded?.()
+    localStorage.removeItem('miyo.tree-expanded.proj-test-1')
     setActivePinia(createPinia())
     useLocaleStore().setMode('zh')
     const store = useWorkspaceStore()
@@ -183,6 +188,8 @@ describe('EndpointTree：整行可点击（文本外空白也响应）', () => {
 describe('EndpointTree：ARIA 树语义 + 键盘导航', () => {
   async function mountKeyboardTree() {
     document.body.innerHTML = ''
+    ;(globalThis as { __resetTreeExpanded?: () => void }).__resetTreeExpanded?.()
+    localStorage.removeItem('miyo.tree-expanded.proj-test-1')
     setActivePinia(createPinia())
     // 文案断言锁定中文（jsdom 默认语言为英文，跟随系统会解析出英文）
     useLocaleStore().setMode('zh')

@@ -24,6 +24,7 @@ function makeStore() {
     draftOf: (id: string) => ({ method: 'GET', id }),
     titleOf: (id: string) => (id.startsWith('create:') ? '新建…' : `未命名接口 ${id}`),
     isCreateTab: (id: string) => id.startsWith('create:'),
+    isScenarioTab: (id: string) => id.startsWith('scenario:'),
     isDirty: vi.fn((_id: string) => false),
     closeTab: vi.fn(),
     closeOtherTabs: vi.fn(),
