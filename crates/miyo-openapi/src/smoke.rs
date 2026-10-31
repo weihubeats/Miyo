@@ -305,6 +305,7 @@ mod tests {
             request_id: ep_id,
             name: name.to_string(),
             category: category.to_string(),
+            folder: String::new(),
             method: HttpMethod::GET,
             url_path: "/api/users/{id}".to_string(),
             path_variables: vec![KeyValue::new("id", "1")],

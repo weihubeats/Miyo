@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-rename-test-case-folder"
+description = "Enables the rename_test_case_folder command without any pre-configured scope."
+commands.allow = ["rename_test_case_folder"]
+
+[[permission]]
+identifier = "deny-rename-test-case-folder"
+description = "Denies the rename_test_case_folder command without any pre-configured scope."
+commands.deny = ["rename_test_case_folder"]

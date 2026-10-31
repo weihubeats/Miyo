@@ -252,6 +252,7 @@ describe('TestCasesPanel', () => {
         d.request,
         '/funds/transfer',
         'POST',
+        '',
       )
     })
   })

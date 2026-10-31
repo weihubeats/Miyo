@@ -63,6 +63,194 @@ const emptyDescription = computed(() =>
   cases.value.length && keyword.value.trim() ? t('cases.noMatchHint') : t('cases.emptyHint'),
 )
 
+// ---------- 文件夹分组 ----------
+/** 分组渲染模型：命名文件夹按组内最早创建时间排序（发现序），未分组殿后。 */
+const groups = computed<{ name: string; cases: TestCase[]; start: number }[]>(() => {
+  const named = new Map<string, TestCase[]>()
+  const ungrouped: TestCase[] = []
+  for (const c of filtered.value) {
+    const f = c.folder ?? ''
+    if (f) {
+      const arr = named.get(f)
+      if (arr) arr.push(c)
+      else named.set(f, [c])
+    } else {
+      ungrouped.push(c)
+    }
+  }
+  const namedArr = [...named.entries()].map(([name, cs]) => ({ name, cases: cs, start: 0 }))
+  namedArr.sort((a, b) => {
+    const ta = Math.min(...a.cases.map((c) => Number(new Date(c.created_at))))
+    const tb = Math.min(...b.cases.map((c) => Number(new Date(c.created_at))))
+    return ta - tb || a.name.localeCompare(b.name)
+  })
+  // 新建尚未有用例的分组（组件态）排在实组之后、未分组之前
+  for (const name of pendingFolders.value) {
+    if (!namedArr.some((g) => g.name === name)) namedArr.push({ name, cases: [], start: 0 })
+  }
+  let total = 0
+  for (const g of namedArr) {
+    g.start = total
+    total += g.cases.length
+  }
+  if (ungrouped.length) namedArr.push({ name: '', cases: ungrouped, start: total })
+  return namedArr
+})
+
+/** 折叠态（按文件夹名；切接口清空）。 */
+const collapsedFolders = ref<Set<string>>(new Set())
+
+function toggleGroup(name: string): void {
+  const next = new Set(collapsedFolders.value)
+  if (next.has(name)) next.delete(name)
+  else next.add(name)
+  collapsedFolders.value = next
+}
+
+/** 现有文件夹清单（新建 / 编辑弹窗的 datalist 建议）。 */
+const folderNames = computed<string[]>(() => {
+  const out: string[] = []
+  for (const c of cases.value) {
+    const f = c.folder ?? ''
+    if (f && !out.includes(f)) out.push(f)
+  }
+  for (const f of pendingFolders.value) {
+    if (!out.includes(f)) out.push(f)
+  }
+  return out
+})
+
+// 分组重命名（行内编辑）
+const renamingFolder = ref<string | null>(null)
+const renameText = ref('')
+
+/** 进入行内重命名；name 允许空串（未分组）。 */
+function startFolderRename(name: string): void {
+  renamingFolder.value = name
+  renameText.value = name
+}
+
+async function commitFolderRename(): Promise<void> {
+  // renamingFolder 为 null = 未在编辑；空串是合法键（未分组）
+  if (renamingFolder.value === null || !props.draft) return
+  const oldName = renamingFolder.value
+  const next = renameText.value.trim()
+  renamingFolder.value = null
+  if (!next || next === oldName) return
+  if (oldName === '') {
+    // 未分组 → 命名：整批未分组用例归入新名
+    const ids = (store.testCases.get(props.draft.id) ?? [])
+      .filter((c) => !(c.folder ?? ''))
+      .map((c) => c.id)
+    if (ids.length && (await store.setTestCaseFolder(props.draft.id, ids, next))) {
+      toast.success(t('cases.folderRenamed'))
+    }
+    return
+  }
+  // 组件态空分组：直接改 Set，不走 IPC
+  if (pendingFolders.value.has(oldName) && !groups.value.some((g) => g.name === oldName && g.cases.length)) {
+    const nextSet = new Set(pendingFolders.value)
+    nextSet.delete(oldName)
+    nextSet.add(next)
+    pendingFolders.value = nextSet
+    return
+  }
+  const ok = await store.renameTestCaseFolder(props.draft.id, oldName, next)
+  if (ok) {
+    collapsedFolders.value = new Set(
+      [...collapsedFolders.value].map((n) => (n === oldName ? next : n)),
+    )
+  }
+}
+
+// 分组解散（组内用例移至未分组）
+const groupMenuEl = ref<InstanceType<typeof Menu> | null>(null)
+const groupMenuTarget = ref<{ name: string; cases: TestCase[] } | null>(null)
+
+function openGroupMenu(event: MouseEvent, g: { name: string; cases: TestCase[] }): void {
+  groupMenuTarget.value = { name: g.name, cases: g.cases }
+  const items: MenuItem[] = [
+    { key: 'add-case', label: t('cases.addCase'), icon: 'plus' },
+    // 未分组的「重命名」= 命名该分组（整批用例归入新名）
+    { key: 'rename', label: t('cases.renameFolder'), icon: 'pencil', dividerBefore: true },
+  ]
+  if (g.name) {
+    items.push({
+      key: 'dissolve',
+      label: t('cases.dissolveFolder'),
+      icon: 'minus',
+      danger: true,
+      confirm: t('cases.dissolveConfirm', { name: g.name, n: g.cases.length }),
+    })
+  }
+  groupMenuEl.value?.openAt(event.currentTarget as HTMLElement, items, 'left')
+}
+
+async function onGroupMenuSelect(item: MenuItem): Promise<void> {
+  const g = groupMenuTarget.value
+  const d = props.draft
+  if (!g || !d) return
+  if (item.key === 'rename') startFolderRename(g.name)
+  if (item.key === 'add-case') openCreate(g.name)
+  if (item.key === 'dissolve') {
+    if (pendingFolders.value.has(g.name) && !g.cases.length) {
+      const next = new Set(pendingFolders.value)
+      next.delete(g.name)
+      pendingFolders.value = next
+    } else if (await store.dissolveTestCaseFolder(d.id, g.name)) {
+      pendingFolders.value = new Set([...pendingFolders.value].filter((n) => n !== g.name))
+      toast.success(t('cases.folderDissolved'))
+    }
+  }
+}
+
+async function onGroupMenuConfirm(item: MenuItem): Promise<void> {
+  const g = groupMenuTarget.value
+  const d = props.draft
+  if (!g || !d || item.key !== 'dissolve') return
+  if (pendingFolders.value.has(g.name) && !g.cases.length) {
+    const next = new Set(pendingFolders.value)
+    next.delete(g.name)
+    pendingFolders.value = next
+  } else if (await store.dissolveTestCaseFolder(d.id, g.name)) {
+    pendingFolders.value = new Set([...pendingFolders.value].filter((n) => n !== g.name))
+    toast.success(t('cases.folderDissolved'))
+  }
+}
+
+// 分组运行（复用集合运行链路，folder 过滤；可独立取消）
+const groupRun = ref<{ name: string; runId: string; done: number; total: number } | null>(null)
+
+async function runGroup(name: string): Promise<void> {
+  const d = props.draft
+  if (!d || runningAll.value || groupRun.value) return
+  groupRun.value = { name, runId: crypto.randomUUID(), done: 0, total: 0 }
+  try {
+    const r = await store.runAllTestCases(d.id, {
+      runId: groupRun.value.runId,
+      folder: name,
+      onProgress: (done, total) => {
+        if (groupRun.value?.name === name) groupRun.value = { ...groupRun.value, done, total }
+      },
+    })
+    toast[r.success === r.total ? 'success' : 'info'](
+      t('cases.runAllDone', { ok: r.success, total: r.total }),
+    )
+  } catch (err) {
+    toast.error(t('cases.runAllFail'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  } finally {
+    if (groupRun.value?.name === name) groupRun.value = null
+  }
+}
+
+function cancelGroupRun(): void {
+  if (!groupRun.value) return
+  void store.cancelAllTestCases(groupRun.value.runId)
+  toast.info(t('cases.cancelling'))
+}
+
 /** 分类计数（全部 (N) + 各分类）：单遍聚合（原来每分类 filter 一遍，O(5N)）。 */
 const counts = computed<Record<FilterKey, number>>(() => {
   const all: Record<FilterKey, number> = {
@@ -82,20 +270,77 @@ const counts = computed<Record<FilterKey, number>>(() => {
 // ---------- 新建 / 编辑 ----------
 const modalOpen = ref(false)
 const editingCase = ref<TestCase | null>(null)
+/** 新建弹窗预填的文件夹（分组头「+」/ 工具栏新建文件夹带入）。 */
+const modalFolder = ref('')
 
-function openCreate(): void {
+function openCreate(folder = ''): void {
   editingCase.value = null
+  modalFolder.value = folder
   modalOpen.value = true
 }
 
-async function onModalSubmit(payload: { name: string; category: TestCaseCategory }): Promise<void> {
+// ---------- 新建文件夹 ----------
+/** 行内新建：Enter 即建（空分组先挂在组件态，加入用例后由用例数据承载）。 */
+const creatingFolder = ref(false)
+const newFolderName = ref('')
+
+function startCreateFolder(): void {
+  creatingFolder.value = true
+  newFolderName.value = ''
+}
+
+function cancelCreateFolder(): void {
+  creatingFolder.value = false
+  newFolderName.value = ''
+}
+
+/** 焦点移出新建行（点击行外区域）才自动提交；行内按钮点击不触发。 */
+function onCreateRowFocusout(event: FocusEvent): void {
+  const row = event.currentTarget as HTMLElement
+  if (row.contains(event.relatedTarget as Node)) return
+  commitCreateFolder()
+}
+
+function commitCreateFolder(): void {
+  const name = newFolderName.value.trim()
+  creatingFolder.value = false
+  if (!name) return
+  // 重名 → 直接展开该组并弹「添加用例」（预填此分组）
+  openCreate(name)
+  if (!folderNames.value.includes(name) && !pendingFolders.value.has(name)) {
+    pendingFolders.value = new Set(pendingFolders.value).add(name)
+  }
+}
+
+/** 尚无用例支撑的新建分组（组件态；加入用例后转由用例数据承载）。 */
+const pendingFolders = ref<Set<string>>(new Set())
+
+async function onModalSubmit(payload: {
+  name: string
+  category: TestCaseCategory
+  folder: string
+}): Promise<void> {
   const d = props.draft
   if (!d) return
   if (editingCase.value) {
-    const ok = await store.renameTestCase(d.id, editingCase.value.id, payload.name, payload.category)
+    const ok = await store.renameTestCase(
+      d.id,
+      editingCase.value.id,
+      payload.name,
+      payload.category,
+      payload.folder,
+    )
     if (ok) toast.success(t('cases.updated'))
   } else {
-    await store.saveTestCase(d.id, payload.name, payload.category, d.request, d.path, d.method)
+    await store.saveTestCase(
+      d.id,
+      payload.name,
+      payload.category,
+      d.request,
+      d.path,
+      d.method,
+      payload.folder,
+    )
   }
 }
 
@@ -214,7 +459,7 @@ async function saveDrawerPayload(payload: {
     bodyType: payload.bodyType,
     bodyContent: payload.bodyContent,
   })
-  const ok = await store.renameTestCase(d.id, c.id, payload.name, payload.category)
+  const ok = await store.renameTestCase(d.id, c.id, payload.name, payload.category, c.folder ?? '')
   if (ok) toast.success(t('cases.saved'))
 }
 
@@ -308,6 +553,11 @@ watch(
     filter.value = '全部'
     keyword.value = ''
     selectedId.value = null
+    collapsedFolders.value = new Set()
+    renamingFolder.value = null
+    groupRun.value = null
+    pendingFolders.value = new Set()
+    creatingFolder.value = false
   },
 )
 </script>
@@ -361,13 +611,16 @@ watch(
         >
           <Icon name="download" :size="13" /> {{ t('cases.exportSmoke') }}
         </button>
-        <button class="miyo-btn miyo-btn-sm" type="button" @click="openCreate">
+        <button class="miyo-btn miyo-btn-sm" type="button" @click="startCreateFolder">
+          <Icon name="folder-plus" :size="13" /> {{ t('cases.newFolder') }}
+        </button>
+        <button class="miyo-btn miyo-btn-sm" type="button" @click="openCreate()">
           <Icon name="plus" :size="13" /> {{ t('cases.addCase') }}
         </button>
         <button
           class="miyo-btn miyo-btn-sm miyo-btn-primary"
           type="button"
-          :disabled="!cases.length || runningAll"
+          :disabled="!cases.length || runningAll || !!groupRun"
           @click="runAll"
         >
           <Icon name="play" :size="13" />
@@ -390,8 +643,36 @@ watch(
       </div>
     </div>
 
-    <!-- 用例表格 -->
-    <div v-if="filtered.length" class="tcp-table">
+    <!-- 行内新建文件夹：Enter / ✓ 确认，Esc / ✕ 取消（空态同样可用） -->
+    <div v-if="creatingFolder" class="tcp-create-row" @focusout="onCreateRowFocusout">
+      <Icon name="folder-plus" :size="13" class="tcp-create-icon" />
+      <input
+        v-model="newFolderName"
+        v-focus-end
+        class="tcp-create-input"
+        type="text"
+        :placeholder="t('cases.newFolderPh')"
+        spellcheck="false"
+        @keyup.enter="commitCreateFolder"
+        @keydown.esc.prevent.stop="cancelCreateFolder"
+      />
+      <IconButton
+        name="check"
+        :size="14"
+        class="tcp-create-confirm"
+        :title="t('common.confirm')"
+        @click="commitCreateFolder"
+      />
+      <IconButton
+        name="x"
+        :size="14"
+        :title="t('common.cancel')"
+        @click="cancelCreateFolder"
+      />
+    </div>
+
+    <!-- 用例表格（按文件夹分组：命名组按发现序，未分组殿后；可折叠） -->
+    <div v-if="filtered.length || pendingFolders.size" class="tcp-table">
       <div class="tcp-row tcp-head">
         <span class="tcp-col-idx">#</span>
         <span class="tcp-col-name">{{ t('cases.colName') }}</span>
@@ -399,14 +680,90 @@ watch(
         <span class="tcp-col-status">{{ t('cases.colResult') }}</span>
         <span class="tcp-col-ops">{{ t('cases.colOps') }}</span>
       </div>
-      <div
-        v-for="(c, i) in filtered"
-        :key="c.id"
-        class="tcp-row tcp-body-row"
-        :class="{ 'is-selected': selectedId === c.id }"
-        @click="selectRow(c)"
-      >
-        <span class="tcp-col-idx">{{ i + 1 }}</span>
+      <template v-for="g in groups" :key="g.name || '__ungrouped__'">
+        <!-- 分组头：折叠 + 名称（行内重命名）+ 计数 + 分组运行 + 操作菜单 -->
+        <div class="tcp-group-head" :class="{ 'is-collapsed': collapsedFolders.has(g.name) }">
+          <button
+            class="tcp-group-toggle"
+            type="button"
+            :aria-expanded="!collapsedFolders.has(g.name)"
+            @click="toggleGroup(g.name)"
+          >
+            <Icon
+              name="chevron-right"
+              :size="13"
+              class="tcp-group-chevron"
+              :class="{ open: !collapsedFolders.has(g.name) }"
+            />
+            <Icon :name="g.name ? 'folder-open' : 'list'" :size="13" class="tcp-group-icon" />
+            <input
+              v-if="renamingFolder === g.name"
+              v-model="renameText"
+              v-focus-end
+              class="tcp-group-rename"
+              type="text"
+              :placeholder="g.name ? undefined : t('cases.newFolderPh')"
+              spellcheck="false"
+              @keyup.enter="commitFolderRename"
+              @blur="commitFolderRename"
+              @click.stop
+              @keydown.esc.stop="renamingFolder = null"
+            />
+            <span
+              v-else
+              class="tcp-group-name"
+              :title="g.name ? `${g.name}（${t('cases.renameHint')}）` : t('cases.renameFolder')"
+              @dblclick.stop="startFolderRename(g.name)"
+            >
+              {{ g.name ? g.name : t('cases.ungrouped') }}
+            </span>
+            <span class="tcp-group-count">{{ g.cases.length }}</span>
+          </button>
+          <div class="tcp-group-actions">
+            <template v-if="groupRun?.name === g.name">
+              <span class="tcp-group-progress">
+                {{ t('cases.runningProgress', { done: groupRun.done, total: groupRun.total }) }}
+              </span>
+              <IconButton name="x" :size="13" :title="t('common.cancel')" @click="cancelGroupRun" />
+            </template>
+            <template v-else>
+              <IconButton
+                name="plus"
+                :size="13"
+                :title="t('cases.addCaseTo', { name: g.name || t('cases.ungrouped') })"
+                @click="openCreate(g.name)"
+              />
+              <IconButton
+                name="play"
+                :size="13"
+                :title="t('cases.runGroup')"
+                :disabled="runningAll || !!groupRun || !g.cases.length"
+                @click="runGroup(g.name)"
+              />
+              <IconButton
+                name="more-horizontal"
+                :size="13"
+                :title="t('common.moreActions')"
+                @click="openGroupMenu($event, g)"
+              />
+            </template>
+          </div>
+        </div>
+        <template v-if="!collapsedFolders.has(g.name)">
+          <div v-if="!g.cases.length" class="tcp-group-empty">
+            {{ t('cases.groupEmpty') }}
+            <button class="tcp-group-empty-add" type="button" @click="openCreate(g.name)">
+              <Icon name="plus" :size="11" /> {{ t('cases.addCase') }}
+            </button>
+          </div>
+          <div
+            v-for="(c, j) in g.cases"
+            :key="c.id"
+            class="tcp-row tcp-body-row"
+            :class="{ 'is-selected': selectedId === c.id }"
+            @click="selectRow(c)"
+          >
+            <span class="tcp-col-idx">{{ g.start + j + 1 }}</span>
         <button class="tcp-col-name tcp-name-btn" type="button" :title="t('cases.rowTitle', { name: c.name })" @click="openDrawer(c)">
           <span class="tcp-method" :class="methodTextTone(c.method)">{{ c.method }}</span>
           <span class="tcp-name-text">{{ c.name }}</span>
@@ -448,9 +805,11 @@ watch(
           />
         </span>
       </div>
+        </template>
+      </template>
     </div>
     <EmptyState
-      v-else
+      v-else-if="!pendingFolders.size"
       icon="list"
       compact
       :title="emptyTitle"
@@ -462,6 +821,8 @@ watch(
       :title="editingCase ? t('cases.editTitle') : t('testcase.title')"
       :name="editingCase?.name ?? ''"
       :category="editingCase?.category ?? '正向'"
+      :folder="editingCase ? editingCase.folder ?? '' : modalFolder"
+      :folders="folderNames"
       @update:open="modalOpen = $event"
       @submit="onModalSubmit"
     />
@@ -483,6 +844,7 @@ watch(
     />
 
     <Menu ref="menuEl" @select="onMenuSelect" @confirm="onMenuConfirm" />
+    <Menu ref="groupMenuEl" @select="onGroupMenuSelect" @confirm="onGroupMenuConfirm" />
   </div>
 </template>
 
@@ -799,4 +1161,174 @@ watch(
   align-items: center;
   gap: 6px;
 }
+
+/* ---- 文件夹分组 ---- */
+.tcp-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  min-width: 0;
+}
+
+.tcp-group-head:first-of-type {
+  border-top: none;
+}
+
+.tcp-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  border: none;
+  background: none;
+  color: var(--text-1);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.tcp-group-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.tcp-group-chevron {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--dur) var(--ease);
+}
+
+.tcp-group-chevron.open {
+  transform: rotate(90deg);
+}
+
+.tcp-group-icon {
+  flex: none;
+  color: var(--text-3);
+}
+
+.tcp-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tcp-group-rename {
+  min-width: 0;
+  flex: 1;
+  max-width: 280px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: var(--fs-xs);
+  outline: none;
+}
+
+.tcp-group-count {
+  flex: none;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+  background: var(--bg-hover);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.tcp-group-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.tcp-group-progress {
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ---- 行内新建文件夹：与表格行同语的紧凑卡片，不做全宽横幅 ---- */
+.tcp-create-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  min-width: 340px;
+  max-width: 60%;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+
+.tcp-create-icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.tcp-create-input {
+  flex: 1;
+  min-width: 160px;
+  max-width: 260px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: var(--fs-xs);
+  outline: none;
+}
+
+.tcp-create-input:focus {
+  border-color: var(--accent);
+}
+
+/* 确认为主操作：主题色淡底与取消形成主次 */
+.tcp-create-confirm {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.tcp-create-confirm:hover {
+  background: var(--accent-tint);
+  filter: brightness(1.15);
+}
+
+/* ---- 空分组引导行 ---- */
+.tcp-group-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 34px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.tcp-group-empty-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.tcp-group-empty-add:hover {
+  background: var(--bg-hover);
+}
+
 </style>

@@ -42,13 +42,14 @@ pub async fn save_test_case(
     Ok(test_case)
 }
 
-/// 更新用例名称与分组（编辑入口）。
+/// 更新用例名称 / 分组 / 文件夹（编辑入口）。文件夹为自由分组名，空 = 未分组。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn update_test_case_meta(
     state: State<'_, AppState>,
     case_id: Uuid,
     name: String,
     category: String,
+    folder: String,
 ) -> CommandResult<()> {
     if name.trim().is_empty() {
         return Err(CommandError::validation("用例名称不能为空"));
@@ -58,7 +59,54 @@ pub async fn update_test_case_meta(
             "无效的用例分组：{category}"
         )));
     }
-    repo::update_test_case_meta(&state.db, case_id, &name, &category)
+    let folder = folder.trim().to_string();
+    if folder.chars().count() > 60 {
+        return Err(CommandError::validation("文件夹名称最长 60 字符"));
+    }
+    repo::update_test_case_meta(&state.db, case_id, &name, &category, &folder)
+        .await
+        .map_err(Into::into)
+}
+
+/// 批量移动用例到文件夹（空 = 移出分组；行菜单「移动到分组」）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn set_test_case_folder(
+    state: State<'_, AppState>,
+    case_ids: Vec<Uuid>,
+    folder: String,
+) -> CommandResult<u64> {
+    if case_ids.is_empty() {
+        return Err(CommandError::validation("未选择用例"));
+    }
+    let folder = folder.trim().to_string();
+    if folder.chars().count() > 60 {
+        return Err(CommandError::validation("文件夹名称最长 60 字符"));
+    }
+    repo::set_test_cases_folder(&state.db, &case_ids, &folder)
+        .await
+        .map_err(Into::into)
+}
+
+/// 重命名接口下的一个用例文件夹（整组改名；目标名已存在时两组合并）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn rename_test_case_folder(
+    state: State<'_, AppState>,
+    request_id: Uuid,
+    old_folder: String,
+    new_folder: String,
+) -> CommandResult<u64> {
+    let old_folder = old_folder.trim().to_string();
+    let new_folder = new_folder.trim().to_string();
+    if old_folder.is_empty() || new_folder.is_empty() {
+        return Err(CommandError::validation("文件夹名称不能为空"));
+    }
+    if old_folder == new_folder {
+        return Ok(0);
+    }
+    if new_folder.chars().count() > 60 {
+        return Err(CommandError::validation("文件夹名称最长 60 字符"));
+    }
+    repo::rename_test_case_folder(&state.db, request_id, &old_folder, &new_folder)
         .await
         .map_err(Into::into)
 }

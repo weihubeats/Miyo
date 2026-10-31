@@ -478,6 +478,7 @@ async fn test_case_management_flow() {
         request_id: endpoint.id,
         name: "正向-内部划转-SGB".into(),
         category: "正向".into(),
+        folder: String::new(),
         method: HttpMethod::POST,
         url_path: "/funds/transfer".into(),
         path_variables: vec![],
@@ -497,7 +498,7 @@ async fn test_case_management_flow() {
     assert_eq!(cases.len(), 1);
 
     // 更新元信息（改名 + 换分组）与运行状态。
-    repo::update_test_case_meta(&db, case.id, "负向-金额超限", "边界值")
+    repo::update_test_case_meta(&db, case.id, "负向-金额超限", "边界值", "")
         .await
         .unwrap();
     repo::update_test_case_status(&db, case.id, TestCaseStatus::Success)
@@ -521,6 +522,7 @@ async fn test_case_management_flow() {
         request_id: endpoint.id,
         name: "级联验证".into(),
         category: "其他".into(),
+        folder: String::new(),
         method: HttpMethod::POST,
         url_path: "/funds/transfer".into(),
         path_variables: vec![],
