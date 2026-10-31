@@ -23,6 +23,13 @@ function makeResponse(body: string): ExecuteResponse {
   }
 }
 
+/** 按语义定位复制按钮（新增下载钮后位置索引脆弱）。 */
+function findCopyBtn(wrapper: ReturnType<typeof mount>) {
+  return wrapper
+    .findAll('.rp-icon-btn')
+    .find((b) => b.attributes('aria-label')?.includes('复制响应正文'))
+}
+
 /** 通过 ⌘F 打开查找条并输入关键词。 */
 async function openFind(wrapper: ReturnType<typeof mount>): Promise<void> {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true }))
@@ -139,7 +146,7 @@ describe('ResponsePanel：复制响应正文', () => {
 
     expect(wrapper.find('.jt-line').exists()).toBe(true)
 
-    const copyBtn = wrapper.findAll('.rp-icon-btn').at(-2)
+    const copyBtn = findCopyBtn(wrapper)
     expect(copyBtn).toBeTruthy()
     await copyBtn!.trigger('click')
 
@@ -153,7 +160,7 @@ describe('ResponsePanel：复制响应正文', () => {
     const wrapper = mount(ResponsePanel, { props: { response: makeResponse(body) } })
     await wrapper.findAll('.seg-item')[1].trigger('click')
 
-    await wrapper.findAll('.rp-icon-btn').at(-2)!.trigger('click')
+    await findCopyBtn(wrapper)!.trigger('click')
     expect(vi.mocked(copyText)).toHaveBeenCalledWith(body)
     wrapper.unmount()
   })
@@ -209,7 +216,7 @@ describe('ResponsePanel：全文缓存回退（body_omitted）', () => {
     const loadFullBody = vi.fn(async () => '"full-body"')
     const wrapper = mount(ResponsePanel, { props: { response: resp, loadFullBody } })
 
-    await wrapper.findAll('.rp-icon-btn').at(-2)!.trigger('click')
+    await findCopyBtn(wrapper)!.trigger('click')
     await flushPromises()
     expect(loadFullBody).toHaveBeenCalledTimes(1)
     expect(vi.mocked(copyText)).toHaveBeenCalledWith('"full-body"')
@@ -222,7 +229,7 @@ describe('ResponsePanel：全文缓存回退（body_omitted）', () => {
     const loadFullBody = vi.fn(async () => null)
     const wrapper = mount(ResponsePanel, { props: { response: resp, loadFullBody } })
 
-    await wrapper.findAll('.rp-icon-btn').at(-2)!.trigger('click')
+    await findCopyBtn(wrapper)!.trigger('click')
     await flushPromises()
     expect(vi.mocked(copyText)).toHaveBeenCalledWith('"preview"')
     wrapper.unmount()

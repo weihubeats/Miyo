@@ -594,7 +594,8 @@ async function restartNow(): Promise<void> {
 async function exportBackup(): Promise<void> {  if (!project.value) return
   busy.value = true
   try {
-    const text = await api.backupExport(project.value.id)
+    const doc = await api.backupExport(project.value.id)
+    const text = doc.content
     const stamp = new Date().toISOString().slice(0, 10)
     const filename = `${project.value.name}-${t('settings.backupFileName')}-${stamp}.json`
 
@@ -616,6 +617,10 @@ async function exportBackup(): Promise<void> {  if (!project.value) return
           },
         },
       })
+      // 明文凭据提示：备份必须可恢复，不做替换，但要让用户知道这份文件里有几把钥匙。
+      if (doc.sensitive_count) {
+        toast.warning(t('settings.backupSensitive', { n: doc.sensitive_count }))
+      }
       return
     }
 

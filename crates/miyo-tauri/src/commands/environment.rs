@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use miyo_core::model::{Environment, EnvironmentVariable};
 use miyo_storage::repository as repo;
+use miyo_sync::redact::is_sensitive_key;
 
 use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
@@ -117,6 +118,8 @@ pub enum EnvExchangeFormat {
 pub struct ExportedEnv {
     pub content: String,
     pub suggested_name: String,
+    /// 明文凭证变量计数（键名命中敏感词根且有值；仅提示不脱敏——导出需可回导）。
+    pub sensitive_count: usize,
 }
 
 /// 导出单个环境（变量以明文落盘，与备份 JSON 口径一致）。
@@ -127,6 +130,15 @@ pub async fn export_environment(
     format: EnvExchangeFormat,
 ) -> CommandResult<ExportedEnv> {
     let env = repo::get_environment(&state.db, environment_id).await?;
+    let sensitive_count = env
+        .variables
+        .iter()
+        .filter(|v| {
+            v.enabled
+                && is_sensitive_key(&v.key)
+                && (!v.remote_value.is_empty() || !v.local_value.is_empty())
+        })
+        .count();
     let safe_name: String = env
         .name
         .chars()
@@ -149,6 +161,7 @@ pub async fn export_environment(
             Ok(ExportedEnv {
                 content,
                 suggested_name: format!("miyo-env-{safe_name}-{date}.json"),
+                sensitive_count,
             })
         }
         EnvExchangeFormat::PostmanJson => {
@@ -174,6 +187,7 @@ pub async fn export_environment(
             Ok(ExportedEnv {
                 content,
                 suggested_name: format!("postman-env-{safe_name}-{date}.json"),
+                sensitive_count,
             })
         }
     }

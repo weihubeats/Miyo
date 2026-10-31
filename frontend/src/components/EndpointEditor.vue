@@ -19,11 +19,13 @@ import { useShortcuts, shortcutDef } from '../composables/useShortcuts'
 import {
   envBaseUrl,
   environmentVariableMap,
+  mergedVariableMap,
   resolveRequestUrl,
   resolveVariables,
   variableListToMap,
 } from '../utils/environment'
 import { isCurlCommand } from '../utils/url'
+import { prettyJson } from '../utils/jsonFormat'
 import { methodBadgeTone, methodTextTone } from '../utils/methodTone'
 import { applyPathVars } from '../utils/pathVariables'
 import { useVarCandidates } from '../composables/useVarCandidates'
@@ -333,9 +335,11 @@ watch(
   },
 )
 
+// 无损格式化（utils/jsonFormat：保序保重键保数字原文），失败回退原文——
+// 原实现 JSON.parse/stringify 会吞重复键、改写数字（1.50→1.5），示例正文与保存原文不一致。
 function prettyBody(raw: string): string {
   try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
+    return prettyJson(raw)
   } catch {
     return raw
   }
@@ -360,12 +364,14 @@ const activeEnv = computed(
 )
 const activeEnvName = computed(() => activeEnv.value?.name ?? '')
 
-/** 环境变量 + 项目变量 + 全局变量合并表（chips / 预览解析用；优先级 环境 > 项目 > 全局）。 */
-const envVars = computed(() => ({
-  ...variableListToMap(store.globalVariables),
-  ...(store.project?.variables ?? {}),
-  ...environmentVariableMap(activeEnv.value),
-}))
+/** 环境变量 + 项目变量 + 全局变量合并表（chips / 预览解析用；单源 utils/environment.mergedVariableMap）。 */
+const envVars = computed(() =>
+  mergedVariableMap({
+    globalVariables: store.globalVariables,
+    projectVariables: store.project?.variables,
+    env: activeEnv.value,
+  }),
+)
 
 /** 地址栏前缀 chip 文案：环境 base_url 变量的「解析后」实际值或会话 Base URL。 */
 const resolvedDomain = computed(() => {

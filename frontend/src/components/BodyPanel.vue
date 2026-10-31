@@ -15,6 +15,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useLocaleStore } from '../stores/locale'
+import { countOccurrences, useFindInText } from '../composables/useFindInText'
 
 import CustomSelect from './ui/CustomSelect.vue'
 import FindBar from './ui/FindBar.vue'
@@ -167,43 +168,7 @@ const panelRef = ref<HTMLElement | null>(null)
 const rawTextareaRef = ref<HTMLTextAreaElement | null>(null)
 const gqlTextareaRef = ref<HTMLTextAreaElement | null>(null)
 
-const findOpen = ref(false)
-const query = ref('')
-const activeMatch = ref(0)
 const jsonTotal = ref(0)
-
-const searchQuery = ref('')
-let searchTimer: ReturnType<typeof setTimeout> | undefined
-
-watch(query, (q) => {
-  if (searchTimer) clearTimeout(searchTimer)
-  if (!q) {
-    searchQuery.value = ''
-    return
-  }
-  searchTimer = setTimeout(() => {
-    searchQuery.value = q
-  }, 160)
-})
-
-watch(query, () => {
-  activeMatch.value = 0
-})
-
-function countOccurrences(text: string, q: string): number {
-  if (!text || !q) return 0
-  const ql = q.toLowerCase()
-  const lower = text.toLowerCase()
-  let n = 0
-  let from = 0
-  for (;;) {
-    const idx = lower.indexOf(ql, from)
-    if (idx === -1) break
-    n += 1
-    from = idx + ql.length
-  }
-  return n
-}
 
 const total = computed(() => {
   if (activeTab.value === 'raw' && rawSubtype.value === 'json') {
@@ -218,9 +183,21 @@ const total = computed(() => {
   return 0
 })
 
-watch(total, (t) => {
-  if (t === 0) activeMatch.value = 0
-  else if (activeMatch.value >= t) activeMatch.value = t - 1
+// 查找状态机（开关 / 防抖 / 导航）走 composables/useFindInText；JSON 模式
+// 计数由 CodeMirror 高亮管线（JsonEditor）经 watch 回写 jsonTotal。
+const {
+  findOpen,
+  query,
+  searchQuery,
+  activeMatch,
+  nextMatch,
+  prevMatch,
+  closeFind,
+  toggleFind,
+} = useFindInText(total, {
+  onClose: () => {
+    jsonTotal.value = 0
+  },
 })
 
 function getMatchOffsets(text: string, q: string, targetIdx: number): [number, number] | null {
@@ -254,31 +231,6 @@ watch(
   },
 )
 
-function nextMatch(): void {
-  if (!total.value) return
-  activeMatch.value = (activeMatch.value + 1) % total.value
-}
-
-function prevMatch(): void {
-  if (!total.value) return
-  activeMatch.value = (activeMatch.value - 1 + total.value) % total.value
-}
-
-function closeFind(): void {
-  findOpen.value = false
-  query.value = ''
-  activeMatch.value = 0
-  jsonTotal.value = 0
-}
-
-function toggleFind(): void {
-  if (findOpen.value) {
-    closeFind()
-  } else {
-    findOpen.value = true
-  }
-}
-
 /** 代码区 Tab / Shift+Tab 缩进而非跳出焦点（与 JsonEditor / CodeMirror 一致）。 */
 function onCodeKeydown(e: KeyboardEvent): void {
   if (e.key === 'Tab') handleTextareaTab(e.target as HTMLTextAreaElement, e)
@@ -303,7 +255,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
-  if (searchTimer) clearTimeout(searchTimer)
 })
 
 /** urlencoded 字段表：与 Params/Headers 一致的 KeyValueTable 幽灵行（输入自动补行）。 */

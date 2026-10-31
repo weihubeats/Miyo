@@ -9,7 +9,10 @@
  * - 主体：JSON → 可折叠树形查看器（行号 + VS Code 深色语法着色）；文本 → 行号代码视图；HTML → 沙箱预览。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { useToast } from '../composables/useToast'
+import { countOccurrences, useFindInText } from '../composables/useFindInText'
+import { useMiyoApi } from '../composables/useMiyoApi'
 import { useLocaleStore } from '../stores/locale'
 import { copyText } from '../utils/clipboard'
 import { escapeHtml, highlightJSONText } from '../utils/highlight'
@@ -152,11 +155,10 @@ const pretty = computed(() => {
 
 const isHtml = computed(() => props.response.content_type.toLowerCase().includes('html'))
 
-/** 内容类型支持「预览」：HTML / 图片 / 音视频 / 二进制文件类。 */
+/** 内容类型支持「预览」：HTML（沙箱 iframe）与图片（data URL）——渲染分支
+ *  实际只覆盖这两类，正则必须与渲染能力一致，否则 Preview 点开只有「无法预览」。 */
 const isPreviewable = computed(() =>
-  /^(text\/html|image\/|audio\/|video\/|application\/(pdf|octet-stream|zip|x-zip|x-.*?zip|json))/i.test(
-    props.response.content_type,
-  ),
+  /^(text\/html|image\/)/i.test(props.response.content_type),
 )
 const isImage = computed(() => props.response.content_type.toLowerCase().startsWith('image/'))
 
@@ -289,13 +291,12 @@ const responseTabs = computed<TabItem[]>(() => [
 ])
 
 // ---------- 操作 ----------
-/** 复制源：preview/raw 用原始 body；pretty 用格式化文本。树接管时 `pretty`
- * 为 ''（大响应跳过 stringify 的优化），需回退原始 body，否则复制到空串。 */
-const copySource = computed(() =>
-  viewMode.value === 'raw' || viewMode.value === 'preview'
-    ? props.response.body
-    : pretty.value || props.response.body,
-)
+/** 复制源：preview/raw 用原始 body；pretty 用格式化文本，树接管（大响应跳过
+ *  stringify，pretty 为空串）时显式回退原始 body——不依赖「空串魔法值」。 */
+const copySource = computed(() => {
+  if (viewMode.value === 'raw' || viewMode.value === 'preview') return props.response.body
+  return treeVisible.value ? props.response.body : pretty.value || props.response.body
+})
 
 async function copyBody(): Promise<void> {
   let text = copySource.value
@@ -310,6 +311,54 @@ async function copyBody(): Promise<void> {
   else toast.error(t('response.copyFail'))
 }
 
+const api = useMiyoApi()
+
+/** 由 Content-Type 猜下载扩展名（猜不出落 .txt）。 */
+function extOf(contentType: string): string {
+  const ct = contentType.toLowerCase()
+  if (ct.includes('json')) return 'json'
+  if (ct.includes('html')) return 'html'
+  if (ct.includes('xml')) return 'xml'
+  if (ct.includes('yaml')) return 'yaml'
+  if (ct.includes('csv')) return 'csv'
+  if (ct.startsWith('image/png')) return 'png'
+  if (ct.startsWith('image/jpeg')) return 'jpg'
+  if (ct.startsWith('image/gif')) return 'gif'
+  if (ct.startsWith('image/svg')) return 'svg'
+  if (ct.startsWith('image/webp')) return 'webp'
+  if (ct.includes('pdf')) return 'pdf'
+  if (ct.includes('zip')) return 'zip'
+  return 'txt'
+}
+
+/** 保存响应体到磁盘（原生保存框 + save_text_file 落盘；正文被 IPC 截断时
+ *  先按 request_id 取全文，缓存过期则降级保存预览并提示）。 */
+const downloading = ref(false)
+async function downloadBody(): Promise<void> {
+  if (downloading.value) return
+  downloading.value = true
+  try {
+    let text = props.response.body
+    if (props.response.body_omitted) {
+      const full = props.loadFullBody ? await props.loadFullBody() : null
+      if (full != null) text = full
+      else toast.warning(t('response.previewCapped'))
+    }
+    const ext = extOf(props.response.content_type)
+    const suggested = `response-${props.response.status}-${Date.now()}.${ext}`
+    const path = await saveDialog({ defaultPath: suggested, title: t('response.downloadBody') })
+    if (!path) return
+    await api.writeTextFile(path, text)
+    toast.success(t('response.downloaded'), { message: path })
+  } catch (err) {
+    toast.error(t('response.downloadFail'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  } finally {
+    downloading.value = false
+  }
+}
+
 const MODE_OPTIONS = computed<SegmentOption[]>(() => [
   { value: 'pretty', label: t('response.pretty'), icon: 'list' },
   { value: 'raw', label: t('response.raw'), icon: 'code' },
@@ -322,30 +371,9 @@ watch(viewMode, (m) => {
 })
 
 // ---------- 查找（Find in Response） ----------
-const findOpen = ref(false)
-const query = ref('')
-const activeMatch = ref(0)
-/** JSON 树上报的匹配总数（树视图的权威计数）。 */
+// 状态机（开关 / 防抖 / 激活序号 / 导航）走 composables/useFindInText；
+// 计数保持本视图口径：树视图由 JsonTree 上报 treeTotal，行视图本地统计。
 const treeTotal = ref(0)
-
-/**
- * 防抖后的查找词：树匹配 / 行视图高亮 / 计数全部基于它。
- * 大响应上这些计算都是全量的，逐键执行会明显卡顿；输入框本身
- * （FindBar v-model）仍用即时 query 保持跟手。空词立即生效，保证
- * 清空搜索时高亮无残留。
- */
-const searchQuery = ref('')
-let searchTimer: ReturnType<typeof setTimeout> | undefined
-watch(query, (q) => {
-  if (searchTimer) clearTimeout(searchTimer)
-  if (!q) {
-    searchQuery.value = ''
-    return
-  }
-  searchTimer = setTimeout(() => {
-    searchQuery.value = q
-  }, 160)
-})
 
 /** JSON 树是否可见（查找对其生效；行视图走本地计数）——即 useTree 别名。 */
 const treeVisible = useTree
@@ -361,16 +389,7 @@ const searchLines = computed(() => {
 function countIn(text: string): number {
   // 超长行不参与查找计数（与高亮降级同口径，避免对大行逐次 toLowerCase 全量扫）。
   if (text.length > LINE_HIGHLIGHT_LIMIT) return 0
-  const ql = searchQuery.value.toLowerCase()
-  let n = 0
-  let from = 0
-  for (;;) {
-    const idx = text.toLowerCase().indexOf(ql, from)
-    if (idx === -1) break
-    n += 1
-    from = idx + ql.length
-  }
-  return n
+  return countOccurrences(text, searchQuery.value)
 }
 
 const textTotal = computed(() => searchLines.value.reduce((n, ln) => n + countIn(ln), 0))
@@ -379,13 +398,19 @@ const total = computed(() =>
   treeVisible.value ? treeTotal.value : textTotal.value,
 )
 
-watch(query, () => {
-  activeMatch.value = 0
-})
-
-watch(total, (t) => {
-  if (t === 0) activeMatch.value = 0
-  else if (activeMatch.value >= t) activeMatch.value = t - 1
+const {
+  findOpen,
+  query,
+  searchQuery,
+  activeMatch,
+  nextMatch,
+  prevMatch,
+  closeFind,
+  toggleFind,
+} = useFindInText(total, {
+  onClose: () => {
+    treeTotal.value = 0
+  },
 })
 
 /** 行视图文本高亮：转义原文并用 <mark> 包裹所有匹配。 */
@@ -473,31 +498,6 @@ const rawRows = computed<LineRow[]>(() => {
   }))
 })
 
-function nextMatch(): void {
-  if (!total.value) return
-  activeMatch.value = (activeMatch.value + 1) % total.value
-}
-
-function prevMatch(): void {
-  if (!total.value) return
-  activeMatch.value = (activeMatch.value - 1 + total.value) % total.value
-}
-
-function closeFind(): void {
-  findOpen.value = false
-  query.value = ''
-  activeMatch.value = 0
-  treeTotal.value = 0
-}
-
-function toggleFind(): void {
-  if (findOpen.value) {
-    closeFind()
-  } else {
-    findOpen.value = true
-  }
-}
-
 /** ⌘F / Ctrl+F 打开查找（输入框内不拦截）。 */
 function onWindowKeydown(e: KeyboardEvent): void {
   if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'f') return
@@ -540,7 +540,6 @@ function toggleCollapsed(): void {
 onMounted(() => window.addEventListener('keydown', onWindowKeydown))
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
-  if (searchTimer) clearTimeout(searchTimer)
 })
 </script>
 
@@ -609,6 +608,17 @@ onUnmounted(() => {
         <Tooltip :content="t('response.copyBody')" placement="bottom">
           <button class="rp-icon-btn" type="button" :aria-label="t('response.copyBody')" @click="copyBody">
             <Icon name="copy" :size="16" />
+          </button>
+        </Tooltip>
+        <Tooltip :content="t('response.downloadBody')" placement="bottom">
+          <button
+            class="rp-icon-btn"
+            type="button"
+            :aria-label="t('response.downloadBody')"
+            :disabled="downloading"
+            @click="downloadBody"
+          >
+            <Icon name="download" :size="16" />
           </button>
         </Tooltip>
         <Tooltip :content="collapsed ? t('response.expand') : t('response.collapse')" placement="bottom">

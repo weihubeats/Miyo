@@ -3,7 +3,7 @@
  * MockRuleDialog：Mock 规则管理（列表 / 新建 / 编辑 / 删除）。
  * 规则在 mock_start 时按 priority 降序匹配，可覆盖接口默认示例。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useMiyoApi } from '../composables/useMiyoApi'
 import { useToast } from '../composables/useToast'
@@ -28,6 +28,33 @@ const t = locale.t
 const rules = ref<MockRule[]>([])
 const busy = ref(false)
 const editing = ref<MockRule | null>(null)
+
+// ---------- 响应头编辑（模型为 HashMap → 行数组桥接，保存时剔除空键回写） ----------
+const respHeaderRows = ref<{ key: string; value: string }[]>([])
+watch(
+  editing,
+  (r) => {
+    respHeaderRows.value = r
+      ? Object.entries(r.response_headers ?? {}).map(([key, value]) => ({ key, value }))
+      : []
+  },
+  { immediate: true },
+)
+function addRespHeader(): void {
+  respHeaderRows.value.push({ key: '', value: '' })
+}
+function removeRespHeader(index: number): void {
+  respHeaderRows.value.splice(index, 1)
+}
+function applyRespHeaders(): void {
+  if (!editing.value) return
+  const out: Record<string, string> = {}
+  for (const { key, value } of respHeaderRows.value) {
+    const k = key.trim()
+    if (k) out[k] = value
+  }
+  editing.value.response_headers = out
+}
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
 const METHOD_OPTIONS = METHODS.map((m) => ({ value: m, label: m }))
@@ -91,12 +118,21 @@ async function save(): Promise<void> {
   }
   busy.value = true
   try {
+    applyRespHeaders()
     const saved = await api.saveMockRule({ ...editing.value, updated_at: new Date().toISOString() })
     const idx = rules.value.findIndex((r) => r.id === saved.id)
     if (idx === -1) rules.value.push(saved)
     else rules.value[idx] = saved
     editing.value = null
     toast.success(t('mockrule.saved'))
+    // 规则变更即时生效：服务运行中自动热重载（原先需手动点「热重载」，
+    // 出现「明明关了规则还命中」的困惑）。
+    try {
+      const port = await api.mockStatus()
+      if (port) await api.mockReload()
+    } catch {
+      // 未运行或重载失败不打断保存流程
+    }
   } catch (err) {
     toast.error(t('mockrule.saveFail'), { message: err instanceof Error ? err.message : String(err) })
   } finally {
@@ -195,6 +231,15 @@ const listTitle = computed(() => t('mockrule.listTitle', { n: rules.value.length
       </div>
       <button class="miyo-btn miyo-btn-sm" type="button" @click="addMatch(editing, 'match_headers')">
         <Icon name="plus" :size="13" /> {{ t('mockrule.addHeader') }}
+      </button>
+      <div class="rule-sub">{{ t('mockrule.responseHeaders') }}</div>
+      <div v-for="(h, i) in respHeaderRows" :key="i" class="kv-row">
+        <input v-model="h.key" class="miyo-input miyo-input-sm kv-key" :placeholder="t('kv.colKey')" />
+        <input v-model="h.value" class="miyo-input miyo-input-sm kv-value" :placeholder="t('kv.colValue')" />
+        <IconButton name="x" :size="13" :title="t('common.delete')" @click="removeRespHeader(i)" />
+      </div>
+      <button class="miyo-btn miyo-btn-sm" type="button" @click="addRespHeader">
+        <Icon name="plus" :size="13" /> {{ t('mockrule.addResponseHeader') }}
       </button>
       <textarea
         v-model="editing.response_body_template"

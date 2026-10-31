@@ -156,14 +156,13 @@ function shortTime(iso: string): string {
     </div>
 
     <div class="hp-list">
-      <button
-        v-for="h in filtered"
-        :key="h.id"
-        class="hp-row"
-        :class="{ active: activeId === h.id }"
-        type="button"
-        @click="restore(h)"
-      >
+      <div v-for="h in filtered" :key="h.id" class="hp-item">
+        <button
+          class="hp-row"
+          :class="{ active: activeId === h.id }"
+          type="button"
+          @click="restore(h)"
+        >
         <span class="hp-line1">
           <span class="hp-method" :class="methodTone(h.method)">{{ h.method }}</span>
           <span class="hp-url" v-tooltip-overflow="h.url">{{ shortUrl(h.url) }}</span>
@@ -181,7 +180,22 @@ function shortTime(iso: string): string {
           </span>
           <span class="hp-meta hp-time">{{ shortTime(h.created_at) }}</span>
         </span>
-      </button>
+        </button>
+        <Popconfirm
+          :title="t('ws.historyDeleteConfirm')"
+          :confirm-text="t('common.delete')"
+          danger
+          @confirm="store.deleteHistory(h.id)"
+        >
+          <IconButton
+            class="hp-del"
+            name="trash"
+            :size="12"
+            tone="danger"
+            :title="t('ws.historyDelete')"
+          />
+        </Popconfirm>
+      </div>
       <EmptyState
         v-if="!store.histories.length"
         icon="history"
@@ -348,6 +362,23 @@ function shortTime(iso: string): string {
 
 /* ---- 记录卡：两行（行1 方法Tag+Path+状态胶囊，行2 耗时·时间） ----
  * 单行 5 列会把 path 挤成短截断；两行让 path 独占整行宽度。 */
+.hp-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/** 行内删除钮：hover 才出现（与树行「⋯」同节奏） */
+.hp-del {
+  flex: none;
+  display: none;
+  margin-right: 6px;
+}
+
+.hp-item:hover .hp-del {
+  display: inline-flex;
+}
+
 .hp-row {
   display: flex;
   flex-direction: column;

@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import type { Environment } from '../types/miyoApi'
 import {
+  BUILTIN_VARIABLES,
   effectiveVariable,
   envBaseUrl,
   envColorClass,
   environmentVariableMap,
+  findUnknownVars,
   joinBaseUrl,
   normalizeBaseUrl,
+  requestTemplateTexts,
   resolveRequestUrl,
   resolveVariables,
   variableListToMap,
 } from './environment'
+import type { Endpoint } from '../types/miyoApi'
 
 function mkEnv(overrides: Partial<Environment> = {}): Environment {
   return {
@@ -182,5 +186,61 @@ describe('resolveVariables', () => {
     const cyclic = { a: '{{b}}', b: '{{a}}' }
     const out = resolveVariables('{{a}}', cyclic)
     expect(out).toContain('{{')
+  })
+})
+
+describe('requestTemplateTexts / findUnknownVars（发送前未定义变量扫描）', () => {
+  const ep = (body: Endpoint['request']['body'], headers: Endpoint['request']['headers'] = [], params: Endpoint['request']['params'] = []): Endpoint => {
+    const now = '2026-01-01T00:00:00.000Z'
+    return {
+      id: 'ep-1',
+      project_id: 'p-1',
+      folder_id: null,
+      name: 'x',
+      method: 'POST',
+      path: '/x',
+      description: '',
+      status: 'developing',
+      sort_order: 0,
+      request: {
+        params,
+        headers,
+        path_variables: [],
+        auth: { type: 'none' },
+        body,
+        active_tab: null,
+        timeout_ms: null,
+        follow_redirects: true,
+        tests: null,
+        disable_cookies: false,
+        body_docs: {},
+      },
+      created_at: now,
+      updated_at: now,
+    }
+  }
+
+  it('扫描 URL / 头 / 参数 / Body 各模式模板文本', () => {
+    const texts = requestTemplateTexts(
+      ep(
+        { mode: 'json', raw: '{"token":"{{tok}}"}' },
+        [{ key: 'Authorization', value: 'Bearer {{auth}}', enabled: true, description: '' }],
+        [{ key: '{{qk}}', value: '1', enabled: true, description: '' }],
+      ),
+      '/api/{{ver}}/login',
+    )
+    expect(texts.some((t) => t.includes('{{ver}}'))).toBe(true)
+    expect(texts.some((t) => t.includes('{{tok}}'))).toBe(true)
+    expect(texts.some((t) => t.includes('{{auth}}'))).toBe(true)
+    expect(texts.some((t) => t.includes('{{qk}}'))).toBe(true)
+  })
+
+  it('未定义 = 引用了但不在已知池（含内置变量豁免），保序去重', () => {
+    const known = new Set<string>(['ver', ...BUILTIN_VARIABLES])
+    const unknown = findUnknownVars(
+      ['/api/{{ver}}/u?tok={{tok}}', '{{}}', '{{tok}}', '{{}}'],
+      known,
+    )
+    expect(unknown).toEqual(['tok'])
   })
 })

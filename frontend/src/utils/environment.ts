@@ -9,7 +9,8 @@
  * - resolveVariables：镜像 miyo-core variable.rs 的 `{{name}}` 单层递归解析（深度上限 10）。
  */
 
-import type { Environment } from '../types/miyoApi'
+import type { Endpoint, Environment } from '../types/miyoApi'
+import { extractVarRefs } from './scenarioVars'
 
 /** 环境名称 → 颜色类（映射类名，颜色值由调用方 scoped CSS 定义）。 */
 export function envColorClass(name: string): string {
@@ -59,6 +60,30 @@ export function environmentVariableMap(
   const base = envBaseUrl(env)
   if (base && !out.base_url) out.base_url = base
   return out
+}
+
+/** miyo-core variable.rs 的内置变量（{{$seq:key}} 形态属模板写法，不算未定义）。 */
+export const BUILTIN_VARIABLES = ['$uuid', '$timestamp', '$isoTimestamp', '$randomInt', '$seq'] as const
+
+/**
+ * 调试页合并变量表（单源）：全局 < 项目 < 环境，环境 Base URL 注入 `base_url`。
+ *
+ * 原先这条合并链在 EndpointEditor / GraphQLView / workspace.caseVariableMap
+ * 三处手写展开——优先级规则一旦调整（如新增层级）极易漏改一处。此处收口后，
+ * 调试页、GraphQL、测试用例运行与变量补全候选拿到同一张表。
+ */
+export function mergedVariableMap(
+  sources: {
+    globalVariables: { key: string; remote_value: string; local_value: string; enabled: boolean }[] | null | undefined
+    projectVariables: Record<string, string> | null | undefined
+    env: Environment | null | undefined
+  },
+): Record<string, string> {
+  return {
+    ...variableListToMap(sources.globalVariables),
+    ...(sources.projectVariables ?? {}),
+    ...environmentVariableMap(sources.env),
+  }
 }
 
 /** 规范化基础 URL：去掉尾部斜杠，避免与路径拼接出双斜杠（`https://x.com//posts`）。 */
@@ -118,4 +143,51 @@ export function resolveRequestUrl(
   if (isAbsolute(rendered)) return { url: rendered }
   const base = resolveVariables(envBaseUrl(env), vars)
   return { url: joinBaseUrl(base, rendered) }
+}
+
+/**
+ * 收集一个请求里参与 {{变量}} 引用扫描的模板文本：URL + 启用中的
+ * 头（键与值）/ 参数（键与值）+ Body（json/text 原文、表单值、GraphQL
+ * query 与 variables）。发送前未定义变量警示的数据源。
+ */
+export function requestTemplateTexts(endpoint: Endpoint, url: string): string[] {
+  const texts = [url]
+  for (const h of endpoint.request.headers) if (h.enabled) texts.push(h.key, h.value)
+  for (const p of endpoint.request.params) if (p.enabled) texts.push(p.key, p.value)
+  const body = endpoint.request.body
+  switch (body.mode) {
+    case 'json':
+    case 'text':
+      texts.push(body.raw)
+      break
+    case 'urlencoded':
+    case 'multipart':
+      for (const f of body.fields) if (f.enabled) texts.push(f.value)
+      break
+    case 'graphql':
+      texts.push(body.spec.query, body.spec.variables)
+      break
+    default:
+      break
+  }
+  return texts
+}
+
+/**
+ * 找出 texts 中引用了、但不在已知变量池（环境/项目/全局合并表 + 内置变量）
+ * 中的 {{变量}} 名（保序去重）。发送前汇总警示用：后端对未知占位原样发出，
+ * 「服务端收到 {{token}} 字面量」这类问题应在发送前暴露。
+ */
+export function findUnknownVars(
+  texts: string[],
+  known: Iterable<string>,
+): string[] {
+  const knownNames = new Set(known)
+  const out: string[] = []
+  for (const text of texts) {
+    for (const name of extractVarRefs(text ?? '')) {
+      if (!knownNames.has(name) && !out.includes(name)) out.push(name)
+    }
+  }
+  return out
 }

@@ -8,20 +8,20 @@
  */
 import { computed, type ComputedRef } from 'vue'
 import { useWorkspaceStore } from '../stores/workspace'
-import { environmentVariableMap, variableListToMap } from '../utils/environment'
+import { BUILTIN_VARIABLES, mergedVariableMap } from '../utils/environment'
 
-/** miyo-core variable.rs 的内置变量（{{$seq:key}} 形态不做候选，属模板写法）。 */
-export const BUILTIN_VARIABLES = ['$uuid', '$timestamp', '$isoTimestamp', '$randomInt', '$seq'] as const
+// 内置变量常量已迁往 utils/environment.ts（store 发送警示同源使用），此处再导出兼容。
+export { BUILTIN_VARIABLES }
 
 export function useVarCandidates(): ComputedRef<string[]> {
   const store = useWorkspaceStore()
   return computed(() => {
     const activeEnv = store.environments.find((e) => e.id === store.activeEnvId) ?? null
-    const merged = {
-      ...variableListToMap(store.globalVariables),
-      ...(store.project?.variables ?? {}),
-      ...environmentVariableMap(activeEnv),
-    }
+    const merged = mergedVariableMap({
+      globalVariables: store.globalVariables,
+      projectVariables: store.project?.variables,
+      env: activeEnv,
+    })
     const set = new Set<string>(BUILTIN_VARIABLES)
     for (const key of Object.keys(merged)) set.add(key)
     return [...set]

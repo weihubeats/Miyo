@@ -26,15 +26,25 @@ const t = locale.t
 const cookies = ref<CookieEntry[]>([])
 const filter = ref('')
 const loading = ref(false)
+/** Cookie 值默认掩码展示（共享屏幕 / 截图即泄漏登录态），眼睛开关临时揭示。 */
+const revealed = ref(false)
+
+/** 过期响应防护：过滤词防抖 + 手动刷新并发时，仅最后一次请求回写。 */
+let reloadSeq = 0
 
 async function reload(): Promise<void> {
+  const seq = ++reloadSeq
   loading.value = true
   try {
-    cookies.value = (await api.cookieList(filter.value.trim() || null)) ?? []
+    const list = (await api.cookieList(filter.value.trim() || null)) ?? []
+    if (seq !== reloadSeq) return
+    cookies.value = list
   } catch (err) {
-    toast.error(t('cookie.loadFail'), { message: err instanceof Error ? err.message : String(err) })
+    if (seq === reloadSeq) {
+      toast.error(t('cookie.loadFail'), { message: err instanceof Error ? err.message : String(err) })
+    }
   } finally {
-    loading.value = false
+    if (seq === reloadSeq) loading.value = false
   }
 }
 
@@ -78,9 +88,17 @@ async function clearAll(): Promise<void> {
   }
 }
 
-/** 值过长截断展示（悬浮 title 看全文）。 */
+/** 值过长截断展示（揭示态用）。 */
 function shortValue(v: string): string {
   return v.length > 48 ? `${v.slice(0, 48)}…` : v
+}
+
+/** 掩码展示：前 4 + 后 2，中段 ••••；揭示后仍按长度截断。 */
+function displayValue(v: string): string {
+  if (!revealed.value) {
+    return v.length <= 6 ? '••••••' : `${v.slice(0, 4)}••••${v.slice(-2)}`
+  }
+  return shortValue(v)
 }
 </script>
 
@@ -99,6 +117,17 @@ function shortValue(v: string): string {
         />
       </div>
       <span class="cp-count">{{ t('cookie.count', { n: cookies.length }) }}</span>
+      <button
+        class="cp-reload"
+        :class="{ active: revealed }"
+        type="button"
+        :title="t('cookie.toggleValues')"
+        :aria-label="t('cookie.toggleValues')"
+        :aria-pressed="revealed"
+        @click="revealed = !revealed"
+      >
+        <Icon name="eye" :size="13" />
+      </button>
       <button
         class="cp-reload"
         type="button"
@@ -139,9 +168,9 @@ function shortValue(v: string): string {
             <IconButton name="trash" :size="12" tone="danger" :title="t('cookie.clearDomainTitle', { domain })" />
           </Popconfirm>
         </div>
-        <div v-for="c in items" :key="`${c.domain}/${c.name}/${c.path}`" class="cp-row" :title="`${c.name}=${c.value}`">
+        <div v-for="c in items" :key="`${c.domain}/${c.name}/${c.path}`" class="cp-row">
           <span class="cp-name">{{ c.name }}</span>
-          <span class="cp-value">{{ shortValue(c.value) }}</span>
+          <span class="cp-value" :class="{ masked: !revealed }">{{ displayValue(c.value) }}</span>
           <span class="cp-flags">
             <span v-if="c.http_only" class="cp-flag" :title="t('cookie.httpOnlyHint')">H</span>
             <span v-if="c.secure" class="cp-flag" :title="t('cookie.secureHint')">S</span>
@@ -207,6 +236,13 @@ function shortValue(v: string): string {
 .cp-reload:hover {
   background: var(--bg-hover);
   color: var(--text-1);
+}
+.cp-reload.active {
+  color: var(--accent);
+}
+.cp-value.masked {
+  color: var(--text-3);
+  letter-spacing: 0.5px;
 }
 .cp-hint {
   padding: 12px;

@@ -392,6 +392,10 @@ async function exportSelected(format: EnvExchangeFormat): Promise<void> {
     const path = await join(dir, doc.suggested_name)
     await api.writeTextFile(path, doc.content)
     toast.success(t('envmgr.exportSuccess'), { message: doc.suggested_name })
+    // 明文凭证提示：导出需可回导不做脱敏，但提醒用户这份文件的敏感度。
+    if (doc.sensitive_count) {
+      toast.warning(t('envmgr.exportSensitive', { n: doc.sensitive_count }))
+    }
   } catch (err) {
     toast.error(t('envmgr.exportFail'), { message: err instanceof Error ? err.message : String(err) })
   } finally {

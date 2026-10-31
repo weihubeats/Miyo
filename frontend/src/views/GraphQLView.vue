@@ -18,13 +18,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMiyoApi } from '../composables/useMiyoApi'
 import { useToast } from '../composables/useToast'
 import { useLocaleStore } from '../stores/locale'
-import { useWorkspaceStore } from '../stores/workspace'
+import { useWorkspaceStore, FALLBACK_GLOBAL_TIMEOUT_MS } from '../stores/workspace'
 import { formatDateTime } from '../utils/dateTime'
 import {
   envBaseUrl,
-  environmentVariableMap,
+  mergedVariableMap,
   resolveRequestUrl,
-  variableListToMap,
 } from '../utils/environment'
 import { escapeHtml, highlightGraphQL, highlightJSON } from '../utils/highlight'
 import { handleTextareaTab } from '../utils/textareaIndent'
@@ -71,12 +70,14 @@ const URL_STORAGE_KEY = 'miyo_graphql_last_url'
 
 const activeEnv = computed(() => store.environments.find((e) => e.id === store.activeEnvId) ?? null)
 
-/** 环境 + 项目 + 全局变量合并表（拼接 / 解析用，与 EndpointEditor 同源）。 */
-const envVars = computed(() => ({
-  ...variableListToMap(store.globalVariables),
-  ...(store.project?.variables ?? {}),
-  ...environmentVariableMap(activeEnv.value),
-}))
+/** 环境 + 项目 + 全局变量合并表（单源 mergedVariableMap，与 EndpointEditor 同源）。 */
+const envVars = computed(() =>
+  mergedVariableMap({
+    globalVariables: store.globalVariables,
+    projectVariables: store.project?.variables,
+    env: activeEnv.value,
+  }),
+)
 
 /** 路径 → 绝对地址（镜像 EndpointEditor.buildUrl：绝对地址直用，否则拼基址并解析变量）。 */
 function absoluteUrl(path: string): string {
@@ -273,7 +274,23 @@ function buildArgs(): ExecuteRequestArgs {
 }
 
 // ---------- 发送 ----------
+// request_id + 前端超时兜底：原先裸调 executeRequest，慢请求既不能取消
+// 也没有本地超时，弱网下只能干等后端 300s 兜底。
+let activeRequestId: string | null = null
+let timeoutTimer: ReturnType<typeof setTimeout> | undefined
+
+/** 取消在途请求（发送按钮变成「停止」）。 */
+async function cancelSend(): Promise<void> {
+  if (!activeRequestId) return
+  try {
+    await api.cancelRequest(activeRequestId)
+  } catch {
+    // 已结束的请求取消会失败，忽略
+  }
+}
+
 async function send() {
+  if (sending.value) return
   if (!gqlUrl.value.trim()) {
     statusText.value = t('graphql.urlRequired')
     toast.warning(t('graphql.urlRequired'))
@@ -293,8 +310,15 @@ async function send() {
   sending.value = true
   sendFailed.value = false
   responseErrors.value = []
+  const rid = crypto.randomUUID()
+  activeRequestId = rid
+  // 前端超时兜底：全局设置 → 内置 300s（与 store.send 同口径；GraphQL 规格无接口级超时）。
+  const ms = store.globalTimeoutMs ?? FALLBACK_GLOBAL_TIMEOUT_MS
+  if (ms && ms > 0) {
+    timeoutTimer = setTimeout(() => void cancelSend(), ms)
+  }
   try {
-    const res: ExecuteResponse = await api.executeRequest(buildArgs())
+    const res: ExecuteResponse = await api.executeRequest({ ...buildArgs(), request_id: rid })
     response.value = {
       status: res.status,
       body: res.body,
@@ -311,6 +335,9 @@ async function send() {
     sendFailed.value = true
     toast.error(t('graphql.sendFail'), { message, duration: 6000 })
   } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer)
+    timeoutTimer = undefined
+    activeRequestId = null
     sending.value = false
   }
 }
@@ -483,8 +510,12 @@ async function copyCode() {
       <button class="miyo-btn miyo-btn-sm" type="button" @click="router.push('/workspace')">← {{ t('graphql.backToWorkspace') }}</button>
       <input v-model="gqlUrl" class="miyo-input gql-url" :placeholder="t('graphql.urlPh')" spellcheck="false" />
       <button class="miyo-btn miyo-btn-sm" :disabled="saving" @click="save">{{ t('common.save') }}</button>
-      <button class="miyo-btn miyo-btn-sm miyo-btn-primary" :disabled="sending" @click="send">
-        {{ sending ? t('graphql.sending') : t('editor.send') }}
+      <button
+        class="miyo-btn miyo-btn-sm miyo-btn-primary"
+        type="button"
+        @click="sending ? cancelSend() : send()"
+      >
+        {{ sending ? t('scenario.stop') : t('editor.send') }}
       </button>
       <button
         v-if="sendFailed"

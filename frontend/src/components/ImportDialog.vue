@@ -12,6 +12,7 @@ import { useMiyoApi } from '../composables/useMiyoApi'
 import { useToast } from '../composables/useToast'
 import { useLocaleStore } from '../stores/locale'
 import Modal from './ui/Modal.vue'
+import Icon from './ui/Icon.vue'
 import type { ImportedEndpoint, ImportFormat, Project } from '../types/miyoApi'
 
 const props = withDefaults(
@@ -39,6 +40,18 @@ const fileInput = ref<HTMLInputElement | null>(null)
 
 /** new-project 模式下的目标项目名。 */
 const projectName = ref('')
+
+/**
+ * 冲突处理策略（默认「跳过」= 最安全，杜绝未经确认覆盖现有数据）：
+ * 冲突判定 = 同 method + path（与 store.importEndpoints 比对口径一致）。
+ * 仅 workspace 模式有「现有数据」可比；new-project 起始为空项目，无冲突。
+ */
+const conflictStrategy = ref<'skip' | 'overwrite' | 'duplicate'>('skip')
+const conflicts = computed(() => {
+  if (!result.value || props.mode !== 'workspace') return []
+  const byKey = new Map(store.endpoints.map((e) => [`${e.method} ${e.path}`, e] as const))
+  return result.value.endpoints.filter((it) => byKey.has(`${it.method} ${it.path}`))
+})
 
 /** 格式展示名：品牌名保持原文，带说明的走字典（computed 随语言切换）。 */
 const FORMAT_LABEL = computed<Record<ImportFormat, string>>(() => ({
@@ -104,12 +117,15 @@ async function confirm(): Promise<void> {
         updated_at: now,
       })
       await store.switchProject(project.id)
-      const summary = await store.importEndpoints(result.value.endpoints)
+      const summary = await store.importEndpoints(result.value.endpoints, conflictStrategy.value)
       toast.success(t('importdlg.createdProject', { name: project.name, n: summary.endpoints }))
       emit('imported', project)
     } else {
-      const summary = await store.importEndpoints(result.value.endpoints)
+      const summary = await store.importEndpoints(result.value.endpoints, conflictStrategy.value)
       toast.success(t('importdlg.imported', { n: summary.endpoints, m: summary.examples }))
+      if (summary.skipped || summary.overwritten) {
+        toast.info(t('importdlg.conflicts', { s: summary.skipped, o: summary.overwritten }))
+      }
     }
     emit('close')
   } catch (err) {
@@ -171,6 +187,26 @@ const canConfirm = computed(
           })
         }}
       </p>
+      <div v-if="conflicts.length" class="import-conflict">
+        <p class="import-conflict-warn">
+          <Icon name="alert-triangle" :size="12" />
+          {{ t('importdlg.conflictWarn', { n: conflicts.length }) }}
+        </p>
+        <div class="import-strategies" role="radiogroup" :aria-label="t('importdlg.strategyLabel')">
+          <label class="import-strategy">
+            <input v-model="conflictStrategy" type="radio" value="skip" />
+            {{ t('importdlg.strategySkip') }}
+          </label>
+          <label class="import-strategy">
+            <input v-model="conflictStrategy" type="radio" value="overwrite" />
+            {{ t('importdlg.strategyOverwrite') }}
+          </label>
+          <label class="import-strategy">
+            <input v-model="conflictStrategy" type="radio" value="duplicate" />
+            {{ t('importdlg.strategyDuplicate') }}
+          </label>
+        </div>
+      </div>
       <ul class="import-list">
         <li v-for="(ep, i) in result.endpoints.slice(0, 12)" :key="i" class="import-row">
           <span class="import-method">{{ ep.method }}</span>
@@ -236,6 +272,39 @@ const canConfirm = computed(
 
 .import-preview {
   margin-top: 12px;
+}
+
+.import-conflict {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-md);
+  background: var(--warning-tint);
+}
+
+.import-conflict-warn {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--warning);
+}
+
+.import-strategies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 7px;
+}
+
+.import-strategy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
 }
 
 .import-list {

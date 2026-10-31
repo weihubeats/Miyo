@@ -1,15 +1,25 @@
 //! 备份/恢复 Command:项目全量 JSON 导出(下载)与导入(新项目 UUID 重映射)。
 //! 对应 Dioxus 版 M10 备份功能。
 
+use serde::Serialize;
 use tauri::State;
 use uuid::Uuid;
 
 use miyo_backup::{build_backup, restore_backup, BackupFile, BackupInput};
 use miyo_core::model::EndpointStatus;
 use miyo_storage::repository as repo;
+use miyo_sync::redact::redact_snapshot;
 
-use crate::error::CommandResult;
+use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
+
+/// 备份导出文档：`content` 为完整备份 JSON；`sensitive_count` 为其中的
+/// 明文凭据项数（与同步推送同口径统计，仅提示不替换——备份必须可完整恢复）。
+#[derive(Debug, Serialize)]
+pub struct BackupExportDoc {
+    pub content: String,
+    pub sensitive_count: usize,
+}
 
 /// 备份设置白名单（全局维度，随备份走；恢复时保守合并，见 `backup_restore`）。
 const BACKUP_SETTING_KEYS: &[&str] = &["http_proxy", "http_timeout_ms", "seq_counters"];
@@ -17,7 +27,10 @@ const BACKUP_SETTING_KEYS: &[&str] = &["http_proxy", "http_timeout_ms", "seq_cou
 /// 导出项目为备份 JSON 字符串（含项目 + 文件夹 + 接口 + 环境 + Mock 规则 +
 /// 响应示例 + 请求用例 + 全局设置快照 + 全局变量/参数）。
 #[tauri::command(rename_all = "camelCase")]
-pub async fn backup_export(state: State<'_, AppState>, project_id: Uuid) -> CommandResult<String> {
+pub async fn backup_export(
+    state: State<'_, AppState>,
+    project_id: Uuid,
+) -> CommandResult<BackupExportDoc> {
     // 互不依赖的读（全部只按 project_id / 全局维度查）合并并发：
     // 8 次 SQLite 往返压成 1 次等待；设置键也并入，3 次 get_setting 合一条 IN 查询。
     let (
@@ -92,7 +105,16 @@ pub async fn backup_export(state: State<'_, AppState>, project_id: Uuid) -> Comm
         global_params: &global_params,
         team: &team,
     });
-    file.serialize().map_err(Into::into)
+    // 敏感项统计：跑一遍 sync 推送同款脱敏（只取计数不替换产物）——备份本体
+    // 必须明文可恢复，但要让用户知道「这份 JSON 里有几把钥匙」。
+    let sensitive_count = redact_snapshot(&file).log.entries.len();
+    let content = file
+        .serialize()
+        .map_err(|e| CommandError::validation(format!("备份序列化失败：{e}")))?;
+    Ok(BackupExportDoc {
+        content,
+        sensitive_count,
+    })
 }
 
 /// 从备份 JSON 恢复：校验格式 → 全量重映射 UUID → 落库为全新项目。
