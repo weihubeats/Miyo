@@ -15,7 +15,6 @@ import Sortable from 'sortablejs'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useLocaleStore } from '../stores/locale'
 import { methodTone } from '../utils/methodTone'
-import { ensureSwapMounted } from '../utils/sortable'
 import Icon from './ui/Icon.vue'
 import IconButton from './ui/IconButton.vue'
 import Menu, { type MenuItem } from './ui/Menu.vue'
@@ -53,7 +52,6 @@ let tabSortable: Sortable | null = null
 
 function initTabSortable(): void {
   if (!tabListEl.value || tabSortable) return
-  ensureSwapMounted()
   tabSortable = Sortable.create(tabListEl.value, {
     animation: 150,
     easing: 'cubic-bezier(0.2, 0, 0, 1)',
