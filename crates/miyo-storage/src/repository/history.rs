@@ -150,3 +150,12 @@ pub async fn clear_request_histories(
     };
     Ok(result.rows_affected())
 }
+
+/// 删除单条请求历史（敏感记录即时清除；审计 #6：原先只能整页清空）。
+pub async fn delete_request_history(db: &SqlitePool, id: Uuid) -> Result<()> {
+    sqlx::query("DELETE FROM request_histories WHERE id = ?")
+        .bind(id.to_string())
+        .execute(db)
+        .await?;
+    Ok(())
+}
