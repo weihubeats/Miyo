@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-mock-clear-logs"
+description = "Enables the mock_clear_logs command without any pre-configured scope."
+commands.allow = ["mock_clear_logs"]
+
+[[permission]]
+identifier = "deny-mock-clear-logs"
+description = "Denies the mock_clear_logs command without any pre-configured scope."
+commands.deny = ["mock_clear_logs"]

@@ -4,7 +4,7 @@
 use tauri::State;
 use uuid::Uuid;
 
-use miyo_core::model::EndpointStatus;
+use miyo_core::model::{EndpointStatus, MockRequestLog};
 use miyo_mock::server::MockServer;
 use miyo_storage::repository as repo;
 use std::collections::HashMap;
@@ -123,4 +123,24 @@ pub async fn mock_stop(state: State<'_, AppState>) -> CommandResult<()> {
 pub async fn mock_status(state: State<'_, AppState>) -> CommandResult<Option<String>> {
     let running = state.mock.read().await;
     Ok(running.as_ref().map(MockServer::address))
+}
+
+/// 最近 Mock 请求日志（新→旧，环形缓冲最近 100 条；服务未运行返回空）。
+/// 未匹配请求 `matched = false`——Mock 调试「为什么没命中」的诊断入口。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn mock_request_logs(state: State<'_, AppState>) -> CommandResult<Vec<MockRequestLog>> {
+    let guard = state.mock.read().await;
+    Ok(guard
+        .as_ref()
+        .map(|server| server.store().recent_logs())
+        .unwrap_or_default())
+}
+
+/// 清空 Mock 请求日志（服务未运行为空操作）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn mock_clear_logs(state: State<'_, AppState>) -> CommandResult<()> {
+    if let Some(server) = state.mock.read().await.as_ref() {
+        server.store().clear_logs();
+    }
+    Ok(())
 }

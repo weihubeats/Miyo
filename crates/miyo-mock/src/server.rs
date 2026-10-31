@@ -3,9 +3,9 @@
 //! 匹配优先级：自定义 MockRule > Endpoint ResponseExample > 默认 JSON（SPEC §16.2）。
 //! 支持路径参数 `{id}`、query/header 匹配、模板变量 `{{params.x}}` 等、延迟返回。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
@@ -13,7 +13,7 @@ use axum::extract::{Request, State};
 use axum::http::{header, HeaderMap, Response as AxumResponse, StatusCode};
 use axum::response::IntoResponse;
 use axum::Router;
-use miyo_core::model::{MockMatchItem, MockRule, ResponseExample};
+use miyo_core::model::{MockMatchItem, MockRequestLog, MockRule, ResponseExample};
 use miyo_core::AppError;
 use uuid::Uuid;
 
@@ -46,6 +46,10 @@ pub struct MockDefinition {
     pub fault_status: u16,
     pub priority: i64,
     pub source: MockSource,
+    /// 命中的规则 id（示例 / 默认响应来源为 None）；请求日志归属用。
+    pub rule_id: Option<uuid::Uuid>,
+    /// 命中来源名：规则名 / 接口的 method+path（示例命中时展示用）。
+    pub source_name: String,
 }
 
 impl MockDefinition {
@@ -63,6 +67,8 @@ impl MockDefinition {
             fault_status: rule.fault_status,
             priority: rule.priority,
             source: MockSource::Rule,
+            rule_id: Some(rule.id),
+            source_name: rule.name.clone(),
         }
     }
 
@@ -87,6 +93,8 @@ impl MockDefinition {
                 fault_status: 500,
                 priority: 0,
                 source: MockSource::Example,
+                rule_id: None,
+                source_name: format!("{method} {path}"),
             }
         } else {
             MockDefinition {
@@ -102,6 +110,8 @@ impl MockDefinition {
                 fault_status: 500,
                 priority: -10,
                 source: MockSource::Default,
+                rule_id: None,
+                source_name: format!("{method} {path}"),
             }
         }
     }
@@ -157,13 +167,44 @@ pub type MatchHit = (
 #[derive(Clone, Default)]
 pub struct MockStore {
     inner: Arc<RwLock<StoreInner>>,
+    /// 最近请求环形缓冲（命中可见化 + 未匹配诊断；只在服务运行期驻内存）。
+    logs: Arc<Mutex<VecDeque<MockRequestLog>>>,
 }
+
+/// 请求日志容量：只在内存里，重启即清；够覆盖一轮排查。
+pub const MOCK_LOG_CAP: usize = 100;
 
 impl MockStore {
     pub fn new() -> Self {
         MockStore {
             inner: Arc::new(RwLock::new(StoreInner::default())),
+            logs: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    /// 记录一条请求日志（超容量淘汰最旧）。
+    pub fn record_request(&self, log: MockRequestLog) {
+        let mut logs = self.logs.lock().unwrap_or_else(|p| p.into_inner());
+        if logs.len() >= MOCK_LOG_CAP {
+            logs.pop_front();
+        }
+        logs.push_back(log);
+    }
+
+    /// 最近请求日志（新→旧）。
+    pub fn recent_logs(&self) -> Vec<MockRequestLog> {
+        self.logs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .rev()
+            .cloned()
+            .collect()
+    }
+
+    /// 清空请求日志。
+    pub fn clear_logs(&self) {
+        self.logs.lock().unwrap_or_else(|p| p.into_inner()).clear();
     }
 
     pub fn set_definitions(&self, defs: Vec<MockDefinition>) {
@@ -437,6 +478,16 @@ async fn mock_handler(
 
     let Some((def, params, query_map)) = hit else {
         tracing::info!("[mock] {} {} → 404 未匹配", method, path);
+        store.record_request(MockRequestLog {
+            at: chrono::Utc::now(),
+            method: method.to_string(),
+            path: path.clone(),
+            status: 404,
+            matched: false,
+            source: "unmatched".into(),
+            rule_id: None,
+            source_name: String::new(),
+        });
         return (
             StatusCode::NOT_FOUND,
             [(header::CONTENT_TYPE, "application/json")],
@@ -465,6 +516,16 @@ async fn mock_handler(
             def.fault_status,
             def.fault_rate_pct
         );
+        store.record_request(MockRequestLog {
+            at: chrono::Utc::now(),
+            method: method.to_string(),
+            path: path.clone(),
+            status: def.fault_status,
+            matched: true,
+            source: mock_source_key(&def.source),
+            rule_id: def.rule_id,
+            source_name: def.source_name.clone(),
+        });
         return (
             StatusCode::from_u16(def.fault_status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             [(header::CONTENT_TYPE, "application/json")],
@@ -502,9 +563,29 @@ async fn mock_handler(
         def.status,
         started.elapsed().as_millis()
     );
+    store.record_request(MockRequestLog {
+        at: chrono::Utc::now(),
+        method: method.to_string(),
+        path: path.clone(),
+        status: def.status,
+        matched: true,
+        source: mock_source_key(&def.source),
+        rule_id: def.rule_id,
+        source_name: def.source_name.clone(),
+    });
     builder
         .body(Body::from(body))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// 命中来源 → 稳定键（前端按语言映射展示文案）。
+fn mock_source_key(source: &MockSource) -> String {
+    match source {
+        MockSource::Rule => "rule",
+        MockSource::Example => "example",
+        MockSource::Default => "default",
+    }
+    .to_string()
 }
 
 /// 正在运行的 Mock 服务句柄。
@@ -586,6 +667,8 @@ mod tests {
             fault_status: 500,
             priority: 0,
             source,
+            rule_id: None,
+            source_name: String::new(),
         }
     }
 
@@ -695,5 +778,52 @@ mod tests {
         assert_eq!(d.status, 201);
         assert_eq!(d.source, MockSource::Example);
         assert!(d.headers.contains_key("content-type") || d.headers.contains_key("Content-Type"));
+    }
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+
+    fn log(method: &str, status: u16, matched: bool) -> MockRequestLog {
+        MockRequestLog {
+            at: chrono::Utc::now(),
+            method: method.into(),
+            path: "/p".into(),
+            status,
+            matched,
+            source: if matched { "rule" } else { "unmatched" }.into(),
+            rule_id: None,
+            source_name: String::new(),
+        }
+    }
+
+    #[test]
+    fn ring_buffer_records_newest_first_and_evicts_oldest() {
+        let store = MockStore::new();
+        for i in 0..(MOCK_LOG_CAP + 10) {
+            store.record_request(log("GET", 200 + (i % 3) as u16, true));
+        }
+        let logs = store.recent_logs();
+        assert_eq!(logs.len(), MOCK_LOG_CAP);
+        // 新→旧：最旧 10 条（i 0..10）被淘汰
+        assert_eq!(logs[0].status, 200 + ((MOCK_LOG_CAP + 9) % 3) as u16);
+        assert_eq!(logs.last().unwrap().status, 200 + (10 % 3) as u16);
+    }
+
+    #[test]
+    fn clear_logs_empties_buffer() {
+        let store = MockStore::new();
+        store.record_request(log("POST", 404, false));
+        assert_eq!(store.recent_logs().len(), 1);
+        store.clear_logs();
+        assert!(store.recent_logs().is_empty());
+    }
+
+    #[test]
+    fn mock_source_keys_are_stable() {
+        assert_eq!(mock_source_key(&MockSource::Rule), "rule");
+        assert_eq!(mock_source_key(&MockSource::Example), "example");
+        assert_eq!(mock_source_key(&MockSource::Default), "default");
     }
 }

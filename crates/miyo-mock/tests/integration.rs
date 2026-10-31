@@ -31,6 +31,8 @@ fn rule_def() -> MockDefinition {
         fault_status: 500,
         priority: 5,
         source: server::MockSource::Rule,
+        rule_id: None,
+        source_name: "echo 规则".into(),
     }
 }
 
