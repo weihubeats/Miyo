@@ -378,6 +378,21 @@ export interface ScenarioAssertionRule {
   expected?: unknown
 }
 
+/** 场景步骤响应快照（Rust `StepResponse`；正文为 IPC 预览，全文经 get_response_body 按需取回）。 */
+export interface ScenarioStepResponse {
+  status: number
+  headers: [string, string][]
+  body: string
+  content_type: string
+  duration_ms: number
+  size_bytes: number
+  truncated: boolean
+  /** `body` 是否仅为 IPC 预览（超 2MB 截断；全文按 `{runId}:{结果位次}` 取回）。 */
+  body_omitted?: boolean
+  /** 实际发出形态（变量渲染 / 认证注入后的最终值；旧后端缺失）。 */
+  request?: RequestSnapshot | null
+}
+
 /** 场景单步结果（Rust `EndpointResult`）。 */
 export interface ScenarioStepResult {
   endpoint_id: string
@@ -388,8 +403,24 @@ export interface ScenarioStepResult {
   status?: number | null
   duration_ms?: number | null
   request_error?: string | null
-  outcomes: { description: string; passed: boolean; reason?: string | null }[]
+  outcomes: {
+    description: string
+    passed: boolean
+    reason?: string | null
+    /** 期望值文本（断言显式给出时随行；旧后端缺失）。 */
+    expected?: string | null
+    /** 实际值文本（取到实际值时随行；旧后端缺失）。 */
+    actual?: string | null
+  }[]
   extracted?: Record<string, string>
+  /** 实际发送的渲染后 URL（含变量替换；旧后端缺失）。 */
+  url?: string | null
+  /** 链路步骤位次（启用步骤 0-based；旧后端 / 单接口运行为空）。 */
+  step_index?: number | null
+  /** 该步因取消而中止（非真实失败；旧后端缺失）。 */
+  cancelled?: boolean
+  /** 响应快照（发送成功时存在；旧后端缺失）。 */
+  response?: ScenarioStepResponse | null
 }
 
 /** 场景运行结果（Rust `ScenarioRunResult`）。 */
@@ -397,6 +428,31 @@ export interface ScenarioRunResult {
   results: ScenarioStepResult[]
   cancelled: boolean
   stopped_on_failure: boolean
+  variables: Record<string, string>
+  /** 每步执行前的 runtime 快照（与 results 同位序；重跑失败步骤的初始变量来源；
+   * 旧后端缺失）。 */
+  vars_snapshots?: Record<string, string>[]
+}
+
+/** 场景运行历史（Rust `ScenarioRunSummary`；命令层已剥 results/variables 正文）。 */
+export interface ScenarioRunSummary {
+  /** 前端生成的 run_id。 */
+  id: string
+  /** 完成时刻（RFC3339）。 */
+  finished_at: string
+  duration_ms?: number | null
+  total_steps: number
+  ok_count: number
+  fail_count: number
+  skipped_count: number
+  cancelled: boolean
+  stopped_on_failure: boolean
+}
+
+/** 场景运行历史详情（Rust `ScenarioRunDetail`；results 与实时运行同形，
+ * response 正文已剥离——历史回看不加载响应体）。 */
+export interface ScenarioRunDetail extends ScenarioRunSummary {
+  results: ScenarioStepResult[]
   variables: Record<string, string>
 }
 
@@ -665,6 +721,13 @@ export interface ExportedDoc {
   suggested_name: string
 }
 
+/** 项目备份导出结果：content 为完整备份 JSON；sensitive_count 为明文凭据项数
+ *  （与同步推送同口径统计，仅提示不替换；旧后端缺失）。 */
+export interface BackupExportDoc {
+  content: string
+  sensitive_count?: number
+}
+
 /** 请求用例（Rust `RequestExample`）：接口请求快照，可一键回填编辑器。 */
 export interface RequestExample {
   id: string
@@ -688,6 +751,8 @@ export interface TestCase {
   request_id: string
   name: string
   category: TestCaseCategory
+  /** 用例文件夹（自由分组名，如「Dlocal 渠道」）；空 = 未分组。 */
+  folder?: string
   method: HttpMethod
   url_path: string
   /** URL 路径变量取值（`/users/{id}` 里的 id）；随用例快照保存，否则单跑会发字面量 `{id}`。 */
@@ -835,6 +900,8 @@ export type EnvExchangeFormat = 'miyo_json' | 'postman_json'
 export interface ExportedEnv {
   content: string
   suggested_name: string
+  /** 明文凭证变量计数（旧后端缺失）。 */
+  sensitive_count?: number
 }
 
 /** 环境导入预览（不落库；前端确认后经 saveEnvironment 落库）。 */
@@ -870,6 +937,20 @@ export type SseEventPayload =
 export interface MockMatchItem {
   key: string
   value: string
+}
+
+/** Mock 请求日志条目（Rust `MockRequestLog`；内存环形缓冲最近 100 条，服务未运行返回空）。 */
+export interface MockRequestLog {
+  at: string
+  method: string
+  path: string
+  status: number
+  matched: boolean
+  /** 稳定键：rule | example | default | unmatched（展示文案前端映射）。 */
+  source: string
+  rule_id?: string | null
+  /** 规则名（示例 / 默认来源为接口的 method+path）。 */
+  source_name: string
 }
 
 /** Mock 规则（Rust `MockRule`，miyo-tauri `list_mock_rules` 等返回）。 */

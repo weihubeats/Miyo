@@ -9,6 +9,14 @@ use miyo_storage::repository as repo;
 use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
 
+/// 删除单条请求历史（不校验归属：id 为 UUID 主键，泄漏面为同机登录用户）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn delete_request_history(state: State<'_, AppState>, id: Uuid) -> CommandResult<()> {
+    repo::delete_request_history(&state.db, id)
+        .await
+        .map_err(CommandError::from)
+}
+
 /// 查询项目最近的请求历史（按时间倒序，默认 50 条）。
 /// `endpoint_id` 提供时仅返回该接口的记录（前端「仅当前接口」过滤）。
 #[tauri::command(rename_all = "camelCase")]

@@ -51,15 +51,20 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-delete-scenario`
 - `allow-run-scenario`
 - `allow-cancel-scenario-run`
+- `allow-list-scenario-runs`
+- `allow-get-scenario-run`
 - `allow-codegen-render`
 - `allow-cookie-list`
 - `allow-cookie-clear`
 - `allow-clipboard-write-text`
 - `allow-list-request-histories`
 - `allow-clear-request-histories`
+- `allow-delete-request-history`
 - `allow-mock-start`
 - `allow-mock-stop`
 - `allow-mock-status`
+- `allow-mock-request-logs`
+- `allow-mock-clear-logs`
 - `allow-mock-reload`
 - `allow-agent-start`
 - `allow-agent-stop`
@@ -118,6 +123,8 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-list-test-cases`
 - `allow-save-test-case`
 - `allow-update-test-case-meta`
+- `allow-set-test-case-folder`
+- `allow-rename-test-case-folder`
 - `allow-update-test-case-content`
 - `allow-update-test-case-status`
 - `allow-delete-test-case`
@@ -712,6 +719,32 @@ Enables the delete_request_example command without any pre-configured scope.
 <td>
 
 Denies the delete_request_example command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-delete-request-history`
+
+</td>
+<td>
+
+Enables the delete_request_history command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-delete-request-history`
+
+</td>
+<td>
+
+Denies the delete_request_history command without any pre-configured scope.
 
 </td>
 </tr>
@@ -1369,6 +1402,32 @@ Denies the get_response_body command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-get-scenario-run`
+
+</td>
+<td>
+
+Enables the get_scenario_run command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-get-scenario-run`
+
+</td>
+<td>
+
+Denies the get_scenario_run command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-get-tls-settings`
 
 </td>
@@ -1811,6 +1870,32 @@ Denies the list_request_histories command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-list-scenario-runs`
+
+</td>
+<td>
+
+Enables the list_scenario_runs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-scenario-runs`
+
+</td>
+<td>
+
+Denies the list_scenario_runs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-list-scenarios`
 
 </td>
@@ -2019,6 +2104,32 @@ Denies the log_tail command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-mock-clear-logs`
+
+</td>
+<td>
+
+Enables the mock_clear_logs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-mock-clear-logs`
+
+</td>
+<td>
+
+Denies the mock_clear_logs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-mock-reload`
 
 </td>
@@ -2038,6 +2149,32 @@ Enables the mock_reload command without any pre-configured scope.
 <td>
 
 Denies the mock_reload command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-mock-request-logs`
+
+</td>
+<td>
+
+Enables the mock_request_logs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-mock-request-logs`
+
+</td>
+<td>
+
+Denies the mock_request_logs command without any pre-configured scope.
 
 </td>
 </tr>
@@ -2272,6 +2409,32 @@ Enables the read_text_file command without any pre-configured scope.
 <td>
 
 Denies the read_text_file command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-rename-test-case-folder`
+
+</td>
+<td>
+
+Enables the rename_test_case_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-rename-test-case-folder`
+
+</td>
+<td>
+
+Denies the rename_test_case_folder command without any pre-configured scope.
 
 </td>
 </tr>
@@ -2896,6 +3059,32 @@ Enables the set_seq_counter command without any pre-configured scope.
 <td>
 
 Denies the set_seq_counter command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-set-test-case-folder`
+
+</td>
+<td>
+
+Enables the set_test_case_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-set-test-case-folder`
+
+</td>
+<td>
+
+Denies the set_test_case_folder command without any pre-configured scope.
 
 </td>
 </tr>

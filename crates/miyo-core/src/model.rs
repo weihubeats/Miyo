@@ -737,6 +737,23 @@ pub enum SyncRemoteKind {
     Db,
 }
 
+/// Mock 请求日志条目（Mock 服务内存环形缓冲，最近 N 条；命中可见化 + 未匹配诊断）。
+///
+/// `source` 为稳定键（rule | example | default），展示文案由前端按语言映射；
+/// 未匹配请求 `matched = false` 且 status 恒为 404。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MockRequestLog {
+    pub at: DateTime<Utc>,
+    pub method: String,
+    pub path: String,
+    pub status: u16,
+    pub matched: bool,
+    pub source: String,
+    pub rule_id: Option<Uuid>,
+    /// 规则名（示例 / 默认来源为接口的 method+path）。
+    pub source_name: String,
+}
+
 /// 团队同步远端：团队绑定的快照仓库（git / S3 / db）。
 ///
 /// 一个团队一个远端路径（不同团队可复用同一路径）；推/拉按项目触发，
@@ -959,6 +976,10 @@ pub struct TestCase {
     pub name: String,
     /// 用例分组：正向 / 负向 / 边界值 / 安全性 / 其他。
     pub category: String,
+    /// 用例文件夹（自由分组名，如「Dlocal 渠道」）；空 = 未分组。
+    /// 单层分组：渠道 → 场景的归类需求，不需要独立实体与树形结构。
+    #[serde(default)]
+    pub folder: String,
     pub method: HttpMethod,
     pub url_path: String,
     /// URL 路径变量取值（`/users/{id}` 里的 id）。缺了它单跑会把字面量
@@ -1018,6 +1039,30 @@ pub struct TestRun {
     pub result_json: String,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
+}
+
+/// 场景运行历史（scenario_runs 表）：run_scenario 每次完成落一行，
+/// 供结果面板回看与重开恢复；id 即前端生成的 run_id。
+///
+/// `results_json` / `variables_json` 为 JSON 透传（与 IPC 形状一致），
+/// schema 演进无需迁移；结果里的 response 正文在落库前剥离（体积考量）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScenarioRun {
+    pub id: Uuid,
+    pub scenario_id: Uuid,
+    pub environment_id: Option<Uuid>,
+    /// 完成时刻（落库前取 now）。
+    pub finished_at: DateTime<Utc>,
+    /// 步骤耗时合计（毫秒）。
+    pub duration_ms: Option<f64>,
+    pub total_steps: i64,
+    pub ok_count: i64,
+    pub fail_count: i64,
+    pub skipped_count: i64,
+    pub cancelled: bool,
+    pub stopped_on_failure: bool,
+    pub results_json: String,
+    pub variables_json: String,
 }
 
 /// 请求历史。

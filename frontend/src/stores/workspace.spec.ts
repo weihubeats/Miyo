@@ -114,6 +114,7 @@ vi.mock('../composables/useMiyoApi', () => ({
     getGlobalParams: vi.fn().mockResolvedValue([]),
     saveGlobalParams: vi.fn().mockResolvedValue(undefined),
     listExamples: vi.fn().mockResolvedValue([]),
+    saveExample: vi.fn().mockImplementation(async (ex: unknown) => ex),
     listRequestExamples: vi.fn().mockResolvedValue([]),
     listTestCases: vi.fn().mockResolvedValue([]),
     // 全局超时：模拟「从未配置过」——后端返回 null，store 应回退内置默认
@@ -172,6 +173,7 @@ beforeAll(() => {
     getItem: (k: string) => mem.get(k) ?? null,
     setItem: (k: string, v: string) => void mem.set(k, v),
     removeItem: (k: string) => void mem.delete(k),
+    clear: () => void mem.clear(),
   })
 })
 
@@ -179,6 +181,9 @@ describe('workspace store 多项目快照切换', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     // 文案断言锁定中文（jsdom 默认语言为英文，跟随系统会解析出英文）
+
+    // 页签/草稿持久化是全局副作用：每例清空，避免跨用例串现场
+    localStorage.clear()
     useLocaleStore().setMode('zh')
     backend.projects.length = 0
     backend.endpointsByProject.clear()
@@ -296,6 +301,9 @@ describe('workspace store 多项目快照切换', () => {
 describe('备份恢复后刷新（回归：不重启也能看到新项目）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+
+    // 页签/草稿持久化是全局副作用：每例清空，避免跨用例串现场
+    localStorage.clear()
     useLocaleStore().setMode('zh')
     backend.projects.length = 0
     backend.endpointsByProject.clear()
@@ -360,6 +368,9 @@ describe('备份恢复后刷新（回归：不重启也能看到新项目）', (
 describe('moveEndpoint：移动后打开草稿的 folder_id / sort_order 同步', () => {
   beforeEach(() => {
     // 文案经 i18n 取词，锁定中文（jsdom 默认语言为英文）
+
+    // 页签/草稿持久化是全局副作用：每例清空，避免跨用例串现场
+    localStorage.clear()
     useLocaleStore().setMode('zh')
     backend.setActive('p-a')
     // 固定时钟：isDirty 依赖草稿/已存的全字段 eq 比较，时间戳漂移会误判「脏」
@@ -434,6 +445,9 @@ describe('cURL 导入：环境前缀优先时不覆写环境，path 存完整 UR
 
   beforeEach(async () => {
     setActivePinia(createPinia())
+
+    // 页签/草稿持久化是全局副作用：每例清空，避免跨用例串现场
+    localStorage.clear()
     useLocaleStore().setMode('zh')
     backend.projects.length = 0
     backend.endpointsByProject.clear()
@@ -524,6 +538,9 @@ describe('无环境前缀按项目持久化（回归：重启丢自定义域名�
 
   beforeEach(async () => {
     setActivePinia(createPinia())
+
+    // 页签/草稿持久化是全局副作用：每例清空，避免跨用例串现场
+    localStorage.clear()
     useLocaleStore().setMode('zh')
     backend.projects.length = 0
     backend.endpointsByProject.clear()
@@ -546,6 +563,9 @@ describe('无环境前缀按项目持久化（回归：重启丢自定义域名�
 
     // 模拟重启：换新 pinia（新 store 实例）重新 init——前缀必须仍在。
     setActivePinia(createPinia())
+
+    // 页签/草稿持久化是全局副作用：每例清空，避免跨用例串现场
+    localStorage.clear()
     useLocaleStore().setMode('zh')
     const reopened = useWorkspaceStore()
     await reopened.init()
@@ -565,6 +585,9 @@ describe('无环境前缀按项目持久化（回归：重启丢自定义域名�
 describe('请求历史：增量分页与失败提示', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+
+    // 页签/草稿持久化是全局副作用：每例清空，避免跨用例串现场
+    localStorage.clear()
     useLocaleStore().setMode('zh')
     backend.projects.length = 0
     backend.endpointsByProject.clear()
@@ -766,6 +789,9 @@ describe('用例运行：URL 路径变量代入', () => {
 
   beforeEach(() => {
     setActivePinia(createPinia())
+
+    // 页签/草稿持久化是全局副作用：每例清空，避免跨用例串现场
+    localStorage.clear()
     useLocaleStore().setMode('zh')
     backend.projects.length = 0
     backend.execCalls.length = 0
@@ -800,6 +826,9 @@ describe('用例运行：URL 路径变量代入', () => {
 describe('「新建」伪页签：+ 每次新开、选择不消耗、快照过滤', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+
+    // 页签/草稿持久化是全局副作用：每例清空，避免跨用例串现场
+    localStorage.clear()
     useLocaleStore().setMode('zh')
     backend.projects.length = 0
     backend.endpointsByProject.clear()
@@ -890,5 +919,160 @@ describe('「新建」伪页签：+ 每次新开、选择不消耗、快照过�
     store.openCreateTab()
     await store.refresh()
     expect(store.openTabs.some((id) => store.isCreateTab(id))).toBe(true)
+  })
+})
+
+describe('页签与草稿跨实例持久化（localStorage）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+
+    // 页签/草稿持久化是全局副作用：每例清空，避免跨用例串现场
+    localStorage.clear()
+    useLocaleStore().setMode('zh')
+    backend.projects.length = 0
+    backend.endpointsByProject.clear()
+    backend.envsByProject.clear()
+    backend.setActive('p-a')
+    backend.projects.push(makeProject('p-a', '项目A'))
+    backend.endpointsByProject.set('p-a', [makeEndpoint('ep-1', 'p-a', 'users')])
+    backend.envsByProject.set('p-a', [])
+    // 隔离其他用例残留的持久化键（stub 的 localStorage 无枚举能力，按已知键清理）
+    localStorage.removeItem('miyo.open-tabs.p-a')
+    localStorage.removeItem('miyo.open-projects')
+    localStorage.removeItem('miyo.recent-endpoints')
+  })
+
+  it('重启（新 store 实例）后恢复页签顺序、草稿内容与激活态', async () => {
+    const s1 = useWorkspaceStore()
+    await s1.init()
+    s1.openEndpoint(backend.endpointsByProject.get('p-a')![0]!)
+    const draft = s1.draftOf('ep-1')!
+    draft.name = '改名草稿'
+    // 草稿编辑走 600ms 防抖落盘
+    await new Promise((r) => setTimeout(r, 700))
+
+    // 全新实例 = 模拟应用重启
+    setActivePinia(createPinia())
+    const s2 = useWorkspaceStore()
+    await s2.init()
+    expect(s2.openTabs).toEqual(['ep-1'])
+    expect(s2.activeTabId).toBe('ep-1')
+    expect(s2.draftOf('ep-1')?.name).toBe('改名草稿')
+    // 恢复的草稿与保存态不同 → 脏标记成立（未保存改动不被静默洗白）
+    expect(s2.isDirty('ep-1')).toBe(true)
+  })
+
+  it('最近打开记录随 openEndpoint 写入并去重置顶', async () => {
+    backend.endpointsByProject.set('p-a', [
+      makeEndpoint('ep-1', 'p-a', 'users'),
+      makeEndpoint('ep-2', 'p-a', 'orders'),
+    ])
+    const s1 = useWorkspaceStore()
+    await s1.init()
+    s1.openEndpoint(backend.endpointsByProject.get('p-a')![0]!)
+    s1.openEndpoint(backend.endpointsByProject.get('p-a')![1]!)
+    s1.openEndpoint(backend.endpointsByProject.get('p-a')![0]!)
+    expect(s1.recentEndpointIds).toEqual(['ep-1', 'ep-2'])
+  })
+})
+
+describe('导入冲突策略（method + path 三选）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    useLocaleStore().setMode('zh')
+    backend.projects.length = 0
+    backend.endpointsByProject.clear()
+    backend.envsByProject.clear()
+    backend.setActive('p-a')
+    backend.projects.push(makeProject('p-a', '项目A'))
+    backend.endpointsByProject.set('p-a', [makeEndpoint('ep-1', 'p-a', 'users')])
+    backend.envsByProject.set('p-a', [])
+  })
+
+  const items = () => [
+    { name: 'users-导入版', method: 'GET', path: '/users', request: makeEndpoint('x', 'p-a', 'x').request },
+    {
+      name: 'orders',
+      method: 'POST',
+      path: '/orders',
+      request: makeEndpoint('x', 'p-a', 'x').request,
+      examples: [{ name: 'ex1', status: 200, content_type: 'application/json', headers: {}, body: '{}' }],
+    },
+  ]
+
+  it('skip：冲突项跳过，非冲突项照常导入', async () => {
+    const store = useWorkspaceStore()
+    await store.init()
+    const summary = await store.importEndpoints(items(), 'skip')
+    expect(summary.skipped).toBe(1)
+    expect(summary.endpoints).toBe(1)
+    // 冲突接口保持原样（名称不变）
+    expect(backend.endpointsByProject.get('p-a')!.some((e) => e.name === 'users-导入版')).toBe(false)
+  })
+
+  it('overwrite：沿用现有 id / 状态标记，覆盖名称与请求配置，不导入示例', async () => {
+    const store = useWorkspaceStore()
+    await store.init()
+    const before = backend.endpointsByProject.get('p-a')!.find((e) => e.id === 'ep-1')!
+    const summary = await store.importEndpoints(items(), 'overwrite')
+    expect(summary.overwritten).toBe(1)
+    // endpoints = 写入总数（新建 1 + 覆盖 1），与导入完成 toast 口径一致
+    expect(summary.endpoints).toBe(2)
+    const after = backend.endpointsByProject.get('p-a')!.find((e) => e.id === 'ep-1')!
+    expect(after.id).toBe(before.id)
+    expect(after.name).toBe('users-导入版')
+    expect(after.created_at).toBe(before.created_at)
+    // POST /orders 是新接口：新建路径 + 示例照常导入
+    expect(backend.endpointsByProject.get('p-a')!.some((e) => e.method === 'POST' && e.path === '/orders')).toBe(true)
+  })
+
+  it('duplicate（默认）：一律新建，冲突项也产生新接口', async () => {
+    const store = useWorkspaceStore()
+    await store.init()
+    const summary = await store.importEndpoints(items(), 'duplicate')
+    expect(summary.skipped).toBe(0)
+    expect(summary.overwritten).toBe(0)
+    expect(summary.endpoints).toBe(2)
+    const users = backend.endpointsByProject.get('p-a')!.filter((e) => e.method === 'GET' && e.path === '/users')
+    expect(users).toHaveLength(2)
+  })
+})
+
+describe('页签拖拽排序回写（reorderTabs）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    useLocaleStore().setMode('zh')
+    backend.projects.length = 0
+    backend.endpointsByProject.clear()
+    backend.envsByProject.clear()
+    backend.setActive('p-a')
+    backend.projects.push(makeProject('p-a', '项目A'))
+    backend.endpointsByProject.set('p-a', [
+      makeEndpoint('ep-1', 'p-a', 'users'),
+      makeEndpoint('ep-2', 'p-a', 'orders'),
+      makeEndpoint('ep-3', 'p-a', 'billing'),
+    ])
+    backend.envsByProject.set('p-a', [])
+  })
+
+  it('接受当前成员的完整排列；拒绝缺项 / 重复 / 未知 id', async () => {
+    const store = useWorkspaceStore()
+    await store.init()
+    store.openEndpoint(backend.endpointsByProject.get('p-a')![0]!)
+    store.openEndpoint(backend.endpointsByProject.get('p-a')![1]!)
+    store.openEndpoint(backend.endpointsByProject.get('p-a')![2]!)
+    store.reorderTabs(['ep-3', 'ep-1', 'ep-2'])
+    expect(store.openTabs).toEqual(['ep-3', 'ep-1', 'ep-2'])
+    // 缺项：不生效
+    store.reorderTabs(['ep-1', 'ep-2'])
+    expect(store.openTabs).toEqual(['ep-3', 'ep-1', 'ep-2'])
+    // 未知 id：不生效
+    store.reorderTabs(['ep-1', 'ep-2', 'ep-9'])
+    expect(store.openTabs).toEqual(['ep-3', 'ep-1', 'ep-2'])
+    // 长度对但重复：不生效
+    store.reorderTabs(['ep-1', 'ep-1', 'ep-2'])
+    expect(store.openTabs).toEqual(['ep-3', 'ep-1', 'ep-2'])
   })
 })

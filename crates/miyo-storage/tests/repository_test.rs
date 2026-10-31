@@ -711,6 +711,7 @@ async fn list_test_cases_by_endpoints_groups_and_orders() {
         request_id: ep,
         name: name.into(),
         category: "正向".into(),
+        folder: String::new(),
         method: HttpMethod::GET,
         url_path: "/users".into(),
         path_variables: Vec::new(),
@@ -775,6 +776,7 @@ async fn test_case_path_variables_persist_and_update() {
         request_id: ep.id,
         name: "详情".into(),
         category: "正向".into(),
+        folder: String::new(),
         method: HttpMethod::GET,
         url_path: "/users/{id}".into(),
         path_variables: vars.clone(),
@@ -921,4 +923,133 @@ async fn history_retention_applies_per_project_under_interleaved_writes() {
         count_b <= cap + 20,
         "项目 B 应受保留上限约束，实际 {count_b}"
     );
+}
+
+/// 用例文件夹：meta 写入 folder → 整组重命名 → 批量移出分组，全链路往返。
+#[tokio::test]
+async fn test_case_folder_roundtrip() {
+    let db = pool().await;
+    let project = repo::create_project(&db, "链路", "").await.unwrap();
+    let endpoint = repo::create_endpoint(&db, project.id, None, "汇款")
+        .await
+        .unwrap();
+    let case = TestCase {
+        id: Uuid::new_v4(),
+        request_id: endpoint.id,
+        name: "正向-汇 USD".into(),
+        category: "正向".into(),
+        folder: "Dlocal 渠道".into(),
+        method: HttpMethod::POST,
+        url_path: "/remmit".into(),
+        path_variables: Vec::new(),
+        params: Vec::new(),
+        headers: Vec::new(),
+        body_type: "json".into(),
+        body_content: String::new(),
+        last_run_status: TestCaseStatus::Untested,
+        created_at: chrono::Utc::now(),
+    };
+    repo::create_test_case(&db, &case).await.unwrap();
+
+    // meta 更新 folder 单项生效
+    repo::update_test_case_meta(&db, case.id, "正向-汇 USD", "正向", "Stripe 渠道")
+        .await
+        .unwrap();
+    let reloaded = repo::list_test_cases(&db, endpoint.id).await.unwrap();
+    assert_eq!(
+        reloaded.iter().find(|c| c.id == case.id).unwrap().folder,
+        "Stripe 渠道"
+    );
+
+    // 整组重命名（目标组不存在 → 只改本组）
+    let moved = repo::rename_test_case_folder(&db, endpoint.id, "Stripe 渠道", "Dlocal 渠道")
+        .await
+        .unwrap();
+    assert_eq!(moved, 1);
+
+    // 批量移出分组（空 = 未分组）
+    let moved = repo::set_test_cases_folder(&db, &[case.id], "")
+        .await
+        .unwrap();
+    assert_eq!(moved, 1);
+    let reloaded = repo::list_test_cases(&db, endpoint.id).await.unwrap();
+    assert_eq!(
+        reloaded.iter().find(|c| c.id == case.id).unwrap().folder,
+        ""
+    );
+}
+
+// ---------- 场景运行历史（scenario_runs） ----------
+
+fn scenario_run(scenario_id: Uuid, id: Uuid, offset_min: i64) -> miyo_core::model::ScenarioRun {
+    use miyo_core::model::ScenarioRun;
+    ScenarioRun {
+        id,
+        scenario_id,
+        environment_id: None,
+        finished_at: chrono::Utc::now() + chrono::Duration::minutes(offset_min),
+        duration_ms: Some(120.5),
+        total_steps: 3,
+        ok_count: 2,
+        fail_count: 1,
+        skipped_count: 0,
+        cancelled: false,
+        stopped_on_failure: true,
+        results_json: r#"[{"endpoint_id":"0b3f4a2e-6d1a-4c6e-9a6f-111111111111","endpoint_name":"登录","method":"POST","path":"/login","ok":false,"status":500,"duration_ms":60.0,"request_error":null,"outcomes":[]}]"#.into(),
+        variables_json: r#"{"token":"abc"}"#.into(),
+    }
+}
+
+#[tokio::test]
+async fn scenario_run_history_roundtrip_and_prune() {
+    let db = pool().await;
+
+    let project = repo::create_project(&db, "场景历史", "").await.unwrap();
+    let scenario = miyo_core::model::Scenario {
+        id: Uuid::new_v4(),
+        project_id: project.id,
+        name: "登录链路".into(),
+        description: String::new(),
+        sort_order: 0,
+        steps: vec![],
+        script: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    repo::save_scenario(&db, &scenario).await.unwrap();
+
+    // 保存 25 条 → 列表按时间倒序，修剪后仅剩最近 20 条。
+    for i in 0..25 {
+        let run = scenario_run(scenario.id, Uuid::new_v4(), i);
+        repo::save_scenario_run(&db, &run).await.unwrap();
+    }
+    repo::prune_scenario_runs(&db, scenario.id, repo::SCENARIO_RUN_KEEP)
+        .await
+        .unwrap();
+
+    let listed = repo::list_scenario_runs(&db, scenario.id, 50)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), repo::SCENARIO_RUN_KEEP as usize);
+    // 新→旧：第一条是 offset 最大的（最新）。
+    assert_eq!(listed[0].ok_count, 2);
+    assert!(listed[0].finished_at >= listed[1].finished_at);
+    assert!(listed[0].stopped_on_failure);
+
+    // 按 id 取回：JSON 透传字段一致。
+    let got = repo::get_scenario_run(&db, listed[0].id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.id, listed[0].id);
+    assert_eq!(got.total_steps, 3);
+    assert!(got.results_json.contains("登录"));
+    assert_eq!(got.variables_json, r#"{"token":"abc"}"#);
+
+    // 场景删除级联清理历史。
+    repo::delete_scenario(&db, scenario.id).await.unwrap();
+    let after = repo::list_scenario_runs(&db, scenario.id, 50)
+        .await
+        .unwrap();
+    assert!(after.is_empty());
 }

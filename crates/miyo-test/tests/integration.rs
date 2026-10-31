@@ -299,6 +299,18 @@ async fn scenario_chain_flows_extracted_vars() {
         result.variables.get("static_v").map(String::as_str),
         Some("s1")
     );
+    // 每步执行前的 runtime 快照（重跑失败步骤的初始变量来源）：
+    // 第 1 步前只有静态变量；第 2 步前已含第 1 步的提取值。
+    assert_eq!(result.vars_snapshots.len(), 2);
+    assert_eq!(
+        result.vars_snapshots[0].get("static_v").map(String::as_str),
+        Some("s1")
+    );
+    assert!(!result.vars_snapshots[0].contains_key("token"));
+    assert_eq!(
+        result.vars_snapshots[1].get("token").map(String::as_str),
+        Some("tok-9")
+    );
 }
 
 #[tokio::test]

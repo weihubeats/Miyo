@@ -224,6 +224,61 @@ impl TestRunRow {
 }
 
 #[derive(sqlx::FromRow)]
+pub(crate) struct ScenarioRunRow {
+    pub(crate) id: String,
+    pub(crate) scenario_id: String,
+    pub(crate) environment_id: Option<String>,
+    pub(crate) finished_at: String,
+    pub(crate) duration_ms: Option<f64>,
+    pub(crate) total_steps: i64,
+    pub(crate) ok_count: i64,
+    pub(crate) fail_count: i64,
+    pub(crate) skipped_count: i64,
+    pub(crate) cancelled: i64,
+    pub(crate) stopped_on_failure: i64,
+    pub(crate) results_json: String,
+    pub(crate) variables_json: String,
+}
+
+impl ScenarioRunRow {
+    pub(crate) fn from_model(model: &ScenarioRun) -> Self {
+        ScenarioRunRow {
+            id: model.id.to_string(),
+            scenario_id: model.scenario_id.to_string(),
+            environment_id: model.environment_id.map(|e| e.to_string()),
+            finished_at: model.finished_at.to_rfc3339(),
+            duration_ms: model.duration_ms,
+            total_steps: model.total_steps,
+            ok_count: model.ok_count,
+            fail_count: model.fail_count,
+            skipped_count: model.skipped_count,
+            cancelled: model.cancelled as i64,
+            stopped_on_failure: model.stopped_on_failure as i64,
+            results_json: model.results_json.clone(),
+            variables_json: model.variables_json.clone(),
+        }
+    }
+
+    pub(crate) fn into_model(self) -> Result<ScenarioRun> {
+        Ok(ScenarioRun {
+            id: parse_uuid(&self.id)?,
+            scenario_id: parse_uuid(&self.scenario_id)?,
+            environment_id: self.environment_id.as_deref().map(parse_uuid).transpose()?,
+            finished_at: parse_time(&self.finished_at)?,
+            duration_ms: self.duration_ms,
+            total_steps: self.total_steps,
+            ok_count: self.ok_count,
+            fail_count: self.fail_count,
+            skipped_count: self.skipped_count,
+            cancelled: self.cancelled != 0,
+            stopped_on_failure: self.stopped_on_failure != 0,
+            results_json: self.results_json,
+            variables_json: self.variables_json,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
 pub(crate) struct HistoryRow {
     pub(crate) id: String,
     pub(crate) project_id: String,

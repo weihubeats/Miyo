@@ -4,16 +4,18 @@
 //! runtime 快照（前步提取值优先）」渲染每步的 URL / 规格模板——前步提取的
 //! 变量即成为后续请求的入参（详见 miyo-test `run_scenario`）。
 
-use serde::Deserialize;
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
-use miyo_core::model::{Endpoint, Scenario};
+use miyo_core::model::{Endpoint, Scenario, ScenarioRun};
 use miyo_core::VariableMap;
 use miyo_storage::repository as repo;
 use miyo_test::runner::{ScenarioOptions, ScenarioStepInput};
 
-use crate::commands::request::resolve_timeout_ms;
+use crate::commands::request::{cap_ipc_body, resolve_timeout_ms};
 use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
 
@@ -88,6 +90,13 @@ pub struct RunScenarioArgs {
     /// 取消标识（前端生成；`cancel_scenario_run` 触发中止）。
     #[serde(default)]
     pub run_id: Option<String>,
+    /// 归属场景（提供则运行完成后自动落运行历史；旧前端 / 裸步骤运行缺省不落）。
+    #[serde(default)]
+    pub scenario_id: Option<Uuid>,
+    /// 初始变量（重跑失败步骤时传前次运行的 runtime 快照，重建链路上下文；
+    /// 缺省用环境 / 项目 / 全局变量解析）。键值对覆盖默认解析结果。
+    #[serde(default)]
+    pub initial_vars: Option<HashMap<String, String>>,
 }
 
 /// 运行场景：严格按步骤顺序串行执行，返回每步结果与最终变量池。
@@ -112,6 +121,12 @@ pub async fn run_scenario(
     },);
     let vars: VariableMap = vars?;
     let timeout_ms = timeout_ms?;
+    // 重跑失败步骤：以前次运行的 runtime 快照为底（已含环境静态变量与提取值），
+    // 全局参数按步补缺仍走同一物化路径。
+    let vars: VariableMap = match args.initial_vars {
+        Some(initial) if !initial.is_empty() => initial,
+        _ => vars,
+    };
 
     let settings = state.global_settings().await?;
     let global_params = settings.global_params.clone();
@@ -156,6 +171,7 @@ pub async fn run_scenario(
 
     // 进度事件（带 run_id：同前端多编辑器实例可过滤只认自己的那次运行）。
     let total = steps.len();
+    let total_enabled = total;
     let event_run_id = args.run_id.clone().unwrap_or_default();
     let progress = move |done: usize, _total: usize| {
         let _ = app.emit(
@@ -163,13 +179,12 @@ pub async fn run_scenario(
             serde_json::json!({ "runId": event_run_id, "done": done, "total": total }),
         );
     };
-
     let options = ScenarioOptions {
         timeout_ms: Some(timeout_ms),
         cancel: cancel.as_ref().map(|(_, t)| t.clone()),
         stop_on_failure: args.stop_on_failure,
     };
-    let result = miyo_test::runner::run_scenario(steps, &vars, &options, Some(&progress)).await;
+    let mut result = miyo_test::runner::run_scenario(steps, &vars, &options, Some(&progress)).await;
 
     // 无论完成 / 取消，都从注册表移除，避免泄漏。
     if let Some((id, _)) = &cancel {
@@ -179,7 +194,170 @@ pub async fn run_scenario(
             .unwrap_or_else(|p| p.into_inner())
             .remove(id);
     }
+
+    // 正文 IPC 预览口径与单请求流程一致：超 2MB 截断，全文入缓存
+    // （键 `{run_id}:{结果位次}`），前端经 get_response_body 按需取回；
+    // 无 run_id 的调用不缓存，前端对 body_omitted 降级为预览提示。
+    let run_key = args.run_id.clone().unwrap_or_default();
+    {
+        let mut cache = state
+            .response_bodies
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        for (i, step) in result.results.iter_mut().enumerate() {
+            let Some(resp) = step.response.as_mut() else {
+                continue;
+            };
+            let (preview, omitted) = cap_ipc_body(&resp.body);
+            if omitted {
+                if !run_key.is_empty() {
+                    cache.insert(format!("{run_key}:{i}"), resp.body.clone());
+                }
+                resp.body = preview;
+                resp.body_omitted = true;
+            }
+        }
+    }
+
+    // 运行历史落库（fail-open：结果照常返回，历史失败仅告警）。
+    if let Some(scenario_id) = args.scenario_id {
+        if let Err(e) = persist_scenario_run(
+            &state,
+            scenario_id,
+            args.environment_id,
+            args.run_id.as_deref(),
+            total_enabled,
+            &result,
+        )
+        .await
+        {
+            tracing::warn!("[run_scenario] 保存运行历史失败：{e}");
+        }
+    }
+
     Ok(result)
+}
+
+/// 场景运行历史条目（IPC 摘要；results_json / variables_json 不下发）。
+#[derive(Debug, Serialize)]
+pub struct ScenarioRunSummary {
+    pub id: String,
+    pub finished_at: chrono::DateTime<chrono::Utc>,
+    pub duration_ms: Option<f64>,
+    pub total_steps: i64,
+    pub ok_count: i64,
+    pub fail_count: i64,
+    pub skipped_count: i64,
+    pub cancelled: bool,
+    pub stopped_on_failure: bool,
+}
+
+/// 场景运行历史详情：摘要 + 回读的步骤结果与变量池。
+#[derive(Debug, Serialize)]
+pub struct ScenarioRunDetail {
+    #[serde(flatten)]
+    pub summary: ScenarioRunSummary,
+    pub results: Vec<miyo_test::runner::EndpointResult>,
+    pub variables: HashMap<String, String>,
+}
+
+/// 运行完成后落历史：剥离 response 正文（体积），统计摘要，保留最近 N 条。
+async fn persist_scenario_run(
+    state: &State<'_, AppState>,
+    scenario_id: Uuid,
+    environment_id: Option<Uuid>,
+    run_id: Option<&str>,
+    enabled_steps: usize,
+    result: &miyo_test::runner::ScenarioRunResult,
+) -> CommandResult<()> {
+    // 结果序列化前剥离 response（正文预览最大 2MB，历史不需要；
+    // 状态码 / 断言明细 / 提取值 / 实际 URL 均在结果字段里保留）。
+    let mut results = result.results.clone();
+    for r in &mut results {
+        r.response = None;
+    }
+    let executed = results.len() as i64;
+    let ok_count = results.iter().filter(|r| r.ok).count() as i64;
+    let record = ScenarioRun {
+        // id 即前端生成的 run_id（同一次重试覆盖旧行，不膨胀）。
+        id: run_id
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .unwrap_or_else(Uuid::new_v4),
+        scenario_id,
+        environment_id,
+        finished_at: chrono::Utc::now(),
+        duration_ms: Some(results.iter().filter_map(|r| r.duration_ms).sum()),
+        total_steps: enabled_steps as i64,
+        ok_count,
+        fail_count: executed - ok_count,
+        skipped_count: (enabled_steps as i64 - executed).max(0),
+        cancelled: result.cancelled,
+        stopped_on_failure: result.stopped_on_failure,
+        results_json: serde_json::to_string(&results)
+            .map_err(|e| CommandError::validation(format!("运行结果序列化失败：{e}")))?,
+        variables_json: serde_json::to_string(&result.variables)
+            .map_err(|e| CommandError::validation(format!("变量池序列化失败：{e}")))?,
+    };
+    repo::save_scenario_run(&state.db, &record).await?;
+    repo::prune_scenario_runs(&state.db, scenario_id, repo::SCENARIO_RUN_KEEP).await?;
+    Ok(())
+}
+
+/// 列出场景最近的运行历史（新→旧，默认 20 条）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_scenario_runs(
+    state: State<'_, AppState>,
+    scenario_id: Uuid,
+    limit: Option<i64>,
+) -> CommandResult<Vec<ScenarioRunSummary>> {
+    let runs = repo::list_scenario_runs(&state.db, scenario_id, limit.unwrap_or(20)).await?;
+    Ok(runs
+        .into_iter()
+        .map(|r| ScenarioRunSummary {
+            id: r.id.to_string(),
+            finished_at: r.finished_at,
+            duration_ms: r.duration_ms,
+            total_steps: r.total_steps,
+            ok_count: r.ok_count,
+            fail_count: r.fail_count,
+            skipped_count: r.skipped_count,
+            cancelled: r.cancelled,
+            stopped_on_failure: r.stopped_on_failure,
+        })
+        .collect())
+}
+
+/// 取单条运行历史详情（回看；不存在返回 `null`）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_scenario_run(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<Option<ScenarioRunDetail>> {
+    let uuid = Uuid::parse_str(&id)
+        .map_err(|_| CommandError::validation(format!("运行历史 id 无效：{id}")))?;
+    let Some(run) = repo::get_scenario_run(&state.db, uuid).await? else {
+        return Ok(None);
+    };
+    let results: Vec<miyo_test::runner::EndpointResult> =
+        serde_json::from_str(&run.results_json)
+            .map_err(|e| CommandError::validation(format!("运行历史结果解析失败：{e}")))?;
+    let variables: HashMap<String, String> = serde_json::from_str(&run.variables_json)
+        .map_err(|e| CommandError::validation(format!("运行历史变量解析失败：{e}")))?;
+    Ok(Some(ScenarioRunDetail {
+        summary: ScenarioRunSummary {
+            id: run.id.to_string(),
+            finished_at: run.finished_at,
+            duration_ms: run.duration_ms,
+            total_steps: run.total_steps,
+            ok_count: run.ok_count,
+            fail_count: run.fail_count,
+            skipped_count: run.skipped_count,
+            cancelled: run.cancelled,
+            stopped_on_failure: run.stopped_on_failure,
+        },
+        results,
+        variables,
+    }))
 }
 
 /// 取消一个在途场景运行（run_id 不存在或已完成时返回 `false`）。

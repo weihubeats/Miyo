@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-delete-request-history"
+description = "Enables the delete_request_history command without any pre-configured scope."
+commands.allow = ["delete_request_history"]
+
+[[permission]]
+identifier = "deny-delete-request-history"
+description = "Denies the delete_request_history command without any pre-configured scope."
+commands.deny = ["delete_request_history"]

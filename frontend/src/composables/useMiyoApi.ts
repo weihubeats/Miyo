@@ -52,6 +52,7 @@ import type {
   LoadResult,
   LogFile,
   MockRule,
+  MockRequestLog,
   OAuth2Token,
   Project,
   ProjectStat,
@@ -65,6 +66,9 @@ import type {
   ResponseExample,
   Scenario,
   ScenarioRunResult,
+  ScenarioRunSummary,
+  ScenarioRunDetail,
+  BackupExportDoc,
   SeqCounter,
   ServiceCatalog,
   RemoteProjectEntry,
@@ -308,8 +312,16 @@ export function useMiyoApi() {
   const saveTestCase = (testCase: TestCase) =>
     run(() => call<TestCase>('save_test_case', { testCase }))
 
-  const updateTestCaseMeta = (caseId: string, name: string, category: string) =>
-    run(() => call<void>('update_test_case_meta', { caseId, name, category }))
+  const updateTestCaseMeta = (caseId: string, name: string, category: string, folder: string) =>
+    run(() => call<void>('update_test_case_meta', { caseId, name, category, folder }))
+
+  /** 批量移动用例到文件夹（空 = 移出分组）。 */
+  const setTestCaseFolder = (caseIds: string[], folder: string) =>
+    run(() => call<number>('set_test_case_folder', { caseIds, folder }))
+
+  /** 重命名接口下的用例文件夹（整组改名）。 */
+  const renameTestCaseFolder = (requestId: string, oldFolder: string, newFolder: string) =>
+    run(() => call<number>('rename_test_case_folder', { requestId, oldFolder, newFolder }))
 
   const updateTestCaseStatus = (caseId: string, status: TestCaseStatus) =>
     run(() => call<void>('update_test_case_status', { caseId, status }))
@@ -373,10 +385,22 @@ export function useMiyoApi() {
     environmentId?: string | null
     stopOnFailure: boolean
     runId: string
+    /** 归属场景（提供则后端运行完成后自动落运行历史）。 */
+    scenarioId?: string | null
+    /** 初始变量（重跑失败步骤：传前次运行的 runtime 快照重建链路上下文）。 */
+    initialVars?: Record<string, string> | null
   }) => run(() => call<ScenarioRunResult>('run_scenario', { args }))
 
   const cancelScenarioRun = (runId: string) =>
     run(() => call<boolean>('cancel_scenario_run', { runId }))
+
+  /** 场景运行历史列表（新→旧，默认 20 条；命令层已剥 results/variables 正文）。 */
+  const listScenarioRuns = (scenarioId: string, limit?: number) =>
+    run(() => call<ScenarioRunSummary[]>('list_scenario_runs', { scenarioId, limit }))
+
+  /** 单条运行历史详情（results 与实时运行同形；不存在返回 null）。 */
+  const getScenarioRun = (id: string) =>
+    run(() => call<ScenarioRunDetail | null>('get_scenario_run', { id }))
 
   // ---------- 代码生成 ----------
   const codegenRender = (args: {
@@ -395,12 +419,22 @@ export function useMiyoApi() {
   const clearRequestHistories = (projectId: string, endpointId?: string | null) =>
     run(() => call<number>('clear_request_histories', { projectId, endpointId }))
 
+  /** 删除单条请求历史（行内删除：敏感记录即时清除）。 */
+  const deleteRequestHistory = (id: string) =>
+    run(() => call<void>('delete_request_history', { id }))
+
   // ---------- Mock 服务 ----------
   const mockStart = () => run(() => call<string>('mock_start'))
 
   const mockStop = () => run(() => call<void>('mock_stop'))
 
   const mockStatus = () => quiet<string | null>('mock_status')
+
+  /** 最近 Mock 请求日志（环形缓冲最近 100 条；服务未运行返回空）。 */
+  const mockRequestLogs = () => run(() => call<MockRequestLog[]>('mock_request_logs'))
+
+  /** 清空 Mock 请求日志。 */
+  const mockClearLogs = () => run(() => call<void>('mock_clear_logs'))
 
   /** 热重载 Mock 定义（运行中原子替换路由与模板，无需重启；未运行报错）。 */
   const mockReload = () => run(() => call<number>('mock_reload'))
@@ -468,7 +502,7 @@ export function useMiyoApi() {
 
   // ---------- 备份/恢复 ----------
   const backupExport = (projectId: string) =>
-    run(() => call<string>('backup_export', { projectId }))
+    run(() => call<BackupExportDoc>('backup_export', { projectId }))
 
   const backupRestore = (text: string) =>
     run(() => call<BackupSummary>('backup_restore', { text }))
@@ -724,6 +758,8 @@ export function useMiyoApi() {
     listTestCases,
     saveTestCase,
     updateTestCaseMeta,
+    setTestCaseFolder,
+    renameTestCaseFolder,
     updateTestCaseStatus,
     updateTestCaseContent,
     deleteTestCase,
@@ -735,12 +771,17 @@ export function useMiyoApi() {
     deleteScenario,
     runScenario,
     cancelScenarioRun,
+    listScenarioRuns,
+    getScenarioRun,
     codegenRender,
     listRequestHistories,
     clearRequestHistories,
+    deleteRequestHistory,
     mockStart,
     mockStop,
     mockStatus,
+    mockRequestLogs,
+    mockClearLogs,
     mockReload,
     listMockRules,
     saveMockRule,

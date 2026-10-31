@@ -11,7 +11,7 @@ use std::sync::{
 };
 
 use miyo_core::model::{Endpoint, RequestSpec};
-use miyo_http::client::{send_request, HttpResponseData};
+use miyo_http::client::{send_request, send_request_cancel, HttpResponseData, RequestSnapshot};
 use serde_json::Value;
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use uuid::Uuid;
@@ -20,8 +20,49 @@ use crate::assert::{evaluate, Outcome};
 use crate::config::TestSpec;
 use crate::extract::extract_variables;
 
+/// 步骤响应快照（JSON 安全，随 [`EndpointResult`] 序列化给前端）。
+///
+/// `body` 为响应全文（HTTP 层已按 20MB 上限截断并标记 `truncated`）；
+/// IPC 预览截断（>2MB）与全文缓存由 miyo-tauri 命令层落地——与单请求
+/// 流程同口径（`get_response_body` 按需取回），本结构不感知缓存。
+/// Deserialize 供运行历史落库回读（scenario_runs.results_json）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StepResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+    pub content_type: String,
+    /// 毫秒（浮点，保留亚毫秒精度）。
+    pub duration_ms: f64,
+    pub size_bytes: usize,
+    pub truncated: bool,
+    /// 正文是否仅为 IPC 预览（命令层超限截断时置位）。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub body_omitted: bool,
+    /// 实际发出形态（变量渲染 / 认证注入 / Cookie 回放后的最终值）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<RequestSnapshot>,
+}
+
+impl StepResponse {
+    fn from_resp(resp: &HttpResponseData) -> Self {
+        StepResponse {
+            status: resp.status,
+            headers: resp.headers.clone(),
+            body: resp.body_text(),
+            content_type: resp.content_type(),
+            duration_ms: resp.duration_ms,
+            size_bytes: resp.size_bytes,
+            truncated: resp.truncated,
+            body_omitted: false,
+            request: resp.request.clone(),
+        }
+    }
+}
+
 /// 单个接口的测试结果。
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+/// Deserialize 供运行历史落库回读（scenario_runs.results_json）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EndpointResult {
     pub endpoint_id: Uuid,
     pub endpoint_name: String,
@@ -37,10 +78,27 @@ pub struct EndpointResult {
     /// 本步提取到的变量（场景链路的时间线展示与调试用）。
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub extracted: HashMap<String, String>,
+    /// 实际发送的渲染后 URL（含变量替换）；配置错误未发送时为 None。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// 场景链路中的步骤位次（启用步骤 0-based）；单接口 / 集合运行为 None。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_index: Option<usize>,
+    /// 该步因取消而中止（在途请求被 cancel 中止，区别于真实失败）。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub cancelled: bool,
+    /// 响应快照（发送成功时存在；failed_fast 无响应）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<StepResponse>,
 }
 
 impl EndpointResult {
-    fn failed_fast(id: Uuid, ep: &Endpoint, reason: impl Into<String>) -> Self {
+    fn failed_fast(
+        id: Uuid,
+        ep: &Endpoint,
+        url: Option<String>,
+        reason: impl Into<String>,
+    ) -> Self {
         EndpointResult {
             endpoint_id: id,
             endpoint_name: ep.name.clone(),
@@ -52,6 +110,10 @@ impl EndpointResult {
             request_error: Some(reason.into()),
             outcomes: Vec::new(),
             extracted: HashMap::new(),
+            url,
+            step_index: None,
+            cancelled: false,
+            response: None,
         }
     }
 }
@@ -72,7 +134,7 @@ pub async fn run_endpoint(
     // 配置解析由 run_one 统一处理（含"无测试配置跳过"与"配置错误"语义）；
     // 运行时变量经互斥表访问（串行入口独占，集合入口多 worker 共享）。
     let shared = AsyncMutex::new(std::mem::take(runtime_vars));
-    let (result, resp) = run_one(ep, url, spec, &shared, timeout_ms).await;
+    let (result, resp) = run_one(ep, url, spec, &shared, timeout_ms, None).await;
     *runtime_vars = shared.into_inner();
     (result, resp)
 }
@@ -88,12 +150,18 @@ async fn run_one(
     spec: &RequestSpec,
     runtime: &AsyncMutex<HashMap<String, String>>,
     timeout_ms: Option<u64>,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
 ) -> (EndpointResult, Option<HttpResponseData>) {
     let config = match TestSpec::from_request_value(ep.request.tests.as_ref()) {
         Ok(c) => c,
         Err(reason) => {
             return (
-                EndpointResult::failed_fast(ep.id, ep, format!("测试配置错误：{reason}")),
+                EndpointResult::failed_fast(
+                    ep.id,
+                    ep,
+                    Some(url.to_string()),
+                    format!("测试配置错误：{reason}"),
+                ),
                 None,
             );
         }
@@ -111,16 +179,23 @@ async fn run_one(
                 request_error: Some("无测试配置（跳过）".into()),
                 outcomes: Vec::new(),
                 extracted: HashMap::new(),
+                url: Some(url.to_string()),
+                step_index: None,
+                cancelled: false,
+                response: None,
             },
             None,
         );
     }
-    run_one_core(ep, url, spec, config, runtime, timeout_ms).await
+    run_one_core(ep, url, spec, config, runtime, timeout_ms, cancel).await
 }
 
 /// 四步核心（pre→send→assert→extract），测试配置由调用方给定：
 /// 单接口路径读自 `endpoint.tests`；场景步骤传步骤级配置
 ///（即使为空也照常发送——场景步骤断言可选，发送本身不能跳过）。
+///
+/// `cancel` 触发时中止在途请求（`send_request_cancel`），本步结果标记
+/// `cancelled = true`；仅取消单步语义，是否终止整轮由调用方判定。
 async fn run_one_core(
     ep: &Endpoint,
     url: &str,
@@ -128,6 +203,7 @@ async fn run_one_core(
     config: TestSpec,
     runtime: &AsyncMutex<HashMap<String, String>>,
     timeout_ms: Option<u64>,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
 ) -> (EndpointResult, Option<HttpResponseData>) {
     // 1. pre_request：快照→本地解析→回写（值支持 {{$timestamp}} 与已提取变量）。
     let snapshot = runtime.lock().await.clone();
@@ -139,12 +215,27 @@ async fn run_one_core(
         runtime.lock().await.extend(injected);
     }
 
-    // 2. 发送请求。
-    let resp = match send_request(ep.method, url, spec, timeout_ms).await {
+    // 2. 发送请求（带取消时中止在途请求，返回 AppError::Cancelled）。
+    let sent = match cancel {
+        Some(c) => send_request_cancel(ep.method, url, spec, timeout_ms, c).await,
+        None => send_request(ep.method, url, spec, timeout_ms).await,
+    };
+    let resp = match sent {
         Ok(r) => r,
         Err(e) => {
+            if matches!(e, miyo_core::AppError::Cancelled(_)) {
+                let mut result =
+                    EndpointResult::failed_fast(ep.id, ep, Some(url.to_string()), "请求已取消");
+                result.cancelled = true;
+                return (result, None);
+            }
             return (
-                EndpointResult::failed_fast(ep.id, ep, format!("请求失败：{}", e.user_message())),
+                EndpointResult::failed_fast(
+                    ep.id,
+                    ep,
+                    Some(url.to_string()),
+                    format!("请求失败：{}", e.user_message()),
+                ),
                 None,
             );
         }
@@ -185,6 +276,10 @@ async fn run_one_core(
             request_error: None,
             outcomes,
             extracted,
+            url: Some(url.to_string()),
+            step_index: None,
+            cancelled: false,
+            response: Some(StepResponse::from_resp(&resp)),
         },
         Some(resp),
     )
@@ -257,8 +352,15 @@ pub async fn run_collection(
                     break;
                 }
                 let item = &items[idx];
-                let (result, _) =
-                    run_one(&item.endpoint, &item.url, &item.spec, &runtime, timeout_ms).await;
+                let (result, _) = run_one(
+                    &item.endpoint,
+                    &item.url,
+                    &item.spec,
+                    &runtime,
+                    timeout_ms,
+                    cancel.as_ref(),
+                )
+                .await;
                 if tx.send((idx, result)).await.is_err() {
                     break;
                 }
@@ -321,6 +423,10 @@ pub struct ScenarioRunResult {
     pub stopped_on_failure: bool,
     /// 全部步骤结束后的运行时变量（链路产物；含环境静态变量的兜底值）。
     pub variables: HashMap<String, String>,
+    /// 每步执行前的 runtime 快照（与 results 同位序）：重跑失败步骤时作为
+    /// 初始变量回传，重建当时的链路上下文。随 IPC 下发、不落运行历史。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vars_snapshots: Vec<HashMap<String, String>>,
 }
 
 /// 运行集成测试场景：严格按步骤顺序串行执行。
@@ -338,6 +444,7 @@ pub async fn run_scenario(
     // runtime 以环境静态变量为底，提取值按步覆盖（runtime 优先级更高）。
     let runtime = AsyncMutex::new(base_vars.clone());
     let mut results = Vec::with_capacity(total);
+    let mut vars_snapshots = Vec::with_capacity(total);
     for (idx, step) in steps.iter().enumerate() {
         if options.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
             return ScenarioRunResult {
@@ -345,9 +452,12 @@ pub async fn run_scenario(
                 cancelled: true,
                 stopped_on_failure: false,
                 variables: runtime.into_inner(),
+                vars_snapshots,
             };
         }
         let render_vars = runtime.lock().await.clone();
+        // 每步执行前的 runtime 快照（重跑失败步骤的初始变量来源）。
+        vars_snapshots.push(render_vars.clone());
         let url = miyo_core::resolve_variables(&step.url_template, &render_vars);
         let spec = miyo_core::render_spec(&step.spec_template, &render_vars);
         let config = TestSpec {
@@ -355,19 +465,35 @@ pub async fn run_scenario(
             extract: step.extract.clone(),
             assertions: step.assertions.clone(),
         };
-        let (result, _) = run_one_core(
+        // 每步独立超时：接口自带 timeout_ms 优先，否则用场景级解析值兜底。
+        let step_timeout = step.endpoint.request.timeout_ms.or(options.timeout_ms);
+        let (mut result, _) = run_one_core(
             &step.endpoint,
             &url,
             &spec,
             config,
             &runtime,
-            options.timeout_ms,
+            step_timeout,
+            options.cancel.as_ref(),
         )
         .await;
+        // 结果自描述：链路位次 + 渲染后实际 URL（前端 / CLI 免按位对齐猜测）。
+        result.step_index = Some(idx);
         let failed = !result.ok;
         results.push(result);
         if let Some(cb) = progress {
             cb(idx + 1, total);
+        }
+        // 取消优先于失败即停：在途请求被中止的步骤 ok = false 但非真实失败，
+        // 先判取消再判失败，避免「取消」被误报为「失败即停」。
+        if options.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+            return ScenarioRunResult {
+                results,
+                cancelled: true,
+                stopped_on_failure: false,
+                variables: runtime.into_inner(),
+                vars_snapshots,
+            };
         }
         if failed && options.stop_on_failure {
             return ScenarioRunResult {
@@ -375,6 +501,7 @@ pub async fn run_scenario(
                 cancelled: false,
                 stopped_on_failure: true,
                 variables: runtime.into_inner(),
+                vars_snapshots,
             };
         }
     }
@@ -383,6 +510,7 @@ pub async fn run_scenario(
         cancelled: false,
         stopped_on_failure: false,
         variables: runtime.into_inner(),
+        vars_snapshots,
     }
 }
 

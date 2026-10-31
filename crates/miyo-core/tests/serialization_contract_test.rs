@@ -12,8 +12,8 @@ use uuid::Uuid;
 use miyo_core::model::{
     ApiKeyLocation, AuthSpec, BodySpec, Endpoint, EndpointStatus, Environment, EnvironmentVariable,
     GlobalParam, GlobalParamLocation, GraphQLSpec, GrpcSpec, HttpMethod, KeyValue, MockMatchItem,
-    MockRule, MultipartField, OAuth2Token, Project, ProtoFile, RequestExample, RequestHistory,
-    RequestSpec, ResponseExample, TestCase, TestCaseStatus, TestRun,
+    MockRequestLog, MockRule, MultipartField, OAuth2Token, Project, ProtoFile, RequestExample,
+    RequestHistory, RequestSpec, ResponseExample, ScenarioRun, TestCase, TestCaseStatus, TestRun,
 };
 
 /// 合法键：snake_case（小写字母/数字/下划线，且不含大写字母）。
@@ -165,6 +165,7 @@ fn ipc_models_serialize_snake_case_keys() {
             request_id: Uuid::new_v4(),
             name: "正向用例".into(),
             category: "正向".into(),
+            folder: String::new(),
             method: HttpMethod::POST,
             url_path: "/pets".into(),
             path_variables: vec![kv("id", "1")],
@@ -214,6 +215,39 @@ fn ipc_models_serialize_snake_case_keys() {
             result_json: "{}".into(),
             started_at: now,
             finished_at: None,
+        },
+    );
+
+    check(
+        "MockRequestLog",
+        &MockRequestLog {
+            at: now,
+            method: "GET".into(),
+            path: "/users".into(),
+            status: 200,
+            matched: true,
+            source: "rule".into(),
+            rule_id: Some(Uuid::new_v4()),
+            source_name: "登录规则".into(),
+        },
+    );
+
+    check(
+        "ScenarioRun",
+        &ScenarioRun {
+            id: Uuid::new_v4(),
+            scenario_id: Uuid::new_v4(),
+            environment_id: None,
+            finished_at: now,
+            duration_ms: Some(12.5),
+            total_steps: 3,
+            ok_count: 2,
+            fail_count: 1,
+            skipped_count: 0,
+            cancelled: false,
+            stopped_on_failure: true,
+            results_json: "[]".into(),
+            variables_json: "{}".into(),
         },
     );
 

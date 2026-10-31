@@ -19,11 +19,13 @@ import { planCrossGroupMove, planSameGroupMove, wouldCreateCycle } from './treeO
 import { deepClone } from '../utils/clone'
 import { splitUrl } from '../utils/url'
 import {
+  BUILTIN_VARIABLES,
   envBaseUrl,
-  environmentVariableMap,
+  findUnknownVars,
+  mergedVariableMap,
+  requestTemplateTexts,
   resolveRequestUrl,
   resolveVariables,
-  variableListToMap,
 } from '../utils/environment'
 import { applyCaseToRequest, restoreBody, snapshotRequest } from '../utils/testCases'
 import { applyPathVars } from '../utils/pathVariables'
@@ -368,6 +370,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const [, p] = await Promise.all([ensureOpenProjectsRestored(), api.getActiveProject()])
     if (!p) return null
     project.value = p
+    // 冷启动：恢复该项目的页签 / 草稿现场（localStorage 持久化；快照机制
+    // 只覆盖会话内切换，重启后走这里）。
+    restoreTabsState(p.id)
     restoreSessionBaseUrl()
     await Promise.all([load(p.id, p), loadEnvironments(), loadScenarios(p.id)])
     return p
@@ -571,12 +576,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       void loadScenarios(p.id)
     } else {
       project.value = p
-      openTabs.value = []
-      drafts.value = new Map()
+      // 快照未命中（冷启动 / LRU 淘汰）：尝试从 localStorage 恢复页签现场。
+      if (!restoreTabsState(p.id)) {
+        openTabs.value = []
+        drafts.value = new Map()
+        activeTabId.value = null
+      }
       examples.value = new Map()
       requestExamples.value = new Map()
       testCases.value = new Map()
-      activeTabId.value = null
       activeView.value = 'debug'
       restoreSessionBaseUrl()
       histories.value = []
@@ -642,6 +650,118 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   // store 创建即触发：应用可能直接落在项目列表页（此时 WorkspaceView 尚未挂载）
   void ensureOpenProjectsRestored()
 
+  // ---------- 页签 / 草稿跨重启恢复 + 最近访问 ----------
+  // 项目级持久化（localStorage）：openTabs 顺序 + 草稿体 + 激活页签。
+  // 草稿是打开时克隆的完整 Endpoint（自包含），重启后无保存态也可恢复编辑现场；
+  // 超限时宁可放弃恢复也不写爆配额（2MB 上限，普通项目远达不到）。
+  const TABS_STATE_PREFIX = 'miyo.open-tabs.'
+  const TABS_STATE_MAX_BYTES = 2 * 1024 * 1024
+  const RECENTS_KEY = 'miyo.recent-endpoints'
+  const RECENTS_MAX = 10
+
+  /** 最近打开的接口（跨项目全局，QuickSearch「最近」分组与排序用）。 */
+  const recentEndpointIds = ref<string[]>([])
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(RECENTS_KEY) ?? '[]')
+    if (Array.isArray(parsed)) {
+      recentEndpointIds.value = parsed.filter((v): v is string => typeof v === 'string').slice(0, RECENTS_MAX)
+    }
+  } catch {
+    // 损坏即重置
+  }
+
+  function recordRecentEndpoint(id: string): void {
+    const next = [id, ...recentEndpointIds.value.filter((v) => v !== id)].slice(0, RECENTS_MAX)
+    recentEndpointIds.value = next
+    try {
+      localStorage.setItem(RECENTS_KEY, JSON.stringify(next))
+    } catch {
+      // 配额满不影响主流程
+    }
+  }
+
+  let tabsPersistTimer: ReturnType<typeof setTimeout> | undefined
+  function persistTabsState(): void {
+    const pid = project.value?.id
+    if (!pid) return
+    try {
+      const draftsObj: Record<string, Endpoint> = {}
+      for (const id of openTabs.value) {
+        const d = drafts.value.get(id)
+        if (d) draftsObj[id] = d
+      }
+      const payload = JSON.stringify({
+        tabs: openTabs.value,
+        drafts: draftsObj,
+        activeTabId: activeTabId.value,
+      })
+      if (payload.length > TABS_STATE_MAX_BYTES) return
+      localStorage.setItem(TABS_STATE_PREFIX + pid, payload)
+    } catch {
+      // 写失败（配额等）静默：恢复缺失只是回到旧默认（空页签）
+    }
+  }
+
+  /** 草稿高频编辑 → 防抖落盘（页签结构变化由下方 watch 直接触发）。 */
+  function schedulePersistTabs(): void {
+    if (tabsPersistTimer) clearTimeout(tabsPersistTimer)
+    tabsPersistTimer = setTimeout(persistTabsState, 600)
+  }
+
+  /** 冷启动 / 快照未命中时恢复该项目的页签现场；返回是否恢复成功。 */
+  function restoreTabsState(pid: string): boolean {
+    try {
+      const raw = localStorage.getItem(TABS_STATE_PREFIX + pid)
+      if (!raw) return false
+      const parsed = JSON.parse(raw) as {
+        tabs?: unknown
+        drafts?: Record<string, Endpoint>
+        activeTabId?: unknown
+      }
+      if (!Array.isArray(parsed.tabs)) return false
+      const tabs: string[] = []
+      const draftsMap = new Map<string, Endpoint>()
+      for (const id of parsed.tabs) {
+        if (typeof id !== 'string') continue
+        // 伪页签自描述；接口页签以草稿体为存在依据（自包含，接口列表加载前后都可渲染）
+        if (isCreateTab(id) || isScenarioTab(id)) {
+          tabs.push(id)
+          continue
+        }
+        const d = parsed.drafts?.[id]
+        if (d && typeof d.id === 'string' && typeof d.request === 'object') {
+          draftsMap.set(id, d)
+          tabs.push(id)
+        }
+      }
+      if (!tabs.length) return false
+      openTabs.value = tabs
+      drafts.value = draftsMap
+      const active =
+        typeof parsed.activeTabId === 'string' && tabs.includes(parsed.activeTabId)
+          ? parsed.activeTabId
+          : tabs[0]!
+      activeTabId.value = active
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  // 页签结构 / 激活态变化即落盘（覆盖打开 / 关闭 / 切换 / 场景页签等所有路径）。
+  watch([openTabs, activeTabId], () => persistTabsState())
+  // 草稿编辑：防抖合并（与上方 dirtyTick watch 同源触发，各自节流互不影响）。
+  watch(
+    drafts,
+    () => schedulePersistTabs(),
+    { deep: true },
+  )
+
+  /** 是否存在未保存草稿（退出确认兜底用）。 */
+  function hasDirtyDrafts(): boolean {
+    return openTabs.value.some((id) => isDirty(id))
+  }
+
   /** 打开接口为标签页；已打开则仅切换。草稿懒克隆自保存态。 */
   function openEndpoint(endpoint: Endpoint): void {
     if (!openTabs.value.includes(endpoint.id)) {
@@ -649,6 +769,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       drafts.value.set(endpoint.id, { ...endpoint, request: deepClone(endpoint.request) })
     }
     activeTabId.value = endpoint.id
+    recordRecentEndpoint(endpoint.id)
     // 缓存命中跳过：切 Tab 原来无条件触发三 IPC（示例/用例/测试用例各一次）。
     if (!examples.value.has(endpoint.id)) void loadExamples(endpoint.id)
     if (!requestExamples.value.has(endpoint.id)) void loadRequestExamples(endpoint.id)
@@ -805,6 +926,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     request: Endpoint['request'],
     path: string,
     method: HttpMethod,
+    folder = '',
   ): Promise<boolean> {
     const trimmed = name.trim()
     if (!trimmed) {
@@ -817,6 +939,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       request_id: endpointId,
       name: trimmed,
       category,
+      folder,
       method,
       url_path: path,
       path_variables: snap.path_variables,
@@ -843,19 +966,26 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   /** 更新用例名称与分组（编辑）。 */
-  async function renameTestCase(endpointId: string, caseId: string, name: string, category: TestCaseCategory): Promise<boolean> {
+  async function renameTestCase(
+    endpointId: string,
+    caseId: string,
+    name: string,
+    category: TestCaseCategory,
+    folder = '',
+  ): Promise<boolean> {
     const trimmed = name.trim()
     if (!trimmed) {
       toast.warning(t('ws.caseNameRequired'))
       return false
     }
     try {
-      await api.updateTestCaseMeta(caseId, trimmed, category)
+      await api.updateTestCaseMeta(caseId, trimmed, category, folder)
       const list = testCases.value.get(endpointId)
       const target = list?.find((c) => c.id === caseId)
       if (target) {
         target.name = trimmed
         target.category = category
+        target.folder = folder
       }
       return true
     } catch (err) {
@@ -864,6 +994,58 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       })
       return false
     }
+  }
+
+  /** 批量移动用例到文件夹（空 = 移出分组）。 */
+  async function setTestCaseFolder(endpointId: string, caseIds: string[], folder: string): Promise<boolean> {
+    try {
+      await api.setTestCaseFolder(caseIds, folder)
+      const list = testCases.value.get(endpointId)
+      if (list) {
+        for (const c of list) {
+          if (caseIds.includes(c.id)) c.folder = folder
+        }
+      }
+      return true
+    } catch (err) {
+      toast.error(t('ws.caseUpdateFail'), {
+        message: err instanceof Error ? err.message : String(err),
+      })
+      return false
+    }
+  }
+
+  /** 重命名用例文件夹（整组跟随；目标组已存在时合并）。 */
+  async function renameTestCaseFolder(endpointId: string, oldFolder: string, newFolder: string): Promise<boolean> {
+    const trimmed = newFolder.trim()
+    if (!trimmed) {
+      toast.warning(t('ws.caseNameRequired'))
+      return false
+    }
+    try {
+      await api.renameTestCaseFolder(endpointId, oldFolder, trimmed)
+      const list = testCases.value.get(endpointId)
+      if (list) {
+        for (const c of list) {
+          if (c.folder === oldFolder) c.folder = trimmed
+        }
+      }
+      toast.success(t('cases.folderRenamed'))
+      return true
+    } catch (err) {
+      toast.error(t('ws.caseUpdateFail'), {
+        message: err instanceof Error ? err.message : String(err),
+      })
+      return false
+    }
+  }
+
+  /** 解散分组：组内用例移至未分组（不删用例）。 */
+  async function dissolveTestCaseFolder(endpointId: string, folder: string): Promise<boolean> {
+    const list = testCases.value.get(endpointId) ?? []
+    const ids = list.filter((c) => c.folder === folder).map((c) => c.id)
+    if (!ids.length) return true
+    return setTestCaseFolder(endpointId, ids, '')
   }
 
   /** 克隆用例（另存为「名称 副本」，保留原快照）。 */
@@ -945,14 +1127,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
-  /** 变量合并表（优先级 环境 > 项目 > 全局，与调试页 envVars 同源）。 */
+  /** 变量合并表（单源 utils/environment.mergedVariableMap，与调试页 envVars 同源）。 */
   function caseVariableMap(): Record<string, string> {
     const env = environments.value.find((e) => e.id === activeEnvId.value) ?? null
-    return {
-      ...variableListToMap(globalVariables.value),
-      ...(project.value?.variables ?? {}),
-      ...environmentVariableMap(env),
-    }
+    return mergedVariableMap({
+      globalVariables: globalVariables.value,
+      projectVariables: project.value?.variables,
+      env,
+    })
   }
 
   /**
@@ -1048,9 +1230,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
    */
   async function runAllTestCases(
     endpointId: string,
-    opts?: { runId?: string; onProgress?: (done: number, total: number) => void },
+    opts?: { runId?: string; folder?: string; onProgress?: (done: number, total: number) => void },
   ): Promise<{ total: number; success: number; cancelled: boolean }> {
-    const cases = testCases.value.get(endpointId) ?? []
+    const all = testCases.value.get(endpointId) ?? []
+    const cases = opts?.folder ? all.filter((c) => c.folder === opts.folder) : all
     if (cases.length === 0) return { total: 0, success: 0, cancelled: false }
     const endpoint = savedIndex.value.get(endpointId) ?? drafts.value.get(endpointId)
     const runId = opts?.runId ?? crypto.randomUUID()
@@ -1166,6 +1349,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   function setDraft(endpoint: Endpoint): void {
     drafts.value.set(endpoint.id, { ...endpoint })
+  }
+
+  /** 页签拖拽排序回写：仅接受当前成员的完整排列（防拖拽期间开关页签竞态）。 */
+  function reorderTabs(ordered: string[]): void {
+    const current = openTabs.value
+    if (ordered.length !== current.length) return
+    const set = new Set(current)
+    if (!ordered.every((id) => set.has(id))) return
+    // 重复 id：长度相同但成员重复，同样拒绝（DOM 顺序异常时不污染数据）
+    if (new Set(ordered).size !== ordered.length) return
+    openTabs.value = ordered
   }
 
   function closeTab(id: string): void {
@@ -1516,14 +1710,30 @@ export const useWorkspaceStore = defineStore('workspace', () => {
    * 现在限并发 4 的 worker 池并行落库，sort_order 预分配保证顺序语义，
    * 结束时一次 refresh 对齐列表（避免中途多次重渲染）。
    */
+  /**
+   * 批量导入接口（OpenAPI / Postman 解析产物）。
+   *
+   * `conflict` 决定与现有接口（同 method + path）相遇时的策略：
+   * - `duplicate`（默认）：一律新建（旧行为）；
+   * - `skip`：跳过冲突项；
+   * - `overwrite`：沿用现有 id / 文件夹 / 排序 / 状态标记，覆盖名称与请求
+   *   配置，不导入示例（避免示例重复堆积）——保持用户既有组织结构。
+   */
   async function importEndpoints(
     items: Array<{ name: string; method: string; path: string; description?: string; request: Endpoint['request']; examples?: Array<{ name: string; status: number; content_type: string; headers: Record<string, string>; body: string }>; folder_hint?: string | null }>,
-  ): Promise<{ endpoints: number; examples: number }> {
-    if (!project.value) return { endpoints: 0, examples: 0 }
+    conflict: 'skip' | 'overwrite' | 'duplicate' = 'duplicate',
+  ): Promise<{ endpoints: number; examples: number; skipped: number; overwritten: number }> {
+    if (!project.value) return { endpoints: 0, examples: 0, skipped: 0, overwritten: 0 }
     const projectId = project.value.id
     const now = new Date().toISOString()
     const baseSort = endpoints.value.length
     const baseFolderSort = folders.value.length
+    // 冲突索引：同 method + path 视为同一接口（导入比对口径，方法统一大写）。
+    const existingByKey = new Map<string, Endpoint>(
+      endpoints.value.map((e) => [`${e.method.toUpperCase()} ${e.path}`, e] as const),
+    )
+    let skipped = 0
+    let overwritten = 0
     // folder_hint → id（预扫本地 + 本次新建，避免并发重复建同名文件夹）。
     const folderCache = new Map<string, string>()
     for (const f of folders.value) folderCache.set(`\0${f.name}`, f.id)
@@ -1559,36 +1769,49 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
 
     let exampleCount = 0
+    let createdCount = 0
     async function saveOne(item: (typeof items)[number], index: number): Promise<void> {
+      const key = `${item.method.toUpperCase()} ${item.path}`
+      const existing = existingByKey.get(key)
+      if (existing && conflict === 'skip') {
+        skipped++
+        return
+      }
+      const overwriting = existing != null && conflict === 'overwrite'
+      if (overwriting) overwritten++
       const folderId = await resolveFolder(item.folder_hint)
       const endpoint = await api.saveEndpoint({
-        id: crypto.randomUUID(),
+        id: overwriting ? existing!.id : crypto.randomUUID(),
         project_id: projectId,
-        folder_id: folderId,
+        // 覆盖保留用户既有归档：文件夹 / 排序 / 状态标记不因导入而丢。
+        folder_id: overwriting ? existing!.folder_id : folderId,
         name: item.name,
         method: item.method as Endpoint['method'],
         path: item.path,
         description: item.description ?? '',
         request: item.request,
-        sort_order: baseSort + index,
-        status: 'designing',
-        created_at: now,
+        sort_order: overwriting ? existing!.sort_order : baseSort + index,
+        status: overwriting ? existing!.status : 'designing',
+        created_at: existing?.created_at ?? now,
         updated_at: now,
       })
-      for (const ex of item.examples ?? []) {
-        await api.saveExample({
-          id: crypto.randomUUID(),
-          endpoint_id: endpoint.id,
-          name: ex.name,
-          status: ex.status,
-          headers: ex.headers ?? {},
-          body: ex.body,
-          content_type: ex.content_type,
-          created_at: now,
-          updated_at: now,
-        })
-        exampleCount++
+      if (!overwriting) {
+        for (const ex of item.examples ?? []) {
+          await api.saveExample({
+            id: crypto.randomUUID(),
+            endpoint_id: endpoint.id,
+            name: ex.name,
+            status: ex.status,
+            headers: ex.headers ?? {},
+            body: ex.body,
+            content_type: ex.content_type,
+            created_at: now,
+            updated_at: now,
+          })
+          exampleCount++
+        }
       }
+      createdCount++
     }
 
     // 限并发 worker 池（4 路 IPC 并行，大导入不再线性等待）。
@@ -1604,7 +1827,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       }),
     )
     await refresh()
-    return { endpoints: items.length, examples: exampleCount }
+    return { endpoints: createdCount, examples: exampleCount, skipped, overwritten }
   }
 
   /**
@@ -1628,6 +1851,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       spec = { ...spec, auth: { ...auth, token: { ...base, access_token: token } as OAuth2Token } }
     }
     const rid = requestId ?? crypto.randomUUID()
+    // 未定义变量汇总警示（非阻断）：{{name}} 不在环境/项目/全局与内置变量池中，
+    // 后端将按字面量原样发出——「服务端收到 {{token}}」这类问题发送前暴露。
+    const knownVars = new Set([...Object.keys(caseVariableMap()), ...BUILTIN_VARIABLES])
+    const unknownVars = findUnknownVars(requestTemplateTexts(endpoint, url), knownVars)
+    if (unknownVars.length) {
+      toast.warning(t('ws.undefinedVars', { names: unknownVars.join(', ') }))
+    }
     // 超时解析与后端 resolve_timeout_ms 保持一致：调用方传入 → 接口级 → 全局
     // （全局未配置时即内置默认 300s，见 refreshGlobalTimeoutMs）。原来只看接口级
     // 字段，导致「留空用全局」的接口在前端不设 timer，而旧接口若残留 30000 又会
@@ -2065,6 +2295,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await loadHistories()
   }
 
+  /** 删除单条历史（行内删除；从已加载列表就地移除，分页窗口不重拉）。 */
+  async function deleteHistory(id: string): Promise<void> {
+    try {
+      await api.deleteRequestHistory(id)
+      histories.value = histories.value.filter((h) => h.id !== id)
+    } catch (err) {
+      toast.error(t('ws.historyDeleteFail'), { message: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
   async function clearHistories(): Promise<void> {
     if (!project.value) return
     const endpointId = historyOnlyCurrent.value ? activeEndpoint.value?.id ?? null : null
@@ -2224,6 +2464,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     activeTabId,
     activeEndpoint,
     isDirty,
+    hasDirtyDrafts,
+    recentEndpointIds,
     draftOf,
     titleOf,
     init,
@@ -2237,6 +2479,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     openNewEndpoint,
     openNewEndpointFromCreateTab,
     openCreateTab,
+    reorderTabs,
     isCreateTab,
     focusTitleSignal,
     setDraft,
@@ -2292,6 +2535,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     loadTestCases,
     saveTestCase,
     renameTestCase,
+    setTestCaseFolder,
+    renameTestCaseFolder,
+    dissolveTestCaseFolder,
     cloneTestCase,
     removeTestCase,
     applyTestCaseToDraft,
@@ -2309,6 +2555,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     loadHistories,
     loadMoreHistories,
     clearHistories,
+    deleteHistory,
     restoreFromHistory,
   }
 })

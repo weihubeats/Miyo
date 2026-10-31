@@ -9,6 +9,7 @@ use miyo_core::render_spec;
 use miyo_core::VariableMap;
 use miyo_http::client::{HttpResponseData, RequestSnapshot};
 use miyo_storage::repository as repo;
+use miyo_sync::redact::{is_sensitive_key, PLACEHOLDER};
 
 use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
@@ -76,7 +77,7 @@ pub struct ScriptRunSummary {
 const IPC_BODY_PREVIEW_BYTES: usize = 2 * 1024 * 1024;
 
 /// 把响应全文切成 IPC 预览（按 UTF-8 字符边界截断，避免 panic）。
-fn cap_ipc_body(full: &str) -> (String, bool) {
+pub(crate) fn cap_ipc_body(full: &str) -> (String, bool) {
     if full.len() <= IPC_BODY_PREVIEW_BYTES {
         return (full.to_string(), false);
     }
@@ -416,14 +417,70 @@ pub fn get_response_body(
         .get(&request_id))
 }
 
+/// 历史摘要脱敏（与 miyo-sync 同口径）：
+///
+/// - `headers` / `params` / `path_variables` 中键名命中敏感词根的值替换为
+///   [`PLACEHOLDER`]——手写的 `Authorization` / `X-API-Key` 头、query 里的
+///   `api_key` 此前明文落库（原实现只清了 `auth` 字段）；
+/// - 渲染后 URL 的 query 中敏感键值同样替换（url 列可读但不含凭据）。
+///   恢复到编辑器时占位符原样带回，语义与同步推送脱敏一致：提示用户补填。
+fn redact_history_spec(spec_value: &mut serde_json::Value) {
+    const KV_FIELDS: &[&str] = &["headers", "params", "path_variables"];
+    let Some(obj) = spec_value.as_object_mut() else {
+        return;
+    };
+    for field in KV_FIELDS {
+        let Some(rows) = obj.get_mut(*field).and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        for row in rows {
+            let Some(row_obj) = row.as_object_mut() else {
+                continue;
+            };
+            let key_is_sensitive = row_obj
+                .get("key")
+                .and_then(|k| k.as_str())
+                .is_some_and(is_sensitive_key);
+            if key_is_sensitive {
+                if let Some(value) = row_obj.get_mut("value") {
+                    *value = serde_json::Value::String(PLACEHOLDER.into());
+                }
+            }
+        }
+    }
+}
+
+/// 渲染后 URL 的 query 脱敏：逐对检查键名，敏感值替换为占位符。
+/// 字符串级处理（保持原文其余部分不动），值内含 `=` 时按首个 `=` 切分。
+fn redact_url_query(url: &str) -> String {
+    let (base, query) = match url.split_once('?') {
+        Some((b, q)) => (b, q),
+        None => return url.to_string(),
+    };
+    let redacted: Vec<String> = query
+        .split('&')
+        .map(|pair| {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            if is_sensitive_key(k) && !v.is_empty() {
+                format!("{k}={PLACEHOLDER}")
+            } else {
+                pair.to_string()
+            }
+        })
+        .collect();
+    format!("{base}?{}", redacted.join("&"))
+}
+
 /// 构建历史记录。
 ///
 /// - `url`：变量渲染后的实际发送地址——历史列表展示与关键字搜索的数据源
 ///   （存模板会让 `{{base_url}}/...` 字面量进入列表，且域名搜索失效）；
+///   query 中敏感键的值经 [`redact_url_query`] 脱敏后落库；
 /// - `url_template`：渲染前模板——写入 `request_summary_json`，供前端
 ///   「恢复到编辑器」保留环境变量语义（换环境重发不锁死域名）；
-/// - `request_summary_json` 另存完整请求规格（变量已渲染），认证字段统一
-///   置空——凭据不落历史库，恢复时保留接口自身配置的认证。
+/// - `request_summary_json` 另存完整请求规格（变量已渲染），auth 字段置空 +
+///   敏感键的头 / query / 路径变量值脱敏（[`redact_history_spec`]）——凭据
+///   不落历史库；恢复时敏感项带回占位符，提示用户补填。
 fn build_history(
     project_id: Uuid,
     endpoint_id: Option<Uuid>,
@@ -442,12 +499,14 @@ fn build_history(
     if let Some(obj) = spec_value.as_object_mut() {
         obj.insert("auth".into(), serde_json::json!({ "type": "none" }));
     }
+    redact_history_spec(&mut spec_value);
+    let url_redacted = redact_url_query(url);
     RequestHistory {
         id: Uuid::new_v4(),
         project_id,
         endpoint_id,
         method: method.to_string(),
-        url: url.to_string(),
+        url: url_redacted,
         status: Some(data.status),
         duration_ms: Some(data.duration_ms.round() as u64),
         request_summary_json: serde_json::json!({
@@ -545,6 +604,39 @@ mod tests {
     use super::*;
     use miyo_core::model::{AuthSpec, BodySpec, GlobalParamLocation};
     use std::collections::HashMap;
+
+    /// 历史摘要脱敏：敏感键的头 / query 值替换为占位符，普通键不动。
+    #[test]
+    fn redacts_sensitive_keys_in_history() {
+        let mut spec = serde_json::json!({
+            "headers": [
+                { "key": "Authorization", "value": "Bearer tok-1", "enabled": true },
+                { "key": "X-Custom", "value": "plain", "enabled": true }
+            ],
+            "params": [
+                { "key": "api_key", "value": "sk-123", "enabled": true },
+                { "key": "page", "value": "2", "enabled": true }
+            ],
+            "path_variables": []
+        });
+        redact_history_spec(&mut spec);
+        let headers = spec["headers"].as_array().unwrap();
+        assert_eq!(headers[0]["value"], PLACEHOLDER);
+        assert_eq!(headers[1]["value"], "plain");
+        let params = spec["params"].as_array().unwrap();
+        assert_eq!(params[0]["value"], PLACEHOLDER);
+        assert_eq!(params[1]["value"], "2");
+    }
+
+    /// URL query 脱敏：敏感键值替换、非敏感原样、无 query 直通。
+    #[test]
+    fn redacts_sensitive_url_query() {
+        assert_eq!(
+            redact_url_query("http://x.com/api?api_key=sk-1&page=2"),
+            format!("http://x.com/api?api_key={PLACEHOLDER}&page=2")
+        );
+        assert_eq!(redact_url_query("http://x.com/api"), "http://x.com/api");
+    }
 
     /// 脚本头回写：改写（大小写不敏感）、删除、新增、禁用行保留四路齐全。
     #[test]

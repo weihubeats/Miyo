@@ -7,12 +7,19 @@ use serde_json::Value;
 use crate::config::AssertionSpec;
 
 /// 单条断言结果。
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+/// Deserialize 供运行历史落库回读（scenario_runs.results_json）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Outcome {
     pub description: String,
     pub passed: bool,
     /// 失败原因（供失败高亮展示）。
     pub reason: Option<String>,
+    /// 期望值文本（断言显式给出 expected 时随行，供结构化对比展示）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    /// 实际值文本（取到实际值时随行）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<String>,
 }
 
 impl Outcome {
@@ -21,6 +28,8 @@ impl Outcome {
             description,
             passed: true,
             reason: None,
+            expected: None,
+            actual: None,
         }
     }
 
@@ -29,6 +38,8 @@ impl Outcome {
             description,
             passed: false,
             reason: Some(reason),
+            expected: None,
+            actual: None,
         }
     }
 }
@@ -165,7 +176,7 @@ pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&
     let expected = a.expected.as_ref().map(v_to_text).unwrap_or_default();
 
     let Some(actual) = actual(a, resp, body_value) else {
-        return match op.as_str() {
+        let mut o = match op.as_str() {
             "not_exists" => Outcome::pass(description),
             "exists" => Outcome::fail(description, "值不存在（未获取到实际值）".into()),
             _ => Outcome::fail(
@@ -173,7 +184,12 @@ pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&
                 "未获取到断言的实际值（JSONPath 无匹配或响应头不存在）".into(),
             ),
         };
+        if a.expected.is_some() {
+            o.expected = Some(expected);
+        }
+        return o;
     };
+    let actual_text = v_to_text(&actual);
 
     let result = match op.as_str() {
         "eq" => {
@@ -262,10 +278,17 @@ pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&
         other => Err(format!("不支持的操作符：{other}")),
     };
 
-    match result {
+    let mut outcome = match result {
         Ok(()) => Outcome::pass(description),
         Err(reason) => Outcome::fail(description, reason),
+    };
+    // 结构化对比值：期望仅在断言显式给出时随行，实际取到才随行——
+    // 前端「期望 x · 实际 y」以此渲染，不再从 reason 文案反解。
+    if a.expected.is_some() {
+        outcome.expected = Some(expected);
     }
+    outcome.actual = Some(actual_text);
+    outcome
 }
 
 #[cfg(test)]
@@ -493,5 +516,30 @@ mod tests {
             expected: Some(json!(200)),
         };
         assert_eq!(describe(&a), "接口正常");
+    }
+
+    #[test]
+    fn outcome_carries_structured_expected_actual() {
+        // 失败：期望 / 实际随行（前端结构化对比展示）。
+        let r = make_resp(500, vec![], "{}", 1.0);
+        let o = evaluate(&spec("status", "eq", json!(200), None), &r, None);
+        assert!(!o.passed);
+        assert_eq!(o.expected.as_deref(), Some("200"));
+        assert_eq!(o.actual.as_deref(), Some("500"));
+
+        // 成功同样随行；无 expected 的操作符不携带期望。
+        let ok = evaluate(&spec("status", "eq", json!(500), None), &r, None);
+        assert!(ok.passed);
+        assert_eq!(ok.actual.as_deref(), Some("500"));
+        let exists_spec = AssertionSpec {
+            name: None,
+            r#type: "status".into(),
+            path: None,
+            op: Some("exists".into()),
+            expected: None,
+        };
+        let exists = evaluate(&exists_spec, &r, None);
+        assert!(exists.expected.is_none());
+        assert!(exists.actual.is_some());
     }
 }

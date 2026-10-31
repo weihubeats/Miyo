@@ -92,6 +92,12 @@ pub async fn save_scenario(db: &SqlitePool, scenario: &Scenario) -> Result<()> {
 }
 
 pub async fn delete_scenario(db: &SqlitePool, scenario_id: Uuid) -> Result<()> {
+    // 运行历史一并清理（scenario_runs 有 FK ON DELETE CASCADE，但 sqlite
+    // 需 PRAGMA foreign_keys 才生效，显式删除不依赖连接参数）。
+    sqlx::query("DELETE FROM scenario_runs WHERE scenario_id = ?")
+        .bind(scenario_id.to_string())
+        .execute(db)
+        .await?;
     let result = sqlx::query("DELETE FROM scenarios WHERE id = ?")
         .bind(scenario_id.to_string())
         .execute(db)
