@@ -33,6 +33,8 @@ const showAbout = ref(false)
 const showRelease = ref(false)
 let unlistenAbout: UnlistenFn | null = null
 let unlistenClose: UnlistenFn | null = null
+/** 用户已在确认框选择「放弃并退出」：destroy 回退 close 时放行，不再二次弹窗。 */
+let quitAnyway = false
 let stopAutoUpdate: (() => void) | null = null
 
 /** 设置更新行 → 打开关于弹窗（一键下载安装）。 */
@@ -111,14 +113,24 @@ onMounted(async () => {
         const { ask } = await import('@tauri-apps/plugin-dialog')
         unlistenClose = await getCurrentWindow().onCloseRequested(async (event) => {
           const { useWorkspaceStore } = await import('./stores/workspace')
-          if (!useWorkspaceStore().hasDirtyDrafts()) return
+          if (quitAnyway || !useWorkspaceStore().hasDirtyDrafts()) return
           event.preventDefault()
           const quit = await ask(t('app.quitDirtyConfirm'), {
             title: 'Miyo',
             okLabel: t('app.quitDiscard'),
             cancelLabel: t('common.cancel'),
           })
-          if (quit) void getCurrentWindow().destroy()
+          if (quit) {
+            try {
+              await getCurrentWindow().destroy()
+            } catch (err) {
+              // destroy 被 ACL / 环境拒绝时退回 close（会再次进入本回调，
+              // 但 ask 的选择已记忆为放弃——直接放行不再拦截）。
+              console.error('[app] window.destroy denied, falling back to close', err)
+              quitAnyway = true
+              void getCurrentWindow().close()
+            }
+          }
         })
       }
     }
