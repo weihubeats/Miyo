@@ -3,7 +3,26 @@
  * 断言映射、URL 模板转换、无 {{}} 残留。
  */
 import { describe, expect, it } from 'vitest'
-import { generateScenarioScript, jsonPathToJs, urlTemplateToJs } from './scenarioScript'
+import {
+  generateScenarioScript,
+  isSensitiveVarName,
+  jsonPathToJs,
+  urlTemplateToJs,
+  type ScriptStep,
+} from './scenarioScript'
+
+/** 一致性测试的步骤构造器：缺省字段统一物化（生成器同款容错）。 */
+function step(partial: Partial<ScriptStep> & Pick<ScriptStep, 'name' | 'method' | 'url'>): ScriptStep {
+  return {
+    params: [],
+    headers: [],
+    body: null,
+    bodyKind: 'none',
+    extract: [],
+    assertions: [],
+    ...partial,
+  }
+}
 
 describe('jsonPathToJs', () => {
   it('简单路径转可选链', () => {
@@ -87,5 +106,146 @@ describe('generateScenarioScript', () => {
     const code = generateScenarioScript('s', steps, { base: 'http://x', stopOnFailure: false })
     expect(code).not.toContain('失败即停：')
     expect(code).toContain('if (results.some((r) => !r.ok)) process.exit(1);')
+  })
+})
+
+describe('导出脚本与真实请求的一致性（对齐 miyo-http 发送路径）', () => {
+  it('查询参数按 append_query 语义追加（已有 ? 用 & 续）', () => {
+    const script = generateScenarioScript(
+      '查询参数',
+      [
+        step({
+          name: '列表',
+          method: 'GET',
+          url: '{{base_url}}/users?page=1',
+          params: [
+            { key: 'size', value: '20' },
+            { key: 'q', value: '{{keyword}}' },
+          ],
+        }),
+      ],
+      { base: 'http://127.0.0.1:1', stopOnFailure: false, envDefaults: { keyword: 'abc' } },
+    )
+    expect(script).toContain('let url1 = `${BASE}/users?page=1`;')
+    expect(script).toContain("url1 += (url1.includes('?') ? '&' : '?') + new URLSearchParams([")
+    expect(script).toContain('["size", "20"]')
+    expect(script).toContain('["q", `${keyword}`]')
+  })
+
+  it('Bearer / Basic / ApiKey 认证映射为头或参数', () => {
+    const bearer = generateScenarioScript(
+      'b',
+      [step({ name: 'x', method: 'GET', url: '{{base_url}}/a', auth: { kind: 'bearer', token: '{{token}}' } })],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(bearer).toContain('"Authorization": `Bearer ${token}`,')
+
+    const basic = generateScenarioScript(
+      'b',
+      [step({ name: 'x', method: 'GET', url: '{{base_url}}/a', auth: { kind: 'basic', username: 'u', password: 'p' } })],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(basic).toContain("'Basic ' + btoa(")
+
+    const apiKey = generateScenarioScript(
+      'b',
+      [step({ name: 'x', method: 'GET', url: '{{base_url}}/a', auth: { kind: 'apikey_header', key: 'X-Key', value: 'v' } })],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(apiKey).toContain('"X-Key": "v"')
+
+    const apiQuery = generateScenarioScript(
+      'b',
+      [step({ name: 'x', method: 'GET', url: '{{base_url}}/a', auth: { kind: 'apikey_query', key: 'api_key', value: 'v' } })],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(apiQuery).toContain('["api_key", "v"]')
+  })
+
+  it('不可映射鉴权（OAuth2 等）生成明确注释，不静默丢失', () => {
+    const script = generateScenarioScript(
+      'b',
+      [step({ name: 'x', method: 'GET', url: '{{base_url}}/a', authUnsupported: 'OAuth2' })],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(script).toContain('// 注意：该步骤使用 OAuth2')
+    expect(script).toContain('自行补齐对应凭据')
+  })
+
+  it('urlencoded / multipart / graphql body 与 Miyo 发送同构', () => {
+    const urlenc = generateScenarioScript(
+      'b',
+      [step({
+        name: 'x', method: 'POST', url: '{{base_url}}/form', bodyKind: 'urlencoded',
+        bodyFields: [{ key: 'a', value: '1' }, { key: 'b', value: '{{v}}' }],
+      })],
+      { base: 'http://x', stopOnFailure: false, envDefaults: { v: '2' } },
+    )
+    expect(urlenc).toContain("new URLSearchParams([")
+    expect(urlenc).toContain('["a", "1"],')
+    expect(urlenc).toContain('["b", `${v}`]')
+
+    const mp = generateScenarioScript(
+      'b',
+      [step({
+        name: 'x', method: 'POST', url: '{{base_url}}/up', bodyKind: 'multipart',
+        bodyFields: [{ key: 'note', value: 'hi' }], bodyFileFields: ['avatar'],
+      })],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(mp).toContain('new FormData()')
+    expect(mp).toContain('fd.append("note", "hi")')
+    expect(mp).toContain('文件字段 "avatar"')
+
+    const gql = generateScenarioScript(
+      'b',
+      [step({
+        name: 'x', method: 'POST', url: '{{base_url}}/graphql', bodyKind: 'graphql',
+        body: 'query { users { id } }', bodyVariables: '{"limit":10}',
+      })],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(gql).toContain('variables: JSON.parse(')
+    expect(gql).toContain('limit')
+  })
+
+  it('binary / grpc 生成明确的不支持注释（binary 附本地文件读取行）', () => {
+    const bin = generateScenarioScript(
+      'b',
+      [step({ name: 'x', method: 'POST', url: '{{base_url}}/up', bodyKind: 'binary', bodyPath: '/tmp/a.bin' })],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(bin).toContain("import { readFileSync } from 'node:fs';")
+    expect(bin).toContain('// body: readFileSync("/tmp/a.bin"),')
+
+    const grpc = generateScenarioScript(
+      'b',
+      [step({ name: 'x', method: 'POST', url: '{{base_url}}/g', bodyKind: 'grpc' })],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(grpc).toContain('gRPC 调用无法用 HTTP fetch 还原')
+  })
+
+  it('环境变量声明：非敏感名内嵌默认，敏感名只引用 MIYO_VAR_*', () => {
+    const script = generateScenarioScript(
+      'b',
+      [
+        step({
+          name: 'x', method: 'GET', url: '{{base_url}}/users/{{region}}?token={{api_token}}',
+        }),
+      ],
+      { base: 'http://x', stopOnFailure: false, envDefaults: { region: 'cn-north', api_token: 'SHOULD-NOT-EMBED' } },
+    )
+    expect(script).toContain('var region = process.env.MIYO_VAR_REGION ?? "cn-north";')
+    expect(script).toContain("process.env.MIYO_VAR_API_TOKEN ?? ''")
+    expect(script).not.toContain('SHOULD-NOT-EMBED')
+    expect(script).toContain('MIYO_VAR_API_TOKEN')
+  })
+
+  it('敏感名单启发式：token/secret/password 类不内嵌', () => {
+    expect(isSensitiveVarName('api_token')).toBe(true)
+    expect(isSensitiveVarName('PASSWORD')).toBe(true)
+    expect(isSensitiveVarName('region')).toBe(false)
+    expect(isSensitiveVarName('base_url')).toBe(false)
   })
 })
