@@ -33,8 +33,10 @@ jobs:
         include:
           - name: linux
             os: ubuntu-latest
+          # macos-14 显式 arm64：macos-latest 指针池在 v0.0.51 发版时连续三次
+          # 队列内取消（job 零 steps、恰 15 分钟），pin 具体镜像绕开调度差异。
           - name: macos-arm
-            os: macos-latest
+            os: macos-14
           - name: macos-intel
             os: macos-15-intel
           - name: windows
