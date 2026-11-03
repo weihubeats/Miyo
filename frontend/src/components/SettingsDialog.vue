@@ -38,9 +38,11 @@ import {
   debugUpdateState,
   hasPendingUpdate,
   pendingUpdateVersion,
+  requestOpenAbout,
   requestOpenRelease,
   skippedUpdateVersion,
 } from '../composables/useAutoUpdate'
+import { version as appVersion } from '../../package.json'
 import Modal from './ui/Modal.vue'
 import Icon, { type IconName } from './ui/Icon.vue'
 import Popconfirm from './ui/Popconfirm.vue'
@@ -908,6 +910,12 @@ function openUpdateDetail(): void {
   requestOpenRelease()
 }
 
+/** 关于入口：关设置 → 打开关于弹窗（版本号 / 检查更新 / 下载安装都在其中）。 */
+function openAbout(): void {
+  emit('close')
+  requestOpenAbout()
+}
+
 // ---------- 更新调试（仅开发版可见）：免改版号验证更新链路 ----------
 const showUpdateDebug = import.meta.env.DEV
 const debugVersion = ref('9.9.9')
@@ -1125,6 +1133,20 @@ const projectSummary = computed(() => {
                     >
                       {{ customizedCount ? t('settings.customizedCount', { n: customizedCount }) : t('settings.customizableCount', { n: SHORTCUT_DEFAULTS.length }) }}
                     </span>
+                  </button>
+                </div>
+                <!-- 关于 Miyo：常驻入口（右侧展示当前版本号，点击打开关于弹窗——检查更新 / 下载安装） -->
+                <div class="mt-5 border-t border-zinc-200/70 dark:border-white/[0.06]">
+                  <button
+                    type="button"
+                    class="flex w-full items-center justify-between gap-4 pt-5 text-left"
+                    @click="openAbout"
+                  >
+                    <div class="max-w-md">
+                      <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.about') }}</div>
+                      <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settings.aboutDesc') }}</p>
+                    </div>
+                    <span class="shrink-0 font-mono text-xs text-zinc-500 dark:text-zinc-400">v{{ appVersion }}</span>
                   </button>
                 </div>
                 <!-- 发现新版本：高亮卡片提权（渐变底 + 紫色版本号 + 主紫行动按钮） -->

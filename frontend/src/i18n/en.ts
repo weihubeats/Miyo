@@ -98,6 +98,8 @@ export const en: Record<ZhKey, string> = {
   'settings.updateAvailableDesc': 'View details to download and install in one click',
   'settings.unskipped': 'Skip cancelled',
   'settings.unskippedHint': 'You will be reminded again on the next check',
+  'settings.about': 'About Miyo',
+  'settings.aboutDesc': 'View version info and release notes, check or install updates',
   'settingsdbg.title': 'Update debugging (dev builds only)',
   'settingsdbg.desc': 'Simulate the update flow without version edits or restarts; simulated data cannot be installed',
   'settingsdbg.versionPh': 'Fake version, e.g. 9.9.9',

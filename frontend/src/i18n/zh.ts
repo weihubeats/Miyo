@@ -96,6 +96,8 @@ export const zh = {
   'settings.updateAvailableDesc': '点击查看详情，一键下载安装',
   'settings.unskipped': '已取消跳过',
   'settings.unskippedHint': '下次检查到该版本将重新提醒',
+  'settings.about': '关于 Miyo',
+  'settings.aboutDesc': '查看版本信息与更新日志，检查或安装更新',
   'settingsdbg.title': '更新调试（仅开发版可见）',
   'settingsdbg.desc': '模拟更新链路，无需改版号/重启；模拟数据不可安装',
   'settingsdbg.versionPh': '模拟版本号，如 9.9.9',
