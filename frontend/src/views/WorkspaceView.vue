@@ -5,6 +5,7 @@
  * 树操作全部走 workspace store（Pinia），点击接口打开草稿标签页。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useSidebarResize } from '../composables/useSidebarResize'
 import { useRoute, useRouter } from 'vue-router'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useWorkspaceStore } from '../stores/workspace'
@@ -119,75 +120,17 @@ function clearApiSearch(): void {
   apiSearch.value = ''
 }
 
-// ---------- 侧栏宽度分割（拖拽调整，双击恢复默认） ----------
-const SIDEBAR_MIN = 220
-const SIDEBAR_MAX = 520
-const SIDEBAR_DEFAULT = 300
-/** 侧栏宽度持久化键：与请求区高度等「用户布局偏好」同一策略（localStorage）。 */
-const SIDEBAR_WIDTH_KEY = 'miyo.sidebar-width'
-
-function clampSidebarWidth(v: number): number {
-  return Math.min(Math.max(v, SIDEBAR_MIN), SIDEBAR_MAX)
-}
-
-function persistSidebarWidth(): void {
-  try {
-    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(sidebarWidth.value)))
-  } catch {
-    // 存储不可用时静默：仅影响重启后的宽度恢复
-  }
-}
-
-const sidebarWidth = ref(
-  clampSidebarWidth(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || SIDEBAR_DEFAULT),
-)
-const sidebarResizing = ref(false)
-let sidebarDragging = false
-let resizeStartX = 0
-let resizeStartWidth = 0
-
-function onSidebarResizeDown(event: MouseEvent): void {
-  if (event.button !== 0) return
-  event.preventDefault()
-  sidebarDragging = true
-  sidebarResizing.value = true
-  resizeStartX = event.clientX
-  resizeStartWidth = sidebarWidth.value
-  document.body.style.userSelect = 'none'
-  document.addEventListener('mousemove', onSidebarResizeMove)
-  document.addEventListener('mouseup', onSidebarResizeUp)
-}
-
-function onSidebarResizeMove(event: MouseEvent): void {
-  if (!sidebarDragging) return
-  const next = resizeStartWidth + (event.clientX - resizeStartX)
-  sidebarWidth.value = Math.min(Math.max(next, SIDEBAR_MIN), SIDEBAR_MAX)
-}
-
-function onSidebarResizeUp(): void {
-  if (!sidebarDragging) return
-  sidebarDragging = false
-  sidebarResizing.value = false
-  persistSidebarWidth()
-  document.body.style.userSelect = ''
-  document.removeEventListener('mousemove', onSidebarResizeMove)
-  document.removeEventListener('mouseup', onSidebarResizeUp)
-}
-
-/** 键盘调宽（分割条可 Tab 聚焦）：← → 每次 10px，Shift 40px，Home/End 到上下限，Enter 恢复默认。 */
-function onSidebarKeydown(event: KeyboardEvent): void {
-  const step = event.shiftKey ? 40 : 10
-  let next = sidebarWidth.value
-  if (event.key === 'ArrowLeft') next -= step
-  else if (event.key === 'ArrowRight') next += step
-  else if (event.key === 'Home') next = SIDEBAR_MIN
-  else if (event.key === 'End') next = SIDEBAR_MAX
-  else if (event.key === 'Enter') next = SIDEBAR_DEFAULT
-  else return
-  event.preventDefault()
-  sidebarWidth.value = Math.min(Math.max(next, SIDEBAR_MIN), SIDEBAR_MAX)
-  persistSidebarWidth()
-}
+// 侧栏宽度分割状态机抽至 composables/useSidebarResize（拖拽 / 键盘 / 持久化）。
+const {
+  SIDEBAR_MIN,
+  SIDEBAR_MAX,
+  SIDEBAR_DEFAULT,
+  sidebarWidth,
+  sidebarResizing,
+  onSidebarResizeDown,
+  onSidebarKeydown,
+  dispose: disposeSidebarResize,
+} = useSidebarResize()
 
 // ---------- 侧栏页签：接口目录 / 请求历史 ----------
 type SidebarTab = 'collections' | 'scenarios' | 'history' | 'cookies'
@@ -545,8 +488,7 @@ onBeforeUnmount(() => {
   menuRef.value?.close()
   unlistenAgent?.()
   if (apiSearchTimer) clearTimeout(apiSearchTimer)
-  document.removeEventListener('mousemove', onSidebarResizeMove)
-  document.removeEventListener('mouseup', onSidebarResizeUp)
+  disposeSidebarResize()
 })
 </script>
 
@@ -1186,11 +1128,16 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 .sidebar-tabs :deep(.tab) {
-  flex: 1 1 0;
+  /* 自然宽 + 弹性收缩：均分（flex:1）会让字数不等的四个页签在窄栏里
+   * 互相挤压（用户截图反馈）；min-width 保底防文字截断。 */
+  flex: 0 1 auto;
+  min-width: 0;
   justify-content: center;
   height: 28px;
+  padding: 0 9px;
   border-radius: var(--radius);
   font-size: 12px;
+  white-space: nowrap;
 }
 .sidebar-tabs :deep(.tab.active) {
   /* 微弱浅色底 + 微亮内描边（分段胶囊内的激活态，取代重阴影） */

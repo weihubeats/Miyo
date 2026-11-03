@@ -4,7 +4,7 @@
  * 采用指针事件实现（pointerdown/move/up + elementFromPoint 命中测试），
  * 规避 WKWebView 对 HTML5 Drag & Drop（dragover/drop/dataTransfer）支持不稳的问题。
  */
-import { reactive, type InjectionKey, type Ref } from 'vue'
+import { reactive, type InjectionKey } from 'vue'
 
 export interface DndTarget {
   drop: 'folder' | 'before' | 'after' | 'root'
@@ -54,22 +54,6 @@ export function setSuppressClick(v: boolean): void {
 }
 
 /**
- * 递归树行内编辑状态的注入键 —— 必须在模块作用域声明。
- * <script setup> 体内的常量会随每个实例重新创建：每层子树各持有一个
- * 不相等的 Symbol，provide/inject 永远匹配不上（此前的缺陷）。
- */
-interface TreeEditState {
-  kind: 'create-folder' | 'rename-folder' | 'rename-endpoint'
-  id?: string
-  parentId?: string | null
-}
-
-const TREE_EDIT_STATE: InjectionKey<{
-  editing: Ref<TreeEditState | null>
-  editValue: Ref<string>
-}> = Symbol('endpoint-tree-edit')
-
-/**
  * 共享子索引的类型（实例见 <script setup>）。
  * parentId / folderId → 直属子项：每层子树原来各自
  * `store.folders.filter + store.endpoints.filter` 全表扫描，
@@ -104,6 +88,7 @@ import { useToast } from '../composables/useToast'
 import { useLocaleStore } from '../stores/locale'
 import { escapeHtml } from '../utils/highlight'
 import { useTreeExpanded } from './endpointTreeExpanded'
+import { TREE_EDIT_STATE, useTreeOperations, type TreeEditState } from '../composables/useTreeOperations'
 import { fuzzyScore } from '../utils/fuzzyMatch'
 import { methodTone } from '../utils/methodTone'
 import Icon from './ui/Icon.vue'
@@ -155,6 +140,21 @@ const editValue = inheritedEdit?.editValue ?? ref('')
 if (!inheritedEdit) {
   provide(TREE_EDIT_STATE, { editing, editValue })
 }
+
+// 行内编辑 + CRUD 包装抽至 composables/useTreeOperations（store 调用与失败 toast）。
+const { startEdit, cancelEdit, commitEdit, removeFolder, removeEndpoint, duplicate } =
+  useTreeOperations({
+    store,
+    toast,
+    t,
+    editing,
+    editValue,
+    expanded,
+    treeSelection,
+  })
+
+// 根级新建文件夹由侧栏头部按钮触发（跨组件暴露编辑入口）。
+defineExpose({ startEdit })
 
 // ---------- 共享子索引（根实例构建，递归子树注入复用） ----------
 function buildChildIndex(): TreeChildIndex {
@@ -436,96 +436,6 @@ function isDraggingSrc(id: string): boolean {
 /** 拖拽结束后的残余 click 在树根捕获层消费掉。 */
 function onTreeClickCapture(event: Event): void {
   if (consumeSuppressClick()) event.stopPropagation()
-}
-
-function startEdit(
-  kind: 'create-folder' | 'rename-folder' | 'rename-endpoint',
-  opts?: { id?: string; parentId?: string | null },
-): void {
-  editing.value = { kind, ...opts }
-  editValue.value = ''
-  if (kind === 'rename-folder' && opts?.id) {
-    editValue.value = store.folders.find((f) => f.id === opts.id)?.name ?? ''
-  }
-  if (kind === 'rename-endpoint' && opts?.id) {
-    editValue.value = store.endpoints.find((e) => e.id === opts.id)?.name ?? ''
-  }
-}
-
-function cancelEdit(): void {
-  editing.value = null
-  editValue.value = ''
-}
-
-defineExpose({ startEdit })
-
-async function commitEdit(): Promise<void> {
-  const ed = editing.value
-  if (!ed) return
-  const name = editValue.value.trim()
-  if (!name) {
-    cancelEdit()
-    return
-  }
-  const now = new Date().toISOString()
-  try {
-    if (ed.kind === 'create-folder') {
-      await store.saveFolder({
-        id: crypto.randomUUID(),
-        project_id: store.project!.id,
-        parent_id: ed.parentId ?? null,
-        name,
-        sort_order: 0,
-        created_at: now,
-        updated_at: now,
-      })
-      if (ed.parentId) expanded.value.add(ed.parentId)
-    } else if (ed.kind === 'rename-folder' && ed.id) {
-      const f = store.folders.find((x) => x.id === ed.id)
-      if (f) await store.saveFolder({ ...f, name, updated_at: now })
-    } else if (ed.kind === 'rename-endpoint' && ed.id) {
-      await store.renameEndpoint(ed.id, name)
-    }
-  } catch (err) {
-    console.error('[EndpointTree.commitEdit]', err)
-    toast.error(
-      ed.kind === 'create-folder' ? t('tree.createFolderFail') : t('tree.renameFail'),
-      { message: err instanceof Error ? err.message : String(err) },
-    )
-  } finally {
-    cancelEdit()
-  }
-}
-
-async function removeFolder(id: string): Promise<void> {
-  try {
-    await store.deleteFolder(id)
-  } catch (err) {
-    console.error('[EndpointTree.removeFolder]', err)
-    toast.error(t('tree.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
-  } finally {
-    treeSelection.folders.delete(id)
-  }
-}
-
-async function removeEndpoint(e: Endpoint): Promise<void> {
-  try {
-    await store.deleteEndpoint(e.id)
-  } catch (err) {
-    console.error('[EndpointTree.removeEndpoint]', err)
-    toast.error(t('tree.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
-  } finally {
-    treeSelection.endpoints.delete(e.id)
-  }
-}
-
-async function duplicate(e: Endpoint): Promise<void> {
-  try {
-    await store.duplicateEndpoint(e.id)
-  } catch (err) {
-    console.error('[EndpointTree.duplicate]', err)
-    toast.error(t('tree.duplicateFail'), { message: err instanceof Error ? err.message : String(err) })
-  }
 }
 
 // ---------- 行内动作菜单 ----------
@@ -1228,7 +1138,11 @@ function onBatchMenuSelect(item: MenuItem): void {
 
 /* Method 轻量徽章：布局尺寸，颜色走共享 methodTone（utils/methodTone.ts） */
 .tree-method {
-  width: 42px;
+  /* 按内容自适应 + 短方法统一最小宽：固定 42px 会让 DELETE（6 字符）
+   * 溢出被裁（用户截图反馈）；长方法自然加宽，其余方法仍互相对齐。 */
+  min-width: 42px;
+  width: auto;
+  padding: 0 5px;
   height: 18px;
   flex-shrink: 0;
   margin-right: 8px;
@@ -1241,7 +1155,7 @@ function onBatchMenuSelect(item: MenuItem): void {
   font-family: var(--font-mono);
   font-size: var(--fs-xxs);
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   line-height: 1.2;
   white-space: nowrap;
 }

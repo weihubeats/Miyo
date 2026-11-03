@@ -10,31 +10,26 @@
  * - Ctrl+S 保存 / Ctrl+Enter 发送；响应区展示状态码、耗时与正文（JSON 自动美化）。
  */
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { useWorkspaceStore, DEFAULT_SESSION_BASE_URL } from '../stores/workspace'
+import { useWorkspaceStore } from '../stores/workspace'
 import { useToast } from '../composables/useToast'
 import { useMiyoApi } from '../composables/useMiyoApi'
 import { useLocaleStore } from '../stores/locale'
 import { isDefaultName } from '../stores/locale'
 import { useShortcuts, shortcutDef } from '../composables/useShortcuts'
-import {
-  envBaseUrl,
-  environmentVariableMap,
-  mergedVariableMap,
-  resolveRequestUrl,
-  resolveVariables,
-  variableListToMap,
-} from '../utils/environment'
+
 import { isCurlCommand } from '../utils/url'
 import { prettyJson } from '../utils/jsonFormat'
 import { methodBadgeTone, methodTextTone } from '../utils/methodTone'
-import { applyPathVars } from '../utils/pathVariables'
 import { useVarCandidates } from '../composables/useVarCandidates'
 import { useVarAutocomplete } from '../composables/useVarAutocomplete'
+import { useEditorSplitter } from '../composables/useEditorSplitter'
+import { useRequestExecution } from '../composables/useRequestExecution'
+import { useRequestSettings } from '../composables/useRequestSettings'
+import { useRequestUrl } from '../composables/useRequestUrl'
 import { lazyComponent } from '../composables/lazyComponent'
 import { deepClone } from '../utils/clone'
 import {
   applyMethodDefaults,
-  envBadgeLabel as envBadgeLabelOf,
   methodNeedsBody,
 } from '../utils/requestBar'
 import AuthPanel from './AuthPanel.vue'
@@ -65,15 +60,12 @@ import ToolsDrawer from './ToolsDrawer.vue'
 import VarSuggest from './ui/VarSuggest.vue'
 import type { TabItem } from './ui/Tabs.vue'
 import type {
-  ExecuteResponse,
-  Environment,
   GrpcResponse,
   HttpMethod,
   RequestSpec,
   ResponseExample,
   TestCaseCategory,
 } from '../types/miyoApi'
-import type { GrpcStreamState } from '../stores/workspace'
 
 const store = useWorkspaceStore()
 const toast = useToast()
@@ -92,107 +84,10 @@ const EnvironmentManager = lazyComponent(() => import('./EnvironmentManager.vue'
 const DocsPanel = lazyComponent(() => import('./DocsPanel.vue'))
 const TestCasesPanel = lazyComponent(() => import('./TestCasesPanel.vue'))
 
-const sendingMap = ref<Map<string, { requestId: string; startedAt: number }>>(new Map())
-
-/** 当前接口是否在途（逐接口隔离：A 发送中切到 B，B 仍可独立发送）。 */
-const sending = computed(() => (draft.value ? sendingMap.value.has(draft.value.id) : false))
-/** 在途请求的取消标识（非空表示有请求可取消）。 */
-const activeRequestId = computed(() =>
-  draft.value ? (sendingMap.value.get(draft.value.id)?.requestId ?? null) : null,
-)
-/** 驱动「发送中计时」重绘的心跳（Apifox 式实时计时，仅在途时推进）。 */
-const elapsedTick = ref(0)
-let elapsedTimer: ReturnType<typeof setInterval> | undefined
-
-function ensureElapsedTimer(): void {
-  if (elapsedTimer) return
-  elapsedTimer = setInterval(() => {
-    if (sendingMap.value.size === 0) {
-      clearInterval(elapsedTimer)
-      elapsedTimer = undefined
-      return
-    }
-    elapsedTick.value += 1
-  }, 100)
-}
-
-/** 当前在途耗时（ms），靠 elapsedTick 心跳刷新。 */
-const elapsedMs = computed(() => {
-  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-  elapsedTick.value
-  if (!draft.value) return 0
-  const f = sendingMap.value.get(draft.value.id)
-  return f ? Math.max(0, Date.now() - f.startedAt) : 0
-})
-/** 发送中实时计时文案（Apifox 式：0.0s 起跳，持续跳动）。 */
-const elapsedText = computed(() => `${(elapsedMs.value / 1000).toFixed(1)}s`)
-/** 响应体动画锚点：新响应到达时重启动画，旧响应在途时降 dim——仅视觉反馈，不新增展示块。 */
-const flashEl = ref<HTMLElement | null>(null)
-
-function triggerFlash(): void {
-  const el = flashEl.value
-  if (!el) return
-  el.classList.remove('flash')
-  void el.offsetWidth
-  el.classList.add('flash')
-}
-/**
- * 各接口的请求结果按 id 分桶：EndpointEditor 是单实例常驻，若用单个 ref，
- * 切到另一个接口会看到上一个接口的响应；且请求在途时切换接口，旧接口的
- * 返回也会落到当前接口上（偶发「A 请求却显示 B 结果」）。按 id 存取后，
- * 每个接口只显示自己的最后一次结果，天然隔离上述两处错位。
- */
-const responses = ref<Map<string, ExecuteResponse | null>>(new Map())
-const sendErrors = ref<Map<string, string | null>>(new Map())
-const response = computed<ExecuteResponse | null>(() =>
-  draft.value ? (responses.value.get(draft.value.id) ?? null) : null,
-)
-const sendError = computed<string | null>(() =>
-  draft.value ? (sendErrors.value.get(draft.value.id) ?? null) : null,
-)
-
-/**
- * 结果桶淘汰（响应 / 错误同规格）：EndpointEditor 单实例常驻整个会话，
- * 每桶持全量响应体（后端上限 20MB），无限累积会拖垮内存与 GC。
- * 超过上限按 Map 插入序淘汰最旧（当前接口除外）。
- */
-const RESPONSE_BUCKET_MAX = 10
-
-function evictOldest<T>(map: Map<string, T>, keepId: string): void {
-  while (map.size > RESPONSE_BUCKET_MAX) {
-    const oldest = map.keys().next().value
-    if (oldest === undefined || oldest === keepId) break
-    map.delete(oldest)
-  }
-}
-
-/** 最近一次发送的 request_id（响应被 IPC 预览截断时按它向 Rust 取全文）。 */
-const lastRequestIds = ref<Map<string, string>>(new Map())
-
-/** ResponsePanel 全文加载器：按当前接口最近一次 request_id 取被截断的完整正文。 */
-async function loadFullBody(): Promise<string | null> {
-  const id = draft.value?.id
-  const rid = id ? lastRequestIds.value.get(id) : undefined
-  return rid ? api.getResponseBody(rid) : null
-}
-
 /** gRPC 响应按接口 id 分桶（口径同 responses：切接口天然隔离）。 */
 const grpcResponses = ref<Map<string, GrpcResponse | null>>(new Map())
-const grpcResponse = computed<GrpcResponse | null>(() =>
-  draft.value ? (grpcResponses.value.get(draft.value.id) ?? null) : null,
-)
-/** 当前接口最近一次的服务端流状态（store 事件通道维护）。 */
-const grpcStream = computed<GrpcStreamState | null>(() =>
-  draft.value ? store.grpcStreamOf(draft.value.id) : null,
-)
-const isGrpc = computed(() => draft.value?.method === 'GRPC')
-/** 响应区展示口径：运行中的流优先；否则最近 unary；否则已结束的流。 */
-const grpcDisplay = computed<{ response: GrpcResponse | null; stream: GrpcStreamState | null }>(() => {
-  const st = grpcStream.value
-  if (st && st.status === 'running') return { response: null, stream: st }
-  if (grpcResponse.value) return { response: grpcResponse.value, stream: null }
-  return { response: null, stream: st }
-})
+/** 响应体动画锚点（DOM 归宿主持有）。 */
+const flashEl = ref<HTMLElement | null>(null)
 
 const draft = computed(() => store.activeEndpoint)
 
@@ -204,6 +99,107 @@ const METHOD_OPTIONS = computed(() => [
   { value: '__proto_header__', label: t('editor.methodGroupOther'), header: true },
   { value: 'GRPC' as HttpMethod, label: 'GRPC', tone: methodTextTone('GRPC') },
 ])
+
+// 地址栏状态机（前缀选择 / 路径归一化 / buildUrl）抽至 composables/useRequestUrl。
+const {
+  urlDomain,
+  resolvedDomain,
+  chipClass,
+  showEnvManager,
+  BASE_URL_MANAGE,
+  baseUrlMenuOpen,
+  baseUrlOptions,
+  sessionBaseIsCustom,
+  envBaseUrlUnset,
+  onResetSessionBaseUrl,
+  baseUrlSideLabel,
+  onBaseUrlChange,
+  envBadgeLabel,
+  urlPlaceholder,
+  urlPath,
+  applyUrlInput,
+  commitUrlPath,
+  buildUrl,
+} = useRequestUrl({ draft, store, toast, t })
+
+/** Mock 规则弹窗开关（Mock 页签「新建规则」与 MockPanel 共用）。 */
+const showMockRules = ref(false)
+
+// 请求执行状态机（分桶 / 计时 / 发送 / 取消 / gRPC 流）抽至
+// composables/useRequestExecution——本组件只保留草稿与 URL/输入提交回调。
+const {
+  sending,
+  elapsedText,
+  dispose: disposeExecution,
+  lastRequestIds,
+  response,
+  sendError,
+  grpcDisplay,
+  isGrpc,
+  hasResponse,
+  send,
+  cancelSend,
+  loadFullBody,
+} = useRequestExecution({
+  draft,
+  store,
+  api,
+  toast,
+  t,
+  commitPendingInput,
+  buildUrl,
+  grpcResponses,
+  flashEl,
+})
+
+
+// 请求设置 Popover（超时 / 重定向）状态机抽至 composables/useRequestSettings。
+const settingsTriggerEl = ref<HTMLElement | null>(null)
+const {
+  onTimeoutInput,
+  timeoutPlaceholder,
+  settingsOpen,
+  settingsPos,
+  hasCustomSettings,
+  toggleSettings,
+  closeSettings,
+  dispose: disposeSettings,
+} = useRequestSettings({
+  draft,
+  globalTimeoutMs: computed(() => store.globalTimeoutMs),
+  t,
+  settingsTriggerEl,
+})
+
+// ---------- 请求区 / 响应区高度分割（Splitter） ----------
+// 状态机（按接口分桶持久化 / grow 基准 / 拖拽键盘交互）抽至
+// composables/useEditorSplitter——本组件只保留 DOM 锚点与派生条件。
+const editorEl = ref<HTMLElement | null>(null)
+/** 请求卡（config-box）DOM：未发送期拖分割条时取其实际盒高做拖拽基准。 */
+const configBoxEl = ref<HTMLElement | null>(null)
+
+const {
+  requestBodyHeight,
+  requestManual,
+  requestBodyCollapsed,
+  splitterDragging,
+  onSplitterDown,
+  onSplitterUp,
+  onSplitterKeydown,
+  toggleRequestBody,
+  requestMaxHeight,
+} = useEditorSplitter({
+  draftId: computed(() => draft.value?.id),
+  hasResponse,
+  editorEl,
+  configBoxEl,
+})
+
+/** 切接口自动收起请求设置弹窗（原与 splitter 的 chrome 归属同 watch，拆分后各自监听）。 */
+watch(
+  () => draft.value?.id,
+  () => closeSettings(),
+)
 
 // ---------- 配置 Tab 系统 ----------
 type ConfigTabKey =
@@ -349,134 +345,11 @@ function isAbsolutePath(p: string): boolean {
   return p.startsWith('http://') || p.startsWith('https://')
 }
 
-/** 地址栏展示前缀（唯一真实数据源）：环境 base_url 变量 > 会话 Base URL。 */
-const urlDomain = computed(() => (draft.value ? store.urlDomain : ''))
-
 /** 面包屑：接口所属文件夹名。 */
 const folderName = computed(() => {
   if (!draft.value?.folder_id) return ''
   return store.folders.find((f) => f.id === draft.value!.folder_id)?.name ?? ''
 })
-
-/** 激活环境（chip 色点）。 */
-const activeEnv = computed(
-  () => store.environments.find((e) => e.id === store.activeEnvId) ?? null,
-)
-const activeEnvName = computed(() => activeEnv.value?.name ?? '')
-
-/** 环境变量 + 项目变量 + 全局变量合并表（chips / 预览解析用；单源 utils/environment.mergedVariableMap）。 */
-const envVars = computed(() =>
-  mergedVariableMap({
-    globalVariables: store.globalVariables,
-    projectVariables: store.project?.variables,
-    env: activeEnv.value,
-  }),
-)
-
-/** 地址栏前缀 chip 文案：环境 base_url 变量的「解析后」实际值或会话 Base URL。 */
-const resolvedDomain = computed(() => {
-  const src = urlDomain.value
-  if (!src) return ''
-  return resolveVariables(src, envVars.value)
-})
-
-/** chip 变量引用未解析（环境未定义该变量）。 */
-const urlUnresolved = computed(
-  () => urlDomain.value.startsWith('{{') && resolvedDomain.value === urlDomain.value,
-)
-
-/** 基础 URL 标签样式：环境变量已解析 → 主题色；未解析 → 警告；会话回退 → 中性。 */
-const chipClass = computed(() => {
-  if (urlUnresolved.value) return 'warn'
-  if (urlDomain.value.startsWith('{{')) return 'env'
-  return 'session'
-})
-
-/** Base URL 下拉「管理环境…」→ 打开环境管理。 */
-const showEnvManager = ref(false)
-const showMockRules = ref(false)
-
-/** 地址栏 Base URL 下拉（Apifox 式：前置 URL 选择器）。 */
-const BASE_URL_MANAGE = '__manage__'
-/** 下拉里的「不使用环境」分组标题（不可选、不参与键盘导航；与「管理环境…」同为零值哨兵）。 */
-const BASE_URL_SESSION_HEADER = '__session__'
-const baseUrlMenuOpen = ref(false)
-
-const sessionBaseVars = computed(() => ({
-  ...variableListToMap(store.globalVariables),
-  ...(store.project?.variables ?? {}),
-}))
-
-function resolveEnvBaseUrl(env: Environment): string {
-  const vars = {
-    ...sessionBaseVars.value,
-    ...environmentVariableMap(env),
-  }
-  const raw = envBaseUrl(env)
-  return raw ? resolveVariables(raw, vars) : ''
-}
-
-/** 下拉选项：`''`=无环境（会话 Base URL），各环境=解析后前置 URL，末项=管理环境。 */
-const baseUrlOptions = computed(() => {
-  const opts: { value: string; label: string; header?: boolean }[] = []
-  const session = store.sessionBaseUrl
-    ? resolveVariables(store.sessionBaseUrl, sessionBaseVars.value)
-    : ''
-  // 「无环境」不是环境，是会话前缀：单列一组并给标题，避免与环境行同构排列被读成
-  // 「有个叫无环境的环境指向这个 IP」（实证困惑：导入 cURL 的 origin 预填在这里）。
-  opts.push({ value: BASE_URL_SESSION_HEADER, label: t('editor.baseUrlGroupSession'), header: true })
-  opts.push({ value: '', label: session || t('envbar.noEnv') })
-  for (const env of store.environments) {
-    // 环境未配 Base URL 时真实发送前缀回退会话 Base URL（同 store.urlDomain / 发送
-    // 拼接口径），左列必须显示实际发送目标。兜底「无环境」会与真正的无环境选项撞名：
-    // 未配 base 的环境逐行渲染成「无环境 | 环境名」，整列多个无环境（回归 bug）。
-    opts.push({ value: env.id, label: resolveEnvBaseUrl(env) || session || t('envbar.noEnv') })
-  }
-  opts.push({ value: BASE_URL_MANAGE, label: t('envbar.manage') })
-  return opts
-})
-
-/** 会话前缀是否已偏离内置默认（偏离才给「无环境」行重置入口）。 */
-const sessionBaseIsCustom = computed(() => store.sessionBaseUrl !== DEFAULT_SESSION_BASE_URL)
-
-/** 环境是否未配 Base URL：其下拉行左列是回退的会话前缀，给「未配置」微标记去掉歧义。 */
-function envBaseUrlUnset(id: string): boolean {
-  const env = store.environments.find((e) => e.id === id)
-  return !!env && !envBaseUrl(env)
-}
-
-/** 「无环境」行重置：会话前缀回内置默认（不动当前环境选择）。 */
-function onResetSessionBaseUrl(): void {
-  store.resetSessionBaseUrl()
-  toast.success(t('editor.baseUrlResetDone'))
-}
-
-/** 下拉行右侧标签：环境名 / 无环境。 */
-function baseUrlSideLabel(value: string): string {
-  if (value === BASE_URL_MANAGE) return ''
-  if (!value) return t('envbar.noEnv')
-  return store.environments.find((e) => e.id === value)?.name ?? ''
-}
-
-function onBaseUrlChange(value: string | number): void {
-  const v = String(value)
-  if (v === BASE_URL_MANAGE) {
-    showEnvManager.value = true
-    return
-  }
-  void store.setEnvironment(v === '' ? null : v)
-}
-
-/** Base URL 紧凑标签：直接展示解析后的裸域名（无域名时退回环境名），一眼可见实际发送目标。 */
-const envBadgeLabel = computed(() =>
-  envBadgeLabelOf({
-    urlDomain: urlDomain.value,
-    resolvedDomain: resolvedDomain.value,
-    envName: activeEnvName.value,
-  }),
-)
-
-
 
 /** 路径输入框元素引用（快捷按钮聚焦回跳）。 */
 const urlInputEl = ref<HTMLInputElement | null>(null)
@@ -683,83 +556,6 @@ function onUrlPaste(event: ClipboardEvent): void {
   if (!replaceByExecCommand(el, next)) setFieldValueAt(el, next, caret)
 }
 
-/** 路径输入框 placeholder：gRPC 提示地址格式；HTTP 提示 Base URL 拼接。 */
-const urlPlaceholder = computed(() => {
-  if (draft.value?.method === 'GRPC') return t('grpc.addressPh')
-  if (!urlDomain.value) return t('editor.urlPhBare')
-  return t('editor.urlPhJoin', { v: resolvedDomain.value || urlDomain.value })
-})
-
-/**
- * 地址栏输入处理。
- *
- * `normalize=false`（逐键，v-model setter）：原文存草稿，禁止任何改写。
- * 旧实现在这里就补 `/` 前缀 / 拆 URL——打一个 `h` 瞬间被改写成 `/h`，
- * 想输自定义域名时打到 `htt…` 已被加斜杠，绝对地址分支永远无法命中。
- *
- * `normalize=true`（提交时机：失焦 / 发送 / 保存 / 粘贴）：
- * 1. 完整 URL：query 并入参数；展示前缀为环境变量时 origin+path 整条存入
- *    path（发送走 isAbsolutePath 分支，不覆写共享环境），否则 origin 写会话 Base URL。
- * 2. `{{变量}}` 引用成为域名源。
- * 3. 其余归一为 `/` 开头的路径（gRPC 地址原样：host:port / dns:/// 加斜杠会破坏格式）。
- */
-function applyUrlInput(value: string, normalize: boolean): void {
-  const d = draft.value
-  if (!d) return
-
-  if (!normalize) {
-    d.path = value
-    return
-  }
-
-  const v = value.trim()
-  if (!v) return
-
-  // 1) 完整 URL：query 并入参数；按展示前缀决定拆分方式。
-  //    主机不含空白（`[^/\s]+`），余下部分先 trim —— 手工输入或旧版本残留的空白不该
-  //    被固化进会话前缀（`http://h:1 `）或拼成 `/ /x` 这种路径。
-  const abs = v.match(/^(?:https?|wss?):\/\/[^/\s]+/)
-  if (abs) {
-    let rest = v.slice(abs[0].length).trim() || '/'
-    const qIdx = rest.indexOf('?')
-    if (qIdx !== -1) {
-      const qs = rest.slice(qIdx + 1)
-      rest = rest.slice(0, qIdx) || '/'
-      for (const [key, val] of new URLSearchParams(qs).entries()) {
-        d.request.params.push({ key, value: val, enabled: true, description: '' })
-      }
-    }
-    const envPrefixed = store.urlDomain.startsWith('{{')
-    // 环境前缀生效时 origin 整条进 path（发送直达导入主机），不写会话前缀：
-    // 该写入会被环境前缀遮蔽，事后切「无环境」冒出没设过的域名（全仓同规则）
-    if (!envPrefixed) store.sessionBaseUrl = abs[0]
-    const rel = rest.startsWith('/') ? rest : `/${rest}`
-    d.path = envPrefixed ? `${abs[0]}${rel}` : rel
-    return
-  }
-
-  // 2) 以 `{{变量}}` 开头：变量引用成为域名源。
-  const varRef = v.match(/^\{\{[^{}]+\}\}/)
-  if (varRef) {
-    store.sessionBaseUrl = varRef[0]
-    d.path = v.slice(varRef[0].length) || '/'
-    return
-  }
-
-  // 3) 其余视为路径本身（gRPC 地址原样）。
-  if (d.method === 'GRPC') {
-    d.path = v
-    return
-  }
-  d.path = v.startsWith('/') ? v : `/${v}`
-}
-
-/** 路径输入框（与 chip 组成完整请求地址）：逐键原文存储，归一化在提交时机执行。 */
-const urlPath = computed({
-  get: () => draft.value?.path ?? '',
-  set: (value: string) => applyUrlInput(value, false),
-})
-
 /** 提交地址栏输入并归一化（失焦 / 发送 / 保存前调用；重复执行幂等）。 */
 /** 读取草稿前统一收口：提交地址栏镜像 + 刷出 Body 防抖镜像。
  *  save/send/代码生成/压测/命名确认都经此，保证 ⌘S / ⌘Enter 在输入框内
@@ -774,614 +570,6 @@ function commitPendingInput(): void {
 /** 刷出 BodyPanel 尚未落盘的防抖镜像（raw / GraphQL query+op / binary path）。 */
 function flushPendingBodyInput(): void {
   bodyPanelRef.value?.flushPendingInput()
-}
-
-function commitUrlPath(): void {
-  if (draft.value) applyUrlInput(draft.value.path, true)
-}
-
-/**
- * 请求地址（与 send / 代码生成 / 压测共用）；有环境时按环境 Base URL 拼接，变量由 resolveRequestUrl 解析。
- *
- * 路径变量代入见 `utils/pathVariables.applyPathVars`（镜像 miyo-core
- * `util::replace_path_variables`）：后端 execute_request 直接使用前端拼好的
- * 完整 URL，不消费 request.path_variables（该字段只被 OpenAPI 导出与文档预览
- * 读取），故代入必须在前端完成；未配置的行不替换，路径原样发送。
- */
-function buildUrl(): string {
-  const d = draft.value
-  if (!d) return ''
-  // gRPC：path 即完整地址（host:port，可含 {{变量}}），不拼 Base URL
-  if (d.method === 'GRPC') return d.path
-  const path = applyPathVars(d.path, d.request.path_variables)
-  if (isAbsolutePath(path)) return path
-  if (activeEnv.value && envBaseUrl(activeEnv.value)) {
-    return resolveRequestUrl(activeEnv.value, path, envVars.value).url
-  }
-  const rel = path.startsWith('/') ? path : `/${path}`
-  return `${store.urlDomain}${rel}`
-}
-
-/** 单请求超时输入：空串 = null（跟随全局超时），非法输入不写回（避免打字中途被清空）。 */
-function onTimeoutInput(value: string | number): void {
-  const request = draft.value?.request
-  if (!request) return
-  if (value === '' || value === null || value === undefined) {
-    request.timeout_ms = null
-    return
-  }
-  const n = typeof value === 'number' ? value : Number(value)
-  if (Number.isFinite(n) && n > 0) request.timeout_ms = Math.round(n)
-}
-
-/** 超时占位：未设置（留空）时展示全局默认值，让「跟随全局」具体可见；未加载完成回退静态文案。 */
-const timeoutPlaceholder = computed(() => {
-  const ms = store.globalTimeoutMs
-  return ms == null ? t('editor.timeoutPh') : t('editor.timeoutPhGlobal', { sec: Math.round(ms / 1000) })
-})
-
-/** 请求设置 Popover：超时/重定向是低频设置，收进页签行右侧触发钮——
- *  请求与响应之间的接缝处不再常驻一行（用户实测：夹在 Body 与响应之间显乱）。
- *  面板 Teleport 到 body + fixed 定位（config-box 是 overflow 滚动容器，
- *  内部绝对定位会被裁剪）；滚动 / 缩放 / 外部点击 / Esc 关闭；
- *  非默认值（设了超时或关闭重定向）时触发钮点亮角标。 */
-const settingsTriggerEl = ref<HTMLElement | null>(null)
-const settingsOpen = ref(false)
-const settingsPos = ref({ left: 0, top: 0 })
-/** 定位用估算尺寸：与 .rs-pop 的 width 一致；高度略放宽只影响上翻判定，宁大勿小。 */
-const SETTINGS_POPOVER = { width: 220, height: 110 }
-
-const hasCustomSettings = computed(() => {
-  const request = draft.value?.request
-  return !!request && (request.timeout_ms != null || request.follow_redirects === false)
-})
-
-function toggleSettings(): void {
-  if (settingsOpen.value) {
-    settingsOpen.value = false
-    return
-  }
-  const rect = settingsTriggerEl.value?.getBoundingClientRect()
-  if (!rect) return
-  const up =
-    window.innerHeight - rect.bottom < SETTINGS_POPOVER.height + 8 && rect.top > SETTINGS_POPOVER.height
-  settingsPos.value = {
-    left: Math.max(
-      8,
-      Math.min(rect.right - SETTINGS_POPOVER.width, window.innerWidth - SETTINGS_POPOVER.width - 8),
-    ),
-    top: up ? rect.top - SETTINGS_POPOVER.height - 6 : rect.bottom + 6,
-  }
-  settingsOpen.value = true
-}
-
-function closeSettings(): void {
-  settingsOpen.value = false
-}
-
-function onSettingsDocMousedown(event: MouseEvent): void {
-  if (!settingsOpen.value) return
-  const target = event.target as Node
-  // 触发钮自行接管开关；面板本体（Teleport 出去）内的操作不关
-  if (settingsTriggerEl.value?.contains(target)) return
-  if (target instanceof Element && target.closest('[data-settings-pop]')) return
-  closeSettings()
-}
-
-function onSettingsDocKeydown(event: KeyboardEvent): void {
-  if (settingsOpen.value && (event.key === 'Escape' || event.key === 'Tab')) closeSettings()
-}
-
-window.addEventListener('mousedown', onSettingsDocMousedown)
-window.addEventListener('keydown', onSettingsDocKeydown)
-window.addEventListener('scroll', closeSettings, true)
-window.addEventListener('resize', closeSettings)
-
-async function send(): Promise<void> {
-  if (!draft.value) return
-  commitPendingInput()
-  const targetId = draft.value.id
-  if (sendingMap.value.has(targetId)) {
-    toast.info(t('editor.sendingHint'))
-    return
-  }
-  if (draft.value.method === 'GRPC') return sendGrpc()
-  const snapshot = draft.value
-  sendErrors.value.set(targetId, null)
-  evictOldest(sendErrors.value, targetId)
-  const url = buildUrl()
-  const rid = crypto.randomUUID()
-  lastRequestIds.value.set(targetId, rid)
-  evictOldest(lastRequestIds.value, targetId)
-  sendingMap.value.set(targetId, { requestId: rid, startedAt: Date.now() })
-  ensureElapsedTimer()
-  try {
-    const resp = await store.send(snapshot, url, rid)
-    // 结果按发起请求时的接口 id 落桶：请求在途时切走再返回，不会错位。
-    responses.value.set(targetId, resp)
-    evictOldest(responses.value, targetId)
-    sendErrors.value.set(targetId, null)
-    evictOldest(sendErrors.value, targetId)
-    triggerFlash()
-    // 历史已迁至侧栏「请求历史」页签，发送后由 store 统一刷新。
-    void store.loadHistories()
-  } catch (err) {
-    const e = err as Error & { code?: string }
-    if (e?.code === 'CANCELLED') {
-      // 用户主动取消：不视为错误，保留上一次结果。
-      toast.info(t('editor.cancelled'))
-      sendErrors.value.set(targetId, null)
-    } else {
-      sendErrors.value.set(targetId, err instanceof Error ? err.message : String(err))
-      evictOldest(sendErrors.value, targetId)
-      responses.value.set(targetId, null)
-      evictOldest(responses.value, targetId)
-      triggerFlash()
-    }
-  } finally {
-    sendingMap.value.delete(targetId)
-    // 等响应分支挂载后再重启动画：完成瞬间仍是请求中占位，flashEl 为空。
-    await nextTick()
-    triggerFlash()
-  }
-}
-
-/**
- * gRPC 发送：unary 直返响应入桶；服务端流注册运行态（消息经事件异步追加），
- * 发送按钮随即复位——流的关闭由响应区按钮控制。
- */
-async function sendGrpc(): Promise<void> {
-  const d = draft.value
-  if (!d) return
-  const targetId = d.id
-  if (sendingMap.value.has(targetId)) {
-    toast.info(t('editor.sendingHint'))
-    return
-  }
-  sendErrors.value.set(targetId, null)
-  const rid = crypto.randomUUID()
-  sendingMap.value.set(targetId, { requestId: rid, startedAt: Date.now() })
-  ensureElapsedTimer()
-  try {
-    const result = await store.sendGrpc(d, rid)
-    if (result.kind === 'unary') {
-      grpcResponses.value.set(targetId, result.response)
-      evictOldest(grpcResponses.value, targetId)
-      void store.loadHistories()
-    } else {
-      // 服务端流：清掉旧 unary 响应，让流式时间线接管响应区
-      grpcResponses.value.set(targetId, null)
-      evictOldest(grpcResponses.value, targetId)
-    }
-    sendErrors.value.set(targetId, null)
-    triggerFlash()
-  } catch (err) {
-    const e = err as Error & { code?: string }
-    if (e?.code === 'CANCELLED') {
-      toast.info(t('editor.cancelled'))
-      sendErrors.value.set(targetId, null)
-    } else {
-      sendErrors.value.set(targetId, err instanceof Error ? err.message : String(err))
-      grpcResponses.value.set(targetId, null)
-      evictOldest(grpcResponses.value, targetId)
-      triggerFlash()
-    }
-  } finally {
-    sendingMap.value.delete(targetId)
-    await nextTick()
-    triggerFlash()
-  }
-}
-
-/** 取消在途请求（后端中止连接，命令随即以 CANCELLED 返回）。 */
-function cancelSend(): void {
-  const rid = activeRequestId.value
-  if (!rid) return
-  void api.cancelRequest(rid)
-  toast.info(t('editor.cancelling'))
-}
-
-/** 保存：名称为空或仍是默认「未命名接口」时，先弹「名称 + 保存位置」确认框，确认后再落库。 */
-const showNameDialog = ref(false)
-const pendingName = ref('')
-const pendingFolderId = ref('')
-
-/** 保存位置（文件夹）选项：树形展平，子目录按层级缩进展示。 */
-interface FolderOption {
-  value: string
-  label: string
-  depth: number
-}
-const folderOptions = computed<FolderOption[]>(() => {
-  const out: FolderOption[] = []
-  const walk = (parentId: string | null, depth: number): void => {
-    store.folders
-      .filter((f) => f.parent_id === parentId)
-      .sort((a, b) => a.sort_order - b.sort_order)
-      .forEach((f) => {
-        out.push({ value: f.id, label: f.name, depth })
-        walk(f.id, depth + 1)
-      })
-  }
-  walk(null, 0)
-  return out
-})
-
-async function save(): Promise<void> {
-  if (!draft.value) return
-  commitPendingInput()
-  const name = draft.value.name.trim()
-  if (isDefaultName('endpoint', name)) {
-    pendingName.value = ''
-    pendingFolderId.value = draft.value.folder_id ?? ''
-    showNameDialog.value = true
-    return
-  }
-  const ok = await store.saveActiveDraft()
-  if (ok) {
-    methodRevert = null
-  }
-}
-
-async function confirmName(): Promise<void> {
-  if (!draft.value) return
-  commitPendingInput()
-  const name = pendingName.value.trim()
-  if (!name) {
-    toast.warning(t('editor.nameRequired'))
-    return
-  }
-  draft.value.name = name
-  draft.value.folder_id = pendingFolderId.value || null
-  showNameDialog.value = false
-  const ok = await store.saveActiveDraft()
-  if (ok) {
-    methodRevert = null
-  }
-}
-
-// ---------- 二级导航 + 保存为用例 ----------
-const SUB_NAV = computed<{ key: 'debug' | 'design' | 'docs' | 'cases' | 'mock'; label: string }[]>(() => [
-  { key: 'debug', label: t('editor.navDebug') },
-  { key: 'design', label: t('editor.navDesign') },
-  { key: 'docs', label: t('editor.navDocs') },
-  { key: 'cases', label: t('editor.navCases') },
-  { key: 'mock', label: 'Mock' },
-])
-
-/** 切换接口时回到「调试」页。 */
-watch(
-  () => draft.value?.id,
-  () => store.setActiveView('debug'),
-  { immediate: true },
-)
-
-const saveMenuEl = ref<InstanceType<typeof Menu> | null>(null)
-
-function openSaveMenu(event: MouseEvent): void {
-  saveMenuEl.value?.openAt(event.currentTarget as HTMLElement, [
-    { key: 'save-case', label: t('editor.saveAsCase'), icon: 'list' },
-  ])
-}
-
-function onSaveMenuSelect(item: MenuItem): void {
-  if (item.key === 'save-case') openSaveCaseModal()
-}
-
-const showTestCaseModal = ref(false)
-const pendingCaseName = ref('')
-
-/** 保存为用例：提取当前请求快照（URL / Params / Headers / Body）存入 test_cases。 */
-function openSaveCaseModal(): void {
-  const d = draft.value
-  if (!d) return
-  pendingCaseName.value = !isDefaultName('endpoint', d.name) ? `${d.method} ${d.path}` : ''
-  showTestCaseModal.value = true
-}
-
-async function onSaveCaseSubmit(payload: {
-  name: string
-  category: TestCaseCategory
-}): Promise<void> {
-  const d = draft.value
-  if (!d) return
-  await store.saveTestCase(d.id, payload.name, payload.category, d.request, d.path, d.method)
-}
-
-// ---------- 请求区 / 响应区高度分割（Splitter） ----------
-const REQUEST_MIN = 80
-const REQUEST_DEFAULT = 200
-/** 请求区最大高度 = 编辑器高度 - MAX_OFFSET，保证响应区至少留 MAX_OFFSET px。 */
-const MAX_OFFSET = 100
-
-/**
- * 分割条手动态**按接口 id 分桶**：每个接口的请求区高度互相独立（用户实测要求：
- * 「一个接口改了高度，其他接口不能跟着变」），并且要记住自己拖过的值——切走再
- * 回来不能回落到默认高度。桶存在模块级 Map 里而不是组件 ref：EndpointEditor 是
- * 单实例常驻，但视图切换可能整棵重建，组件级状态会随卸载一起丢。
- */
-const editorEl = ref<HTMLElement | null>(null)
-/** 请求卡（config-box）DOM：未发送期拖分割条时取其实际盒高做拖拽基准。 */
-const configBoxEl = ref<HTMLElement | null>(null)
-
-/** 每个接口一条手动分割态：高度 + 是否手动拖过（同键写入，一并替换）。 */
-interface SplitState {
-  height: number
-  manual: boolean
-}
-/** 桶上限：只存数字 + 布尔，超限按插入顺序淘汰最旧的（当前接口除外）。 */
-const SPLIT_BUCKET_MAX = 200
-const splitBuckets = new Map<string, SplitState>()
-
-/** 落 localStorage：重启 / 重开窗口后各接口仍沿用自己上次拖好的高度。 */
-const SPLIT_STORE_KEY = 'miyo.request-split-by-endpoint'
-const SPLIT_STORE_LIMIT = 200
-/** 手动高度生效下限：低于它就当作「折叠态」处理（用户拉塌的本意）。 */
-const REQUEST_COLLAPSE_THRESHOLD = 40
-
-/**
- * 模块求值时读一次上次会话的桶。用块作用域而非 `;` 前置的 IIFE：后者紧跟在
- * `const … = 40` 之后会被解析成对 40 的调用表达式。
- */
-{
-  try {
-    const raw = localStorage.getItem(SPLIT_STORE_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw) as Record<string, SplitState>
-      for (const [id, item] of Object.entries(parsed)) {
-        if (typeof item?.height !== 'number' || !Number.isFinite(item.height)) continue
-        splitBuckets.set(id, { height: item.height, manual: item.manual === true })
-      }
-    }
-  } catch {
-    /* 存储损坏 / 隐私模式：按默认布局走，不阻断编辑器挂载 */
-  }
-}
-
-function persistSplitBuckets(keepId: string): void {
-  try {
-    // 只留最近 SPLIT_STORE_LIMIT 条，避免 localStorage 无限增长
-    while (splitBuckets.size > SPLIT_STORE_LIMIT) {
-      const oldest = splitBuckets.keys().next().value
-      if (oldest === undefined || oldest === keepId) break
-      splitBuckets.delete(oldest)
-    }
-    localStorage.setItem(SPLIT_STORE_KEY, JSON.stringify(Object.fromEntries(splitBuckets)))
-  } catch {
-    /* 配额 / 隐私模式写入失败：仅丢持久化，不影响本次会话 */
-  }
-}
-
-const splitTick = ref(0)
-
-/** 当前接口的分割态（无记录 = 从未拖过，走 grow 贴内容布局）。 */
-function currentSplit(): SplitState | null {
-  const id = draft.value?.id
-  return id ? (splitBuckets.get(id) ?? null) : null
-}
-
-const requestBodyHeight = computed(() => {
-  void splitTick.value
-  return currentSplit()?.height ?? REQUEST_DEFAULT
-})
-/**
- * 未发送期手动拖过分割条：请求卡从「贴内容 grow」切为分割条分配的固定高。
- * 阈值用 40 而非 REQUEST_MIN(80)：拖到 80 以下也是用户明确选的「塌下去」，
- * 若按 80 判定就会回到 grow 贴内容布局，看起来正是「高度重置」。
- */
-const requestManual = computed(() => {
-  void splitTick.value
-  const cur = currentSplit()
-  return !!cur?.manual && cur.height >= REQUEST_COLLAPSE_THRESHOLD
-})
-const requestBodyCollapsed = computed(() => {
-  void splitTick.value
-  return requestBodyHeight.value <= REQUEST_MIN
-})
-
-/** 写**当前接口**的请求卡固定高（无接口时丢弃：组件未渲染 v-if="draft"）。 */
-function setRequestBodyHeight(px: number): void {
-  const id = draft.value?.id
-  if (!id) return
-  const prev = splitBuckets.get(id)
-  splitBuckets.delete(id) // 重插到末尾 = 刷新「最近使用」序
-  splitBuckets.set(id, { height: px, manual: prev?.manual ?? false })
-  while (splitBuckets.size > SPLIT_BUCKET_MAX) {
-    const oldest = splitBuckets.keys().next().value
-    if (oldest === undefined || oldest === id) break
-    splitBuckets.delete(oldest)
-  }
-  splitTick.value++
-  persistSplitBuckets(id)
-}
-
-/** 标记**当前接口**已进入手动分割态。 */
-function setRequestManual(): void {
-  const id = draft.value?.id
-  if (!id) return
-  const prev = splitBuckets.get(id)
-  splitBuckets.delete(id)
-  splitBuckets.set(id, { height: prev?.height ?? REQUEST_DEFAULT, manual: true })
-  splitTick.value++
-  persistSplitBuckets(id)
-}
-
-const splitterDragging = ref(false)
-
-/** 正在发送或已有结果时展示响应区（发送中显示请求中占位，见模板）。 */
-const hasResponse = computed(
-  () =>
-    !!response.value ||
-    !!sendError.value ||
-    sending.value ||
-    !!grpcResponse.value ||
-    !!grpcStream.value,
-)
-
-let splitStartY = 0
-let splitStartHeight = 0
-let splitDragging = false
-
-/** growChrome 按接口拆存：切接口后再拖该接口时，chrome 才能按「仍在 grow 态」重测，
- * 否则会误用上一接口测得的 chrome；-1 表示当前接口尚未测量。 */
-const growChromeById = new Map<string, number>()
-let growChromeFor: string | null = null
-let hintMinH = 0
-
-/** 取当前接口的 chrome 测量值（-1 未测）。 */
-function currentGrowChrome(): number {
-  const id = draft.value?.id ?? null
-  if (id !== growChromeFor) return -1
-  return growChromeById.get(id ?? '') ?? -1
-}
-
-/** 写入当前接口的 chrome 测量值。 */
-function setGrowChrome(v: number): void {
-  const id = draft.value?.id ?? null
-  growChromeFor = id
-  if (id) growChromeById.set(id, v)
-}
-
-/**
- * 切接口时**不**清手动分割态（原实现整份归零，导致每个接口都记不住自己拖过的
- * 窗口高度——用户实测：A 拉过 body 弹框，切走再回来又变默认）。分割态按接口 id
- * 分桶（各自独立、互不影响，落 localStorage）；这里只切「chrome 测量值归属的接口」，
- * 各接口布局不同，跨接口复用测量值会把请求卡钳到错误的上下限。
- */
-watch(
-  () => draft.value?.id,
-  (id) => {
-    // 切到新接口即「尚未测量」；切回自己时保留原测量值（该接口仍处 grow 态）
-    growChromeFor = id ?? null
-    closeSettings()
-  },
-)
-
-/**
- * 请求区上限。兜底值只在「量不到编辑器高度」时使用（首帧 / 未排版环境）：
- * 编辑器高度为 0 会让上限塌成 REQUEST_MIN，拖动怎么拉都停在最小高度，
- * 表现就是「拖不动 / 一跳回默认」。
- */
-const EDITOR_FALLBACK_HEIGHT = 600
-
-function requestMaxHeight(): number {
-  const measured = editorEl.value?.clientHeight ?? 0
-  const edH = measured > 0 ? measured : EDITOR_FALLBACK_HEIGHT
-  const chrome = currentGrowChrome()
-  if (!hasResponse.value && chrome >= 0) {
-    return Math.max(edH - chrome - hintMinH, REQUEST_MIN + 40)
-  }
-  return Math.max(edH - MAX_OFFSET, REQUEST_MIN + 40)
-}
-
-/** 首次出现响应区时初始化分割：请求区约 35%、响应区 65%（优先放大响应展示空间），
- * 请求区下限钳到 REQUEST_DEFAULT(200px) 保证编辑可用，而非固定 200px 压扁编辑器。
- * 仅在 无响应→有响应 跳变时计算（此时工作区仍是 grow 布局，clientHeight 即可用总高）；
- * 同一响应会话内的手动拖拽在重发时不受影响（hasResponse 保持 true 不再触发）。
- * 已手动分桶过的接口不覆盖：那是用户亲手定的高度，切走再回来必须原样恢复。 */
-watch(hasResponse, (has) => {
-  if (!has) return
-  // 该接口手动拖过高度：一律不覆盖（那是用户亲手定的值）。
-  if (requestManual.value) return
-  const available = editorEl.value?.clientHeight ?? 0
-  if (available <= 0) return
-  setRequestBodyHeight(
-    Math.min(Math.max(Math.round(available * 0.35), REQUEST_DEFAULT), requestMaxHeight()),
-  )
-})
-
-/** 未手动拖过分割条时，请求卡「贴内容」的实际高度（grow 布局下的盒高）。
- *  拖动基准必须取这个值：模块级高度偏好可能来自上一个接口 / 上次会话，与当前
- *  接口此刻的布局无关。 */
-function measuredGrowHeight(): number {
-  const actual = configBoxEl.value?.getBoundingClientRect().height
-  if (actual === undefined || actual <= 0) return REQUEST_DEFAULT
-  // border-box：用 getBoundingClientRect（含边框）与 height 样式同口径
-  return Math.max(Math.min(Math.round(actual), requestMaxHeight()), REQUEST_MIN)
-}
-
-/** 进入手动分割模式（未发送期）：请求卡当前是 grow 贴内容布局，实际盒高 ≠
- * requestBodyHeight 的存值——先以实际盒高对齐基准再切固定高，否则首次拖动会
- * 从旧值（200）跳变。已有响应 / 已是固定高时直接返回现值。 */
-function enterManualSplit(): number {
-  if (hasResponse.value || requestManual.value) return requestBodyHeight.value
-  const ed = editorEl.value
-  const cb = configBoxEl.value
-  const hint = ed?.querySelector<HTMLElement>('.response-hint')
-  // grow 态 flex 收敛必不溢出：此刻量 chrome = 总高 − 请求卡 − 占位条
-  if (ed && cb && hint) {
-    setGrowChrome(
-      ed.scrollHeight - cb.getBoundingClientRect().height - hint.getBoundingClientRect().height,
-    )
-    hintMinH = parseFloat(getComputedStyle(hint).minHeight) || hint.offsetHeight
-  }
-  const measured = measuredGrowHeight()
-  setRequestManual()
-  setRequestBodyHeight(measured)
-  // 返回本次实测值：调用方在同一调用栈内据此判定折叠态，不隔着 computed 的缓存
-  return measured
-}
-
-/** 分割条 mousedown：开始拖拽，动态调整请求区高度（响应区 flex:1 自动补位）。 */
-function onSplitterDown(event: MouseEvent): void {
-  if (event.button !== 0) return
-  event.preventDefault()
-  splitDragging = true
-  splitterDragging.value = true
-  splitStartY = event.clientY
-  // 基准必须取「此刻眼睛看到的盒高」：本接口从未拖过时存量值是默认的 200，
-  // 与 grow 布局的实际高度不一致，直接用会让首拖跳变。固定高态下两者相同。
-  splitStartHeight = hasResponse.value || requestManual.value
-    ? requestBodyHeight.value
-    : measuredGrowHeight()
-  document.body.style.userSelect = 'none'
-  document.addEventListener('mousemove', onSplitterMove)
-  document.addEventListener('mouseup', onSplitterUp)
-}
-
-function onSplitterMove(event: MouseEvent): void {
-  if (!splitDragging) return
-  const next = splitStartHeight + (event.clientY - splitStartY)
-  setRequestManual()
-  // 下限先钳再取上限：反序时 Math.max(min, max(...)) 会把低于下限的值又抬回 min，
-  // 拖到折叠区本该停在 REQUEST_MIN，却会反弹成 REQUEST_DEFAULT（折叠态永远拖不到）。
-  setRequestBodyHeight(Math.max(Math.min(next, requestMaxHeight()), REQUEST_MIN))
-}
-
-function onSplitterUp(): void {
-  if (!splitDragging) return
-  splitDragging = false
-  splitterDragging.value = false
-  document.body.style.userSelect = ''
-  document.removeEventListener('mousemove', onSplitterMove)
-  document.removeEventListener('mouseup', onSplitterUp)
-}
-
-/** 双击分割条 / 点击微调按钮：请求区收缩到最小高度，再点恢复默认高度。 */
-function toggleRequestBody(): void {
-  // 「折叠」判定用 requestBodyCollapsed 会漏掉用户把高度拖到 40~120 的情形，
-  // 这里直接按固定高 + 实际高度判断，双击语义保持「塌到底 ⇄ 回到默认」。
-  const wasCollapsed = !requestManual.value || requestBodyHeight.value <= REQUEST_MIN
-  enterManualSplit()
-  setRequestBodyHeight(wasCollapsed ? REQUEST_DEFAULT : REQUEST_MIN)
-}
-
-/** 键盘调高（分割条可 Tab 聚焦）：↑ ↓ 每次 10px，Shift 40px，PgUp/PgDn 更大步长，Home/End 到上下限。 */
-function onSplitterKeydown(event: KeyboardEvent): void {
-  const handled = ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End']
-  if (!handled.includes(event.key)) return
-  event.preventDefault()
-  const max = requestMaxHeight()
-  const step = event.shiftKey ? 40 : 10
-  let next = enterManualSplit()
-  if (event.key === 'ArrowUp') next -= step
-  else if (event.key === 'ArrowDown') next += step
-  else if (event.key === 'PageUp') next -= step * 4
-  else if (event.key === 'PageDown') next += step * 4
-  else if (event.key === 'Home') next = REQUEST_MIN
-  else if (event.key === 'End') next = max
-  setRequestManual()
-  setRequestBodyHeight(Math.min(Math.max(next, REQUEST_MIN), max))
 }
 
 // ---------- 响应示例 ----------
@@ -1476,6 +664,112 @@ async function copyBaseUrl(): Promise<void> {
   toast.info(t('editor.baseCopied'))
 }
 
+// ---------- 二级导航 + 保存为用例 ----------
+const SUB_NAV = computed<{ key: 'debug' | 'design' | 'docs' | 'cases' | 'mock'; label: string }[]>(() => [
+  { key: 'debug', label: t('editor.navDebug') },
+  { key: 'design', label: t('editor.navDesign') },
+  { key: 'docs', label: t('editor.navDocs') },
+  { key: 'cases', label: t('editor.navCases') },
+  { key: 'mock', label: 'Mock' },
+])
+
+/** 切换接口时回到「调试」页。 */
+watch(
+  () => draft.value?.id,
+  () => store.setActiveView('debug'),
+  { immediate: true },
+)
+
+const saveMenuEl = ref<InstanceType<typeof Menu> | null>(null)
+
+function openSaveMenu(event: MouseEvent): void {
+  saveMenuEl.value?.openAt(event.currentTarget as HTMLElement, [
+    { key: 'save-case', label: t('editor.saveAsCase'), icon: 'list' },
+  ])
+}
+
+function onSaveMenuSelect(item: MenuItem): void {
+  if (item.key === 'save-case') openSaveCaseModal()
+}
+
+const showTestCaseModal = ref(false)
+const pendingCaseName = ref('')
+
+/** 保存为用例：提取当前请求快照（URL / Params / Headers / Body）存入 test_cases。 */
+function openSaveCaseModal(): void {
+  const d = draft.value
+  if (!d) return
+  pendingCaseName.value = !isDefaultName('endpoint', d.name) ? `${d.method} ${d.path}` : ''
+  showTestCaseModal.value = true
+}
+
+async function onSaveCaseSubmit(payload: {
+  name: string
+  category: TestCaseCategory
+}): Promise<void> {
+  const d = draft.value
+  if (!d) return
+  await store.saveTestCase(d.id, payload.name, payload.category, d.request, d.path, d.method)
+}
+/** 保存：名称为空或仍是默认「未命名接口」时，先弹「名称 + 保存位置」确认框，确认后再落库。 */
+const showNameDialog = ref(false)
+const pendingName = ref('')
+const pendingFolderId = ref('')
+
+/** 保存位置（文件夹）选项：树形展平，子目录按层级缩进展示。 */
+interface FolderOption {
+  value: string
+  label: string
+  depth: number
+}
+const folderOptions = computed<FolderOption[]>(() => {
+  const out: FolderOption[] = []
+  const walk = (parentId: string | null, depth: number): void => {
+    store.folders
+      .filter((f) => f.parent_id === parentId)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .forEach((f) => {
+        out.push({ value: f.id, label: f.name, depth })
+        walk(f.id, depth + 1)
+      })
+  }
+  walk(null, 0)
+  return out
+})
+
+async function save(): Promise<void> {
+  if (!draft.value) return
+  commitPendingInput()
+  const name = draft.value.name.trim()
+  if (isDefaultName('endpoint', name)) {
+    pendingName.value = ''
+    pendingFolderId.value = draft.value.folder_id ?? ''
+    showNameDialog.value = true
+    return
+  }
+  const ok = await store.saveActiveDraft()
+  if (ok) {
+    methodRevert = null
+  }
+}
+
+async function confirmName(): Promise<void> {
+  if (!draft.value) return
+  commitPendingInput()
+  const name = pendingName.value.trim()
+  if (!name) {
+    toast.warning(t('editor.nameRequired'))
+    return
+  }
+  draft.value.name = name
+  draft.value.folder_id = pendingFolderId.value || null
+  showNameDialog.value = false
+  const ok = await store.saveActiveDraft()
+  if (ok) {
+    methodRevert = null
+  }
+}
+
 /**
  * 全局快捷键（集中注册表，见 useShortcuts；帮助面板自动收录）。
  * 默认键位来自 SHORTCUT_DEFAULTS，用户可在设置 → 快捷键中自定义。
@@ -1500,14 +794,8 @@ watch(
 
 onUnmounted(() => {
   onSplitterUp()
-  if (elapsedTimer) {
-    clearInterval(elapsedTimer)
-    elapsedTimer = undefined
-  }
-  window.removeEventListener('mousedown', onSettingsDocMousedown)
-  window.removeEventListener('keydown', onSettingsDocKeydown)
-  window.removeEventListener('scroll', closeSettings, true)
-  window.removeEventListener('resize', closeSettings)
+  disposeExecution()
+  disposeSettings()
 })
 </script>
 
@@ -1799,13 +1087,16 @@ onUnmounted(() => {
         aria-orientation="horizontal"
         :aria-label="t('editor.splitterHint')"
         :aria-valuenow="Math.round(requestBodyHeight)"
-        :aria-valuemin="REQUEST_MIN"
+        :aria-valuemin="80"
         :aria-valuemax="Math.round(requestMaxHeight())"
         :title="t('editor.splitterHint')"
         @mousedown="onSplitterDown"
         @dblclick="toggleRequestBody"
         @keydown="onSplitterKeydown"
-      ></div>
+      >
+        <!-- 常驻微把手：静止期低透明度提示「这里可以拖」（可发现性）；hover/拖拽加深 -->
+        <span class="rp-splitter-grip" aria-hidden="true"></span>
+      </div>
 
       <template v-if="hasResponse">
         <div class="response-zone">
@@ -2907,6 +2198,32 @@ onUnmounted(() => {
 /* 拖拽中更实、更明显（此时用户已明确进入调整状态） */
 .rp-splitter.dragging::before {
   opacity: 1;
+}
+/* 常驻微把手：静止期低透明度短横条，hover / 拖拽 / 键盘聚焦时加深——
+ * 1px 接缝线在浅色主题下易被忽略（可发现性），把手给出明确的可拖暗示。
+ * 不抢焦点：pointer-events none，热区仍是整条 ::after。 */
+.rp-splitter-grip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 4px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: var(--text-3);
+  opacity: 0.32;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+.rp-splitter:hover .rp-splitter-grip,
+.rp-splitter.dragging .rp-splitter-grip,
+.rp-splitter:focus-visible .rp-splitter-grip {
+  opacity: 0.7;
+}
+/* 把手居中会盖住 ::before 的高亮线——高亮时把手让位为浅色（线仍清晰） */
+.rp-splitter.dragging .rp-splitter-grip {
+  background: var(--bg-elevated);
+  opacity: 0.9;
 }
 /* 仅在键盘聚焦时给描边：鼠标点击（含按下拖拽）不应留下「选中框」，
  * 那会让人误以为拖出了什么选框。:focus-visible 在鼠标交互下本就不触发，

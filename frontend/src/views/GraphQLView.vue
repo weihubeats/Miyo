@@ -26,6 +26,7 @@ import {
   resolveRequestUrl,
 } from '../utils/environment'
 import { escapeHtml, highlightGraphQL, highlightJSON } from '../utils/highlight'
+import ResponsePanel from '../components/ResponsePanel.vue'
 import { handleTextareaTab } from '../utils/textareaIndent'
 import Modal from '../components/ui/Modal.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
@@ -160,9 +161,8 @@ const queryEditor = ref<HTMLElement | null>(null)
 const varsEditor = ref<HTMLElement | null>(null)
 const saving = ref(false)
 const statusText = ref('')
-const response = ref<{ status: number; body: string; durationMs: number } | null>(null)
+const response = ref<ExecuteResponse | null>(null)
 const responseErrors = ref<{ message: string; locations?: string; path?: string }[]>([])
-const responseRaw = ref(false)
 const sendFailed = ref(false)
 
 // ---------- 变量 JSON 校验 ----------
@@ -219,21 +219,6 @@ const variablesHtml = computed(() => {
 // parse + stringify(pretty) + 正则高亮会把体积放大数十倍并生成海量 <span>，
 // 超过阈值跳过格式化，仅转义显示前 200KB 纯文本；完整内容可切换「原始」查看。
 const PARSE_LIMIT_BYTES = 1_000_000
-const PREVIEW_LIMIT_BYTES = 200_000
-
-const responseTooLarge = computed(() => (response.value?.body.length ?? 0) > PARSE_LIMIT_BYTES)
-
-const responseHtml = computed(() => {
-  if (!response.value) return ''
-  const text = response.value.body
-  if (text.length > PARSE_LIMIT_BYTES) return escapeHtml(text.slice(0, PREVIEW_LIMIT_BYTES))
-  try {
-    const parsed = JSON.parse(text)
-    return highlightJSON(JSON.stringify(parsed, null, 2))
-  } catch {
-    return escapeHtml(text)
-  }
-})
 
 const statusClass = computed(() => {
   if (!response.value) return ''
@@ -321,8 +306,12 @@ async function send() {
     const res: ExecuteResponse = await api.executeRequest({ ...buildArgs(), request_id: rid })
     response.value = {
       status: res.status,
+      headers: res.headers ?? [],
       body: res.body,
-      durationMs: res.duration_ms,
+      content_type: res.content_type || 'application/json',
+      duration_ms: res.duration_ms,
+      size_bytes: res.size_bytes ?? 0,
+      truncated: !!res.truncated,
     }
     // GraphQL 语义：errors 字段存在即业务失败，优先展示
     responseErrors.value = parseResponseErrors(res.body)
@@ -331,7 +320,6 @@ async function send() {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     statusText.value = message
-    responseRaw.value = true
     sendFailed.value = true
     toast.error(t('graphql.sendFail'), { message, duration: 6000 })
   } finally {
@@ -582,13 +570,8 @@ async function copyCode() {
       </div>
     </div>
 
-    <div class="resp-head">
-      <div class="hint-inline" :class="statusClass">
-        {{ statusText || (response ? `${response.status} · ${response.durationMs}ms` : '') }}
-      </div>
-      <button v-if="response" class="miyo-btn miyo-btn-sm miyo-btn-ghost" @click="responseRaw = !responseRaw">
-        {{ responseRaw ? t('response.pretty') : t('response.raw') }}
-      </button>
+    <div v-if="statusText" class="resp-head">
+      <div class="hint-inline" :class="statusClass">{{ statusText }}</div>
     </div>
 
     <div v-if="responseErrors.length" class="resp-errors">
@@ -599,12 +582,9 @@ async function copyCode() {
       </div>
     </div>
 
-    <div v-if="response" class="resp-body">
-      <p v-if="responseTooLarge && !responseRaw" class="resp-too-large">
-        {{ t('graphql.respTooLarge') }}
-      </p>
-      <pre v-if="!responseRaw" class="resp-pre" v-html="responseHtml"></pre>
-      <pre v-else class="resp-pre">{{ response.body }}</pre>
+    <!-- 响应渲染复用 ResponsePanel（Tree/Pretty/Raw/Headers + 查找 + 复制/下载） -->
+    <div v-if="response" class="gql-resp">
+      <ResponsePanel :response="response" />
     </div>
     <div v-else class="resp-empty">
       <p class="hint">{{ t('graphql.respEmpty') }}</p>
@@ -908,6 +888,13 @@ async function copyCode() {
   font-weight: 600;
   font-family: var(--mono);
   font-size: 12.5px;
+}
+
+.gql-resp {
+  margin-top: var(--s-2);
+  height: 420px;
+  display: flex;
+  flex-direction: column;
 }
 
 .resp-body {
