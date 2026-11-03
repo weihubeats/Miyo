@@ -465,18 +465,17 @@ fn build_grpc_history(
     let body_preview: &str = byte_truncate(&response.message_json, 2000);
     // metadata 即 gRPC 的请求头：敏感键（authorization / token / *-key…）
     // 的值脱敏后落历史库，口径与 HTTP 历史 redact_history_spec 一致。
-    let metadata_redacted: Vec<serde_json::Value> = args
+    // 保留 (key, value) 元组序列化形状（数组对），恢复编辑器与既有摘要读取方
+    // 按原形状解析——只替换敏感值，不动结构。
+    let metadata_redacted: Vec<(String, String)> = args
         .metadata
         .iter()
         .map(|(key, value)| {
-            serde_json::json!({
-                "key": key,
-                "value": if !value.is_empty() && is_sensitive_key(key) {
-                    PLACEHOLDER.to_string()
-                } else {
-                    value.clone()
-                },
-            })
+            if !value.is_empty() && is_sensitive_key(key) {
+                (key.clone(), PLACEHOLDER.to_string())
+            } else {
+                (key.clone(), value.clone())
+            }
         })
         .collect();
     let request_summary = serde_json::json!({

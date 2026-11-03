@@ -2793,11 +2793,14 @@ name = "miyo-oauth"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "base64 0.23.1",
  "chrono",
  "miyo-core",
+ "rand 0.10.3",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
