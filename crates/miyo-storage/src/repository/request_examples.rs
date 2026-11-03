@@ -21,7 +21,10 @@ pub async fn create_request_example<'e>(
     .bind(example.id.to_string())
     .bind(example.endpoint_id.to_string())
     .bind(&example.name)
-    .bind(serde_json::to_string(&example.request).map_err(miyo_core::AppError::Json)?)
+    // auth 密钥字段随快照加密（与 endpoints 同通道，见 rows::encrypt_request_secrets）。
+    .bind(super::rows::encrypt_request_secrets(
+        &serde_json::to_string(&example.request).map_err(miyo_core::AppError::Json)?,
+    )?)
     .bind(example.created_at.to_rfc3339())
     .bind(example.updated_at.to_rfc3339())
     .execute(executor)
@@ -99,8 +102,9 @@ pub async fn save_request_examples_bulk(
                 id: example.id.to_string(),
                 endpoint_id: example.endpoint_id.to_string(),
                 name: example.name.clone(),
-                request_json: serde_json::to_string(&example.request)
-                    .map_err(miyo_core::AppError::Json)?,
+                request_json: super::rows::encrypt_request_secrets(
+                    &serde_json::to_string(&example.request).map_err(miyo_core::AppError::Json)?,
+                )?,
                 created_at: example.created_at.to_rfc3339(),
                 updated_at: example.updated_at.to_rfc3339(),
             })
@@ -139,7 +143,10 @@ impl RequestExampleRow {
             id: super::rows::parse_uuid(&self.id)?,
             endpoint_id: super::rows::parse_uuid(&self.endpoint_id)?,
             name: self.name,
-            request: serde_json::from_str(&self.request_json).map_err(miyo_core::AppError::Json)?,
+            request: serde_json::from_str(&super::rows::decrypt_request_secrets(
+                &self.request_json,
+            )?)
+            .map_err(miyo_core::AppError::Json)?,
             created_at: super::rows::parse_time(&self.created_at)?,
             updated_at: super::rows::parse_time(&self.updated_at)?,
         })

@@ -94,6 +94,7 @@ fn oauth2_fields(auth: &AuthSpec) -> Result<OAuth2Fields, OAuth2Error> {
         grant,
         username,
         password,
+        use_pkce,
         ..
     } = auth
     else {
@@ -119,6 +120,7 @@ fn oauth2_fields(auth: &AuthSpec) -> Result<OAuth2Fields, OAuth2Error> {
         grant: *grant,
         username: username.clone(),
         password: password.clone(),
+        use_pkce: *use_pkce,
     })
 }
 
@@ -132,6 +134,8 @@ struct OAuth2Fields {
     grant: OAuth2Grant,
     username: Option<String>,
     password: Option<String>,
+    /// PKCE 开关：None / Some(true) = 启用（授权码流默认），Some(false) = 关闭。
+    use_pkce: Option<bool>,
 }
 
 /// 取 access token：缓存有效（未过期且未临近过期）直接返回；
@@ -379,7 +383,15 @@ async fn authorize_inner(
         .lock()
         .await;
 
-    // 1. 授权 URL。
+    // 1. 授权 URL。授权码流默认启用 PKCE（RFC 7636 S256）：
+    //    授权 URL 携带 code_challenge，换 token 时回传 code_verifier；
+    //    use_pkce = Some(false) 可关闭（兼容不认该参数的旧 IdP）。
+    let pkce_verifier =
+        if fields.grant == OAuth2Grant::AuthorizationCode && fields.use_pkce.unwrap_or(true) {
+            Some(crate::pkce::code_verifier())
+        } else {
+            None
+        };
     let state = uuid::Uuid::new_v4().to_string();
     let mut auth_url = Url::parse(&fields.auth_url)
         .map_err(|e| OAuth2Error::Config(format!("auth_url 无效：{e}")))?;
@@ -389,6 +401,13 @@ async fn authorize_inner(
         q.append_pair("client_id", &fields.client_id);
         q.append_pair("redirect_uri", &fields.redirect_uri);
         q.append_pair("state", &state);
+        if let Some(verifier) = &pkce_verifier {
+            q.append_pair(
+                "code_challenge",
+                &crate::pkce::code_challenge_s256(verifier),
+            );
+            q.append_pair("code_challenge_method", "S256");
+        }
         if !fields.scope.trim().is_empty() {
             q.append_pair("scope", fields.scope.trim());
         }
@@ -485,8 +504,8 @@ async fn authorize_inner(
         _ = tokio::time::sleep(Duration::from_secs(3)) => { server.abort(); }
     }
 
-    // 6. 换取令牌。
-    let token = exchange_code(&fields, &code).await?;
+    // 6. 换取令牌（PKCE 启用时回传 code_verifier）。
+    let token = exchange_code(&fields, &code, pkce_verifier.as_deref()).await?;
     cache::store_token(&fields.client_id, &fields.token_url, token.clone());
     Ok(token)
 }
@@ -520,17 +539,26 @@ async fn bind_callback_listener(
     }
 }
 
-/// 用授权码换取令牌：POST token_url（form：grant_type=authorization_code）。
-async fn exchange_code(fields: &OAuth2Fields, code: &str) -> Result<OAuth2Token, OAuth2Error> {
+/// 用授权码换取令牌：POST token_url（form：grant_type=authorization_code；
+/// PKCE 启用时附 code_verifier，由授权服务器校验 challenge=SHA256(verifier)）。
+async fn exchange_code(
+    fields: &OAuth2Fields,
+    code: &str,
+    code_verifier: Option<&str>,
+) -> Result<OAuth2Token, OAuth2Error> {
+    let mut form = vec![
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("redirect_uri", fields.redirect_uri.as_str()),
+        ("client_id", fields.client_id.as_str()),
+        ("client_secret", fields.client_secret.as_str()),
+    ];
+    if let Some(verifier) = code_verifier {
+        form.push(("code_verifier", verifier));
+    }
     let resp = token_client()
         .post(&fields.token_url)
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", fields.redirect_uri.as_str()),
-            ("client_id", fields.client_id.as_str()),
-            ("client_secret", fields.client_secret.as_str()),
-        ])
+        .form(&form)
         .send()
         .await
         .map_err(|e| OAuth2Error::Exchange(format!("换取令牌请求失败：{e}")))?;
@@ -621,6 +649,7 @@ mod tests {
             username: None,
             password: None,
             token: None,
+            use_pkce: None,
         }
     }
 
@@ -803,9 +832,10 @@ mod tests {
                         log.lock().unwrap().push((
                             "token".into(),
                             format!(
-                                "grant_type={grant} code={:?} client_id={:?}",
+                                "grant_type={grant} code={:?} client_id={:?} verifier={:?}",
                                 f.get("code"),
-                                f.get("client_id")
+                                f.get("client_id"),
+                                f.get("code_verifier")
                             ),
                         ));
                         let access = if grant == "refresh_token" {
@@ -902,6 +932,9 @@ mod tests {
                     &format!("redirect_uri\": \"{redirect_uri}\""),
                     "state\": \"",
                     "scope\": \"read\"",
+                    // PKCE（默认启用）：challenge + S256 方法随授权 URL 上送。
+                    "code_challenge\": \"",
+                    "code_challenge_method\": \"S256\"",
                 ] {
                     assert!(
                         auth_line.contains(expected),
@@ -924,6 +957,11 @@ mod tests {
                 assert!(
                     token_line.contains("client_id=Some(\"c-e2e\")"),
                     "{token_line}"
+                );
+                // PKCE：换 token 必须回传 code_verifier（授权服务器侧校验哈希）。
+                assert!(
+                    token_line.contains("verifier=Some(\""),
+                    "token 请求应带 code_verifier: {token_line}"
                 );
             }
             // 令牌应已入缓存，后续 access_token_for 直接命中。
@@ -974,6 +1012,62 @@ mod tests {
                 log.iter()
                     .any(|(k, v)| k == "token" && v.contains("grant_type=refresh_token")),
                 "应发 refresh_token 请求: {log:?}"
+            );
+        });
+    }
+
+    /// use_pkce = Some(false)：兼容旧 IdP，不送 challenge、不回传 verifier。
+    #[test]
+    fn e2e_pkce_disabled_legacy_servers() {
+        let _e2e = e2e_lock().lock().unwrap();
+        let _cache = crate::cache::test_lock().lock().unwrap();
+        crate::cache::reset_cache();
+        block_on(async {
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let (idp_url, _idp) = mock_idp(log.clone()).await;
+
+            let mut auth = spec_auth("c-e2e-nopkce", &format!("{idp_url}/token"));
+            if let AuthSpec::OAuth2 {
+                auth_url, use_pkce, ..
+            } = &mut auth
+            {
+                *auth_url = format!("{idp_url}/authorize");
+                *use_pkce = Some(false);
+            }
+
+            let (url_tx, url_rx) = std::sync::mpsc::channel();
+            let auth2 = auth.clone();
+            let task = tokio::spawn(async move {
+                let tx = url_tx;
+                authorize_inner(&auth2, move |url| {
+                    let _ = tx.send(url.to_string());
+                    Ok(())
+                })
+                .await
+            });
+
+            let auth_url = url_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("授权流程应把 auth_url 交给浏览器");
+            assert!(
+                !auth_url.contains("code_challenge"),
+                "关闭 PKCE 时授权 URL 不应带 challenge: {auth_url}"
+            );
+            let resp = reqwest::get(&auth_url).await.unwrap();
+            assert!(resp.status().is_success());
+
+            let token = task.await.unwrap().expect("授权流程应成功");
+            assert_eq!(token.access_token, "at-code-1");
+
+            let log = log.lock().unwrap();
+            let token_line = log
+                .iter()
+                .find(|(k, _)| k == "token")
+                .map(|(_, v)| v.clone())
+                .unwrap();
+            assert!(
+                token_line.contains("verifier=None"),
+                "关闭 PKCE 时 token 请求不应带 verifier: {token_line}"
             );
         });
     }

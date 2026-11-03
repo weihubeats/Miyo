@@ -15,6 +15,7 @@
 
 pub mod cache;
 pub mod client;
+pub mod pkce;
 
 pub use cache::{cached_token, clear_token, reset_cache, store_token};
 pub use client::{access_token_for, authorize, OAuth2Error};

@@ -108,6 +108,45 @@ pub async fn delete_scenario(db: &SqlitePool, scenario_id: Uuid) -> Result<()> {
     Ok(())
 }
 
+/// 批量写入场景（备份恢复 / 同步覆盖用）：事务连接上逐条 upsert，语义与
+/// [`save_scenario`] 一致。场景量级小（个位数到几十），逐条执行足够；
+/// 空列表为 no-op。
+pub async fn save_scenarios_bulk(
+    conn: &mut sqlx::SqliteConnection,
+    scenarios: &[Scenario],
+) -> Result<()> {
+    if scenarios.is_empty() {
+        return Ok(());
+    }
+    for scenario in scenarios {
+        let steps_json = serde_json::to_string(&scenario.steps)
+            .map_err(|e| AppError::Validation(format!("场景步骤序列化失败：{e}")))?;
+        sqlx::query(
+            "INSERT INTO scenarios (id, project_id, name, description, sort_order, steps_json, script, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name,
+               description = excluded.description,
+               sort_order = excluded.sort_order,
+               steps_json = excluded.steps_json,
+               script = excluded.script,
+               updated_at = excluded.updated_at",
+        )
+        .bind(scenario.id.to_string())
+        .bind(scenario.project_id.to_string())
+        .bind(&scenario.name)
+        .bind(&scenario.description)
+        .bind(scenario.sort_order)
+        .bind(&steps_json)
+        .bind(scenario.script.as_deref().filter(|s| !s.trim().is_empty()))
+        .bind(scenario.created_at.to_rfc3339())
+        .bind(scenario.updated_at.to_rfc3339())
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

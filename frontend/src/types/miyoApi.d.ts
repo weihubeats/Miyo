@@ -112,6 +112,8 @@ export type AuthSpec =
       /** password 模式：资源所有者密码（其他模式忽略）。 */
       password?: string | null
       token?: OAuth2Token
+      /** 授权码流 PKCE（RFC 7636 S256）：缺省 true；false 仅兼容旧 IdP。 */
+      use_pkce?: boolean
     }
   /** HTTP Digest 认证（RFC 7616）：401 质询后自动应答重发。 */
   | { type: 'digest'; username: string; password: string }
@@ -779,6 +781,8 @@ export interface BackupSummary {
   mock_rules: number
   response_examples: number
   request_examples?: number
+  /** 恢复的集成测试场景数（v5 备份起携带；旧备份缺失按 0）。 */
+  scenarios?: number
   /** 恢复时应用的全局设置键（代理/超时/序列，未配置才应用）。 */
   settings_applied?: string[]
   /** 已有配置而跳过的全局设置键。 */

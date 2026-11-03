@@ -272,6 +272,7 @@ async fn openapi_roundtrip_and_backup() {
         global_variables: &[],
         global_params: &[],
         team: &None,
+        scenarios: &[],
     });
     let text = file.serialize().expect("序列化备份");
     assert!(text.contains("miyo-project-backup"));

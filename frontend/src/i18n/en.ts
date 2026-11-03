@@ -624,6 +624,7 @@ export const en: Record<ZhKey, string> = {
 
   'auth.none': 'No auth',
   'auth.dynamicSignature': 'Dynamic signature',
+  'auth.unknownType': 'Unknown auth type',
   'auth.hexLower': 'Hex (lowercase)',
   'auth.hexUpper': 'Hex (uppercase)',
   'auth.username': 'Username',
@@ -641,7 +642,9 @@ export const en: Record<ZhKey, string> = {
   // OAuth2 grant types and non-interactive token fetch (client_credentials / password)
   'auth.grantAuthCode': 'Authorization code',
   'auth.grantClientCreds': 'Client credentials',
-  'auth.grantPassword': 'Password',
+  'auth.grantPasswordLegacy': 'Password (legacy, not recommended)',
+  'auth.usePkce': 'PKCE (S256, recommended)',
+  'auth.pkceHint': 'Adds a one-time verifier at token exchange (RFC 7636) to prevent authorization-code interception; disable only if the server rejects code_challenge.',
   'auth.fetchToken': 'Fetch token',
   'auth.fetchingToken': 'Fetching…',
   'auth.oauthOk': 'OAuth2 authorized. Save (⌘S) to persist',
@@ -994,6 +997,7 @@ export const en: Record<ZhKey, string> = {
   'settings.importSettingsApplied': 'Global settings applied: {v}',
   'settings.importSettingsKept': 'Global settings kept as-is: {v}',
   'settings.importVarsMerged': 'Filled in {n} missing global variables/params',
+  'settings.importScenarios': '{n} scenarios',
   'settings.importRestored': 'Restored as "{name}": {endpoints} endpoints, {envs} environments',
   'settings.importFail': 'Import failed',
   'settings.logReadFail': 'Failed to read log',
@@ -1670,6 +1674,7 @@ export const en: Record<ZhKey, string> = {
   'sync.pullBackupAt': 'Local snapshot archived: {path}',
   'sync.pullFail': 'Pull failed',
   'sync.redactedTitle': '{n} credential(s) redacted (never left this machine)',
+  'sync.redactDisclaimer': 'Redaction matches common credential key names heuristically and is not guaranteed to catch everything; entries with scripts/free text are listed for manual review — check them before pushing.',
   'sync.loadFail': 'Failed to read sync remotes',
 
 }

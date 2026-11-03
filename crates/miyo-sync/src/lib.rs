@@ -97,6 +97,7 @@ pub(crate) mod tests_support {
             global_variables: vec![],
             global_params: vec![],
             team: None,
+            scenarios: vec![],
         }
     }
 }
@@ -313,6 +314,7 @@ mod tests {
             global_variables: vec![],
             global_params: vec![],
             team: None,
+            scenarios: vec![],
         }
     }
 

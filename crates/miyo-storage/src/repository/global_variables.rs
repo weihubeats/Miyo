@@ -36,7 +36,7 @@ pub async fn save_global_variables(
     db: &SqlitePool,
     variables: &[EnvironmentVariable],
 ) -> Result<()> {
-    let blob = encrypt_env_json(variables);
+    let blob = encrypt_env_json(variables)?;
     super::set_setting(db, KEY_GLOBAL_VARIABLES, &blob).await
 }
 

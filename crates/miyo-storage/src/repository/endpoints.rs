@@ -40,7 +40,7 @@ pub async fn create_endpoint(
         created_at: now,
         updated_at: now,
     };
-    let row = EndpointRow::from_model(&model);
+    let row = EndpointRow::from_model(&model)?;
     sqlx::query(
         "INSERT INTO endpoints
          (id, project_id, folder_id, name, method, path, description, status, sort_order, request_json, created_at, updated_at)
@@ -81,7 +81,7 @@ pub async fn get_endpoint(db: &SqlitePool, endpoint_id: Uuid) -> Result<Endpoint
 pub async fn update_endpoint(db: &SqlitePool, endpoint: &Endpoint) -> Result<Endpoint> {
     let mut updated = endpoint.clone();
     updated.updated_at = Utc::now();
-    let row = EndpointRow::from_model(&updated);
+    let row = EndpointRow::from_model(&updated)?;
     let result = sqlx::query(
         "UPDATE endpoints SET folder_id = ?, name = ?, method = ?, path = ?, description = ?,
                 status = ?, sort_order = ?, request_json = ?, updated_at = ?
@@ -139,7 +139,7 @@ pub async fn duplicate_endpoint(db: &SqlitePool, endpoint_id: Uuid) -> Result<En
         created_at: now,
         updated_at: now,
     };
-    let row = EndpointRow::from_model(&duplicate);
+    let row = EndpointRow::from_model(&duplicate)?;
     sqlx::query(
         "INSERT INTO endpoints
          (id, project_id, folder_id, name, method, path, description, status, sort_order, request_json, created_at, updated_at)
@@ -180,7 +180,7 @@ pub async fn save_endpoint<'e>(
     executor: impl sqlx::Executor<'e, Database = sqlx::Sqlite>,
     endpoint: &Endpoint,
 ) -> Result<()> {
-    let row = EndpointRow::from_model(endpoint);
+    let row = EndpointRow::from_model(endpoint)?;
     sqlx::query(
         "INSERT INTO endpoints (id, project_id, folder_id, name, method, path, description, status, sort_order, request_json, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -223,7 +223,11 @@ pub async fn save_endpoints_bulk(
     if endpoints.is_empty() {
         return Ok(());
     }
-    let rows: Vec<EndpointRow> = endpoints.iter().map(EndpointRow::from_model).collect();
+    // 逐条加密（auth 密钥字段），任一失败整体失败（不静默降级明文）。
+    let rows: Vec<EndpointRow> = endpoints
+        .iter()
+        .map(EndpointRow::from_model)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     for chunk in rows.chunks(200) {
         let mut qb = sqlx::QueryBuilder::new(
             "INSERT INTO endpoints (id, project_id, folder_id, name, method, path, description, status, sort_order, request_json, created_at, updated_at) ",

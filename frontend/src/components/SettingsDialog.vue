@@ -656,6 +656,8 @@ async function onImportFile(event: Event): Promise<void> {
     const mergedVars = summary.global_variables_merged ?? 0
     const mergedParams = summary.global_params_merged ?? 0
     if (mergedVars + mergedParams > 0) extras.push(t('settings.importVarsMerged', { n: mergedVars + mergedParams }))
+    const scenarioCount = summary.scenarios ?? 0
+    if (scenarioCount > 0) extras.push(t('settings.importScenarios', { n: scenarioCount }))
     toast.success(t('settings.importRestored', { name: summary.name, endpoints: summary.endpoints, envs: summary.environments }), {
       message: extras.join(locale.resolved === 'zh' ? '；' : '; ') || undefined,
     })

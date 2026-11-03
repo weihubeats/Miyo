@@ -93,6 +93,8 @@ type EditableAuth = AuthSpec & {
   redirect_uri?: string
   /** OAuth2 授权模式（缺省 authorization_code，兼容旧数据）。 */
   grant?: OAuth2Grant
+  /** 授权码流 PKCE 开关（缺省 true，见后端 use_pkce）。 */
+  use_pkce?: boolean
   key_id?: string
   access_key?: string
   secret_key?: string
@@ -109,12 +111,20 @@ const authAny = computed(() => props.draft?.request.auth as EditableAuth)
 const authorizing = ref(false)
 const advancedOpen = ref(false)
 
-/** OAuth2 授权模式选项（随语言刷新）。 */
+/** OAuth2 授权模式选项（随语言刷新）。password 为 RFC 弃用的遗留方式，仅旧配置沿用。 */
 const OAUTH_GRANT_OPTIONS = computed<Array<{ value: OAuth2Grant; label: string }>>(() => [
   { value: 'authorization_code', label: t('auth.grantAuthCode') },
   { value: 'client_credentials', label: t('auth.grantClientCreds') },
-  { value: 'password', label: t('auth.grantPassword') },
+  { value: 'password', label: t('auth.grantPasswordLegacy') },
 ])
+
+/** PKCE 开关（授权码流专用）：缺省视为开启；关闭仅用于不认 code_challenge 的旧 IdP。 */
+const oauthUsePkce = computed<boolean>({
+  get: () => authAny.value?.use_pkce ?? true,
+  set: (v) => {
+    if (authAny.value) authAny.value.use_pkce = v
+  },
+})
 
 /** 当前 OAuth2 授权模式（缺省补 authorization_code，兼容旧数据）。 */
 const oauthGrant = computed<OAuth2Grant>({
@@ -252,6 +262,7 @@ function setAuthType(type: string): void {
         grant: 'authorization_code',
         username: '',
         password: '',
+        // use_pkce 缺省（true）：后端授权码流默认启用 PKCE，无需显式写。
       }
       break
     case 'digest':
@@ -349,6 +360,10 @@ function setAuthType(type: string): void {
         <input v-model="authAny.scope" class="miyo-input miyo-input-sm kv-key" :placeholder="t('auth.scopePh')" />
         <input v-if="oauthGrant === 'authorization_code'" v-model="authAny.redirect_uri" class="miyo-input miyo-input-sm kv-value" :placeholder="t('auth.redirectUriPh')" />
       </div>
+      <label v-if="oauthGrant === 'authorization_code'" class="oauth-pkce" :title="t('auth.pkceHint')">
+        <input v-model="oauthUsePkce" type="checkbox" class="miyo-checkbox" />
+        <span>{{ t('auth.usePkce') }}</span>
+      </label>
     </div>
     <div v-else-if="authAny?.type === 'apikey'" class="kv-row">
       <input v-model="authAny.key" class="miyo-input miyo-input-sm kv-key" :placeholder="t('auth.keyPh')" />
@@ -514,6 +529,21 @@ function setAuthType(type: string): void {
   width: 100px;
 }
 
+.oauth-pkce {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.oauth-pkce input[type='checkbox'] {
+  accent-color: var(--accent, #7c5cff);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
 .oauth-hint {
   margin: 0;
   display: flex;

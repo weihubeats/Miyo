@@ -7,7 +7,7 @@
 use sqlx::SqlitePool;
 
 use miyo_core::model::GlobalParam;
-use miyo_core::Result;
+use miyo_core::{AppError, Result};
 
 use super::rows::decrypt_env_json;
 
@@ -30,20 +30,17 @@ pub async fn get_global_params(db: &SqlitePool) -> Result<Vec<GlobalParam>> {
 
 /// 保存全局参数（整体加密覆盖写）。
 pub async fn save_global_params(db: &SqlitePool, params: &[GlobalParam]) -> Result<()> {
-    let blob = encrypt_env_json_params(params);
+    let blob = encrypt_env_json_params(params)?;
     super::set_setting(db, KEY_GLOBAL_PARAMS, &blob).await
 }
 
-/// 全局参数加密（结构不同，序列化后走同一加密通道）。
-fn encrypt_env_json_params(params: &[GlobalParam]) -> String {
-    let json = serde_json::to_string(params).unwrap_or_else(|_| "[]".into());
-    match miyo_secret::ensure_master_key().and_then(|k| miyo_secret::encrypt(&k, &json)) {
-        Ok(cipher) => cipher,
-        Err(e) => {
-            tracing::warn!(error = %e, "全局参数加密失败，已降级为明文存储");
-            json
-        }
-    }
+/// 全局参数加密（结构不同，序列化后走同一加密通道；失败不降级明文）。
+fn encrypt_env_json_params(params: &[GlobalParam]) -> Result<String> {
+    let json = serde_json::to_string(params)
+        .map_err(|e| AppError::Validation(format!("全局参数序列化失败：{e}")))?;
+    miyo_secret::ensure_master_key()
+        .and_then(|k| miyo_secret::encrypt(&k, &json))
+        .map_err(|e| AppError::Decryption(format!("加密失败（敏感数据拒绝明文落库）：{e}")))
 }
 
 #[cfg(test)]

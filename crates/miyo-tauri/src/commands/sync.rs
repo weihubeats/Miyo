@@ -259,6 +259,7 @@ async fn assemble_snapshot(
         global_params,
         settings,
         proto_files,
+        scenarios,
     ) = tokio::join!(
         repo::get_project(&state.db, project_id),
         repo::list_folders(&state.db, project_id),
@@ -269,11 +270,17 @@ async fn assemble_snapshot(
         repo::get_global_params(&state.db),
         repo::get_settings(&state.db, BACKUP_SETTING_KEYS),
         repo::list_proto_files(&state.db, project_id),
+        repo::list_scenarios(&state.db, project_id),
     );
     let (project, folders, endpoints, environments, mock_rules) =
         (project?, folders?, endpoints?, environments?, mock_rules?);
-    let (global_variables, global_params, settings, proto_files) =
-        (global_variables?, global_params?, settings?, proto_files?);
+    let (global_variables, global_params, settings, proto_files, scenarios) = (
+        global_variables?,
+        global_params?,
+        settings?,
+        proto_files?,
+        scenarios?,
+    );
 
     let active_ids: Vec<Uuid> = endpoints
         .iter()
@@ -313,6 +320,7 @@ async fn assemble_snapshot(
         global_variables: &global_variables,
         global_params: &global_params,
         team: &team,
+        scenarios: &scenarios,
     }))
 }
 
@@ -373,6 +381,14 @@ async fn apply_snapshot(
         }
         list
     };
+    // 场景步骤是接口引用式：同步覆盖保留接口 id，endpoint_id 无需重映射。
+    let scenarios: Vec<_> = {
+        let mut list: Vec<_> = snapshot.scenarios.clone();
+        for s in &mut list {
+            s.project_id = project_id;
+        }
+        list
+    };
 
     // 清空旧子对象（CASCADE 不走——这里显式删除保顺序）。
     repo::delete_project_children(tx.as_mut(), project_id).await?;
@@ -384,6 +400,7 @@ async fn apply_snapshot(
     repo::save_response_examples_bulk(tx.as_mut(), &snapshot.response_examples).await?;
     repo::save_request_examples_bulk(tx.as_mut(), &snapshot.request_examples).await?;
     repo::save_proto_files_bulk(tx.as_mut(), &snapshot.proto_files).await?;
+    repo::save_scenarios_bulk(tx.as_mut(), &scenarios).await?;
 
     tx.commit().await.map_err(miyo_core::AppError::Database)?;
     Ok(())

@@ -619,6 +619,7 @@ export const zh = {
 
   'auth.none': '无认证',
   'auth.dynamicSignature': '动态签名',
+  'auth.unknownType': '未知鉴权方式',
   'auth.hexLower': 'Hex（小写）',
   'auth.hexUpper': 'Hex（大写）',
   'auth.username': '用户名',
@@ -636,7 +637,9 @@ export const zh = {
   // OAuth2 授权模式与非交互式换 token（client_credentials / password）
   'auth.grantAuthCode': '授权码模式',
   'auth.grantClientCreds': '客户端凭证',
-  'auth.grantPassword': '密码模式',
+  'auth.grantPasswordLegacy': '密码模式（遗留，不推荐）',
+  'auth.usePkce': 'PKCE（S256，推荐开启）',
+  'auth.pkceHint': '授权码交换时附带一次性校验（RFC 7636），防止授权码被截获；仅当授权服务器不认 code_challenge 参数时关闭。',
   'auth.fetchToken': '获取令牌',
   'auth.fetchingToken': '获取中…',
   'auth.oauthOk': 'OAuth2 授权成功，请保存 (⌘S) 持久化',
@@ -988,6 +991,7 @@ export const zh = {
   'settings.importSettingsApplied': '全局设置应用：{v}',
   'settings.importSettingsKept': '全局设置保留现有：{v}',
   'settings.importVarsMerged': '全局变量/参数补缺 {n} 项',
+  'settings.importScenarios': '场景 {n} 条',
   'settings.importRestored': '已恢复为「{name}」：接口 {endpoints} 个、环境 {envs} 个',
   'settings.importFail': '导入失败',
   'settings.logReadFail': '读取日志失败',
@@ -1664,6 +1668,7 @@ export const zh = {
   'sync.pullBackupAt': '本地快照留档：{path}',
   'sync.pullFail': '拉取失败',
   'sync.redactedTitle': '已脱敏 {n} 项凭证（未离开本机）',
+  'sync.redactDisclaimer': '脱敏按常见凭证键名启发式判断，不保证覆盖全部内容；含脚本/自由文本的条目会列出「请人工确认」项，推送前请先检查。',
   'sync.loadFail': '读取同步远端失败',
 
 } as const

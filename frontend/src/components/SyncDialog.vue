@@ -350,6 +350,8 @@ function shortRev(rev: string | null): string {
           <li v-for="item in redacted" :key="item">{{ item }}</li>
         </ul>
       </div>
+      <!-- 启发式脱敏非绝对安全：常驻提示 + 需人工审查项（脚本类）随日志展示 -->
+      <p v-if="projectId" class="sync-hint warn">{{ t('sync.redactDisclaimer') }}</p>
     </template>
 
     <template #footer>
@@ -489,7 +491,8 @@ function shortRev(rev: string | null): string {
   font-size: var(--fs-xxs);
   text-transform: none;
 }
-.sync-hint.soon {
+.sync-hint.soon,
+.sync-hint.warn {
   color: var(--warning, #f5a623);
 }
 .sync-field {

@@ -1448,6 +1448,7 @@ mod tests {
                     refresh_token: refresh_token.map(String::from),
                     expires_at: chrono::Utc::now() + chrono::Duration::seconds(expires_in_secs),
                 }),
+                use_pkce: None,
             },
             ..Default::default()
         }
@@ -1514,6 +1515,7 @@ mod tests {
                 username: None,
                 password: None,
                 token: None,
+                use_pkce: None,
             },
             ..Default::default()
         };

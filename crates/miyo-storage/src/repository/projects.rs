@@ -28,7 +28,7 @@ pub async fn create_project(db: &SqlitePool, name: &str, description: &str) -> R
         sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projects")
             .fetch_one(db)
             .await?;
-    let row = ProjectRow::from_model(&model);
+    let row = ProjectRow::from_model(&model)?;
     sqlx::query(
         "INSERT INTO projects (id, name, description, variables_json, created_at, updated_at, sort_order, team_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -120,7 +120,7 @@ pub async fn get_project(db: &SqlitePool, project_id: Uuid) -> Result<Project> {
 pub async fn update_project(db: &SqlitePool, project: &Project) -> Result<Project> {
     let mut updated = project.clone();
     updated.updated_at = Utc::now();
-    let row = ProjectRow::from_model(&updated);
+    let row = ProjectRow::from_model(&updated)?;
     let result = sqlx::query(
         "UPDATE projects SET name = ?, description = ?, variables_json = ?, updated_at = ?, team_id = ?
          WHERE id = ?",
@@ -162,6 +162,9 @@ pub async fn delete_project_children(
         "proto_files",
         "request_histories",
         "test_runs",
+        // 运行历史在场景之前删（scenario_runs → scenarios 外键，先子后父）。
+        "scenario_runs",
+        "scenarios",
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE project_id = ?"))
             .bind(&pid)
@@ -187,7 +190,7 @@ pub async fn save_project<'e>(
     executor: impl sqlx::Executor<'e, Database = sqlx::Sqlite>,
     project: &Project,
 ) -> Result<()> {
-    let row = ProjectRow::from_model(project);
+    let row = ProjectRow::from_model(project)?;
     sqlx::query(
         "INSERT INTO projects (id, name, description, variables_json, created_at, updated_at, team_id)
          VALUES (?, ?, ?, ?, ?, ?, ?)

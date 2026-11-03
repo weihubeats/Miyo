@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use miyo_backup::BackupFile;
-use miyo_core::model::{AuthSpec, KeyValue, RequestSpec};
+use miyo_core::model::{AuthSpec, BodySpec, KeyValue, RequestSpec};
 
 /// 敏感值占位符。
 pub const PLACEHOLDER: &str = "__MIYO_REDACTED__";
@@ -119,6 +119,59 @@ pub fn redact_snapshot(snapshot: &BackupFile) -> RedactionReport {
             }
         }
     }
+    // 请求用例是完整请求快照（含 auth），与接口本体同口径脱敏。
+    for example in &mut out.request_examples {
+        redact_request(
+            &mut example.request,
+            &mut log,
+            &format!("请求用例 {}", example.name),
+        );
+    }
+    // 响应示例的响应头同样可能携带 Set-Cookie / 令牌。
+    for example in &mut out.response_examples {
+        let sensitive: Vec<String> = example
+            .headers
+            .keys()
+            .filter(|k| is_sensitive_key(k))
+            .cloned()
+            .collect();
+        for key in sensitive {
+            let changed = example
+                .headers
+                .get(&key)
+                .map(|v| !v.is_empty())
+                .unwrap_or(false);
+            if changed {
+                example.headers.insert(key.clone(), PLACEHOLDER.to_string());
+                log.entries
+                    .push(format!("响应示例 {} 的响应头 {}", example.name, key));
+            }
+        }
+    }
+    // 场景 / 请求 / 响应示例的 body 模板与场景脚本属于自由文本，无法可靠自动
+    // 判断是否内嵌凭据——登记为「需人工检查」项（明确提示，不做静默假设）。
+    for scenario in &mut out.scenarios {
+        if scenario
+            .script
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+        {
+            log.entries.push(format!(
+                "场景 {} 含自定义脚本：请人工确认未内嵌真实凭据",
+                scenario.name
+            ));
+        }
+    }
+    for endpoint in &mut out.endpoints {
+        if let Some(scripts) = &endpoint.request.scripts {
+            if !scripts.pre_request.trim().is_empty() || !scripts.post_response.trim().is_empty() {
+                log.entries.push(format!(
+                    "接口 {} 含前置/后置脚本：请人工确认未内嵌真实凭据",
+                    endpoint.name
+                ));
+            }
+        }
+    }
     report_unique(&mut log);
     RedactionReport { snapshot: out, log }
 }
@@ -192,19 +245,94 @@ fn redact_project(snapshot: &mut BackupFile, log: &mut RedactionLog) {
 fn redact_request(request: &mut RequestSpec, log: &mut RedactionLog, scope: &str) {
     redact_kv_list(&mut request.headers, log, scope, "请求头");
     redact_kv_list(&mut request.params, log, scope, "查询参数");
+    redact_kv_list(&mut request.path_variables, log, scope, "路径变量");
     redact_auth(&mut request.auth, log, scope);
+    redact_body(&mut request.body, log, scope);
 }
 
+/// 脱敏键值列表。**禁用项也脱敏**：禁用只是不发送，值仍随快照外发；
+/// 禁用的历史 Token 泄出去同样是泄露。
 fn redact_kv_list(items: &mut [KeyValue], log: &mut RedactionLog, scope: &str, label: &str) {
     for kv in items.iter_mut() {
-        if !kv.enabled || kv.value.is_empty() {
+        if kv.value.is_empty() {
             continue;
         }
         if is_sensitive_key(&kv.key) || looks_like_secret(&kv.value) {
             kv.value = PLACEHOLDER.to_string();
+            let disabled = if kv.enabled { "" } else { "（已禁用）" };
             log.entries
-                .push(format!("接口 {scope} 的{label} {}", kv.key));
+                .push(format!("接口 {scope} 的{label} {}{disabled}", kv.key));
         }
+    }
+}
+
+/// Body 内凭证脱敏：
+///
+/// - JSON：解析后对敏感键的字符串值替换占位符（解析失败按自由文本跳过，
+///   不做整段替换以免毁掉正常文档）；
+/// - UrlEncoded / Multipart：字段按键名启发式脱敏；
+/// - Text / Binary / GraphQL / gRPC：自由内容无法可靠判断，交由
+///   脚本/内容人工审查提示（日志中的「请人工确认」项）覆盖。
+fn redact_body(body: &mut BodySpec, log: &mut RedactionLog, scope: &str) {
+    match body {
+        BodySpec::Json { raw } => {
+            let Ok(mut value) = serde_json::from_str::<serde_json::Value>(raw) else {
+                return;
+            };
+            let before = value.clone();
+            redact_json_secrets(&mut value);
+            if value != before {
+                if let Ok(new_raw) = serde_json::to_string(&value) {
+                    *raw = new_raw;
+                    log.entries
+                        .push(format!("接口 {scope} 的 JSON Body 敏感字段"));
+                }
+            }
+        }
+        BodySpec::UrlEncoded { fields } => {
+            redact_kv_list(fields, log, scope, "表单字段");
+        }
+        BodySpec::Multipart { fields } => {
+            for field in fields.iter_mut() {
+                if field.value.is_empty() || !field.enabled {
+                    continue;
+                }
+                // 文件类型字段的 value 是路径/文件引用，不是凭证，只处理文本字段。
+                if matches!(field.value_type, miyo_core::model::MultipartValueType::Text)
+                    && is_sensitive_key(&field.key)
+                {
+                    field.value = PLACEHOLDER.to_string();
+                    log.entries
+                        .push(format!("接口 {scope} 的 Multipart 字段 {}", field.key));
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 递归替换 JSON 中敏感键的字符串值（值形态如 JWT 也命中）。
+fn redact_json_secrets(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, v) in map.iter_mut() {
+                if is_sensitive_key(key) {
+                    if let Some(s) = v.as_str() {
+                        if !s.is_empty() && (is_sensitive_key(key) || looks_like_secret(s)) {
+                            *v = serde_json::Value::String(PLACEHOLDER.to_string());
+                            continue;
+                        }
+                    }
+                }
+                redact_json_secrets(v);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                redact_json_secrets(item);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -294,6 +422,17 @@ fn restore_request(target: &mut RequestSpec, local: &RequestSpec) {
             continue;
         }
         if let Some(local_kv) = local.headers.iter().find(|l| l.key == kv.key) {
+            if !local_kv.value.is_empty() {
+                kv.value = local_kv.value.clone();
+            }
+        }
+    }
+    // 查询参数同样可能被脱敏（token / sig 类键），占位符从本地还原。
+    for kv in target.params.iter_mut() {
+        if kv.value != PLACEHOLDER {
+            continue;
+        }
+        if let Some(local_kv) = local.params.iter().find(|l| l.key == kv.key) {
             if !local_kv.value.is_empty() {
                 kv.value = local_kv.value.clone();
             }
@@ -480,5 +619,184 @@ mod tests {
         assert!(looks_like_secret(jwt));
         assert!(!looks_like_secret("application/json"));
         assert!(!looks_like_secret("1.2.3"));
+    }
+
+    /// 禁用参数同样脱敏（值随快照外发，禁用只影响发送）。
+    #[test]
+    fn redacts_disabled_params() {
+        let mut snapshot = sample_snapshot("/x");
+        snapshot.endpoints[0].request.params = vec![KeyValue {
+            key: "access_token".into(),
+            value: "tok-999".into(),
+            enabled: false,
+            description: String::new(),
+            field_type: miyo_core::model::FieldType::default(),
+            required: true,
+            example: String::new(),
+        }];
+        let report = redact_snapshot(&snapshot);
+        let param = &report.snapshot.endpoints[0].request.params[0];
+        assert_eq!(param.value, PLACEHOLDER);
+        assert!(!param.enabled, "禁用状态不得被改动");
+        assert!(report.log.entries.iter().any(|e| e.contains("已禁用")));
+    }
+
+    /// JSON Body 敏感字段脱敏 + UrlEncoded / Multipart 字段脱敏。
+    #[test]
+    fn redacts_body_secrets() {
+        let mut snapshot = sample_snapshot("/x");
+        snapshot.endpoints[0].request.body = miyo_core::model::BodySpec::Json {
+            raw: r#"{"username":"u","password":"pw-1","note":{"api_key":"ak-2"},"keep":"plain"}"#
+                .into(),
+        };
+        let report = redact_snapshot(&snapshot);
+        let raw = match &report.snapshot.endpoints[0].request.body {
+            miyo_core::model::BodySpec::Json { raw } => raw.clone(),
+            other => panic!("body 应为 JSON，实际 {other:?}"),
+        };
+        assert!(!raw.contains("pw-1"), "密码应被脱敏: {raw}");
+        assert!(!raw.contains("ak-2"), "嵌套 api_key 应被脱敏: {raw}");
+        assert!(raw.contains("plain"), "非敏感字段保留");
+        assert!(raw.contains("u"), "用户名保留");
+        assert!(report.log.entries.iter().any(|e| e.contains("JSON Body")));
+
+        // Multipart 文本字段按键名脱敏；文件字段不动。
+        snapshot.endpoints[0].request.body = miyo_core::model::BodySpec::Multipart {
+            fields: vec![
+                miyo_core::model::MultipartField {
+                    key: "password".into(),
+                    value_type: miyo_core::model::MultipartValueType::Text,
+                    value: "mp-pw".into(),
+                    enabled: true,
+                },
+                miyo_core::model::MultipartField {
+                    key: "avatar".into(),
+                    value_type: miyo_core::model::MultipartValueType::FilePath,
+                    value: "/tmp/a.png".into(),
+                    enabled: true,
+                },
+            ],
+        };
+        let report = redact_snapshot(&snapshot);
+        match &report.snapshot.endpoints[0].request.body {
+            miyo_core::model::BodySpec::Multipart { fields } => {
+                assert_eq!(fields[0].value, PLACEHOLDER);
+                assert_eq!(fields[1].value, "/tmp/a.png", "文件字段保留");
+            }
+            other => panic!("body 应为 Multipart，实际 {other:?}"),
+        }
+    }
+
+    /// 请求用例与响应示例纳入脱敏范围。
+    #[test]
+    fn redacts_examples() {
+        use miyo_core::model::{BodySpec, RequestExample};
+        let mut snapshot = sample_snapshot("/x");
+        let ep_id = snapshot.endpoints[0].id;
+        snapshot.request_examples = vec![RequestExample {
+            id: uuid::Uuid::new_v4(),
+            endpoint_id: ep_id,
+            name: "带令牌的用例".into(),
+            request: miyo_core::model::RequestSpec {
+                auth: AuthSpec::Bearer {
+                    token: "ex-tok".into(),
+                },
+                body: BodySpec::Json {
+                    raw: r#"{"token":"bt-1"}"#.into(),
+                },
+                ..Default::default()
+            },
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }];
+        // sample_snapshot 无响应示例，构造一条带敏感响应头的。
+        snapshot.response_examples = vec![miyo_core::model::ResponseExample {
+            id: uuid::Uuid::new_v4(),
+            endpoint_id: ep_id,
+            name: "成功".into(),
+            status: 200,
+            headers: std::collections::HashMap::from([(
+                "Set-Cookie".to_string(),
+                "sid=secret-session".to_string(),
+            )]),
+            body: "{}".into(),
+            content_type: "application/json".into(),
+            docs: Default::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }];
+        let report = redact_snapshot(&snapshot);
+        let ex = &report.snapshot.request_examples[0];
+        assert!(
+            matches!(&ex.request.auth, AuthSpec::Bearer { token } if token == PLACEHOLDER),
+            "用例 auth 应脱敏"
+        );
+        match &ex.request.body {
+            BodySpec::Json { raw } => assert!(!raw.contains("bt-1")),
+            other => panic!("用例 body 应为 JSON，实际 {other:?}"),
+        }
+        assert_eq!(
+            report.snapshot.response_examples[0]
+                .headers
+                .get("Set-Cookie"),
+            Some(&PLACEHOLDER.to_string())
+        );
+        assert_eq!(report.snapshot.response_examples[0].body, "{}");
+    }
+
+    /// 脚本类内容无法自动判断：登记人工审查提示而非静默放过。
+    #[test]
+    fn flags_scripts_for_manual_review() {
+        use miyo_core::model::{Scenario, ScenarioStep, ScriptsSpec};
+        let mut snapshot = sample_snapshot("/x");
+        snapshot.endpoints[0].request.scripts = Some(ScriptsSpec {
+            pre_request: "pm.request.headers.add({key:'X-Sign', value: sign()})".into(),
+            post_response: String::new(),
+        });
+        let ep_id = snapshot.endpoints[0].id;
+        snapshot.scenarios = vec![Scenario {
+            id: uuid::Uuid::new_v4(),
+            project_id: snapshot.project.id,
+            name: "登录链路".into(),
+            description: String::new(),
+            sort_order: 0,
+            steps: vec![ScenarioStep {
+                endpoint_id: ep_id,
+                enabled: true,
+                extract: serde_json::json!([]),
+                assertions: serde_json::json!([]),
+            }],
+            script: Some("fetch(url, {headers:{authorization: 'Bearer ' + REAL_TOKEN}})".into()),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }];
+        let report = redact_snapshot(&snapshot);
+        assert!(report
+            .log
+            .entries
+            .iter()
+            .any(|e| e.contains("登录链路") && e.contains("人工确认")));
+        assert!(report
+            .log
+            .entries
+            .iter()
+            .any(|e| e.contains("前置/后置脚本")));
+        // 脚本内容本身不替换（无法可靠判定），靠提示驱动人工检查。
+        assert!(report.snapshot.scenarios[0]
+            .script
+            .as_deref()
+            .unwrap()
+            .contains("REAL_TOKEN"));
+    }
+
+    /// 拉取还原：查询参数占位符同样从本地取回。
+    #[test]
+    fn restore_refills_param_placeholders() {
+        let mut remote = sample_snapshot("/login");
+        remote.endpoints[0].request.params = vec![KeyValue::new("sig", PLACEHOLDER)];
+        let mut local = sample_snapshot("/login");
+        local.endpoints[0].request.params = vec![KeyValue::new("sig", "local-sig")];
+        restore_local_values(&mut remote, &local);
+        assert_eq!(remote.endpoints[0].request.params[0].value, "local-sig");
     }
 }

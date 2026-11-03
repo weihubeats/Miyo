@@ -29,7 +29,7 @@ pub async fn create_environment(
         created_at: now,
         updated_at: now,
     };
-    let row = EnvironmentRow::from_model(&model);
+    let row = EnvironmentRow::from_model(&model)?;
     sqlx::query(
         "INSERT INTO environments (id, project_id, name, base_url, variables_json, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -62,7 +62,7 @@ pub async fn get_environment(db: &SqlitePool, environment_id: Uuid) -> Result<En
 pub async fn update_environment(db: &SqlitePool, environment: &Environment) -> Result<Environment> {
     let mut updated = environment.clone();
     updated.updated_at = Utc::now();
-    let row = EnvironmentRow::from_model(&updated);
+    let row = EnvironmentRow::from_model(&updated)?;
     let result = sqlx::query(
         "UPDATE environments SET project_id = ?, name = ?, base_url = ?, variables_json = ?, updated_at = ? WHERE id = ?",
     )
@@ -113,7 +113,7 @@ pub async fn list_environments(db: &SqlitePool, project_id: Uuid) -> Result<Vec<
 
 /// 带 id：原样写入环境（upsert，同一 id 重复保存时更新而非报主键冲突）。
 pub async fn save_environment(db: &SqlitePool, env: &Environment) -> Result<Environment> {
-    let row = EnvironmentRow::from_model(env);
+    let row = EnvironmentRow::from_model(env)?;
     sqlx::query(
         "INSERT INTO environments (id, project_id, name, base_url, variables_json, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -145,10 +145,11 @@ pub async fn save_environments_bulk(
     if environments.is_empty() {
         return Ok(());
     }
+    // 逐条加密（变量整体加密），任一失败整体失败（不静默降级明文）。
     let rows: Vec<EnvironmentRow> = environments
         .iter()
         .map(EnvironmentRow::from_model)
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     for chunk in rows.chunks(200) {
         let mut qb = sqlx::QueryBuilder::new(
             "INSERT INTO environments (id, project_id, name, base_url, variables_json, created_at, updated_at) ",

@@ -18,16 +18,17 @@ pub(crate) struct ProjectRow {
 }
 
 impl ProjectRow {
-    pub(crate) fn from_model(model: &Project) -> Self {
-        ProjectRow {
+    pub(crate) fn from_model(model: &Project) -> Result<Self> {
+        Ok(ProjectRow {
             id: model.id.to_string(),
             name: model.name.clone(),
             description: model.description.clone(),
-            variables_json: serde_json::to_string(&model.variables).unwrap_or_else(|_| "{}".into()),
+            // 项目变量常含 base_url / 密钥类占位值，与环境变量同通道加密。
+            variables_json: encrypt_project_variables(&model.variables)?,
             team_id: model.team_id.map(|v| v.to_string()),
             created_at: model.created_at.to_rfc3339(),
             updated_at: model.updated_at.to_rfc3339(),
-        }
+        })
     }
 
     pub(crate) fn into_model(self) -> Result<Project> {
@@ -35,7 +36,7 @@ impl ProjectRow {
             id: parse_uuid(&self.id)?,
             name: self.name,
             description: self.description,
-            variables: serde_json::from_str(&self.variables_json).unwrap_or_default(),
+            variables: project_variables_from_json(decrypt_env_json(&self.variables_json)?)?,
             team_id: self.team_id.map(|v| parse_uuid(&v)).transpose()?,
             created_at: parse_time(&self.created_at)?,
             updated_at: parse_time(&self.updated_at)?,
@@ -97,8 +98,8 @@ pub(crate) struct EndpointRow {
 }
 
 impl EndpointRow {
-    pub(crate) fn from_model(model: &Endpoint) -> EndpointRow {
-        EndpointRow {
+    pub(crate) fn from_model(model: &Endpoint) -> Result<EndpointRow> {
+        Ok(EndpointRow {
             id: model.id.to_string(),
             project_id: model.project_id.to_string(),
             folder_id: model.folder_id.map(|v| v.to_string()),
@@ -108,14 +109,15 @@ impl EndpointRow {
             description: model.description.clone(),
             status: model.status.as_str().to_string(),
             sort_order: model.sort_order,
-            // app_secret 为敏感字段：持久化前加密（AES-256-GCM，见本文件
-            // `encrypt_request_secrets`；加密失败降级明文并告警）。
+            // auth 内密钥类字段持久化前加密（AES-256-GCM，见本文件
+            // `encrypt_request_secrets`）；加密失败返回错误，写路径整体失败，
+            // 不静默降级明文（密钥不可用时落明文等于把保险箱门焊死在墙上）。
             request_json: encrypt_request_secrets(
                 &serde_json::to_string(&model.request).unwrap_or_else(|_| "{}".into()),
-            ),
+            )?,
             created_at: model.created_at.to_rfc3339(),
             updated_at: model.updated_at.to_rfc3339(),
-        }
+        })
     }
 
     pub(crate) fn into_model(self) -> Result<Endpoint> {
@@ -136,7 +138,7 @@ impl EndpointRow {
                 _ => EndpointStatus::Developing,
             },
             sort_order: self.sort_order,
-            // 读路径：先解密 app_secret 再反序列化（明文 / 非签名数据原样通过）。
+            // 读路径：先解密 auth 密钥字段再反序列化（旧库明文原样通过）。
             request: serde_json::from_str(&decrypt_request_secrets(&self.request_json)?)
                 .unwrap_or_default(),
             created_at: parse_time(&self.created_at)?,
@@ -157,18 +159,18 @@ pub(crate) struct EnvironmentRow {
 }
 
 impl EnvironmentRow {
-    pub(crate) fn from_model(model: &Environment) -> EnvironmentRow {
-        EnvironmentRow {
+    pub(crate) fn from_model(model: &Environment) -> Result<EnvironmentRow> {
+        Ok(EnvironmentRow {
             id: model.id.to_string(),
             project_id: model.project_id.to_string(),
             name: model.name.clone(),
             // 基址非敏感信息，明文落库。
             base_url: model.base_url.clone(),
-            // M11：变量整体加密后落库（密钥不可用时降级明文，保证可用性）。
-            variables_json: encrypt_env_json(&model.variables),
+            // M11：变量整体加密后落库；加密失败返回错误（不静默降级明文）。
+            variables_json: encrypt_env_json(&model.variables)?,
             created_at: model.created_at.to_rfc3339(),
             updated_at: model.updated_at.to_rfc3339(),
-        }
+        })
     }
 
     pub(crate) fn into_model(self) -> Result<Environment> {
@@ -476,17 +478,37 @@ impl WsMessageRow {
 }
 
 /// 环境变量加密（AES-256-GCM，密钥见 miyo-secret）。
-pub(crate) fn encrypt_env_json(vars: &[EnvironmentVariable]) -> String {
-    let json = serde_json::to_string(vars).unwrap_or_else(|_| "[]".into());
-    match miyo_secret::ensure_master_key().and_then(|k| miyo_secret::encrypt(&k, &json)) {
-        Ok(cipher) => cipher,
-        Err(e) => {
-            // 可用性优先降级为明文落库，但必须留下痕迹：密钥文件只读 /
-            // 磁盘满等故障若静默发生，用户无从得知敏感数据未加密。
-            tracing::warn!(error = %e, "环境变量加密失败，已降级为明文存储");
-            json
-        }
-    }
+///
+/// 加密失败（密钥文件不可写 / 磁盘满等）返回错误，由上层把整次保存标失败——
+/// 不做「降级明文落库」的静默降级：敏感数据在用户不知情时裸奔比保存失败
+/// 危险得多，密钥问题修复后重试保存即可。
+pub(crate) fn encrypt_env_json(vars: &[EnvironmentVariable]) -> Result<String> {
+    let json = serde_json::to_string(vars)
+        .map_err(|e| AppError::Validation(format!("环境变量序列化失败：{e}")))?;
+    encrypt_blob(&json)
+}
+
+/// 项目变量加密（HashMap<String, String>，与环境变量同通道）。
+pub(crate) fn encrypt_project_variables(
+    vars: &std::collections::HashMap<String, String>,
+) -> Result<String> {
+    let json = serde_json::to_string(vars)
+        .map_err(|e| AppError::Validation(format!("项目变量序列化失败：{e}")))?;
+    encrypt_blob(&json)
+}
+
+/// 项目变量解密后解析：新格式为 map；兼容旧库明文（decrypt 对明文透传）。
+pub(crate) fn project_variables_from_json(
+    value: serde_json::Value,
+) -> Result<std::collections::HashMap<String, String>> {
+    serde_json::from_value(value)
+        .map_err(|_| AppError::Decryption("项目变量密文已损坏，无法解析".to_string()))
+}
+
+fn encrypt_blob(json: &str) -> Result<String> {
+    miyo_secret::ensure_master_key()
+        .and_then(|k| miyo_secret::encrypt(&k, json))
+        .map_err(|e| AppError::Decryption(format!("加密失败（敏感数据拒绝明文落库）：{e}")))
 }
 
 /// 环境变量解密。
@@ -548,30 +570,29 @@ pub(crate) fn parse_uuid(s: &str) -> Result<Uuid> {
 }
 
 // ---------------------------------------------------------------------------
-// 动态签名 app_secret 加密（AES-256-GCM，密钥见 miyo-secret）。
+// 请求内鉴权密钥字段加密（AES-256-GCM，密钥见 miyo-secret）。
 //
-// [占位实现]：endpoints.request_json 整包以 JSON 持久化，其中
-// `AuthSpec::DynamicSignature.config.app_secret` 为敏感字段。完整接入点有二：
+// endpoints.request_json 整包以 JSON 持久化，其中 `auth` 子树携带各鉴权方式
+// 的密钥字段（Bearer token、Basic/Digest 密码、ApiKey value、OAuth2 secret/
+// 令牌、DynamicSignature app_secret、Hawk key、AWS/HMAC secret_key 等）。
 //
-// 1. 写路径：`EndpointRow::from_model`（本文件）序列化后调用
-//    `encrypt_request_secrets`，把 app_secret 字段替换为密文；
-// 2. 读路径：`EndpointRow::into_model` 反序列化前调用
-//    `decrypt_request_secrets`，还原明文后照常解析。
-//
-// 下方两个函数已按递归 JSON 遍历实现（未来 App-Secret 字段改名 / 新增
-// 敏感字段时无需改这里，按 key 名匹配即可）；是否接入由上层按发布节奏
-// 决定——接入前旧库中 app_secret 为明文，decrypt 对无 `:` 前缀的明文
-// 原样返回（miyo-secret 兼容策略），不会破坏既有数据。
-/// 把请求 JSON 中动态签名鉴权的 `app_secret` 字段加密为密文。
-///
-/// 加密失败降级为明文保留（与 `encrypt_env_json` 一致），并记录 warn，
-/// 避免磁盘故障等偶发问题把整个请求写失败。新数据只含动态签名时
-/// 走 miyo-secret 的 `encrypt`；旧明文 / 非动态签名数据原样通过。
-pub(crate) fn encrypt_request_secrets(request_json: &str) -> String {
-    encrypt_request_json(request_json, true)
+// 1. 写路径：`EndpointRow::from_model` 序列化后调用 `encrypt_request_secrets`，
+//    把 auth 子树内的密钥字符串替换为密文；加密失败整体返回错误，不静默降级。
+// 2. 读路径：`EndpointRow::into_model` 反序列化前调用 `decrypt_request_secrets`，
+//    还原明文后照常解析。旧库明文数据 decrypt 透传（miyo-secret 兼容策略），
+//    下次保存时自然转为密文。
+/// 把请求 JSON 中 `auth` 子树的密钥字段加密为密文。
+pub(crate) fn encrypt_request_secrets(request_json: &str) -> Result<String> {
+    let value: serde_json::Value = match serde_json::from_str(request_json) {
+        Ok(v) => v,
+        // JSON 损坏：原样返回，交由反序列化兜底（与历史容错口径一致）。
+        Err(_) => return Ok(request_json.to_string()),
+    };
+    let out = walk_secrets(value, true)?;
+    Ok(serde_json::to_string(&out).unwrap_or_else(|_| request_json.to_string()))
 }
 
-/// 把请求 JSON 中动态签名鉴权的 `app_secret` 字段解密回明文。
+/// 把请求 JSON 中 `auth` 子树的密钥字段解密回明文。
 ///
 /// 加密格式解不开（主密钥丢失/更换）时返回 `AppError::Decryption` 由上层
 /// 提示用户，避免把密文当明文继续使用。JSON 损坏时原样返回（与旧版
@@ -585,47 +606,51 @@ pub(crate) fn decrypt_request_secrets(request_json: &str) -> Result<String> {
     Ok(serde_json::to_string(&out).unwrap_or_else(|_| request_json.to_string()))
 }
 
-fn encrypt_request_json(request_json: &str, encrypt: bool) -> String {
-    let value: serde_json::Value = match serde_json::from_str(request_json) {
-        Ok(v) => v,
-        Err(_) => return request_json.to_string(),
-    };
-    let out = match walk_secrets(value, encrypt) {
-        Ok(v) => v,
-        Err(_) => return request_json.to_string(),
-    };
-    serde_json::to_string(&out).unwrap_or_else(|_| request_json.to_string())
+/// auth 子树内需要加密的字符串字段（按 key 名匹配，与 AuthSpec 字段对应）：
+///
+/// - `token`：Bearer.token（OAuth2.token 为对象，递归进内部键）；
+/// - `password`：Basic / Digest / OAuth2 资源所有者密码；
+/// - `value`：ApiKey.value（auth 子树内无 KeyValue 列表，无同名冲突）；
+/// - `key`：Hawk 共享密钥（ApiKey.key 为键名，误加密仅损可读性、解密无损）；
+/// - `client_secret` / `app_secret`：OAuth2 / DynamicSignature；
+/// - `secret_key` / `session_token`：AwsV4 / Hmac；
+/// - `access_token` / `refresh_token`：OAuth2.token 对象内部。
+const AUTH_SECRET_KEYS: &[&str] = &[
+    "token",
+    "password",
+    "value",
+    "key",
+    "client_secret",
+    "app_secret",
+    "secret_key",
+    "session_token",
+    "access_token",
+    "refresh_token",
+];
+
+/// 递归遍历 JSON：进入 `auth` 对象后按 [`AUTH_SECRET_KEYS`] 加/解密字符串值。
+///
+/// 用 key 名匹配而非深度绑定到具体 Auth 结构：未来新增鉴权方式 / 字段改名
+/// 时无需改这里。进入 auth 子树后嵌套对象（DynamicSignature.config、
+/// OAuth2.token 等）仍视为子树内。非字符串值递归后原样返回。
+fn walk_secrets(value: serde_json::Value, encrypt: bool) -> Result<serde_json::Value> {
+    walk_node(value, encrypt, false)
 }
 
-/// 递归遍历 JSON，凡 key 为 `app_secret` 的字符串字段做加/解密。
-///
-/// 用 key 名匹配而非深度绑定到 `DynamicSignatureConfig` 结构：未来该字段
-/// 挪到 OAuth2 等其它鉴权对象中也能自动覆盖；同时规避 serde 扁平化标签
-/// 带来的结构感知复杂度。
-fn walk_secrets(value: serde_json::Value, encrypt: bool) -> Result<serde_json::Value> {
+/// `in_auth` = 当前节点位于 auth 子树内（顶层请求对象 / 其它字段为 false）。
+fn walk_node(value: serde_json::Value, encrypt: bool, in_auth: bool) -> Result<serde_json::Value> {
     match value {
         serde_json::Value::Object(map) => {
             let mut out = serde_json::Map::with_capacity(map.len());
             for (key, v) in map {
-                if key == "app_secret" {
-                    // 仅字符串字段参与加解密；非字符串（异常数据）原样保留。
-                    if let serde_json::Value::String(s) = v {
-                        let secret = if encrypt {
-                            miyo_secret::ensure_master_key()
-                                .and_then(|k| miyo_secret::encrypt(&k, &s))
-                                .map_err(|e| AppError::Decryption(e.to_string()))?
-                        } else {
-                            miyo_secret::ensure_master_key()
-                                .and_then(|k| miyo_secret::decrypt(&k, &s))
-                                .map_err(|e| AppError::Decryption(e.to_string()))?
-                        };
-                        out.insert(key, serde_json::Value::String(secret));
-                    } else {
-                        out.insert(key, v);
-                    }
+                if in_auth && AUTH_SECRET_KEYS.contains(&key.as_str()) {
+                    out.insert(key, transform_secret(v, encrypt)?);
+                } else if key == "auth" {
+                    // auth 的值即子树根。
+                    out.insert(key, walk_node(v, encrypt, true)?);
                 } else {
                     // 原地递归消费，避免逐节点 clone。
-                    out.insert(key, walk_secrets(v, encrypt)?);
+                    out.insert(key, walk_node(v, encrypt, in_auth)?);
                 }
             }
             Ok(serde_json::Value::Object(out))
@@ -633,12 +658,34 @@ fn walk_secrets(value: serde_json::Value, encrypt: bool) -> Result<serde_json::V
         serde_json::Value::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
             for item in items {
-                out.push(walk_secrets(item, encrypt)?);
+                out.push(walk_node(item, encrypt, in_auth)?);
             }
             Ok(serde_json::Value::Array(out))
         }
         other => Ok(other),
     }
+}
+
+/// 对单个字符串字段做加/解密；非字符串（对象 / 数组 / null）递归后原样返回。
+fn transform_secret(v: serde_json::Value, encrypt: bool) -> Result<serde_json::Value> {
+    if let serde_json::Value::String(s) = &v {
+        // 空串跳过（无秘密可保护；避免给所有空字段造出伪密文格式）。
+        if s.is_empty() {
+            return Ok(v);
+        }
+        let secret = miyo_secret::ensure_master_key()
+            .and_then(|k| {
+                if encrypt {
+                    miyo_secret::encrypt(&k, s)
+                } else {
+                    miyo_secret::decrypt(&k, s)
+                }
+            })
+            .map_err(|e| AppError::Decryption(e.to_string()))?;
+        return Ok(serde_json::Value::String(secret));
+    }
+    // 对象（如 OAuth2.token）与数组：仍在 auth 子树内，递归处理内部字段。
+    walk_node(v, encrypt, true)
 }
 
 pub(crate) fn parse_time(s: &str) -> Result<chrono::DateTime<Utc>> {
@@ -654,7 +701,7 @@ mod secret_tests {
     #[test]
     fn app_secret_roundtrips_through_encrypt_decrypt() {
         let json = r#"{"auth":{"type":"dynamic_signature","config":{"app_secret":"hunter2","app_key":"k"}}}"#;
-        let enc = encrypt_request_secrets(json);
+        let enc = encrypt_request_secrets(json).unwrap();
         assert_ne!(enc, json);
         assert!(enc.contains(":"), "密文应为 nonce:ciphertext 格式");
         assert!(!enc.contains("hunter2"), "明文不得残留");
@@ -662,10 +709,103 @@ mod secret_tests {
         assert!(dec.contains("hunter2"));
     }
 
+    /// auth 子树内全部密钥字段加密（9 种鉴权方式逐一覆盖），auth 外的
+    /// 同名键（KeyValue 的 key/value）不受影响。
+    #[test]
+    fn all_auth_kinds_encrypt_their_secrets() {
+        let cases: Vec<(&str, serde_json::Value, &str)> = vec![
+            (
+                "bearer token",
+                serde_json::json!({"auth": {"type": "bearer", "token": "tok-1"}}),
+                "tok-1",
+            ),
+            (
+                "basic password",
+                serde_json::json!({"auth": {"type": "basic", "username": "u", "password": "pw-1"}}),
+                "pw-1",
+            ),
+            (
+                "apikey value",
+                serde_json::json!({"auth": {"type": "apikey", "key": "X-Key", "value": "ak-1", "in": "header"}}),
+                "ak-1",
+            ),
+            (
+                "oauth2 secret + token object",
+                serde_json::json!({"auth": {"type": "oauth2", "client_id": "c", "client_secret": "cs-1",
+                    "token": {"access_token": "at-1", "refresh_token": "rt-1", "expires_at": "2026-01-01T00:00:00Z"}}}),
+                "cs-1",
+            ),
+            (
+                "hawk key",
+                serde_json::json!({"auth": {"type": "hawk", "key_id": "id", "key": "hk-1"}}),
+                "hk-1",
+            ),
+            (
+                "digest password",
+                serde_json::json!({"auth": {"type": "digest", "username": "u", "password": "dp-1"}}),
+                "dp-1",
+            ),
+            (
+                "awsv4 secret + session token",
+                serde_json::json!({"auth": {"type": "awsv4", "access_key": "AK", "secret_key": "sk-1",
+                    "session_token": "st-1"}}),
+                "sk-1",
+            ),
+            (
+                "hmac secret",
+                serde_json::json!({"auth": {"type": "hmac", "access_key": "AK", "secret_key": "hmk-1"}}),
+                "hmk-1",
+            ),
+        ];
+        for (name, value, secret) in cases {
+            let plain = serde_json::to_string(&value).unwrap();
+            let enc = encrypt_request_secrets(&plain).unwrap();
+            assert!(!enc.contains(secret), "{name}: 明文不得残留: {enc}");
+            let dec = decrypt_request_secrets(&enc).unwrap();
+            let dec_v: serde_json::Value = serde_json::from_str(&dec).unwrap();
+            assert_eq!(dec_v, value, "{name}: 加解密往返应还原原文");
+        }
+    }
+
+    /// auth 子树外的同名键不加密：请求头 / 查询参数保持明文（ KeyValue 结构），
+    /// OAuth2 的 token 对象内 access_token/refresh_token 加密。
+    #[test]
+    fn secrets_only_inside_auth_subtree() {
+        let json = serde_json::json!({
+            "headers": [{"key": "Authorization", "value": "Bearer plain-kept"}],
+            "params": [{"key": "token", "value": "param-kept"}],
+            "auth": {"type": "bearer", "token": "auth-secret"}
+        });
+        let plain = serde_json::to_string(&json).unwrap();
+        let enc = encrypt_request_secrets(&plain).unwrap();
+        assert!(enc.contains("plain-kept"), "auth 外的 header 值保持明文");
+        assert!(enc.contains("param-kept"), "auth 外的参数值保持明文");
+        assert!(!enc.contains("auth-secret"));
+        let dec: serde_json::Value =
+            serde_json::from_str(&decrypt_request_secrets(&enc).unwrap()).unwrap();
+        assert_eq!(dec, json);
+    }
+
+    /// OAuth2.token 对象内部字段加密（access_token / refresh_token）。
+    #[test]
+    fn oauth2_token_object_inner_fields_encrypted() {
+        let json = serde_json::json!({
+            "auth": {"type": "oauth2", "client_id": "c",
+                "token": {"access_token": "at-secret", "refresh_token": "rt-secret",
+                          "expires_at": "2026-01-01T00:00:00Z"}}
+        });
+        let plain = serde_json::to_string(&json).unwrap();
+        let enc = encrypt_request_secrets(&plain).unwrap();
+        assert!(!enc.contains("at-secret") && !enc.contains("rt-secret"));
+        let dec: serde_json::Value =
+            serde_json::from_str(&decrypt_request_secrets(&enc).unwrap()).unwrap();
+        assert_eq!(dec, json);
+    }
+
     #[test]
     fn non_signature_json_is_passthrough() {
         let json = r#"{"headers":[{"key":"X","value":"1"}]}"#;
-        assert_eq!(encrypt_request_secrets(json), json);
+        assert_eq!(encrypt_request_secrets(json).unwrap(), json);
         assert_eq!(decrypt_request_secrets(json).unwrap(), json);
     }
 
@@ -678,7 +818,43 @@ mod secret_tests {
 
     #[test]
     fn corrupt_json_is_passthrough() {
-        assert_eq!(encrypt_request_secrets("not-json"), "not-json");
+        assert_eq!(encrypt_request_secrets("not-json").unwrap(), "not-json");
         assert_eq!(decrypt_request_secrets("not-json").unwrap(), "not-json");
+    }
+
+    /// 空值字段不造伪密文（保持空串，往返无损）。serde_json 遍历会重排键序，
+    /// 按解析值比较（反序列化对键序不敏感）。
+    #[test]
+    fn empty_secret_stays_empty() {
+        let json = r#"{"auth":{"type":"bearer","token":""}}"#;
+        let enc = encrypt_request_secrets(json).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&enc).unwrap(),
+            serde_json::from_str::<serde_json::Value>(json).unwrap()
+        );
+        // 空 token 不得被替换成密文（密文含 ':'，这里仍为空串）。
+        assert!(enc.contains(r#""token":""#), "空 token 应保持空串: {enc}");
+    }
+
+    /// 项目变量行级加解密往返（明文旧数据经 decrypt 透传）。
+    #[test]
+    fn project_variables_row_roundtrip() {
+        let vars = std::collections::HashMap::from([
+            ("base_url".to_string(), "http://127.0.0.1".to_string()),
+            ("admin_token".to_string(), "sk-222".to_string()),
+        ]);
+        let project = Project {
+            id: Uuid::new_v4(),
+            name: "加密项目".into(),
+            description: String::new(),
+            variables: vars.clone(),
+            team_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let row = ProjectRow::from_model(&project).unwrap();
+        assert!(!row.variables_json.contains("sk-222"), "明文不得落库");
+        let back = row.into_model().unwrap();
+        assert_eq!(back.variables, vars);
     }
 }

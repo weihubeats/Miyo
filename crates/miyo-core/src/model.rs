@@ -342,6 +342,11 @@ pub enum AuthSpec {
         /// 已获取的令牌；授权成功后写入，刷新后由缓存回填。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         token: Option<OAuth2Token>,
+        /// 授权码流是否启用 PKCE（RFC 7636，S256）。
+        /// 缺省 / Some(true) = 启用（防授权码截获，现代 IdP 均支持）；
+        /// Some(false) = 关闭（兼容极少数不认 code_challenge 参数的旧 IdP）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        use_pkce: Option<bool>,
     },
     /// HTTP Digest 认证（RFC 7616）。
     ///
@@ -1309,6 +1314,7 @@ mod tests {
                 refresh_token: Some("rt-1".into()),
                 expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             }),
+            use_pkce: None,
         };
         let json = serde_json::to_value(&auth).unwrap();
         assert_eq!(json["type"], "oauth2");
@@ -1331,6 +1337,7 @@ mod tests {
             username: None,
             password: None,
             token: None,
+            use_pkce: None,
         };
         let json = serde_json::to_value(&auth).unwrap();
         assert!(json.get("token").is_none());
@@ -1354,6 +1361,7 @@ mod tests {
                 refresh_token: None,
                 expires_at: chrono::Utc::now() + chrono::Duration::hours(hours),
             }),
+            use_pkce: None,
         };
         assert_eq!(make(1).oauth2_status(), Some(OAuth2Status::Valid));
         // 30 秒后过期 → 即将过期
@@ -1373,6 +1381,7 @@ mod tests {
                 refresh_token: None,
                 expires_at: chrono::Utc::now() + chrono::Duration::seconds(30),
             }),
+            use_pkce: None,
         };
         assert_eq!(soon.oauth2_status(), Some(OAuth2Status::ExpiringSoon));
         // 已过期
@@ -1392,6 +1401,7 @@ mod tests {
                 refresh_token: None,
                 expires_at: chrono::Utc::now() - chrono::Duration::seconds(1),
             }),
+            use_pkce: None,
         };
         assert_eq!(expired.oauth2_status(), Some(OAuth2Status::Expired));
         // 无 token
@@ -1406,6 +1416,7 @@ mod tests {
             username: None,
             password: None,
             token: None,
+            use_pkce: None,
         };
         assert_eq!(none.oauth2_status(), Some(OAuth2Status::Unauthorized));
         assert_eq!(AuthSpec::None.oauth2_status(), None);

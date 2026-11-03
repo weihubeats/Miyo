@@ -19,6 +19,7 @@ use miyo_grpc::{
     acquire_pool, spawn_server_stream, DescriptorPool, GrpcEvent, GrpcInvokeArgs as EngineArgs,
     GrpcResponse, GrpcSource, ProtoFileInput, ServiceCatalog,
 };
+use miyo_sync::redact::{is_sensitive_key, PLACEHOLDER};
 
 use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
@@ -462,6 +463,22 @@ fn build_grpc_history(
 ) -> RequestHistory {
     // 响应预览按字节截断（字符边界安全），口径与 HTTP 历史一致
     let body_preview: &str = byte_truncate(&response.message_json, 2000);
+    // metadata 即 gRPC 的请求头：敏感键（authorization / token / *-key…）
+    // 的值脱敏后落历史库，口径与 HTTP 历史 redact_history_spec 一致。
+    let metadata_redacted: Vec<serde_json::Value> = args
+        .metadata
+        .iter()
+        .map(|(key, value)| {
+            serde_json::json!({
+                "key": key,
+                "value": if !value.is_empty() && is_sensitive_key(key) {
+                    PLACEHOLDER.to_string()
+                } else {
+                    value.clone()
+                },
+            })
+        })
+        .collect();
     let request_summary = serde_json::json!({
         "method": "GRPC",
         "url": args.address,
@@ -471,7 +488,7 @@ fn build_grpc_history(
                 "method": args.method,
                 "message": args.message_json,
                 "use_tls": args.use_tls,
-                "metadata": args.metadata,
+                "metadata": metadata_redacted,
                 "timeout_ms": args.timeout_ms,
             }
         },

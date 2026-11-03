@@ -43,6 +43,7 @@ pub fn render_spec(spec: &RequestSpec, vars: &VariableMap) -> RequestSpec {
                 username,
                 password,
                 token,
+                use_pkce,
             } => AuthSpec::OAuth2 {
                 client_id: crate::resolve_variables(client_id, vars),
                 client_secret: crate::resolve_variables(client_secret, vars),
@@ -54,6 +55,7 @@ pub fn render_spec(spec: &RequestSpec, vars: &VariableMap) -> RequestSpec {
                 username: username.clone(),
                 password: password.clone(),
                 token: token.clone(),
+                use_pkce: *use_pkce,
             },
             AuthSpec::Digest { username, password } => AuthSpec::Digest {
                 username: crate::resolve_variables(username, vars),

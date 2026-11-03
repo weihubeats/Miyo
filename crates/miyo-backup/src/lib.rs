@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use chrono::Utc;
 use miyo_core::model::{
     Endpoint, Environment, EnvironmentVariable, Folder, GlobalParam, MockRule, Project, ProtoFile,
-    RequestExample, ResponseExample, Team,
+    RequestExample, ResponseExample, Scenario, Team,
 };
 use miyo_core::AppError;
 use serde::{Deserialize, Serialize};
@@ -44,14 +44,18 @@ pub struct BackupFile {
     /// 团队元数据（v4 起；旧备份缺失时为 None，项目 team_id 兜底为默认团队）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<Team>,
+    /// 集成测试场景（v5 起；旧备份缺失按空处理）。步骤为接口引用式，
+    /// 恢复时 steps 内的 endpoint_id 随接口重映射。
+    #[serde(default)]
+    pub scenarios: Vec<Scenario>,
 }
 
 /// 备份格式标识。
 pub const FORMAT: &str = "miyo-project-backup";
 /// 品牌更名前的格式标识：解析时同样接受，旧备份文件可继续导入恢复。
 pub const LEGACY_FORMAT: &str = "rustfox-project-backup";
-/// 当前 schema 版本（v4：引入团队 team 元数据 + project.team_id）。
-pub const SCHEMA_VERSION: u32 = 4;
+/// 当前 schema 版本（v5：补齐 scenarios；v4 团队 / v1-v3 环境形状照旧升级）。
+pub const SCHEMA_VERSION: u32 = 5;
 
 impl BackupFile {
     pub fn serialize(&self) -> Result<String, AppError> {
@@ -189,6 +193,8 @@ pub struct BackupInput<'a> {
     pub global_params: &'a [GlobalParam],
     /// 团队元数据（v4）：项目所属团队，可空。
     pub team: &'a Option<Team>,
+    /// 集成测试场景（v5）。
+    pub scenarios: &'a [Scenario],
 }
 
 pub fn build_backup(input: &BackupInput) -> BackupFile {
@@ -208,6 +214,7 @@ pub fn build_backup(input: &BackupInput) -> BackupFile {
         global_variables: input.global_variables.to_vec(),
         global_params: input.global_params.to_vec(),
         team: input.team.clone(),
+        scenarios: input.scenarios.to_vec(),
     }
 }
 
@@ -222,6 +229,7 @@ pub struct Restored {
     pub response_examples: Vec<ResponseExample>,
     pub request_examples: Vec<RequestExample>,
     pub proto_files: Vec<ProtoFile>,
+    pub scenarios: Vec<Scenario>,
 }
 
 /// 恢复：全量重映射 UUID（新项目）。返回值与 `build_backup` 顺序对应。
@@ -300,6 +308,28 @@ pub fn restore_backup(file: &BackupFile) -> Restored {
         });
     }
 
+    // 场景：新 id 归新项目；步骤是接口引用式，endpoint_id 随接口 id 映射表
+    // 重映射（备份内含全部接口，正常必然命中；手工编辑的残缺备份兜底 nil，
+    // 与 mock_rules 的兜底口径一致）。
+    let mut scenarios: Vec<Scenario> = Vec::with_capacity(file.scenarios.len());
+    for s in &file.scenarios {
+        let new_id = Uuid::new_v4();
+        map.insert(s.id, new_id);
+        let mut new_steps: Vec<miyo_core::model::ScenarioStep> = Vec::with_capacity(s.steps.len());
+        for step in &s.steps {
+            new_steps.push(miyo_core::model::ScenarioStep {
+                endpoint_id: *map.get(&step.endpoint_id).unwrap_or(&Uuid::nil()),
+                ..step.clone()
+            });
+        }
+        scenarios.push(Scenario {
+            id: new_id,
+            project_id: new_project_id,
+            steps: new_steps,
+            ..s.clone()
+        });
+    }
+
     Restored {
         project: Project {
             id: new_project_id,
@@ -312,6 +342,7 @@ pub fn restore_backup(file: &BackupFile) -> Restored {
         response_examples,
         request_examples,
         proto_files,
+        scenarios,
     }
 }
 
@@ -320,6 +351,7 @@ mod tests {
     use super::*;
     use miyo_core::model::{
         BodySpec, EndpointStatus, EnvironmentVariable, HttpMethod, KeyValue, RequestSpec,
+        ScenarioStep,
     };
     fn sample_data() -> BackupFile {
         let project = Project {
@@ -424,6 +456,31 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
+        let scenario = Scenario {
+            id: Uuid::new_v4(),
+            project_id: project.id,
+            name: "登录链路".into(),
+            description: "登录 → 查详情".into(),
+            sort_order: 0,
+            steps: vec![
+                ScenarioStep {
+                    endpoint_id: ep.id,
+                    enabled: true,
+                    extract: serde_json::json!([{"var": "token", "from": "body", "path": "$.token"}]),
+                    assertions: serde_json::json!([{"type": "status", "op": "eq", "value": 200}]),
+                },
+                // 指向不存在接口的步骤：恢复时应兜底 nil 而非 panic / 丢失。
+                ScenarioStep {
+                    endpoint_id: Uuid::new_v4(),
+                    enabled: false,
+                    extract: serde_json::json!([]),
+                    assertions: serde_json::json!([]),
+                },
+            ],
+            script: Some("const steps = [];".into()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
         build_backup(&BackupInput {
             project: &project,
             folders: &[folder],
@@ -437,6 +494,7 @@ mod tests {
             global_variables: &[],
             global_params: &[],
             team: &None,
+            scenarios: &[scenario],
         })
     }
 
@@ -471,6 +529,20 @@ mod tests {
         v.as_object_mut().unwrap().remove("proto_files");
         let parsed = BackupFile::parse(&v.to_string()).unwrap();
         assert!(parsed.proto_files.is_empty());
+    }
+
+    /// v4 备份无 scenarios 字段：升级到 v5 后按空处理，场景数据不阻塞导入。
+    #[test]
+    fn parse_v4_backup_without_scenarios_defaults_empty() {
+        let data = sample_data();
+        let mut v4 = serde_json::json!(data);
+        v4["schema_version"] = serde_json::json!(4);
+        v4.as_object_mut().unwrap().remove("scenarios");
+        let parsed = BackupFile::parse(&v4.to_string()).unwrap();
+        assert_eq!(parsed.schema_version, SCHEMA_VERSION);
+        assert!(parsed.scenarios.is_empty());
+        // 其余实体不受影响。
+        assert_eq!(parsed.endpoints.len(), 1);
     }
 
     #[test]
@@ -592,6 +664,15 @@ mod tests {
         assert_eq!(restored.proto_files[0].project_id, restored.project.id);
         assert_eq!(restored.proto_files[0].name, "user/v1/user.proto");
         assert_ne!(restored.proto_files[0].id, data.proto_files[0].id);
+        // 场景：新 id 归新项目；步骤 endpoint_id 跟随接口重映射；
+        // 未命中映射的步骤兜底 nil（不丢失、不指向旧 id）。
+        let sc = &restored.scenarios[0];
+        assert_eq!(sc.project_id, restored.project.id);
+        assert_ne!(sc.id, data.scenarios[0].id);
+        assert_eq!(sc.steps[0].endpoint_id, ep.id);
+        assert_eq!(sc.steps[1].endpoint_id, Uuid::nil());
+        assert_eq!(sc.steps[0].extract, data.scenarios[0].steps[0].extract);
+        assert_eq!(sc.script, data.scenarios[0].script);
         // 无交叉引用残留
         let old_ids: Vec<Uuid> = data.endpoints.iter().map(|e| e.id).collect();
         for new_ep in &restored.endpoints {

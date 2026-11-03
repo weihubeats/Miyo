@@ -32,7 +32,7 @@ pub async fn backup_export(
     project_id: Uuid,
 ) -> CommandResult<BackupExportDoc> {
     // 互不依赖的读（全部只按 project_id / 全局维度查）合并并发：
-    // 8 次 SQLite 往返压成 1 次等待；设置键也并入，3 次 get_setting 合一条 IN 查询。
+    // 10 次 SQLite 往返压成 1 次等待；设置键也并入，3 次 get_setting 合一条 IN 查询。
     let (
         project,
         folders,
@@ -43,6 +43,7 @@ pub async fn backup_export(
         global_params,
         settings,
         proto_files,
+        scenarios,
     ) = tokio::join!(
         repo::get_project(&state.db, project_id),
         repo::list_folders(&state.db, project_id),
@@ -53,6 +54,7 @@ pub async fn backup_export(
         repo::get_global_params(&state.db),
         repo::get_settings(&state.db, BACKUP_SETTING_KEYS),
         repo::list_proto_files(&state.db, project_id),
+        repo::list_scenarios(&state.db, project_id),
     );
     let project = project?;
     let folders = folders?;
@@ -63,6 +65,7 @@ pub async fn backup_export(
     let global_params = global_params?;
     let settings = settings?;
     let proto_files = proto_files?;
+    let scenarios = scenarios?;
 
     // 批量一次查询（去 N+1：E 个接口原来 2E 次查询 + 2E 次 JSON 反序列化）。
     let active_ids: Vec<Uuid> = endpoints
@@ -104,6 +107,7 @@ pub async fn backup_export(
         global_variables: &global_variables,
         global_params: &global_params,
         team: &team,
+        scenarios: &scenarios,
     });
     // 敏感项统计：跑一遍 sync 推送同款脱敏（只取计数不替换产物）——备份本体
     // 必须明文可恢复，但要让用户知道「这份 JSON 里有几把钥匙」。
@@ -152,6 +156,7 @@ pub async fn backup_restore(
         repo::save_response_examples_bulk(tx.as_mut(), &restored.response_examples).await?;
         repo::save_request_examples_bulk(tx.as_mut(), &restored.request_examples).await?;
         repo::save_proto_files_bulk(tx.as_mut(), &restored.proto_files).await?;
+        repo::save_scenarios_bulk(tx.as_mut(), &restored.scenarios).await?;
         Ok(())
     }
     .await;
@@ -188,6 +193,7 @@ pub async fn backup_restore(
         "response_examples": restored.response_examples.len(),
         "request_examples": restored.request_examples.len(),
         "proto_files": restored.proto_files.len(),
+        "scenarios": restored.scenarios.len(),
         "settings_applied": globals.settings_applied,
         "settings_skipped": globals.settings_skipped,
         "global_variables_merged": globals.global_variables_merged,
