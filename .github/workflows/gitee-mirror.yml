@@ -17,7 +17,7 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # 海外 runner 到 gitee.com 偶发 SSL 卡死（曾整段挂 5 分钟后 timeout）。
