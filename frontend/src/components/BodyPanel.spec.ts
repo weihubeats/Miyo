@@ -138,14 +138,117 @@ describe('BodyPanel：raw JSON 编辑与格式化', () => {
     expect(wrapper.findAll('.rp-find-mark').length).toBe(2)
     expect(wrapper.findAll('.rp-find-mark.active').length).toBe(1)
 
-    // 切换下一个匹配
-    await wrapper.findAll('.findbar-btn')[1].trigger('click')
+    // 切换下一个匹配（Body 的 FindBar 带 replaceable，首枚是替换行展开钮，按 title 定位）
+    const nextBtn = wrapper
+      .findAll('.findbar-btn')
+      .find((b) => b.attributes('title') === '下一个 (Enter)')!
+    await nextBtn.trigger('click')
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.findbar-count').text()).toContain('2 / 2')
 
     // Esc 关闭
     await findInput.trigger('keydown', { key: 'Escape' })
     expect(wrapper.findComponent({ name: 'FindBar' }).exists()).toBe(false)
+  })
+
+  it('在请求体中全部替换：JSON 草稿即时回写，计数同步刷新', async () => {
+    const draft = jsonDraft('{"user":"miyo","name":"miyo"}')
+    const wrapper = mountPanel(draft)
+
+    await wrapper.find('.bp-icon-btn').trigger('click')
+    await wrapper.find('.findbar-expander').trigger('click')
+    const inputs = wrapper.findAll('.findbar-input')
+    await inputs[0]!.setValue('miyo')
+    await inputs[1]!.setValue('kano')
+    // 「全部替换」= 替换行第二个按钮
+    await wrapper.findAll('.findbar-replace-btn')[1]!.trigger('click')
+
+    // 替换按即时 query（非防抖值）执行，草稿即刻回写
+    expect(rawOf(draft)).toBe('{"user":"kano","name":"kano"}')
+    // 替换后无残留匹配
+    expect(wrapper.find('.findbar-count').text()).toContain('无匹配')
+  })
+
+  it('在 raw 文本（非 JSON 子类型）中全部替换：经防抖镜像落库', async () => {
+    const d = makeDraft()
+    d.request.body = { mode: 'text', raw: 'a=1&b=2&c=1' }
+    const draft = reactive(d)
+    const wrapper = mountPanel(draft)
+
+    await wrapper.find('.bp-icon-btn').trigger('click')
+    await wrapper.find('.findbar-expander').trigger('click')
+    const inputs = wrapper.findAll('.findbar-input')
+    await inputs[0]!.setValue('1')
+    await inputs[1]!.setValue('9')
+    await wrapper.findAll('.findbar-replace-btn')[1]!.trigger('click')
+
+    expect(rawOf(draft)).toBe('a=9&b=2&c=9')
+  })
+
+  it('替换内容为空 = 删除全部匹配；查找词为空时不动作', async () => {
+    const draft = jsonDraft('{"a":"x","b":"x"}')
+    const wrapper = mountPanel(draft)
+    await wrapper.find('.bp-icon-btn').trigger('click')
+    await wrapper.find('.findbar-expander').trigger('click')
+    const inputs = wrapper.findAll('.findbar-input')
+    await inputs[0]!.setValue('x')
+    await inputs[1]!.setValue('')
+    await wrapper.findAll('.findbar-replace-btn')[1]!.trigger('click')
+    expect(rawOf(draft)).toBe('{"a":"","b":""}')
+
+    // 查找词为空：替换按钮无效果
+    await inputs[0]!.setValue('')
+    await inputs[1]!.setValue('y')
+    await wrapper.findAll('.findbar-replace-btn')[1]!.trigger('click')
+    expect(rawOf(draft)).toBe('{"a":"","b":""}')
+  })
+
+  it('在请求体中逐个替换：「替换」替换当前匹配并推进到下一个', async () => {
+    const draft = jsonDraft('{"user":"miyo","name":"miyo"}')
+    const wrapper = mountPanel(draft)
+
+    await wrapper.find('.bp-icon-btn').trigger('click')
+    await wrapper.find('.findbar-expander').trigger('click')
+    const inputs = wrapper.findAll('.findbar-input')
+    await inputs[0]!.setValue('miyo')
+    await inputs[1]!.setValue('kano')
+
+    // 第一次「替换」：替换第 1 处，激活序号停在原位即指向下一处
+    await wrapper.findAll('.findbar-replace-btn')[0]!.trigger('click')
+    expect(rawOf(draft)).toBe('{"user":"kano","name":"miyo"}')
+    expect(wrapper.find('.findbar-count').text()).toContain('1 / 1')
+
+    // 再替换一次：清零
+    await wrapper.findAll('.findbar-replace-btn')[0]!.trigger('click')
+    expect(rawOf(draft)).toBe('{"user":"kano","name":"kano"}')
+    expect(wrapper.find('.findbar-count').text()).toContain('无匹配')
+  })
+
+  it('在 raw 文本（非 JSON 子类型）中逐个替换：镜像落库且选区推进', async () => {
+    const d = makeDraft()
+    d.request.body = { mode: 'text', raw: 'a=1&b=2&c=1' }
+    const draft = reactive(d)
+    const wrapper = mountPanel(draft)
+
+    await wrapper.find('.bp-icon-btn').trigger('click')
+    await wrapper.find('.findbar-expander').trigger('click')
+    const inputs = wrapper.findAll('.findbar-input')
+    await inputs[0]!.setValue('1')
+    await inputs[1]!.setValue('9')
+    await wrapper.findAll('.findbar-replace-btn')[0]!.trigger('click')
+
+    expect(rawOf(draft)).toBe('a=9&b=2&c=1')
+  })
+
+  it('快捷键 Ctrl/Cmd+R：打开查找并直接展开替换行', async () => {
+    const draft = jsonDraft('{"a":1}')
+    // window 级监听：事件必须经真实文档树冒泡（attachTo），游离挂载收不到
+    const wrapper = mount(BodyPanel, { props: { draft }, attachTo: document.body })
+    await wrapper.find('textarea').trigger('keydown', { key: 'r', ctrlKey: true })
+    expect(wrapper.findComponent({ name: 'FindBar' }).exists()).toBe(true)
+    expect(wrapper.find('.findbar-replace-row').exists()).toBe(true)
+    wrapper.unmount()
+    document.body.innerHTML = ''
   })
 
   it('form-data→无→form-data：字段记忆还原', async () => {

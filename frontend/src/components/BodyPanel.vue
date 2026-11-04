@@ -13,9 +13,10 @@
  * 保持 auto-height 贴内容，由主 query textarea（flex:1）吸收剩余高度。
  * bodyAny 用 any 放宽联合类型访问（模板 v-model 直写 raw / spec.*）。
  */
-import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useLocaleStore } from '../stores/locale'
-import { countOccurrences, useFindInText } from '../composables/useFindInText'
+import { countOccurrences, replaceAllOccurrences, useFindInText } from '../composables/useFindInText'
+import { useToast } from '../composables/useToast'
 
 import CustomSelect from './ui/CustomSelect.vue'
 import FindBar from './ui/FindBar.vue'
@@ -200,6 +201,94 @@ const {
   },
 })
 
+// ---------- 全部替换 / 替换单个 ----------
+const toast = useToast()
+/** 替换行展开状态与替换内容（查找条关闭后保留，再次打开延续）。 */
+const replaceOpen = ref(false)
+const replaceText = ref('')
+
+/**
+ * 当前页签参与查找计数的文本源与回写通道（替换共用）。
+ * raw/json → 草稿 raw（v-model 直写）；raw 其余子类型 / graphql query →
+ * 防抖镜像（含未落盘键入），onInput + flush 落库。
+ */
+function bodyFindSource(): { source: string; write: (t: string) => void } | null {
+  if (activeTab.value === 'raw' && rawSubtype.value === 'json') {
+    const b = bodyAny.value
+    if (!b) return null
+    return { source: b.raw, write: (t) => { b.raw = t } }
+  }
+  if (activeTab.value === 'graphql') {
+    return {
+      source: gqlQuery.local.value,
+      write: (t) => {
+        gqlQuery.onInput(t)
+        gqlQuery.flush()
+      },
+    }
+  }
+  return {
+    source: rawText.local.value,
+    write: (t) => {
+      rawText.onInput(t)
+      rawText.flush()
+    },
+  }
+}
+
+/** 替换操作前把即时 query 同步进 searchQuery：计数/高亮不等防抖。 */
+function syncSearchQuery(): string | null {
+  const q = query.value
+  if (!q) return null
+  searchQuery.value = q
+  return q
+}
+
+/** 全部替换（FindBar「全部替换」按钮 / 替换输入框 Ctrl/Cmd+Alt+Enter）。 */
+function doReplaceAll(): void {
+  const q = syncSearchQuery()
+  const ctx = q ? bodyFindSource() : null
+  if (!ctx) return
+  const { text, count } = replaceAllOccurrences(ctx.source, q!, replaceText.value)
+  if (count > 0) {
+    ctx.write(text)
+    toast.success(t('body.replaceAllDone', { n: count }))
+  }
+}
+
+/**
+ * 替换单个（FindBar「替换」按钮 / 替换输入框 Enter）：替换当前激活序号的
+ * 匹配，随后激活序号停在原位即为「下一个」（被替换匹配之前的序号不变、
+ * 其后整体前移一位）。文本已变导致序号越界时仅收回界内，不误替换。
+ */
+function doReplaceOne(): void {
+  const q = syncSearchQuery()
+  const ctx = q ? bodyFindSource() : null
+  if (!ctx) return
+  const offsets = getMatchOffsets(ctx.source, q!, activeMatch.value)
+  if (!offsets) {
+    const n = countOccurrences(ctx.source, q!)
+    activeMatch.value = n ? Math.min(activeMatch.value, n - 1) : 0
+    return
+  }
+  const [start, end] = offsets
+  const newText = ctx.source.slice(0, start) + replaceText.value + ctx.source.slice(end)
+  ctx.write(newText)
+  const n = countOccurrences(newText, q!)
+  activeMatch.value = n ? Math.min(activeMatch.value, n - 1) : 0
+  // textarea 路径：DOM 值变更渲染后再选中新激活匹配（查找 watcher 是前置触发，
+  // 此时 ta.value 尚为旧文本，选区会错位，故这里显式补选）。
+  void nextTick(() => {
+    if (activeTab.value === 'raw' && rawSubtype.value === 'json') return
+    const ta = activeTab.value === 'graphql' ? gqlTextareaRef.value : rawTextareaRef.value
+    if (!ta) return
+    const pos = getMatchOffsets(ta.value, q!, activeMatch.value)
+    if (!pos) return
+    ta.focus()
+    ta.setSelectionRange(pos[0], pos[1])
+  })
+}
+
 function getMatchOffsets(text: string, q: string, targetIdx: number): [number, number] | null {
   if (!q) return null
   const ql = q.toLowerCase()
@@ -237,13 +326,22 @@ function onCodeKeydown(e: KeyboardEvent): void {
 }
 
 function onWindowKeydown(e: KeyboardEvent): void {
-  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'f') return
+  const mod = e.metaKey || e.ctrlKey
+  if (!mod) return
+  const key = e.key.toLowerCase()
   const target = e.target as HTMLElement | null
   if (target?.closest('.findbar, .sidebar-search, .docs-search')) return
 
   const root = panelRef.value
   const isInside = !!(root && target && root.contains(target))
-  if (isInside) {
+  if (!isInside) return
+  // 替换：Ctrl/Cmd+R（JetBrains 等编辑器惯例）或 ⌘⌥F（macOS VS Code 惯例）。
+  // metaKey 限定使 ⌘⌥F 分支在 Win/Linux 下不会误触 AltGr 组合。
+  if (key === 'r' || (e.metaKey && e.altKey && key === 'f')) {
+    e.preventDefault()
+    findOpen.value = true
+    replaceOpen.value = true
+  } else if (key === 'f') {
     e.preventDefault()
     findOpen.value = true
   }
@@ -417,9 +515,16 @@ defineExpose({
       :index="activeMatch"
       :total="total"
       :placeholder="t('body.findPh')"
+      replaceable
+      :replace-open="replaceOpen"
+      v-model:replace="replaceText"
+      :replace-ph="t('body.replacePh')"
       @prev="prevMatch"
       @next="nextMatch"
       @close="closeFind"
+      @toggle-replace="replaceOpen = !replaceOpen"
+      @replace-one="doReplaceOne"
+      @replace-all="doReplaceAll"
     />
 
     <JsonEditor

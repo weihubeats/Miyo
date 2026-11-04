@@ -1,13 +1,30 @@
 import { describe, expect, it, vi } from 'vitest'
 import { computed, defineComponent, ref, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
-import { countOccurrences, useFindInText } from './useFindInText'
+import { countOccurrences, replaceAllOccurrences, useFindInText } from './useFindInText'
 
 describe('countOccurrences', () => {
   it('大小写不敏感统计，空词/空文本为 0', () => {
     expect(countOccurrences('aXbXc', 'x')).toBe(2)
     expect(countOccurrences('abc', '')).toBe(0)
     expect(countOccurrences('', 'a')).toBe(0)
+  })
+})
+
+describe('replaceAllOccurrences', () => {
+  it('大小写不敏感全量替换并计数', () => {
+    expect(replaceAllOccurrences('aXbXc', 'x', '-')).toEqual({ text: 'a-b-c', count: 2 })
+  })
+  it('替换内容包含查找词不陷入循环', () => {
+    expect(replaceAllOccurrences('aaa', 'a', 'aa')).toEqual({ text: 'aaaaaa', count: 3 })
+  })
+  it('空替换串 = 删除全部出现', () => {
+    expect(replaceAllOccurrences('aXbXc', 'X', '')).toEqual({ text: 'abc', count: 2 })
+  })
+  it('无匹配 / 空词 / 空文本原样返回', () => {
+    expect(replaceAllOccurrences('abc', 'z', 'y')).toEqual({ text: 'abc', count: 0 })
+    expect(replaceAllOccurrences('abc', '', 'y')).toEqual({ text: 'abc', count: 0 })
+    expect(replaceAllOccurrences('', 'a', 'y')).toEqual({ text: '', count: 0 })
   })
 })
 

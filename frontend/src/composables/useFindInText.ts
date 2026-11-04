@@ -32,6 +32,28 @@ export function countOccurrences(text: string, q: string): number {
   return n
 }
 
+/**
+ * 大小写不敏感的全量替换（与 countOccurrences 同口径）。
+ * 返回新文本与替换次数（0 次时原文返回，调用方据此跳过回写）。
+ */
+export function replaceAllOccurrences(text: string, q: string, r: string): { text: string; count: number } {
+  if (!text || !q) return { text, count: 0 }
+  const ql = q.toLowerCase()
+  const lower = text.toLowerCase()
+  let out = ''
+  let from = 0
+  let n = 0
+  for (;;) {
+    const idx = lower.indexOf(ql, from)
+    if (idx === -1) break
+    out += text.slice(from, idx) + r
+    from = idx + q.length
+    n += 1
+  }
+  if (n === 0) return { text, count: 0 }
+  return { text: out + text.slice(from), count: n }
+}
+
 export function useFindInText(total: Ref<number>, options: UseFindInTextOptions = {}) {
   const findOpen = ref(false)
   const query = ref('')
