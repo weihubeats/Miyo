@@ -13,7 +13,7 @@ use uuid::Uuid;
 use miyo_core::model::{Endpoint, Scenario, ScenarioRun};
 use miyo_core::VariableMap;
 use miyo_storage::repository as repo;
-use miyo_test::runner::{ScenarioOptions, ScenarioStepInput};
+use miyo_test::runner::{ScenarioOptions, ScenarioProgress, ScenarioStepInput};
 
 use crate::commands::request::{cap_ipc_body, resolve_timeout_ms};
 use crate::error::{CommandError, CommandResult};
@@ -170,13 +170,35 @@ pub async fn run_scenario(
     });
 
     // 进度事件（带 run_id：同前端多编辑器实例可过滤只认自己的那次运行）。
+    //
+    // 每个步骤发两次：进入本步（result 缺省 + url，前端显示「执行中」与
+    // 实际请求地址）、本步结束（result 带整段结果，前端立刻就能展开响应 /
+    // 断言 / 提取值——不必等整轮跑完）。正文与最终结果同口径做 IPC 预览截断，
+    // 避免逐步回传大响应；全文仍由末尾的 get_response_body 缓存路径兜底。
     let total = steps.len();
     let total_enabled = total;
     let event_run_id = args.run_id.clone().unwrap_or_default();
-    let progress = move |done: usize, _total: usize| {
+    let progress = move |p: ScenarioProgress<'_>| {
+        let step = p.step.map(|r| {
+            let mut r = r.clone();
+            if let Some(resp) = r.response.as_mut() {
+                let (preview, omitted) = cap_ipc_body(&resp.body);
+                if omitted {
+                    resp.body = preview;
+                    resp.body_omitted = true;
+                }
+            }
+            r
+        });
         let _ = app.emit(
             "miyo:scenario-progress",
-            serde_json::json!({ "runId": event_run_id, "done": done, "total": total }),
+            serde_json::json!({
+                "runId": event_run_id,
+                "done": p.done,
+                "total": p.total,
+                "url": p.url,
+                "result": step,
+            }),
         );
     };
     let options = ScenarioOptions {

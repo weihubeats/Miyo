@@ -394,7 +394,7 @@ pub async fn run_collection(
 
 /// 场景步骤输入：URL / 规格保留**渲染前模板**（执行期用 runtime 二次渲染，
 /// 前步提取的变量即可成为后续请求的入参），提取与断言为步骤级配置
-///（不读 `endpoint.tests`）。
+/// （不读 `endpoint.tests`）。
 #[derive(Debug, Clone)]
 pub struct ScenarioStepInput {
     pub endpoint: Endpoint,
@@ -402,6 +402,22 @@ pub struct ScenarioStepInput {
     pub spec_template: RequestSpec,
     pub extract: Vec<crate::config::ExtractSpec>,
     pub assertions: Vec<crate::config::AssertionSpec>,
+}
+
+/// 场景进度快照（回调参数）。
+///
+/// 进度分两半：`done` 是本步之前的已完成步数，`step` 是本步（进入时不含结果，
+/// 结束 / 失败 / 取消时带上该步结果）——前端据此在等待网络期间就渲染
+/// 「第 N 步 · 执行中 · 已发出请求」，而不是只看到一根 0%→100% 的进度条。
+#[derive(Debug, Clone)]
+pub struct ScenarioProgress<'a> {
+    /// 已完成步数（0-based 位次）。
+    pub done: usize,
+    pub total: usize,
+    /// 本步结果：进入本步时为 `None`，本步结束后为 `Some`。
+    pub step: Option<&'a EndpointResult>,
+    /// 本步渲染后实际发出的 URL（进入本步时已可确定）。
+    pub url: Option<&'a str>,
 }
 
 /// 场景运行选项。
@@ -438,7 +454,7 @@ pub async fn run_scenario(
     steps: Vec<ScenarioStepInput>,
     base_vars: &HashMap<String, String>,
     options: &ScenarioOptions,
-    progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+    progress: Option<&(dyn Fn(ScenarioProgress<'_>) + Send + Sync)>,
 ) -> ScenarioRunResult {
     let total = steps.len();
     // runtime 以环境静态变量为底，提取值按步覆盖（runtime 优先级更高）。
@@ -467,6 +483,16 @@ pub async fn run_scenario(
         };
         // 每步独立超时：接口自带 timeout_ms 优先，否则用场景级解析值兜底。
         let step_timeout = step.endpoint.request.timeout_ms.or(options.timeout_ms);
+        // 进入本步：先报「已发出」（实际 URL 已确定），让前端在等待网络期间
+        // 就能展示正在跑哪一步、打到哪个地址。
+        if let Some(cb) = progress {
+            cb(ScenarioProgress {
+                done: idx,
+                total,
+                step: None,
+                url: Some(&url),
+            });
+        }
         let (mut result, _) = run_one_core(
             &step.endpoint,
             &url,
@@ -482,7 +508,13 @@ pub async fn run_scenario(
         let failed = !result.ok;
         results.push(result);
         if let Some(cb) = progress {
-            cb(idx + 1, total);
+            let done = results.len();
+            cb(ScenarioProgress {
+                done,
+                total,
+                step: results.last(),
+                url: None,
+            });
         }
         // 取消优先于失败即停：在途请求被中止的步骤 ok = false 但非真实失败，
         // 先判取消再判失败，避免「取消」被误报为「失败即停」。

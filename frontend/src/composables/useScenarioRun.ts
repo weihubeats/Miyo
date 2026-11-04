@@ -66,6 +66,18 @@ export interface UseScenarioRunOptions {
   openMenuAt: MenuOpener
 }
 
+/** 场景进度事件载荷（后端 `miyo:scenario-progress`，每步发两次：
+ *  进入本步时带 url、结束本步时带 result）。 */
+export interface ScenarioProgressEvent {
+  runId: string
+  done: number
+  total: number
+  /** 进入某步时的实际 URL（该步结束时缺省）。 */
+  url?: string | null
+  /** 该步已结束时的结果（进入时缺省）。 */
+  result?: ScenarioRunResult['results'][number] | null
+}
+
 /** 单个启用步骤 → 运行入参（URL 保留 {{}} 模板，执行期 runtime 二次渲染）。 */
 export interface BuiltRunStep {
   index: number
@@ -88,6 +100,59 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
   const runResult = ref<ScenarioRunResult | null>(null)
   /** 本次运行实际执行的步骤（编辑态索引，按运行顺序）；结果按位对应。 */
   const runStepIndexes = ref<number[]>([])
+
+  // ---------- 逐步实时结果（后端进度事件 `miyo:scenario-progress`） ----------
+  /** 运行中按位累积的已完成步结果：后端每步结束即回传，前端立刻可见
+   *  （不必等整轮跑完）；运行结束后由 runScenario 的返回整体覆盖。 */
+  const liveResults = ref<(ScenarioRunResult['results'][number] | undefined)[]>([])
+  /** 运行中「已进入但未结束」的步：位次 + 渲染后实际发出的 URL。 */
+  const inFlight = ref<{ pos: number; url: string } | null>(null)
+
+  /** 接收进度事件（由宿主组件转发 `miyo:scenario-progress`）。 */
+  function applyProgressEvent(p: ScenarioProgressEvent): void {
+    if (!runId.value || p.runId !== runId.value) return
+    progress.value = { done: p.done, total: p.total || progress.value.total }
+    if (p.result) {
+      const stepIdx = p.result.step_index ?? p.done - 1
+      const pos = runStepIndexes.value.indexOf(stepIdx)
+      const at = pos === -1 ? Math.max(0, p.done - 1) : pos
+      const next = [...liveResults.value]
+      next[at] = p.result
+      liveResults.value = next
+      if (inFlight.value?.pos === at) inFlight.value = null
+      return
+    }
+    inFlight.value = { pos: p.done, url: p.url ?? '' }
+  }
+
+  /** 运行中的结果行：已完成步 + 在途步占位（步骤一进入就有行，不必等整轮）。 */
+  const liveRows = computed<
+    { result: ScenarioRunResult['results'][number] | null; pos: number; url: string | null }[]
+  >(() => {
+    if (!running.value) return []
+    const rows: {
+      result: ScenarioRunResult['results'][number] | null
+      pos: number
+      url: string | null
+    }[] = []
+    const total = runStepIndexes.value.length
+    for (let pos = 0; pos < total; pos++) {
+      const r = liveResults.value[pos]
+      if (r) {
+        rows.push({ result: r, pos, url: r.url ?? null })
+        continue
+      }
+      // 尚未结束：仅在途步占位（后续步骤保持徽章「待执行」）。
+      if (inFlight.value?.pos === pos) {
+        rows.push({ result: null, pos, url: inFlight.value.url || null })
+      }
+      break
+    }
+    return rows
+  })
+
+  /** 某步在「运行中」是否还没有任何结果（面板显示等待提示）。 */
+  const livePending = computed(() => liveRows.value.some((r) => !r.result))
 
   /** 执行策略（失败即停的可读化表达，底层仍是 stop_on_failure 布尔）。 */
   const STRATEGY_OPTIONS = computed(() => [
@@ -114,13 +179,18 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     return m
   })
 
-  /** 结果按位对应 runStepIndexes；运行中仅进度可辨（无逐步中间结果）。 */
+  /** 结果按位对应 runStepIndexes；运行中已完成步按真实结果着色（ok / fail），
+   * 在途步「执行中」，未到达的「待执行」。 */
   function stepTone(i: number): StepTone | null {
     const pos = runStepIndexes.value.indexOf(i)
     if (pos === -1) return null
     if (running.value) {
-      if (pos < progress.value.done) return 'done'
-      return pos === progress.value.done ? 'run' : 'wait'
+      const live = liveResults.value[pos]
+      if (live) {
+        if (live.cancelled) return 'cancel'
+        return live.ok ? 'ok' : 'fail'
+      }
+      return inFlight.value?.pos === pos ? 'run' : 'wait'
     }
     if (!runResult.value) return null
     const r = resultByStepIndex.value.get(i)
@@ -293,6 +363,8 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     runIsHistory.value = false
     currentRunAt.value = null
     varsSnapshots.value = []
+    liveResults.value = []
+    inFlight.value = null
     progress.value = { done: 0, total: built.length }
     reportOpen.value = true
     running.value = true
@@ -310,11 +382,21 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
       currentRunAt.value = new Date().toISOString()
       void loadHistory()
     } catch (err) {
+      // 抛错时把已跑完的步骤留住（实时结果不清空），便于排查是哪一步出的问题。
+      if (liveResults.value.some(Boolean)) {
+        runResult.value = {
+          results: liveResults.value.filter((r): r is NonNullable<typeof r> => !!r),
+          cancelled: false,
+          stopped_on_failure: false,
+          variables: {},
+        }
+      }
       toast.error(t('scenario.runFail'), {
         message: err instanceof Error ? err.message : String(err),
       })
     } finally {
       running.value = false
+      inFlight.value = null
     }
   }
 
@@ -395,6 +477,10 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     runIsHistory.value = false
     currentRunAt.value = null
     respOpenRows.value = new Set()
+    // 重跑的结果按原位次回填，实时事件位次是「重跑子集内」的位次，两者不同位序，
+    // 故重跑不做逐步实时渲染，整轮回填后一次展示（避免错位）。
+    liveResults.value = []
+    inFlight.value = null
     progress.value = { done: 0, total: built.length }
     reportOpen.value = true
     running.value = true
@@ -490,6 +576,11 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     progress,
     runResult,
     runStepIndexes,
+    liveResults,
+    inFlight,
+    liveRows,
+    livePending,
+    applyProgressEvent,
     STRATEGY_OPTIONS,
     execStrategy,
     // 步骤执行状态
