@@ -11,9 +11,9 @@ async fn seeds_full_fixture_set() {
     let db = memory_pool().await.unwrap();
     seed_dev_data(&db).await.unwrap();
 
-    // 项目 10 个（3 个完整演示 + 6 个轻量补位 + 1 个边界场景），全部以「小奏技术」品牌命名
+    // 项目 11 个（4 个完整演示 + 6 个轻量补位 + 1 个边界场景），全部以「小奏技术」品牌命名
     let projects = repo::list_projects(&db).await.unwrap();
-    assert_eq!(projects.len(), 10);
+    assert_eq!(projects.len(), 11);
     assert!(
         projects.iter().all(|p| p.name.contains("小奏技术")),
         "所有种子项目名都应包含品牌「小奏技术」"
@@ -36,7 +36,11 @@ async fn seeds_full_fixture_set() {
             .filter(|p| p.team_id == Some(team_id))
             .count()
     };
-    assert_eq!(count_in(platform.id), 3, "平台组 3 个项目");
+    assert_eq!(
+        count_in(platform.id),
+        4,
+        "平台组 4 个项目（含网关 Mock 链路演示）"
+    );
     assert_eq!(count_in(business.id), 3, "业务组 3 个项目");
     assert_eq!(
         projects
@@ -299,6 +303,80 @@ async fn seeds_full_fixture_set() {
         .unwrap()
         .expect("激活环境已写入");
     assert!(active_env.contains(&open_dev.id.to_string()));
+
+    // 电商下单 Mock 链路：POST 下单 → GET 预览 → POST 支付，上一步结果喂下一步
+    let shop = projects
+        .iter()
+        .find(|p| p.name == "小奏技术 · 电商下单（Mock 链路）")
+        .expect("电商下单 Mock 链路项目存在");
+    let shop_envs = repo::list_environments(&db, shop.id).await.unwrap();
+    assert_eq!(shop_envs.len(), 1);
+    assert_eq!(
+        shop_envs[0].base_url, "http://127.0.0.1:4010",
+        "链路演示走本地 Mock"
+    );
+
+    let shop_eps = repo::list_endpoints(&db, shop.id).await.unwrap();
+    assert_eq!(shop_eps.len(), 3);
+    let create_ep = shop_eps
+        .iter()
+        .find(|e| e.method == miyo_core::model::HttpMethod::POST && e.path == "/shop/orders")
+        .expect("POST 下单接口存在");
+    assert!(
+        matches!(&create_ep.request.body, miyo_core::model::BodySpec::Json { raw } if raw.contains("sku")),
+        "下单接口应带 JSON 请求体（请求参数演示素材）"
+    );
+    let preview_ep = shop_eps
+        .iter()
+        .find(|e| e.path == "/shop/orders/{orderNo}/pay-preview")
+        .expect("GET 支付预览接口存在");
+    assert!(
+        !preview_ep.request.params.is_empty() && !preview_ep.request.path_variables.is_empty(),
+        "预览接口应同时带 query 参数与路径变量"
+    );
+    assert!(
+        preview_ep
+            .request
+            .params
+            .iter()
+            .any(|p| p.value.contains("{{payToken}}")),
+        "预览接口的 query 应引用第 1 步提取的 payToken"
+    );
+    let pay_ep = shop_eps
+        .iter()
+        .find(|e| e.path.ends_with("/pay"))
+        .expect("POST 支付接口存在");
+    assert!(
+        matches!(&pay_ep.request.body, miyo_core::model::BodySpec::Json { raw } if raw.contains("{{payableAmount}}")),
+        "支付接口 Body 应使用预览步骤算出的实付金额"
+    );
+
+    let shop_rules = repo::list_mock_rules(&db, shop.id).await.unwrap();
+    assert_eq!(shop_rules.len(), 3, "下单 / 预览 / 支付各一条 Mock 规则");
+    assert!(
+        shop_rules
+            .iter()
+            .any(|r| r.response_body_template.contains("{{params.")),
+        "Mock 响应应回显路径参数（便于核对实际入参）"
+    );
+
+    let shop_scenarios = repo::list_scenarios(&db, shop.id).await.unwrap();
+    let chain = shop_scenarios
+        .iter()
+        .find(|s| s.name.starts_with("电商主流程"))
+        .expect("电商主流程场景存在");
+    assert_eq!(chain.steps.len(), 3);
+    let extract0 = serde_json::to_string(&chain.steps[0].extract).unwrap();
+    assert!(
+        extract0.contains("orderNo") && extract0.contains("payToken"),
+        "第 1 步应提取 orderNo / payToken 供后续步骤使用"
+    );
+    assert!(
+        serde_json::to_string(&chain.steps[1].extract)
+            .unwrap()
+            .contains("payableAmount"),
+        "第 2 步应提取 payableAmount 供支付步骤使用"
+    );
 }
 
 /// 幂等性：同一内存库重复 seed（模拟手动重复调用）不应报错。

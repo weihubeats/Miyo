@@ -1004,6 +1004,207 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     };
     repo::save_scenario(db, &scenario).await?;
 
+    // ---- 电商下单：本地 Mock 通用业务链路演示（下单 → 预览 → 支付）----
+    //
+    // 与上一条公网链路互补：JSONPlaceholder 不收 POST、无查询类接口，演示不出
+    // 「POST 请求 + 用上一步的请求/响应值拼下一步参数」。这里全部走本地 Mock，
+    // 启动 Mock 服务即可离线跑通，且每一步都带真实的请求参数（query / 路径变量 /
+    // JSON Body），可在场景结果行内展开「请求参数」核对实际发出的内容。
+    //
+    // 链路本身取最常见的电商主流程：POST 下单拿 orderNo / payToken → GET 预览
+    // 支付页（query 带 orderNo、路径变量带 payToken）→ POST 发起支付（Body 带
+    // 预览返回的 payableAmount）。订单号由 Mock 的 {{mock.uuid}} 生成，每跑一次
+    // 都不一样，能直观看到「值确实是上一步传下来的」。
+    let now = Utc::now();
+    let shop_project = Project {
+        id: Uuid::new_v4(),
+        name: "小奏技术 · 电商下单（Mock 链路）".into(),
+        description:
+            "电商主流程演示：全部走本地 Mock（启动 Mock 服务后 127.0.0.1:4010 直接命中）。\
+                      第 1 步 POST 下单拿 orderNo / payToken，第 2 步 GET 预览支付页，\
+                      第 3 步 POST 发起支付——支付金额与订单号都来自前一步的响应。"
+                .into(),
+        variables: HashMap::new(),
+        team_id: Some(team_platform.id),
+        created_at: now,
+        updated_at: now,
+    };
+    repo::save_project(db, &shop_project).await?;
+    let shop_folder = folder(&shop_project, None, "下单支付");
+    repo::save_folder(db, &shop_folder).await?;
+
+    let create_order = endpoint(
+        &shop_project,
+        Some(&shop_folder),
+        "创建订单",
+        HttpMethod::POST,
+        "/shop/orders",
+        "JSON Body：商品 SKU / 数量 / 收货人；Mock 返回新订单号与支付令牌",
+        EndpointStatus::Released,
+        0,
+        RequestSpec {
+            headers: vec![kvd("Content-Type", "application/json", "请求类型")],
+            body: BodySpec::Json {
+                raw: r#"{"sku": "MIYO-PRO-1Y", "quantity": 2, "customer": "奏小雪", "couponCode": "NEW2026"}"#
+                    .into(),
+            },
+            ..RequestSpec::default()
+        },
+    );
+    repo::save_endpoint(db, &create_order).await?;
+    let preview_pay = endpoint(
+        &shop_project,
+        Some(&shop_folder),
+        "预览支付",
+        HttpMethod::GET,
+        "/shop/orders/{orderNo}/pay-preview",
+        "路径变量 {orderNo}（第 1 步提取）+ Query payToken（第 1 步提取）",
+        EndpointStatus::Released,
+        1,
+        RequestSpec {
+            params: vec![
+                kvd("payToken", "{{payToken}}", "支付令牌，来自第 1 步"),
+                kvd("channel", "alipay", "支付渠道"),
+            ],
+            path_variables: vec![kvd("orderNo", "{{orderNo}}", "订单号，来自第 1 步")],
+            ..RequestSpec::default()
+        },
+    );
+    repo::save_endpoint(db, &preview_pay).await?;
+    let pay_order = endpoint(
+        &shop_project,
+        Some(&shop_folder),
+        "支付订单",
+        HttpMethod::POST,
+        "/shop/orders/{orderNo}/pay",
+        "路径变量 {orderNo} + JSON Body：金额取第 2 步预览结果，渠道沿用 query",
+        EndpointStatus::Released,
+        2,
+        RequestSpec {
+            headers: vec![kvd("Content-Type", "application/json", "请求类型")],
+            params: vec![kvd("channel", "alipay", "支付渠道")],
+            path_variables: vec![kvd("orderNo", "{{orderNo}}", "订单号，来自第 1 步")],
+            body: BodySpec::Json {
+                raw: r#"{"amount": "{{payableAmount}}", "currency": "CNY", "payToken": "{{payToken}}"}"#
+                    .into(),
+            },
+            ..RequestSpec::default()
+        },
+    );
+    repo::save_endpoint(db, &pay_order).await?;
+
+    // Mock 规则：响应模板用 {{params.x}} / {{query.x}} / {{mock.uuid}} 回显入参——
+    // 跑完一步就能在响应里看到「实际发出去的参数」，不必去 Mock 日志里翻。
+    for rule in [
+        mock_rule(
+            &shop_project,
+            Some(&create_order),
+            "电商·下单成功",
+            HttpMethod::POST,
+            "/shop/orders",
+            201,
+            r#"{"orderNo": "SO{{mock.uuid}}", "status": "CREATED", "payToken": "pt-{{mock.uuid}}", "amount": "398.00", "currency": "CNY"}"#,
+            0,
+        ),
+        mock_rule(
+            &shop_project,
+            Some(&preview_pay),
+            "电商·支付预览",
+            HttpMethod::GET,
+            "/shop/orders/{orderNo}/pay-preview",
+            200,
+            r#"{"orderNo": "{{params.orderNo}}", "amount": "398.00", "discount": "9.80", "payableAmount": "388.20", "channel": "{{query.channel}}", "payTokenValid": true}"#,
+            0,
+        ),
+        mock_rule(
+            &shop_project,
+            Some(&pay_order),
+            "电商·支付成功",
+            HttpMethod::POST,
+            "/shop/orders/{orderNo}/pay",
+            200,
+            r#"{"orderNo": "{{params.orderNo}}", "status": "PAID", "paidAt": "2026-11-04T10:30:00Z", "tradeNo": "ALI{{mock.int}}", "channel": "{{query.channel}}"}"#,
+            0,
+        ),
+    ] {
+        repo::save_mock_rule(db, &rule).await?;
+    }
+
+    let shop_scenario = Scenario {
+        id: Uuid::new_v4(),
+        project_id: shop_project.id,
+        name: "电商主流程：下单 → 支付预览 → 支付".into(),
+        description:
+            "第 1 步 POST 下单，提取 orderNo / payToken；第 2 步 GET 用它们拼路径变量与 Query \
+             预览支付页，提取 payableAmount；第 3 步 POST 支付，Body 带上预览算出的实付金额。"
+                .into(),
+        sort_order: 0,
+        steps: vec![
+            ScenarioStep {
+                endpoint_id: create_order.id,
+                enabled: true,
+                extract: serde_json::json!([
+                    { "name": "orderNo", "from": "body", "path": "$.orderNo" },
+                    { "name": "payToken", "from": "body", "path": "$.payToken" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 201 },
+                    { "type": "jsonpath", "path": "$.orderNo", "op": "exists", "expected": null }
+                ]),
+            },
+            ScenarioStep {
+                endpoint_id: preview_pay.id,
+                enabled: true,
+                extract: serde_json::json!([
+                    { "name": "payableAmount", "from": "body", "path": "$.payableAmount" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 },
+                    { "type": "jsonpath", "path": "$.payableAmount", "op": "exists", "expected": null }
+                ]),
+            },
+            ScenarioStep {
+                endpoint_id: pay_order.id,
+                enabled: true,
+                extract: serde_json::json!([
+                    { "name": "tradeNo", "from": "body", "path": "$.tradeNo" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 },
+                    { "type": "jsonpath", "path": "$.status", "op": "eq", "expected": "PAID" }
+                ]),
+            },
+        ],
+        script: None,
+        created_at: now,
+        updated_at: now,
+    };
+    repo::save_scenario(db, &shop_scenario).await?;
+
+    // 响应示例：文档页素材（与 Mock 规则同形状）
+    for example in [
+        response_example(
+            &create_order,
+            "201 已创建",
+            201,
+            r#"{"orderNo": "SO7f3c1a2b", "status": "CREATED", "payToken": "pt-9d21e0", "amount": "398.00", "currency": "CNY"}"#,
+        ),
+        response_example(
+            &preview_pay,
+            "200 成功",
+            200,
+            r#"{"orderNo": "SO7f3c1a2b", "amount": "398.00", "discount": "9.80", "payableAmount": "388.20", "channel": "alipay", "payTokenValid": true}"#,
+        ),
+        response_example(
+            &pay_order,
+            "200 成功",
+            200,
+            r#"{"orderNo": "SO7f3c1a2b", "status": "PAID", "paidAt": "2026-11-04T10:30:00Z", "tradeNo": "ALI1024", "channel": "alipay"}"#,
+        ),
+    ] {
+        repo::save_response_example(db, &example).await?;
+    }
+
     // ---- GraphQL：公共接口 ----
     let mut graphql_endpoints: HashMap<String, Endpoint> = HashMap::new();
     for (i, (name, desc, query, variables)) in [
@@ -1674,6 +1875,21 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             env_var("trace_id", "xz-trace-stg-001", "链路追踪 ID 示例"),
         ],
     );
+    // 电商下单（链路 Mock 演示）：基址指向本地 Mock 服务，启动 Mock 后整条
+    // 链路（下单 → 预览 → 支付，含两次 POST）离线可跑。
+    let shop_env = environment(
+        &shop_project,
+        "开发环境",
+        "http://127.0.0.1:4010",
+        vec![
+            env_var("token", "xz-dev-token-123", "Mock 演示用 Bearer Token"),
+            env_var(
+                "channel",
+                "alipay",
+                "默认支付渠道（也可直接在接口 Query 里改）",
+            ),
+        ],
+    );
     for env in [
         &users_dev,
         &users_test,
@@ -1681,6 +1897,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
         &open_test,
         &gql_dev,
         &gql_test,
+        &shop_env,
     ] {
         repo::save_environment(db, env).await?;
     }
