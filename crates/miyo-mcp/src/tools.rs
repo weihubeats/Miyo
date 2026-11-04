@@ -144,6 +144,49 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "get_endpoint",
+            "description": "读取单个接口的完整定义（方法 / 路径 / 请求头 / 参数 / Body / 认证形态），调用 send_endpoint 前先看它。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "endpointId": { "type": "string", "description": "接口 UUID（list_endpoints / save_curl 返回）" }
+                },
+                "required": ["endpointId"]
+            }
+        }),
+        json!({
+            "name": "send_endpoint",
+            "description": "发送一次真实 HTTP 请求（链式调用的核心工具）。按 Miyo 中已保存接口的当前配置执行，支持覆盖：url（完整地址）、headers、query、body（请求体原文）、variables（额外变量，渲染进 {{var}} 占位）。返回完整响应（状态码 / 耗时 / 正文，超 64KB 截断）。典型链路：调用下单接口 → 从响应正文提取订单号 → 用 variables/body 把订单号传给支付预览接口 → 再调支付接口。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "endpointId": { "type": "string", "description": "接口 UUID（list_endpoints / save_curl 返回）" },
+                    "url": { "type": "string", "description": "可选，覆盖完整 URL 模板（支持 {{var}} 占位）" },
+                    "headers": { "type": "object", "description": "可选，追加/覆盖请求头 {\"名\": \"值\"}", "additionalProperties": { "type": "string" } },
+                    "query": { "type": "object", "description": "可选，追加/覆盖 query 参数", "additionalProperties": { "type": "string" } },
+                    "body": { "type": "string", "description": "可选，覆盖请求体原文（Json/Text 原位替换；其余类型降级为 text）" },
+                    "variables": { "type": "object", "description": "可选，额外变量注入（优先级最高），如 {\"orderId\": \"A1024\"}", "additionalProperties": { "type": "string" } },
+                    "environmentId": { "type": "string", "description": "可选，环境 UUID（缺省用全局+项目变量）" },
+                    "timeoutMs": { "type": "number", "description": "可选，本次请求超时毫秒（缺省 接口级→全局设置→300s）" }
+                },
+                "required": ["endpointId"]
+            }
+        }),
+        json!({
+            "name": "run_scenario",
+            "description": "运行整个集成测试场景（按步骤顺序串行执行，前一步提取的链路变量自动传入后续步骤），返回每步摘要（状态码/断言/提取值/响应预览）与最终变量池。适合一次性执行预编排好的接口链路（如下单→支付预览→支付）。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scenarioId": { "type": "string", "description": "场景 UUID（list_scenarios 返回）" },
+                    "environmentId": { "type": "string", "description": "可选，环境 UUID（缺省用全局+项目变量）" },
+                    "stopOnFailure": { "type": "boolean", "description": "可选，失败即停（默认 true）" },
+                    "variables": { "type": "object", "description": "可选，初始变量注入（优先级最高）", "additionalProperties": { "type": "string" } }
+                },
+                "required": ["scenarioId"]
+            }
+        }),
+        json!({
             "name": "list_scenarios",
             "description": "列出 Miyo 中的集成测试场景（接口链路）。返回 id / 名称 / 描述 / 步骤数 / 是否已有自定义脚本。",
             "inputSchema": {
@@ -206,6 +249,38 @@ fn validate_tool_call(params: &Value) -> Result<(), (i64, String)> {
                 .ok_or_else(|| (-32602, "缺少必填参数 projectId".to_string()))?
                 .parse::<Uuid>()
                 .map_err(|_| (-32602, "projectId 不是合法 UUID".to_string()))?;
+            Ok(())
+        }
+        "get_endpoint" => {
+            str_arg(&args, "endpointId")
+                .ok_or_else(|| (-32602, "缺少必填参数 endpointId".to_string()))?
+                .parse::<Uuid>()
+                .map_err(|_| (-32602, "endpointId 不是合法 UUID".to_string()))?;
+            Ok(())
+        }
+        "send_endpoint" => {
+            str_arg(&args, "endpointId")
+                .ok_or_else(|| (-32602, "缺少必填参数 endpointId".to_string()))?
+                .parse::<Uuid>()
+                .map_err(|_| (-32602, "endpointId 不是合法 UUID".to_string()))?;
+            str_map_arg(&args, "headers").map_err(|e| (-32602, e))?;
+            str_map_arg(&args, "query").map_err(|e| (-32602, e))?;
+            str_map_arg(&args, "variables").map_err(|e| (-32602, e))?;
+            opt_uuid_arg(&args, "environmentId").map_err(|e| (-32602, e))?;
+            if let Some(t) = args.get("timeoutMs") {
+                if t.as_f64().map(|f| f <= 0.0).unwrap_or(true) {
+                    return Err((-32602, "timeoutMs 必须是正数".to_string()));
+                }
+            }
+            Ok(())
+        }
+        "run_scenario" => {
+            str_arg(&args, "scenarioId")
+                .ok_or_else(|| (-32602, "缺少必填参数 scenarioId".to_string()))?
+                .parse::<Uuid>()
+                .map_err(|_| (-32602, "scenarioId 不是合法 UUID".to_string()))?;
+            str_map_arg(&args, "variables").map_err(|e| (-32602, e))?;
+            opt_uuid_arg(&args, "environmentId").map_err(|e| (-32602, e))?;
             Ok(())
         }
         "list_scenarios" => {
@@ -283,6 +358,73 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, (i64
             )
             .expect("序列化失败")
         }
+        "get_endpoint" => {
+            let endpoint_id: Uuid = str_arg(&args, "endpointId")
+                .ok_or_else(|| (-32602, "缺少必填参数 endpointId".to_string()))?
+                .parse()
+                .map_err(|_| (-32602, "endpointId 不是合法 UUID".to_string()))?;
+            serde_json::to_value(
+                client
+                    .get_endpoint(endpoint_id)
+                    .await
+                    .map_err(|e| tool_error(&e.user_message()))?,
+            )
+            .expect("序列化失败")
+        }
+        "send_endpoint" => {
+            let endpoint_id: Uuid = str_arg(&args, "endpointId")
+                .ok_or_else(|| (-32602, "缺少必填参数 endpointId".to_string()))?
+                .parse()
+                .map_err(|_| (-32602, "endpointId 不是合法 UUID".to_string()))?;
+            let mut payload = serde_json::json!({});
+            for key in ["url", "headers", "query", "body", "variables"] {
+                if let Some(v) = args.get(key) {
+                    if !v.is_null() {
+                        payload[key] = v.clone();
+                    }
+                }
+            }
+            if let Some(id) = opt_uuid_arg(&args, "environmentId").map_err(|e| (-32602, e))? {
+                payload["environmentId"] = serde_json::json!(id.to_string());
+            }
+            if let Some(t) = args.get("timeoutMs").and_then(|v| v.as_f64()) {
+                payload["timeoutMs"] = serde_json::json!(t as u64);
+            }
+            serde_json::to_value(
+                client
+                    .execute_endpoint(endpoint_id, payload)
+                    .await
+                    .map_err(|e| tool_error(&e.user_message()))?,
+            )
+            .expect("序列化失败")
+        }
+        "run_scenario" => {
+            let scenario_id: Uuid = str_arg(&args, "scenarioId")
+                .ok_or_else(|| (-32602, "缺少必填参数 scenarioId".to_string()))?
+                .parse()
+                .map_err(|_| (-32602, "scenarioId 不是合法 UUID".to_string()))?;
+            let mut payload = serde_json::json!({});
+            if let Some(v) = args.get("stopOnFailure") {
+                if !v.is_null() {
+                    payload["stopOnFailure"] = v.clone();
+                }
+            }
+            if let Some(v) = args.get("variables") {
+                if !v.is_null() {
+                    payload["variables"] = v.clone();
+                }
+            }
+            if let Some(id) = opt_uuid_arg(&args, "environmentId").map_err(|e| (-32602, e))? {
+                payload["environmentId"] = serde_json::json!(id.to_string());
+            }
+            serde_json::to_value(
+                client
+                    .run_scenario(scenario_id, payload)
+                    .await
+                    .map_err(|e| tool_error(&e.user_message()))?,
+            )
+            .expect("序列化失败")
+        }
         "list_scenarios" => {
             let project_id = opt_uuid_arg(&args, "projectId").map_err(|e| (-32602, e))?;
             serde_json::to_value(
@@ -331,7 +473,7 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, (i64
             "address": client.base(),
             "tokenPath": miyo_agent::token::token_path(&miyo_agent::default_data_dir()),
             "auth": "Authorization: Bearer <token 文件内容>",
-            "docs": "POST /agent/curl | GET /agent/projects | GET /agent/endpoints/:projectId | GET /agent/scenarios?projectId= | GET /agent/scenarios/:id | PUT /agent/scenarios/:id/script"
+            "docs": "POST /agent/curl | GET /agent/projects | GET /agent/endpoints/:projectId | GET /agent/endpoints/:id/detail | POST /agent/endpoints/:id/execute | GET /agent/scenarios?projectId= | GET /agent/scenarios/:id | POST /agent/scenarios/:id/run | PUT /agent/scenarios/:id/script"
         }),
         other => return Err((-32602, format!("未知工具：{other}"))),
     };
@@ -343,6 +485,26 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, (i64
 
 fn str_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args[key].as_str().filter(|s| !s.is_empty())
+}
+
+/// 可选的「字符串 → 字符串」对象参数（headers / query / variables）。
+/// 提供时必须是对象且值全为字符串。
+fn str_map_arg(args: &Value, key: &str) -> Result<Option<()>, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) if v.is_object() => {
+            if v.as_object()
+                .unwrap()
+                .iter()
+                .all(|(_, val)| val.is_string())
+            {
+                Ok(Some(()))
+            } else {
+                Err(format!("{key} 的值必须全是字符串"))
+            }
+        }
+        Some(_) => Err(format!("{key} 必须是对象（键值对，值为字符串）")),
+    }
 }
 
 fn opt_uuid_arg(args: &Value, key: &str) -> Result<Option<Uuid>, String> {
@@ -396,6 +558,9 @@ mod tests {
             "save_curl",
             "list_projects",
             "list_endpoints",
+            "get_endpoint",
+            "send_endpoint",
+            "run_scenario",
             "list_scenarios",
             "get_scenario",
             "save_scenario_script",
@@ -498,8 +663,9 @@ mod tests {
         )
         .await
         .unwrap();
+        // 按工具名字段断言（描述文案里会提到其他工具名，子串会误判）
         assert!(
-            !reply.contains("save_curl"),
+            !reply.contains("\"name\":\"save_curl\""),
             "停用工具不应出现在 tools/list：{reply}"
         );
         assert!(reply.contains("list_projects"));

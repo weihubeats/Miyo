@@ -9,7 +9,7 @@ pub mod variable;
 pub use curl_parser::{parse_curl, CurlParsed};
 pub use error::{not_found, openapi_error, script_error, validation, ws_error, AppError};
 pub use model::*;
-pub use render::{render_kv, render_spec};
+pub use render::{apply_global_params, render_kv, render_spec};
 pub use util::*;
 pub use variable::{merge_variables, resolve_variables, resolve_variables_with, VariableMap};
 

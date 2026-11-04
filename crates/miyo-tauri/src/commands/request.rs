@@ -555,49 +555,9 @@ pub(crate) async fn resolve_timeout_ms(spec: &RequestSpec, state: &AppState) -> 
         .unwrap_or(miyo_http::client::DEFAULT_TIMEOUT_MS))
 }
 
-/// 全局参数注入：将启用的全局参数并入请求规格（query → params，header → headers）。
-///
-/// 规则：请求自身已存在的同名键优先（全局参数只做补缺，不覆盖显式配置）。
-/// key 大小写不敏感比较（Header 常见 `x-request-id` / `X-Request-Id` 混写）。
-pub(crate) fn apply_global_params(
-    spec: &mut RequestSpec,
-    params: &[miyo_core::model::GlobalParam],
-    vars: &VariableMap,
-) {
-    use miyo_core::model::GlobalParamLocation;
-
-    for gp in params.iter().filter(|p| p.enabled) {
-        if gp.key.trim().is_empty() {
-            continue;
-        }
-        let key_lower = gp.key.trim().to_ascii_lowercase();
-        let value = miyo_core::resolve_variables(&gp.value, vars);
-        match gp.location {
-            GlobalParamLocation::Query => {
-                let exists = spec
-                    .params
-                    .iter()
-                    .any(|kv| kv.enabled && kv.key.trim().to_ascii_lowercase() == key_lower);
-                if !exists {
-                    let mut kv = KeyValue::new(gp.key.trim(), value);
-                    kv.description = "全局参数".into();
-                    spec.params.push(kv);
-                }
-            }
-            GlobalParamLocation::Header => {
-                let exists = spec
-                    .headers
-                    .iter()
-                    .any(|kv| kv.enabled && kv.key.trim().to_ascii_lowercase() == key_lower);
-                if !exists {
-                    let mut kv = KeyValue::new(gp.key.trim(), value);
-                    kv.description = "全局参数".into();
-                    spec.headers.push(kv);
-                }
-            }
-        }
-    }
-}
+/// 全局参数注入：已下沉 [`miyo_core::render::apply_global_params`]（Agent
+/// 控制面执行路由与 Tauri 命令共用同一物化口径），此处保留原路径的再导出。
+pub(crate) use miyo_core::apply_global_params;
 
 #[cfg(test)]
 mod tests {

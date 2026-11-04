@@ -90,6 +90,11 @@ import {
   type VarScanStep,
 } from '../utils/scenarioVars'
 import { generateScenarioScript, type ScriptAuth, type ScriptStep } from '../utils/scenarioScript'
+import {
+  parseScenarioScript,
+  ScriptParseError,
+  type ParsedScriptStep,
+} from '../utils/scenarioScriptParse'
 import { useScenarioRun } from '../composables/useScenarioRun'
 import { mergedVariableMap } from '../utils/environment'
 import CustomSelect from './ui/CustomSelect.vue'
@@ -100,6 +105,7 @@ import EmptyState from './ui/EmptyState.vue'
 import EnvBadge from './ui/EnvBadge.vue'
 import Icon from './ui/Icon.vue'
 import IconButton from './ui/IconButton.vue'
+import Popconfirm from './ui/Popconfirm.vue'
 import Menu, { type MenuItem } from './ui/Menu.vue'
 // ScenarioAssertionRule / ScenarioExtractRule / ScenarioRunResult 等类型
 // 由模块级 <script> 块导入（两块脚本同属一个模块作用域）。
@@ -704,6 +710,9 @@ function toScriptSteps(): ScriptStep[] {
       assertions: s.assertions
         .filter((r) => r.type)
         .map((r) => ({
+          // name 参与生成（check 具名 label）；曾遗漏导致同步往返后
+          // 具名断言退化为自动 label、脚本被误判为已自定义。
+          name: r.name ?? null,
           type: r.type,
           path: r.path?.trim() || null,
           op: r.op || 'eq',
@@ -754,6 +763,145 @@ function onScriptInput(v: string): void {
 function resetScript(): void {
   scriptCustomized.value = false
   scriptDraft.value = generatedScript.value
+}
+
+// ---------- 脚本 → 编排联动（解析回写 + 按脚本运行） ----------
+/**
+ * 同步边界：编排步骤是 endpoint_id 引用式，URL / 请求头 / Body 的真源在接口，
+ * 同步只回写步骤自有字段（提取 / 断言 / 步骤增删）；脚本步骤与接口物化 URL
+ * 的差异以警示呈现（接口层改动需到接口编辑器修正）。
+ */
+interface ScriptSyncPlan {
+  steps: ParsedScriptStep[]
+  /** 位置对齐的编辑态启用步骤（前 min(N, M) 个）。 */
+  targets: EditorStep[]
+  /** 脚本比编排多出的步骤：按 方法 + URL 模板 匹配到的接口 id。 */
+  appended: { parsed: ParsedScriptStep; endpointId: string }[]
+  /** URL 漂移警示（步骤序号 1-based）。 */
+  drifts: string[]
+  /** 编排启用步骤多于脚本的剩余数（保持原样）。 */
+  remaining: number
+  /** 阻断同步的问题（全部解决才可应用）。 */
+  blockers: string[]
+}
+
+function analyzeScriptSync(): ScriptSyncPlan {
+  const { steps: parsedSteps } = parseScenarioScript(scriptDraft.value)
+  const enabledSteps = steps.value.filter((s) => s.enabled)
+  const targets = enabledSteps.slice(0, parsedSteps.length)
+  const appended: ScriptSyncPlan['appended'] = []
+  const drifts: string[] = []
+  const blockers: string[] = []
+
+  for (const [i, target] of targets.entries()) {
+    const parsed = parsedSteps[i]
+    const ep = endpointMap.value.get(target.endpointId)
+    if (ep && urlTemplateFor(ep) !== parsed.url) {
+      drifts.push(t('scenario.syncDriftStep', { n: i + 1, name: ep.name }))
+    }
+  }
+  for (const parsed of parsedSteps.slice(enabledSteps.length)) {
+    const ep = store.endpoints.find(
+      (e) => e.method === parsed.method && urlTemplateFor(e) === parsed.url,
+    )
+    if (!ep) {
+      blockers.push(t('scenario.syncNoMatch', { name: parsed.name }))
+      continue
+    }
+    appended.push({ parsed, endpointId: ep.id })
+  }
+  return {
+    steps: parsedSteps,
+    targets,
+    appended,
+    drifts,
+    remaining: Math.max(0, enabledSteps.length - parsedSteps.length),
+    blockers,
+  }
+}
+
+/** 编辑态断言行形状（与 decodeStep 一致：期望值统一字符串）。 */
+function toEditorAssertions(rules: ScenarioAssertionRule[]): EditorStep['assertions'] {
+  return rules.map((r) => ({
+    name: r.name ?? null,
+    type: r.type,
+    path: r.path ?? '',
+    op: r.op ?? 'eq',
+    expected: r.expected == null ? '' : String(r.expected),
+  }))
+}
+
+function applyScriptSync(plan: ScriptSyncPlan): void {
+  for (const [i, target] of plan.targets.entries()) {
+    const parsed = plan.steps[i]
+    target.extract = parsed.extract.map((r) => ({ ...r }))
+    target.assertions = toEditorAssertions(parsed.assertions)
+  }
+  for (const add of plan.appended) {
+    steps.value.push({
+      key: nextStepKey(),
+      endpointId: add.endpointId,
+      enabled: true,
+      extract: add.parsed.extract.map((r) => ({ ...r })),
+      assertions: toEditorAssertions(add.parsed.assertions),
+      open: false,
+    })
+  }
+  // 同步后重算自定义标记：再生成本与脚本一致（往返无损）即解除自定义态
+  scriptCustomized.value = scriptDraft.value !== generatedScript.value
+}
+
+/** 同步到编排（Popconfirm 确认后）。全部解析通过才应用（all-or-nothing）。 */
+function onSyncConfirm(): void {
+  // 空场景（编排无启用步骤且脚本未自定义）：没有可同步的内容，友好提示而非解析报错
+  if (!steps.value.some((s) => s.enabled) && !scriptCustomized.value) {
+    toast.info(t('scenario.syncEmpty'))
+    return
+  }
+  let plan: ScriptSyncPlan
+  try {
+    plan = analyzeScriptSync()
+  } catch (e) {
+    toast.error(e instanceof ScriptParseError ? e.message : String(e))
+    return
+  }
+  if (plan.blockers.length) {
+    toast.error(plan.blockers.join('；'))
+    return
+  }
+  applyScriptSync(plan)
+  toast.success(t('scenario.syncDone', { n: plan.steps.length }))
+  if (plan.drifts.length) {
+    toast.warning(plan.drifts.slice(0, 3).join('；'), { duration: 0 })
+  }
+  if (plan.remaining) {
+    toast.warning(t('scenario.syncRemaining', { n: plan.remaining }), { duration: 0 })
+  }
+  viewMode.value = 'manual'
+}
+
+/** 脚本视图「运行」：自定义脚本先同步回编排（失败中止），再走现有运行引擎。 */
+async function runFromScript(): Promise<void> {
+  if (running.value) return
+  if (scriptCustomized.value) {
+    let plan: ScriptSyncPlan
+    try {
+      plan = analyzeScriptSync()
+    } catch (e) {
+      toast.error(e instanceof ScriptParseError ? e.message : String(e))
+      return
+    }
+    if (plan.blockers.length) {
+      toast.error(plan.blockers.join('；'))
+      return
+    }
+    applyScriptSync(plan)
+    if (plan.drifts.length) {
+      toast.warning(plan.drifts.slice(0, 3).join('；'), { duration: 0 })
+    }
+  }
+  viewMode.value = 'manual'
+  await run()
 }
 
 async function copyScript(): Promise<void> {
@@ -1404,6 +1552,29 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
           </span>
         </div>
         <div class="se-script-actions">
+          <Popconfirm
+            :title="t('scenario.syncConfirm')"
+            :description="t('scenario.syncConfirmDesc')"
+            :confirm-text="t('common.confirm')"
+            :cancel-text="t('common.cancel')"
+            @confirm="onSyncConfirm"
+          >
+            <button
+              class="miyo-btn miyo-btn-sm"
+              type="button"
+              :disabled="running"
+            >
+              <Icon name="arrow-up-right" :size="13" /> {{ t('scenario.syncToSteps') }}
+            </button>
+          </Popconfirm>
+          <button
+            class="miyo-btn miyo-btn-sm se-run"
+            type="button"
+            :disabled="running"
+            @click="runFromScript"
+          >
+            <Icon name="play" :size="13" /> {{ t('scenario.run') }}
+          </button>
           <button
             v-if="scriptCustomized"
             class="miyo-btn miyo-btn-sm"

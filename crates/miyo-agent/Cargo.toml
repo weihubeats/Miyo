@@ -10,6 +10,8 @@ homepage = "https://weihubeats.github.io/Miyo/"
 [dependencies]
 miyo-core = { path = "../miyo-core" }
 miyo-storage = { path = "../miyo-storage" }
+miyo-test = { path = "../miyo-test" }
+miyo-http = { path = "../miyo-http" }
 axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

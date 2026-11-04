@@ -11,7 +11,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use miyo_core::model::{Endpoint, Project, RequestSpec, Scenario};
+use miyo_core::model::{BodySpec, Endpoint, Project, RequestSpec, Scenario};
 use miyo_storage::repository as repo;
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
@@ -42,6 +42,18 @@ pub const MCP_TOOLS: &[McpToolDef] = &[
     McpToolDef {
         name: "list_endpoints",
         kind: "read",
+    },
+    McpToolDef {
+        name: "get_endpoint",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "send_endpoint",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "run_scenario",
+        kind: "write",
     },
     McpToolDef {
         name: "list_scenarios",
@@ -239,6 +251,117 @@ pub struct SaveScenarioScriptResult {
     pub id: uuid::Uuid,
     /// true = 已写入自定义脚本；false = 已清除。
     pub script_set: bool,
+}
+
+// ---------- 执行类 DTO（send_endpoint / run_scenario / get_endpoint） ----------
+
+/// MCP 返回体的单步 / 单请求正文截断上限（AI 只需要读出链路字段，超大响应
+/// 全量进模型上下文既慢又贵；全文仍在应用内结果面板可查）。
+const EXEC_BODY_LIMIT: usize = 64 * 1024;
+/// run_scenario 每步正文预览上限（多步叠加，比单请求更紧）。
+const STEP_BODY_LIMIT: usize = 4 * 1024;
+
+/// POST `/agent/endpoints/{id}/execute` 请求体。全部字段可选——缺省即按
+/// 接口当前配置原样发送（`{{var}}` 由变量池渲染）。
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecuteEndpointRequest {
+    /// 覆盖完整 URL 模板（保留 `{{var}}` 占位，执行期渲染）。
+    #[serde(default)]
+    pub url: Option<String>,
+    /// 追加 / 覆盖请求头（同名启用键大小写不敏感覆盖）。
+    #[serde(default)]
+    pub headers: Option<std::collections::HashMap<String, String>>,
+    /// 追加 / 覆盖 query 参数。
+    #[serde(default)]
+    pub query: Option<std::collections::HashMap<String, String>>,
+    /// 覆盖请求体原文：Json/Text 类型原位替换；GraphQL 替换 query；
+    /// 其余类型降级为 Text（需要特定 Content-Type 时在 headers 里给）。
+    #[serde(default)]
+    pub body: Option<String>,
+    /// 额外变量注入（优先级最高，覆盖环境/项目/全局同名项；链式调用的核心传参通道）。
+    #[serde(default)]
+    pub variables: Option<std::collections::HashMap<String, String>>,
+    /// 环境变量来源（缺省 = 全局 + 项目变量）。
+    #[serde(alias = "environment_id", default)]
+    pub environment_id: Option<uuid::Uuid>,
+    /// 本次请求超时毫秒（缺省按 接口级 → 全局设置 → 300s 兜底）。
+    #[serde(alias = "timeout_ms", default)]
+    pub timeout_ms: Option<u64>,
+}
+
+/// POST `/agent/endpoints/{id}/execute` 响应体。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecuteEndpointResult {
+    pub endpoint_id: uuid::Uuid,
+    pub method: String,
+    /// 渲染变量后的实际请求 URL。
+    pub url: String,
+    pub status: u16,
+    pub duration_ms: f64,
+    pub content_type: String,
+    pub size_bytes: usize,
+    pub body: String,
+    pub body_truncated: bool,
+}
+
+/// POST `/agent/scenarios/{id}/run` 请求体。
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunScenarioRequest {
+    #[serde(alias = "environment_id", default)]
+    pub environment_id: Option<uuid::Uuid>,
+    /// 默认 true（失败即停），与应用内执行策略一致。
+    #[serde(alias = "stop_on_failure", default = "default_true")]
+    pub stop_on_failure: bool,
+    /// 初始变量注入（优先级最高）。
+    #[serde(default)]
+    pub variables: Option<std::collections::HashMap<String, String>>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// run_scenario 单步摘要（AI 链式调用所需的全部信息：每步的提取值直接可读）。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScenarioStepRunResult {
+    /// 启用步骤 0-based 位次（与结果数组下标一致）。
+    pub index: usize,
+    pub endpoint_name: String,
+    pub method: String,
+    /// 渲染变量后的实际 URL；发送失败时为 null。
+    pub url: Option<String>,
+    pub status: Option<u16>,
+    pub duration_ms: Option<f64>,
+    pub ok: bool,
+    /// 失败断言明细（描述 + 原因）。
+    pub assertion_failures: Vec<String>,
+    /// 本步提取到的链路变量。
+    pub extracted: std::collections::HashMap<String, String>,
+    /// 响应正文预览（超 [`STEP_BODY_LIMIT`] 截断）。
+    pub body_preview: Option<String>,
+    pub body_truncated: bool,
+    pub error: Option<String>,
+}
+
+/// POST `/agent/scenarios/{id}/run` 响应体。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunScenarioResult {
+    pub scenario_id: uuid::Uuid,
+    pub scenario_name: String,
+    pub passed: usize,
+    pub failed: usize,
+    /// 失败即停 / 取消时未执行的启用步骤数。
+    pub skipped: usize,
+    pub cancelled: bool,
+    pub stopped_on_failure: bool,
+    /// 最终变量池（链上全部提取结果；敏感名照原值返回，由调用方自行注意）。
+    pub variables: std::collections::HashMap<String, String>,
+    pub steps: Vec<ScenarioStepRunResult>,
 }
 
 /// 统一错误响应体 `{ code, message }`。
@@ -503,6 +626,394 @@ async fn save_scenario_script_handler(
     Ok(Json(SaveScenarioScriptResult { id, script_set }))
 }
 
+// ---------- 执行类（send_endpoint / run_scenario / get_endpoint） ----------
+
+/// UTF-8 安全截断（多字节字符按 char boundary 回退）。
+fn truncate_utf8(s: &str, max_bytes: usize) -> (String, bool) {
+    if s.len() <= max_bytes {
+        return (s.to_string(), false);
+    }
+    let mut end = max_bytes;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (s[..end].to_string(), true)
+}
+
+/// 路径变量代入（镜像前端 `applyPathVars`）：长 key 先替换，`{{k}}` 与 `{k}`
+/// 两种占位都支持，禁用/空行跳过。执行期 `{{var}}` 由变量池渲染，此处只
+/// 处理接口自带的路径变量设计值。
+fn apply_path_vars(path: &str, vars: &[miyo_core::model::KeyValue]) -> String {
+    let mut rows: Vec<&miyo_core::model::KeyValue> = vars
+        .iter()
+        .filter(|r| r.enabled && !r.key.trim().is_empty() && !r.value.trim().is_empty())
+        .collect();
+    rows.sort_by_key(|r| std::cmp::Reverse(r.key.chars().count()));
+    let mut out = path.to_string();
+    for row in rows {
+        out = out
+            .replace(&format!("{{{{{}}}}}", row.key), &row.value)
+            .replace(&format!("{{{}}}", row.key), &row.value);
+    }
+    out
+}
+
+/// 接口当前配置 → URL 模板（与前端 `urlTemplateFor` 同构；控制面无会话
+/// 域名输入，相对路径统一走 `{{base_url}}` 占位交由变量池渲染）。
+fn url_template_for(ep: &Endpoint) -> String {
+    let is_abs = ep.path.contains("://");
+    let with_vars = apply_path_vars(&ep.path, &ep.request.path_variables);
+    if is_abs {
+        with_vars
+    } else if with_vars.starts_with('/') {
+        format!("{{{{base_url}}}}{with_vars}")
+    } else {
+        format!("{{{{base_url}}}}/{with_vars}")
+    }
+}
+
+/// 同名启用键覆盖（大小写不敏感），不存在则追加。
+fn upsert_kv(rows: &mut Vec<miyo_core::model::KeyValue>, key: &str, value: &str) {
+    let lower = key.trim().to_ascii_lowercase();
+    if let Some(kv) = rows
+        .iter_mut()
+        .find(|kv| kv.enabled && kv.key.trim().to_ascii_lowercase() == lower)
+    {
+        kv.value = value.to_string();
+        return;
+    }
+    rows.push(miyo_core::model::KeyValue::new(key.trim(), value));
+}
+
+/// Body 覆盖：Json/Text 原位替换 raw；GraphQL 替换 query；字段表 / 文件 /
+/// 二进制等结构化类型无法按原文承载，降级为 Text（Content-Type 由覆盖头决定）。
+fn apply_body_override(spec: &mut RequestSpec, body: &str) {
+    match &mut spec.body {
+        BodySpec::Json { raw } | BodySpec::Text { raw } => *raw = body.to_string(),
+        BodySpec::GraphQL { spec: gql } => gql.query = body.to_string(),
+        _ => {
+            spec.body = BodySpec::Text {
+                raw: body.to_string(),
+            }
+        }
+    }
+}
+
+/// 变量池合并（控制面版 `variables_for`）：全局（解密 + enabled）> 项目 >
+/// 环境（显式传入才生效）> 调用方显式注入（最高优先，链式调用传参通道）。
+/// 合并口径与 `AppState::variables_for` 一致（含 base_url 注入），去掉的是
+/// 「激活项目 / 环境」UI 态——控制面按显式传参收敛。
+async fn merged_variables(
+    db: &SqlitePool,
+    project_id: uuid::Uuid,
+    environment_id: Option<uuid::Uuid>,
+    extra: Option<std::collections::HashMap<String, String>>,
+) -> Result<miyo_core::VariableMap, miyo_core::AppError> {
+    let mut vars: miyo_core::VariableMap = repo::get_global_variables(db)
+        .await?
+        .into_iter()
+        .filter(|v| v.enabled)
+        // 先求值再 move key：`(v.key, v.effective_value()…)` 会因 key 先被
+        // move 触发 E0382（与 state.rs 同款踩坑）。
+        .map(|v| {
+            let value = v.effective_value().to_string();
+            (v.key, value)
+        })
+        .collect();
+    let project = repo::get_project(db, project_id).await?;
+    for (k, v) in project.variables {
+        vars.insert(k, v);
+    }
+    if let Some(env_id) = environment_id {
+        let env = repo::get_environment(db, env_id).await?;
+        let mut env_vars = env.effective_variables();
+        if !env_vars.contains_key("base_url") {
+            let base = env.base_url.trim();
+            if !base.is_empty() {
+                env_vars.insert("base_url".into(), base.to_string());
+            }
+        }
+        for (k, v) in env_vars {
+            vars.insert(k, v);
+        }
+    }
+    if let Some(extra) = extra {
+        for (k, v) in extra {
+            vars.insert(k, v);
+        }
+    }
+    Ok(vars)
+}
+
+/// 全局超时设置（settings 表 `http_timeout_ms`，JSON `null` = 未配置）。
+async fn global_timeout_ms(db: &SqlitePool) -> Option<u64> {
+    repo::get_setting(db, "http_timeout_ms")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Option<u64>>(&raw).ok().flatten())
+}
+
+/// GET `/agent/endpoints/{id}/detail`：单个接口完整定义（大项目避免全量拉取）。
+async fn get_endpoint_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<Endpoint> {
+    ensure_tool_enabled(&state, "get_endpoint").await?;
+    repo::get_endpoint(&state.db, id)
+        .await
+        .map(Json)
+        .map_err(api_error)
+}
+
+/// POST `/agent/endpoints/{id}/execute`：按接口当前配置发送一次真实请求
+/// （可覆盖 url/headers/query/body/变量），返回完整响应供 AI 提取链路字段。
+async fn execute_endpoint_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    body: Option<Json<ExecuteEndpointRequest>>,
+) -> ApiResult<ExecuteEndpointResult> {
+    ensure_tool_enabled(&state, "send_endpoint").await?;
+    let req = body.map(|Json(v)| v).unwrap_or_default();
+    let ep = repo::get_endpoint(&state.db, id).await.map_err(api_error)?;
+    let vars = merged_variables(
+        &state.db,
+        ep.project_id,
+        req.environment_id,
+        req.variables.clone(),
+    )
+    .await
+    .map_err(api_error)?;
+
+    let mut spec = ep.request.clone();
+    if let Some(headers) = &req.headers {
+        for (k, v) in headers {
+            upsert_kv(&mut spec.headers, k, v);
+        }
+    }
+    if let Some(query) = &req.query {
+        for (k, v) in query {
+            upsert_kv(&mut spec.params, k, v);
+        }
+    }
+    if let Some(body) = &req.body {
+        apply_body_override(&mut spec, body);
+    }
+    let global_params = repo::get_global_params(&state.db)
+        .await
+        .map_err(api_error)?;
+    miyo_core::apply_global_params(&mut spec, &global_params, &vars);
+    // 变量渲染（与 Tauri execute_request 同口径）：URL 模板 + 规格全文
+    // （headers/params/auth/body 的 {{var}} 占位在此替换）。
+    let spec = miyo_core::render_spec(&spec, &vars);
+
+    let url_template = req.url.clone().unwrap_or_else(|| url_template_for(&ep));
+    let url = miyo_core::resolve_variables(&url_template, &vars);
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(api_error(miyo_core::AppError::Validation(format!(
+            "解析后的 URL 非法：{url}。项目缺少 base_url 变量？可在 variables 中显式传入 base_url 或用 url 参数覆盖完整地址。"
+        ))));
+    }
+
+    let timeout_ms = req
+        .timeout_ms
+        .or(spec.timeout_ms)
+        .or(global_timeout_ms(&state.db).await)
+        .unwrap_or(miyo_http::client::DEFAULT_TIMEOUT_MS);
+    let resp = miyo_http::client::send_request(ep.method, &url, &spec, Some(timeout_ms))
+        .await
+        .map_err(api_error)?;
+    let content_type = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+    let (body, truncated) = truncate_utf8(&resp.body_text(), EXEC_BODY_LIMIT);
+    tracing::info!(
+        "[agent] send_endpoint：{} {url} → {}（{}ms）",
+        ep.method.as_str(),
+        resp.status,
+        resp.duration_ms
+    );
+    Ok(Json(ExecuteEndpointResult {
+        endpoint_id: ep.id,
+        method: ep.method.as_str().to_string(),
+        url,
+        status: resp.status,
+        duration_ms: resp.duration_ms,
+        content_type,
+        size_bytes: resp.size_bytes,
+        body,
+        body_truncated: truncated,
+    }))
+}
+
+/// POST `/agent/scenarios/{id}/run`：运行整个场景（串行 + 链路变量传递），
+/// 返回分步摘要与最终变量池，供 AI 一次性执行预编排的接口链路。
+async fn run_scenario_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    body: Option<Json<RunScenarioRequest>>,
+) -> ApiResult<RunScenarioResult> {
+    ensure_tool_enabled(&state, "run_scenario").await?;
+    let req = body.map(|Json(v)| v).unwrap_or_default();
+    let scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+    let vars = merged_variables(
+        &state.db,
+        scenario.project_id,
+        req.environment_id,
+        req.variables.clone(),
+    )
+    .await
+    .map_err(api_error)?;
+    let global_params = repo::get_global_params(&state.db)
+        .await
+        .map_err(api_error)?;
+
+    // 物化启用步骤（与 Tauri 命令 run_scenario 同口径：全局参数补缺 +
+    // TestSpec 解析；URL 模板由接口当前配置推导，保留 {{var}} 执行期渲染）。
+    let mut steps = Vec::new();
+    for (idx, step) in scenario.steps.iter().enumerate() {
+        if !step.enabled {
+            continue;
+        }
+        let ep = repo::get_endpoint(&state.db, step.endpoint_id)
+            .await
+            .map_err(|_| {
+                api_error(miyo_core::AppError::Validation(format!(
+                    "第 {} 步引用的接口不存在（{}）",
+                    idx + 1,
+                    step.endpoint_id
+                )))
+            })?;
+        let mut spec = ep.request.clone();
+        miyo_core::apply_global_params(&mut spec, &global_params, &vars);
+        let config = miyo_test::config::TestSpec::from_request_value(Some(&serde_json::json!({
+            "extract": step.extract,
+            "assertions": step.assertions,
+        })))
+        .map_err(|e| {
+            api_error(miyo_core::AppError::Validation(format!(
+                "第 {} 步的提取/断言配置无效：{e}",
+                idx + 1
+            )))
+        })?;
+        steps.push(miyo_test::runner::ScenarioStepInput {
+            url_template: url_template_for(&ep),
+            endpoint: ep,
+            spec_template: spec,
+            extract: config.extract,
+            assertions: config.assertions,
+        });
+    }
+    if steps.is_empty() {
+        return Err(api_error(miyo_core::AppError::Validation(
+            "场景没有启用中的步骤".into(),
+        )));
+    }
+
+    let timeout_ms = steps[0]
+        .spec_template
+        .timeout_ms
+        .or(global_timeout_ms(&state.db).await)
+        .unwrap_or(miyo_http::client::DEFAULT_TIMEOUT_MS);
+    let options = miyo_test::runner::ScenarioOptions {
+        timeout_ms: Some(timeout_ms),
+        cancel: None,
+        stop_on_failure: req.stop_on_failure,
+    };
+    let result = miyo_test::runner::run_scenario(steps, &vars, &options, None).await;
+
+    let enabled_steps = scenario.steps.iter().filter(|s| s.enabled).count();
+    let mut step_results = Vec::with_capacity(result.results.len());
+    for r in &result.results {
+        let (body_preview, body_truncated) = match &r.response {
+            Some(resp) => {
+                let (b, t) = truncate_utf8(&resp.body, STEP_BODY_LIMIT);
+                (Some(b), t)
+            }
+            None => (None, false),
+        };
+        step_results.push(ScenarioStepRunResult {
+            index: r.step_index.unwrap_or_default(),
+            endpoint_name: r.endpoint_name.clone(),
+            method: r.method.clone(),
+            url: r.url.clone(),
+            status: r.status,
+            duration_ms: r.duration_ms,
+            ok: r.ok,
+            assertion_failures: r
+                .outcomes
+                .iter()
+                .filter(|o| !o.passed)
+                .map(|o| match &o.reason {
+                    Some(reason) => format!("{}（{reason}）", o.description),
+                    None => o.description.clone(),
+                })
+                .collect(),
+            extracted: r.extracted.clone(),
+            body_preview,
+            body_truncated,
+            error: r.request_error.clone(),
+        });
+    }
+    let passed = result.results.iter().filter(|r| r.ok).count();
+    let failed = result.results.len() - passed;
+    let skipped = enabled_steps - result.results.len();
+
+    // 运行历史落库（与 Tauri 命令同库同表：剥正文、统计摘要、保留最近 N 条）。
+    let mut history_results = result.results.clone();
+    for r in &mut history_results {
+        r.response = None;
+    }
+    let record = miyo_core::model::ScenarioRun {
+        id: uuid::Uuid::new_v4(),
+        scenario_id: scenario.id,
+        environment_id: req.environment_id,
+        finished_at: chrono::Utc::now(),
+        duration_ms: Some(
+            result
+                .results
+                .iter()
+                .filter_map(|r| r.duration_ms)
+                .sum::<f64>(),
+        ),
+        total_steps: enabled_steps as i64,
+        ok_count: passed as i64,
+        fail_count: failed as i64,
+        skipped_count: skipped as i64,
+        cancelled: result.cancelled,
+        stopped_on_failure: result.stopped_on_failure,
+        results_json: serde_json::to_string(&history_results).unwrap_or_else(|_| "[]".into()),
+        variables_json: serde_json::to_string(&result.variables).unwrap_or_else(|_| "{}".into()),
+    };
+    if let Err(e) = repo::save_scenario_run(&state.db, &record).await {
+        tracing::warn!("[agent] run_scenario 历史落库失败：{e}");
+    } else if let Err(e) =
+        repo::prune_scenario_runs(&state.db, scenario.id, repo::SCENARIO_RUN_KEEP).await
+    {
+        tracing::warn!("[agent] run_scenario 历史清理失败：{e}");
+    }
+    tracing::info!(
+        "[agent] run_scenario：场景「{}」{} 步，通过 {passed} 失败 {failed}",
+        scenario.name,
+        enabled_steps
+    );
+
+    Ok(Json(RunScenarioResult {
+        scenario_id: scenario.id,
+        scenario_name: scenario.name,
+        passed,
+        failed,
+        skipped,
+        cancelled: result.cancelled,
+        stopped_on_failure: result.stopped_on_failure,
+        variables: result.variables,
+        steps: step_results,
+    }))
+}
+
 /// 解析目标项目：显式 id 校验存在性；缺省时按「唯一项目自动选中 /
 /// 零项目自动创建 / 多项目报错列出候选」的规则收敛。
 async fn resolve_project(
@@ -620,6 +1131,12 @@ pub fn build_router(state: AgentState) -> Router {
         .route("/agent/health", get(health))
         .route("/agent/projects", get(list_projects_handler))
         .route("/agent/endpoints/{project_id}", get(list_endpoints_handler))
+        .route("/agent/endpoints/{id}/detail", get(get_endpoint_handler))
+        .route(
+            "/agent/endpoints/{id}/execute",
+            post(execute_endpoint_handler),
+        )
+        .route("/agent/scenarios/{id}/run", post(run_scenario_handler))
         .route("/agent/curl", post(import_curl_handler))
         .route("/agent/scenarios", get(list_scenarios_handler))
         .route("/agent/scenarios/{id}", get(get_scenario_handler))
@@ -720,6 +1237,370 @@ mod tests {
 
     fn client() -> reqwest::Client {
         reqwest::Client::new()
+    }
+
+    // ---------- 执行类路由测试（本地 echo 上游） ----------
+
+    /// 本地回显上游：/orders 返回固定 JSON（供提取），/pay 回显收到的 JSON
+    /// body，/echo 回显 Authorization 头与原文 body（供覆盖项断言）。
+    async fn spawn_upstream() -> String {
+        use axum::routing::post;
+        let app = axum::Router::new()
+            .route(
+                "/orders",
+                get(|| async { Json(serde_json::json!({ "orderId": "A1024" })) }),
+            )
+            .route(
+                "/pay",
+                post(|body: String| async move {
+                    Json(serde_json::json!({ "paid": true, "got": body }))
+                }),
+            )
+            .route(
+                "/echo",
+                post(|headers: axum::http::HeaderMap, body: String| async move {
+                    Json(serde_json::json!({
+                        "auth": headers
+                            .get("authorization")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or(""),
+                        "body": body,
+                    }))
+                }),
+            )
+            .route(
+                "/users/{id}",
+                get(|AxumPath(id): AxumPath<String>| async move {
+                    Json(serde_json::json!({ "userId": id }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{addr}")
+    }
+
+    fn make_endpoint(project_id: uuid::Uuid, name: &str, method: &str, path: &str) -> Endpoint {
+        Endpoint {
+            id: uuid::Uuid::new_v4(),
+            project_id,
+            folder_id: None,
+            name: name.into(),
+            method: method.parse().unwrap(),
+            path: path.into(),
+            description: String::new(),
+            status: miyo_core::model::EndpointStatus::Developing,
+            sort_order: 0,
+            request: RequestSpec::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_endpoint_sends_with_overrides() {
+        let (url, token, db, _state) = spawn_test_server().await;
+        let upstream = spawn_upstream().await;
+        let project = repo::create_project(&db, "执行", "").await.unwrap();
+        let ep = make_endpoint(project.id, "回显", "POST", &format!("{upstream}/echo"));
+        repo::save_endpoint(&db, &ep).await.unwrap();
+
+        let res = client()
+            .post(format!("{url}/agent/endpoints/{}/execute", ep.id))
+            .header("Authorization", &format!("Bearer {token}"))
+            .json(&serde_json::json!({
+                "headers": { "Authorization": "Bearer test-token" },
+                "body": "hello-{{greeting}}",
+                "variables": { "greeting": "你好" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = res.status();
+        let raw = res.text().await.unwrap_or_default();
+        assert_eq!(status, StatusCode::OK, "执行应成功，响应：{raw}");
+        let result: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(result["status"], 200);
+        assert_eq!(result["method"], "POST");
+        // 覆盖头与变量渲染（{{greeting}} → 你好）都在上游回显中可见
+        let echoed: serde_json::Value =
+            serde_json::from_str(result["body"].as_str().unwrap()).unwrap();
+        assert_eq!(echoed["auth"], "Bearer test-token");
+        assert!(echoed["body"].as_str().unwrap().contains("hello-你好"));
+        assert_eq!(result["bodyTruncated"], false);
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn execute_endpoint_relative_path_uses_base_url_variable() {
+        let (url, token, db, _state) = spawn_test_server().await;
+        let upstream = spawn_upstream().await;
+        let project = repo::create_project(&db, "相对路径", "").await.unwrap();
+        let mut with_base = repo::get_project(&db, project.id).await.unwrap();
+        with_base
+            .variables
+            .insert("base_url".into(), upstream.clone());
+        repo::save_project(&db, &with_base).await.unwrap();
+        let ep = make_endpoint(project.id, "订单", "GET", "/orders");
+        repo::save_endpoint(&db, &ep).await.unwrap();
+
+        // 相对路径 → {{base_url}} 占位由项目变量渲染
+        let res = client()
+            .post(format!("{url}/agent/endpoints/{}/execute", ep.id))
+            .header("Authorization", &format!("Bearer {token}"))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let result: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(result["status"], 200);
+        assert_eq!(result["url"], format!("{upstream}/orders"));
+        assert!(result["body"].as_str().unwrap().contains("A1024"));
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn execute_endpoint_without_base_url_is_validation_error() {
+        let (url, token, db, _state) = spawn_test_server().await;
+        let project = repo::create_project(&db, "无 base", "").await.unwrap();
+        let ep = make_endpoint(project.id, "订单", "GET", "/orders");
+        repo::save_endpoint(&db, &ep).await.unwrap();
+
+        let res = client()
+            .post(format!("{url}/agent/endpoints/{}/execute", ep.id))
+            .header("Authorization", &format!("Bearer {token}"))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(body["code"], "VALIDATION");
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn run_scenario_chains_variables_and_persists_history() {
+        let (url, token, db, _state) = spawn_test_server().await;
+        let upstream = spawn_upstream().await;
+        let project = repo::create_project(&db, "链路执行", "").await.unwrap();
+        let mut with_base = repo::get_project(&db, project.id).await.unwrap();
+        with_base
+            .variables
+            .insert("base_url".into(), upstream.clone());
+        repo::save_project(&db, &with_base).await.unwrap();
+
+        // 步骤 1 下单（提取 orderId）→ 步骤 2 支付（body 引用 {{orderId}}）
+        let order = make_endpoint(project.id, "下单", "GET", "/orders");
+        let mut pay = make_endpoint(project.id, "支付", "POST", "/pay");
+        pay.request.body = miyo_core::model::BodySpec::Json {
+            raw: r#"{"orderId":"{{orderId}}"}"#.into(),
+        };
+        repo::save_endpoint(&db, &order).await.unwrap();
+        repo::save_endpoint(&db, &pay).await.unwrap();
+        let scenario = Scenario {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            name: "下单支付链路".into(),
+            description: String::new(),
+            sort_order: 0,
+            steps: vec![
+                miyo_core::model::ScenarioStep {
+                    endpoint_id: order.id,
+                    enabled: true,
+                    extract: serde_json::json!([{ "name": "orderId", "from": "body", "path": "$.orderId" }]),
+                    assertions: serde_json::json!([{ "type": "status", "op": "eq", "expected": "200" }]),
+                },
+                miyo_core::model::ScenarioStep {
+                    endpoint_id: pay.id,
+                    enabled: true,
+                    extract: serde_json::json!([]),
+                    assertions: serde_json::json!([]),
+                },
+            ],
+            script: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_scenario(&db, &scenario).await.unwrap();
+
+        let res = client()
+            .post(format!("{url}/agent/scenarios/{}/run", scenario.id))
+            .header("Authorization", &format!("Bearer {token}"))
+            .json(&serde_json::json!({ "stopOnFailure": true }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let result: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(result["passed"], 2, "两步都应通过：{result}");
+        assert_eq!(result["failed"], 0);
+        // 链路变量：步 1 提取 orderId → 步 2 body 渲染 + 最终变量池可读
+        assert_eq!(result["variables"]["orderId"], "A1024");
+        assert_eq!(result["steps"][0]["extracted"]["orderId"], "A1024");
+        let pay_body = result["steps"][1]["bodyPreview"].as_str().unwrap();
+        assert!(
+            pay_body.contains("A1024"),
+            "支付步应收到链路变量：{pay_body}"
+        );
+        assert_eq!(result["steps"][0]["endpointName"], "下单");
+
+        // 运行历史已落库（与 Tauri 命令同表）
+        let runs = repo::list_scenario_runs(&db, scenario.id, 5).await.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].ok_count, 2);
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn run_scenario_stop_on_failure_halts() {
+        let (url, token, db, _state) = spawn_test_server().await;
+        let upstream = spawn_upstream().await;
+        let project = repo::create_project(&db, "失败即停", "").await.unwrap();
+        let mut with_base = repo::get_project(&db, project.id).await.unwrap();
+        with_base
+            .variables
+            .insert("base_url".into(), upstream.clone());
+        repo::save_project(&db, &with_base).await.unwrap();
+        let a = make_endpoint(project.id, "会失败", "GET", "/orders");
+        let b = make_endpoint(project.id, "不应执行", "GET", "/users/1");
+        repo::save_endpoint(&db, &a).await.unwrap();
+        repo::save_endpoint(&db, &b).await.unwrap();
+        let scenario = Scenario {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            name: "停".into(),
+            description: String::new(),
+            sort_order: 0,
+            steps: vec![
+                miyo_core::model::ScenarioStep {
+                    endpoint_id: a.id,
+                    enabled: true,
+                    extract: serde_json::json!([]),
+                    // 断言 500 但上游返回 200 → 失败
+                    assertions: serde_json::json!([{ "type": "status", "op": "eq", "expected": "500" }]),
+                },
+                miyo_core::model::ScenarioStep {
+                    endpoint_id: b.id,
+                    enabled: true,
+                    extract: serde_json::json!([]),
+                    assertions: serde_json::json!([]),
+                },
+            ],
+            script: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_scenario(&db, &scenario).await.unwrap();
+
+        let res = client()
+            .post(format!("{url}/agent/scenarios/{}/run", scenario.id))
+            .header("Authorization", &format!("Bearer {token}"))
+            .json(&serde_json::json!({ "stopOnFailure": true }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let result: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(result["stoppedOnFailure"], true);
+        assert_eq!(result["failed"], 1);
+        assert_eq!(result["skipped"], 1, "第二步应被跳过：{result}");
+        assert_eq!(result["steps"].as_array().unwrap().len(), 1);
+        assert!(
+            !result["steps"][0]["assertionFailures"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "失败断言明细应在"
+        );
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn get_endpoint_detail_and_missing() {
+        let (url, token, db, _state) = spawn_test_server().await;
+        let project = repo::create_project(&db, "详情", "").await.unwrap();
+        let ep = make_endpoint(project.id, "详情接口", "GET", "/detail");
+        repo::save_endpoint(&db, &ep).await.unwrap();
+        let auth = format!("Bearer {token}");
+
+        let res = client()
+            .get(format!("{url}/agent/endpoints/{}/detail", ep.id))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let detail: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(detail["name"], "详情接口");
+        assert_eq!(detail["path"], "/detail");
+
+        let res = client()
+            .get(format!(
+                "{url}/agent/endpoints/{}/detail",
+                uuid::Uuid::new_v4()
+            ))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn disabled_execute_tools_are_403() {
+        let (url, token, db, _state) = spawn_test_server().await;
+        let upstream = spawn_upstream().await;
+        let project = repo::create_project(&db, "停用", "").await.unwrap();
+        let mut with_base = repo::get_project(&db, project.id).await.unwrap();
+        with_base
+            .variables
+            .insert("base_url".into(), upstream.clone());
+        repo::save_project(&db, &with_base).await.unwrap();
+        let ep = make_endpoint(project.id, "订单", "GET", "/orders");
+        repo::save_endpoint(&db, &ep).await.unwrap();
+        let scenario = Scenario {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            name: "停用场景".into(),
+            description: String::new(),
+            sort_order: 0,
+            steps: vec![],
+            script: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_scenario(&db, &scenario).await.unwrap();
+        repo::set_setting(
+            &db,
+            MCP_DISABLED_TOOLS_KEY,
+            &serde_json::json!(["send_endpoint", "run_scenario"]).to_string(),
+        )
+        .await
+        .unwrap();
+        let auth = format!("Bearer {token}");
+
+        let res = client()
+            .post(format!("{url}/agent/endpoints/{}/execute", ep.id))
+            .header("Authorization", &auth)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        let res = client()
+            .post(format!("{url}/agent/scenarios/{}/run", scenario.id))
+            .header("Authorization", &auth)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        db.close().await;
     }
 
     #[tokio::test]

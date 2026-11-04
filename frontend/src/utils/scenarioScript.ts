@@ -109,6 +109,8 @@ function assertLine(a: ScenarioAssertionRule, actual: string): string {
       return call(`String(${actual}).includes(${literal(a.expected)})`)
     case 'not_contains':
       return call(`!String(${actual}).includes(${literal(a.expected)})`)
+    case 'neq':
+      return call(`${actual} !== ${literal(a.expected)}`)
     case 'gt':
       return call(`Number(${actual}) > ${literal(a.expected)}`)
     case 'gte':

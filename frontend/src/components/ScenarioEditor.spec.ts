@@ -25,13 +25,29 @@ const listScenarioRuns = vi.fn<(scenarioId: string, limit?: number) => Promise<S
   async () => [],
 )
 const getScenarioRun = vi.fn<(id: string) => Promise<ScenarioRunDetail | null>>(async () => null)
+const saveScenario = vi.fn(async (s: Scenario) => s)
+
+const { toastInfo } = vi.hoisted(() => ({ toastInfo: vi.fn() }))
+vi.mock('../composables/useToast', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../composables/useToast')>()
+  return {
+    ...mod,
+    useToast: () => ({ ...mod.useToast(), info: toastInfo }),
+  }
+})
 
 vi.mock('../composables/useMiyoApi', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../composables/useMiyoApi')>()
   return {
     ...mod,
-    // 只覆盖运行与历史查询；其余函数（store 内部用的列表 / 保存等）保持原实现。
-    useMiyoApi: () => ({ ...mod.useMiyoApi(), runScenario, listScenarioRuns, getScenarioRun }),
+    // 只覆盖运行 / 历史查询 / 场景保存；其余函数（store 内部用的列表等）保持原实现。
+    useMiyoApi: () => ({
+      ...mod.useMiyoApi(),
+      runScenario,
+      listScenarioRuns,
+      getScenarioRun,
+      saveScenario,
+    }),
   }
 })
 
@@ -495,5 +511,119 @@ describe('ScenarioEditor：编排体验升级', () => {
     const report = wrapper.find('.se-report')
     expect(report.text()).toContain('全部通过')
     expect(report.text()).toContain('成功 2')
+  })
+
+  it('脚本 → 编排联动：修改脚本后同步，提取与断言回写步骤', async () => {
+    const store = useWorkspaceStore()
+    store.scenarios = [makeScenario()]
+    store.endpoints = [makeEndpoint()]
+
+    const wrapper = mountEditor({ scenarioId: 'sc-1' })
+    await nextTick()
+
+    // 切到脚本视图，手改脚本：提取路径改为 $.user.token + 新增状态码断言
+    const segmented = wrapper.findComponent(SegmentedControl)
+    segmented.vm.$emit('update:modelValue', 'script')
+    await nextTick()
+    const editor = wrapper.findComponent(JsonCodeMirror)
+    const generated = (wrapper.findComponent(JsonCodeMirror).props('modelValue') as string) ?? ''
+    expect(generated).toContain('var token = (body1?.token); // 提取 $.token')
+    const fixed = generated
+      .replace('var token = (body1?.token); // 提取 $.token', 'var token = (body1?.user?.token); // 提取 $.user.token')
+      .replace(
+        'let body1 = body1 ?? await res1.json().catch(() => null);',
+        'check("状态码", res1.status === 200);\nlet body1 = body1 ?? await res1.json().catch(() => null);',
+      )
+    editor.vm.$emit('update:modelValue', fixed)
+    await nextTick()
+    expect(wrapper.text()).toContain('脚本已手动编辑')
+
+    // 同步到编排（Popconfirm 直接派发 confirm）
+    const syncBtn = wrapper.findAll('button').find((b) => b.text().includes('同步到编排'))
+    expect(syncBtn).toBeDefined()
+    await syncBtn!.trigger('click')
+    const Popconfirm = (await import('./ui/Popconfirm.vue')).default
+    wrapper.findComponent(Popconfirm).vm.$emit('confirm')
+    await nextTick()
+    await flushPromises()
+
+    // 同步后切回手动视图（提取路径的可见性断言在脚本视图的再生成本里做）
+    expect(wrapper.find('.se-script').exists()).toBe(false)
+    // 脏检查生效（保存按钮启用）
+    const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('保存'))
+    expect(saveBtn?.attributes('disabled')).toBeUndefined()
+
+    // 往返无损：再生成的脚本与用户修复版一致 → 自定义态解除；脚本含新断言
+    segmented.vm.$emit('update:modelValue', 'script')
+    await nextTick()
+    expect(wrapper.text()).not.toContain('脚本已手动编辑')
+    const cmText = wrapper.find('.se-script .cm-content').text()
+    expect(cmText).toContain('状态码')
+    expect(cmText).toContain('$.user.token')
+  })
+
+  it('空场景点同步到编排：友好提示而非解析报错', async () => {
+    const store = useWorkspaceStore()
+    const empty = { ...makeScenario(), steps: [] }
+    store.scenarios = [empty]
+    store.endpoints = [makeEndpoint()]
+
+    const wrapper = mountEditor({ scenarioId: 'sc-1' })
+    await nextTick()
+    const segmented = wrapper.findComponent(SegmentedControl)
+    segmented.vm.$emit('update:modelValue', 'script')
+    await nextTick()
+
+    const syncBtn = wrapper.findAll('button').find((b) => b.text().includes('同步到编排'))
+    expect(syncBtn).toBeDefined()
+    await syncBtn!.trigger('click')
+    const Popconfirm = (await import('./ui/Popconfirm.vue')).default
+    wrapper.findComponent(Popconfirm).vm.$emit('confirm')
+    await nextTick()
+
+    // 前置守卫：info 提示、不抛解析错误、不切换视图
+    expect(toastInfo).toHaveBeenCalledWith('场景还没有步骤，先在手动编排里添加接口步骤')
+    expect(wrapper.find('.se-script').exists()).toBe(true)
+  })
+
+  it('脚本视图「运行」：自定义脚本先同步再走运行引擎', async () => {
+    const store = useWorkspaceStore()
+    store.scenarios = [makeScenario()]
+    store.endpoints = [makeEndpoint()]
+    runScenario.mockResolvedValue({
+      results: [],
+      cancelled: false,
+      stopped_on_failure: false,
+      variables: {},
+      vars_snapshots: [],
+    })
+
+    const wrapper = mountEditor({ scenarioId: 'sc-1' })
+    await nextTick()
+
+    const segmented = wrapper.findComponent(SegmentedControl)
+    segmented.vm.$emit('update:modelValue', 'script')
+    await nextTick()
+    const editor = wrapper.findComponent(JsonCodeMirror)
+    const generated = (wrapper.findComponent(JsonCodeMirror).props('modelValue') as string) ?? ''
+    editor.vm.$emit(
+      'update:modelValue',
+      generated.replace('var token = (body1?.token); // 提取 $.token', 'var token = (body1?.user?.token); // 提取 $.user.token'),
+    )
+    await nextTick()
+
+    // 点击脚本栏「运行」：先同步（脏 → 先落库）再运行
+    const runBtn = wrapper.findAll('button').find((b) => b.text().includes('运行'))
+    expect(runBtn).toBeDefined()
+    await runBtn!.trigger('click')
+    await flushPromises()
+
+    expect(saveScenario).toHaveBeenCalled()
+    expect(runScenario).toHaveBeenCalledTimes(1)
+    const arg = runScenario.mock.calls[0]![0]!
+    expect(arg.steps).toHaveLength(1)
+    expect(arg.steps[0].extract).toEqual([{ name: 'token', from: 'body', path: '$.user.token' }])
+    // 运行入口在手动视图（结果面板可见）
+    expect(wrapper.find('.se-script').exists()).toBe(false)
   })
 })

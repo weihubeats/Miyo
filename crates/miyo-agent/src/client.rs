@@ -13,8 +13,8 @@ use reqwest::Client;
 use uuid::Uuid;
 
 use crate::server::{
-    ImportCurlResult, McpToolState, SaveScenarioScriptResult, ScenarioDetail, ScenarioSummary,
-    MAX_PORT_TRIES,
+    ExecuteEndpointResult, ImportCurlResult, McpToolState, RunScenarioResult,
+    SaveScenarioScriptResult, ScenarioDetail, ScenarioSummary, MAX_PORT_TRIES,
 };
 
 /// 默认起始端口（与服务端一致）。
@@ -22,6 +22,11 @@ pub const DEFAULT_AGENT_PORT: u16 = crate::server::DEFAULT_AGENT_PORT;
 
 /// 探测超时（端口未监听时连接立即失败，超时只兜底极端情况）。
 const PROBE_TIMEOUT: Duration = Duration::from_millis(800);
+
+/// 执行类调用（send_endpoint / run_scenario）的客户端侧超时上限：真实请求
+/// 的服务端超时兜底是 300s（全局默认），这里给到 11 分钟覆盖自定义超时 +
+/// 建连/排队余量；客户端全局默认 15s 只适用于元数据类端点。
+const EXEC_HTTP_TIMEOUT: Duration = Duration::from_secs(660);
 
 /// Agent 控制面客户端（异步）。
 #[derive(Clone)]
@@ -127,6 +132,51 @@ impl ControlClient {
     pub async fn list_endpoints(&self, project_id: Uuid) -> Result<Vec<Endpoint>, AppError> {
         self.get_json(&format!("/agent/endpoints/{project_id}"))
             .await
+    }
+
+    /// 单个接口完整定义（大项目避免全量拉取）。
+    pub async fn get_endpoint(&self, endpoint_id: Uuid) -> Result<Endpoint, AppError> {
+        self.get_json(&format!("/agent/endpoints/{endpoint_id}/detail"))
+            .await
+    }
+
+    /// 执行单个接口（按接口当前配置 + 覆盖项发送真实请求，返回完整响应）。
+    pub async fn execute_endpoint(
+        &self,
+        endpoint_id: Uuid,
+        args: serde_json::Value,
+    ) -> Result<ExecuteEndpointResult, AppError> {
+        let res = self
+            .http
+            .post(format!(
+                "{}/agent/endpoints/{endpoint_id}/execute",
+                self.base
+            ))
+            .timeout(EXEC_HTTP_TIMEOUT)
+            .header("Authorization", self.auth())
+            .json(&args)
+            .send()
+            .await
+            .map_err(AppError::from_reqwest)?;
+        decode(res).await
+    }
+
+    /// 运行整个场景（串行 + 链路变量传递），返回分步摘要与最终变量池。
+    pub async fn run_scenario(
+        &self,
+        scenario_id: Uuid,
+        args: serde_json::Value,
+    ) -> Result<RunScenarioResult, AppError> {
+        let res = self
+            .http
+            .post(format!("{}/agent/scenarios/{scenario_id}/run", self.base))
+            .timeout(EXEC_HTTP_TIMEOUT)
+            .header("Authorization", self.auth())
+            .json(&args)
+            .send()
+            .await
+            .map_err(AppError::from_reqwest)?;
+        decode(res).await
     }
 
     /// 场景列表（projectId 缺省时：唯一项目自动选中，多项目报错列候选）。

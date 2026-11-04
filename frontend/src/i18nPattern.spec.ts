@@ -44,6 +44,9 @@ const FILE_ALLOWLIST: Record<string, RegExp[]> = {
   // 场景脚本生成器：产物是独立可运行的 JS（无法走 t()），中文为生成物文案
   //（与 Rust 侧 export/markdown 生成器同性质）
   'src/utils/scenarioScript.ts': [CJK],
+  // 脚本反向解析器：正则字面量里的中文是生成器的固定格式标记（步骤注释 /
+  // 提取注释等，与上同源），错误文案已走 tFallback
+  'src/utils/scenarioScriptParse.ts': [CJK],
 }
 
 /**
