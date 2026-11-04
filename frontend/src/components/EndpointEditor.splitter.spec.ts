@@ -144,3 +144,63 @@ describe('EndpointEditor：分割态按接口独立 / 跨视图保留', () => {
     wrapper.unmount()
   })
 })
+
+describe('EndpointEditor：二级导航按接口记忆', () => {
+  /** 点二级导航（模拟用户显式切页）。 */
+  async function clickNav(
+    wrapper: Awaited<ReturnType<typeof mountEditor>>['wrapper'],
+    label: string,
+  ): Promise<void> {
+    const item = wrapper.findAll('.sub-nav-item').find((b) => b.text().startsWith(label))!
+    await item.trigger('click')
+    await nextTick()
+  }
+
+  function activeNav(wrapper: Awaited<ReturnType<typeof mountEditor>>['wrapper']): string {
+    return wrapper.findAll('.sub-nav-item').find((b) => b.classes().includes('active'))!.text()
+  }
+
+  it('在 A 的测试用例页切到 B 再切回：A 仍是测试用例页（不打回调试）', async () => {
+    const { wrapper, store } = await mountEditor()
+
+    store.openEndpoint(endpointA)
+    await nextTick()
+    await clickNav(wrapper, '测试用例')
+    expect(activeNav(wrapper)).toContain('测试用例')
+
+    // 切去 B：B 没有记忆 → 调试页
+    store.openEndpoint(endpointB)
+    await nextTick()
+    expect(activeNav(wrapper)).toContain('调试')
+
+    // 切回 A：恢复 A 上次停留的测试用例页（用户实测诉求）
+    store.openEndpoint(endpointA)
+    await nextTick()
+    expect(activeNav(wrapper)).toContain('测试用例')
+
+    wrapper.unmount()
+  })
+
+  it('各接口各自记忆：B 自己切到设计页，A 仍在用例页', async () => {
+    const { wrapper, store } = await mountEditor()
+
+    store.openEndpoint(endpointA)
+    await nextTick()
+    await clickNav(wrapper, '测试用例')
+
+    store.openEndpoint(endpointB)
+    await nextTick()
+    await clickNav(wrapper, '设计')
+    expect(activeNav(wrapper)).toContain('设计')
+
+    store.openEndpoint(endpointA)
+    await nextTick()
+    expect(activeNav(wrapper)).toContain('测试用例')
+
+    store.openEndpoint(endpointB)
+    await nextTick()
+    expect(activeNav(wrapper)).toContain('设计')
+
+    wrapper.unmount()
+  })
+})

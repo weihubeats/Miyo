@@ -487,6 +487,9 @@ kbd,
 .miyo-mono {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
+  /* 制表符 UI 统一按 4 空格宽渲染：Chrome 默认 8 空格宽，同一 Tab 上的
+     label 与 badge 会被拉出参差不齐的间距（实测 Headers 徽章被顶到很右）。 */
+  tab-size: 4;
 }
 
 .num {

@@ -83,9 +83,14 @@ type ReqTabKey = 'params' | 'headers' | 'body'
 
 const reqTab = ref<ReqTabKey>('params')
 
+/** 有效行数：面板表格会把底部空白幽灵行回写，计数只算有键或有值的行。 */
+function filledRows(rows: KeyValue[] | undefined): number {
+  return (rows ?? []).filter((r) => (r.key ?? '').trim() || (r.value ?? '').trim()).length
+}
+
 const reqTabs = computed<TabItem[]>(() => [
-  { key: 'params', label: t('design.tabParams'), count: d.value?.request.params.length ?? 0 },
-  { key: 'headers', label: t('design.tabHeaders'), count: d.value?.request.headers.length ?? 0 },
+  { key: 'params', label: t('design.tabParams'), count: filledRows(d.value?.request.params) },
+  { key: 'headers', label: t('design.tabHeaders'), count: filledRows(d.value?.request.headers) },
   { key: 'body', label: t('design.tabBody') },
 ])
 

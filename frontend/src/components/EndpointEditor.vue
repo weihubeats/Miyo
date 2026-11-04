@@ -243,6 +243,15 @@ const BODY_TAB_LABELS: Record<string, string> = {
   binary: 'Binary',
 }
 
+/** 有效行数：与面板表格的可见行一致——只算「有键或有值」的行。
+ *
+ * 历史坑：这里原来直接用 `request.headers.length`，而表格会把底部空白幽灵行
+ * 一并回写给父级（`sync()` 保留末行），于是加一个 `Cookie` 后 badge 显示 2、
+ * 表里只有 1 条数据行。三类 kv（params / headers / path）同口径修正。 */
+function filledRowCount(rows: { key?: string; value?: string }[] | undefined): number {
+  return (rows ?? []).filter((r) => (r.key ?? '').trim() || (r.value ?? '').trim()).length
+}
+
 const configTabs = computed<TabItem[]>(() => {
   const d = draft.value
   if (!d) return []
@@ -250,14 +259,14 @@ const configTabs = computed<TabItem[]>(() => {
   if (d.method === 'GRPC') {
     return [
       { key: 'grpc', label: 'gRPC' },
-      { key: 'headers', label: t('editor.tabHeaders'), count: d.request.headers.length },
+      { key: 'headers', label: t('editor.tabHeaders'), count: filledRowCount(d.request.headers) },
     ]
   }
   const bodyMode = d.request.body.mode
   return [
-    { key: 'params', label: t('editor.tabParams'), count: d.request.params.length },
+    { key: 'params', label: t('editor.tabParams'), count: filledRowCount(d.request.params) },
     { key: 'auth', label: t('editor.tabAuth') },
-    { key: 'headers', label: t('editor.tabHeaders'), count: d.request.headers.length },
+    { key: 'headers', label: t('editor.tabHeaders'), count: filledRowCount(d.request.headers) },
     {
       key: 'body',
       label:
@@ -266,7 +275,7 @@ const configTabs = computed<TabItem[]>(() => {
           : t('editor.tabBody'),
       count: bodyMode !== 'none' ? 1 : undefined,
     },
-    { key: 'path', label: t('editor.tabPath'), count: d.request.path_variables?.length ?? 0 },
+    { key: 'path', label: t('editor.tabPath'), count: filledRowCount(d.request.path_variables) },
     { key: 'scripts', label: t('editor.tabScripts') },
     { key: 'examples', label: t('editor.tabExamples') },
     { key: 'code', label: t('editor.tabCode') },
@@ -673,12 +682,37 @@ const SUB_NAV = computed<{ key: 'debug' | 'design' | 'docs' | 'cases' | 'mock'; 
   { key: 'mock', label: 'Mock' },
 ])
 
-/** 切换接口时回到「调试」页。 */
+/**
+ * 二级导航按接口独立记忆：切到「测试用例」再切去别的接口、切回来仍是
+ * 「测试用例」，不会被打回「调试」页（用户实测诉求）。
+ *
+ * 映射放模块级：编辑器随页签 v-if 卸载重挂也要记得（与分割态同口径）。
+ * `lastViewByEndpoint` 记每个接口最后停在哪个二级页；打开接口时据此恢复。
+ * 只有显式点击导航（用户切页）才更新——打开接口引发的 activeView 变化不算，
+ * 否则「当前接口」会被后切进来自动恢复的页覆盖。
+ */
+const lastViewByEndpoint = new Map<string, 'debug' | 'design' | 'docs' | 'cases' | 'mock'>()
+
+function rememberView(endpointId: string | null | undefined, view: string): void {
+  if (!endpointId) return
+  lastViewByEndpoint.set(endpointId, view as 'debug' | 'design' | 'docs' | 'cases' | 'mock')
+}
+
+/** 打开接口：恢复该接口上次停留的二级页（从未切过 → 调试页）。 */
 watch(
   () => draft.value?.id,
-  () => store.setActiveView('debug'),
+  (id) => {
+    if (!id) return
+    store.setActiveView(lastViewByEndpoint.get(id) ?? 'debug')
+  },
   { immediate: true },
 )
+
+/** 用户显式点导航：先记到当前接口，再切页。 */
+function selectView(view: 'debug' | 'design' | 'docs' | 'cases' | 'mock'): void {
+  rememberView(draft.value?.id, view)
+  store.setActiveView(view)
+}
 
 const saveMenuEl = ref<InstanceType<typeof Menu> | null>(null)
 
@@ -830,7 +864,7 @@ onUnmounted(() => {
         :class="{ active: store.activeView === nav.key }"
         type="button"
         role="tab"
-        @click="store.setActiveView(nav.key)"
+        @click="selectView(nav.key)"
       >
         {{ nav.label }}
         <span v-if="nav.key === 'cases'" class="sub-nav-badge">{{ store.testCaseCount }}</span>
