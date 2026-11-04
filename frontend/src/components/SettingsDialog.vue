@@ -232,6 +232,13 @@ onMounted(async () => {
 const DEFAULT_TIMEOUT_SEC = FALLBACK_GLOBAL_TIMEOUT_MS / 1000
 const timeoutSec = ref(DEFAULT_TIMEOUT_SEC)
 
+/** 编辑中实时回显（与其余 CustomNumberInput 用法一致；曾单向绑定导致手输被丢弃，#134）。 */
+function onTimeoutModelUpdate(v: string | number): void {
+  if (v === '') return
+  const n = typeof v === 'number' ? v : Number(v)
+  if (Number.isFinite(n)) timeoutSec.value = n
+}
+
 async function saveTimeout(sec: number): Promise<void> {
   const v = Math.round(Number(sec))
   if (!Number.isFinite(v) || v < 1 || v > 3600) {
@@ -1047,6 +1054,7 @@ const projectSummary = computed(() => {
                       size="md"
                       tone="inset"
                       class="w-24"
+                      @update:model-value="onTimeoutModelUpdate"
                       @change="saveTimeout"
                     />
                     <span

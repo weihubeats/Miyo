@@ -1,10 +1,12 @@
 <script setup lang="ts">
 /**
- * CustomNumberInput：自绘数字输入（步进按钮 + 键盘 ↑/↓ + min/max 钳制）。
+ * CustomNumberInput：自绘数字输入（步进按钮 + 键盘 ↑/↓/Enter + min/max 钳制）。
+ * - 聚焦期间维护编辑缓冲 edit，失焦以可解析的输入内容提交——父级只监听
+ *   change（单向绑定）也能手输生效（#134）；双向回显父级行为不变；
  * - 输出保持 number（可解析时）或原始字符串（编辑中途）；
  * - 五态：default / hover / focus / active / disabled × 深/浅主题；tabular-nums。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import Icon from './Icon.vue'
 import { useLocaleStore } from '../../stores/locale'
 
@@ -30,7 +32,11 @@ const emit = defineEmits<{
   change: [value: number]
 }>()
 
-const text = computed(() => String(props.modelValue ?? ''))
+/** 聚焦期间的编辑缓冲：单向绑定父级（只监听 change）不回显 prop，也以输入内容为准。 */
+const focused = ref(false)
+const edit = ref('')
+
+const text = computed(() => (focused.value ? edit.value : String(props.modelValue ?? '')))
 
 function parse(input: string): number | null {
   if (!input.trim()) return null
@@ -48,15 +54,23 @@ function clamp(n: number): number {
 function commit(v: number | null): void {
   const raw = props.modelValue
   if (v !== null) {
+    edit.value = String(v)
     emit('update:modelValue', v)
     emit('change', v)
   } else if (String(raw) !== '') {
+    edit.value = ''
     emit('update:modelValue', '')
   }
 }
 
+function onFocus(): void {
+  focused.value = true
+  edit.value = String(props.modelValue ?? '')
+}
+
 function onInput(event: Event): void {
   const raw = (event.target as HTMLInputElement).value
+  edit.value = raw
   const n = parse(raw)
   if (n !== null) emit('update:modelValue', n)
   else emit('update:modelValue', raw)
@@ -75,13 +89,22 @@ function onKeydown(event: KeyboardEvent): void {
   } else if (event.key === 'ArrowDown') {
     event.preventDefault()
     stepBy(-1)
+  } else if (event.key === 'Enter') {
+    // 手输后回车直接走失焦提交路径
+    ;(event.target as HTMLInputElement).blur()
   }
 }
 
 function onBlur(): void {
-  const n = parse(text.value)
+  focused.value = false
+  const baseline = String(props.modelValue ?? '')
+  // 手输过且可解析 → 以输入内容为准（父级未回显的单向绑定也能提交）；
+  // 否则维持原语义按父级值判定：可解析则钳制提交，非法/空输入不误写回。
+  const edited = edit.value !== baseline
+  const source = edited && parse(edit.value) !== null ? edit.value : baseline
+  const n = parse(source)
   if (n === null) {
-    if (text.value.trim()) emit('update:modelValue', '')
+    if (source.trim()) emit('update:modelValue', '')
   } else {
     commit(clamp(n))
   }
@@ -98,6 +121,7 @@ function onBlur(): void {
       :placeholder="placeholder"
       :disabled="disabled"
       spellcheck="false"
+      @focus="onFocus"
       @input="onInput"
       @keydown="onKeydown"
       @blur="onBlur"
