@@ -10,8 +10,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 
+/** 事件总线桩：listen 记录回调，`__emit` 模拟后端事件（进度事件测试用）。 */
+const progressListeners = vi.hoisted(() => new Map<string, (e: { payload: unknown }) => void>())
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(async () => () => {}),
+  listen: vi.fn(async (event: string, cb: (e: { payload: unknown }) => void) => {
+    progressListeners.set(event, cb)
+    return () => progressListeners.delete(event)
+  }),
 }))
 
 import type {
@@ -191,6 +196,44 @@ describe('ScenarioEditor', () => {
 
     expect(wrapper.find('.se-missing').exists()).toBe(true)
   })
+
+  it('折叠态直接展示请求参数与链式引用来源（不必展开卡片）', async () => {
+    const store = useWorkspaceStore()
+    const login = makeEndpoint()
+    const order = makeEndpoint()
+    order.id = 'ep-2'
+    order.name = '下单'
+    order.method = 'POST'
+    order.path = '/orders'
+    order.request.params = [{ key: 'channel', value: 'acquiring', enabled: true, description: '' }]
+    order.request.body = { mode: 'json', raw: '{"orderNo": "{{token}}", "n": 1}' }
+    store.endpoints = [login, order]
+    store.scenarios = [
+      {
+        ...makeScenario(),
+        steps: [
+          {
+            endpoint_id: 'ep-1',
+            enabled: true,
+            extract: [{ name: 'token', from: 'body', path: '$.token' }],
+            assertions: [],
+          },
+          { endpoint_id: 'ep-2', enabled: true, extract: [], assertions: [] },
+        ],
+      },
+    ]
+
+    const wrapper = mountEditor({ scenarioId: 'sc-1' })
+    await nextTick()
+
+    // 第 2 步折叠态：Query 参数、请求体原文、引用来源（来自步骤 1）
+    const brief = wrapper.findAll('.se-req-brief')
+    expect(brief.length).toBe(2)
+    const second = brief[1]!.text()
+    expect(second).toContain('channel=acquiring')
+    expect(second).toContain('{{token}}')
+    expect(wrapper.findAll('.se-chip-from')[0]!.text()).toContain('来自 1')
+  })
 })
 
 describe('ScenarioEditor：编排体验升级', () => {
@@ -336,6 +379,10 @@ describe('ScenarioEditor：编排体验升级', () => {
     // 结构化断言对比：期望 / 实际。
     expect(report.text()).toContain('期望 200')
     expect(report.text()).toContain('实际 200')
+    // 响应正文速览：不展开也能看到返回内容（用户实测：原来只看到 200）。
+    const peek = report.find('.se-rpeek')
+    expect(peek.exists()).toBe(true)
+    expect(peek.text()).toContain('"ok": true')
     // 运行结果变量池进入变量链路（运行时值）。
     expect(wrapper.text()).toContain('abc')
 
@@ -346,11 +393,101 @@ describe('ScenarioEditor：编排体验升级', () => {
     await nextTick()
     expect(wrapper.find('.rp').exists()).toBe(true)
 
-    // 点击结果行 → 对应步骤卡展开定位。
+    // 结果行只做展示（点击不整行跳转，避免和行内展开抢事件）；
+    // 定位走步骤卡头部的「定位」按钮。
     expect(wrapper.find('.se-step-body').exists()).toBe(false)
-    await report.find('.se-rrow').trigger('click')
+    const stepTools = wrapper.findAll('.se-step-tools .ib')
+    await stepTools[0]!.trigger('click')
     await nextTick()
     expect(wrapper.find('.se-step-body').exists()).toBe(true)
+  })
+
+  it('运行中逐步展示：进入步显示执行中与实际 URL，结束后行内即有结果', async () => {
+    const store = useWorkspaceStore()
+    store.scenarios = [{ ...makeScenario(), id: 'sc-run-live' }]
+    store.endpoints = [makeEndpoint()]
+
+    // 运行悬停不返回：模拟网络在途，只靠进度事件驱动 UI。
+    let resolveRun: (v: unknown) => void = () => {}
+    runScenario.mockImplementation(() => new Promise((r) => (resolveRun = r)))
+
+    const wrapper = mountEditor({ scenarioId: 'sc-run-live' })
+    await nextTick()
+    await wrapper.find('.se-run').trigger('click')
+    await nextTick()
+
+    const report = wrapper.find('.se-report')
+    expect(report.exists()).toBe(true)
+    // 还没有任何事件：面板只有进度条，没有结果行。
+    expect(report.findAll('.se-rrow').length).toBe(0)
+
+    // 后端进入第 1 步：带实际 URL，无结果 → 执行中占位行。
+    // runId 由前端生成（crypto.randomUUID），从调用入参取回以匹配过滤。
+    // listen 在 onMounted 里 await 注册，挂载后可能还差一个 tick 才落位。
+    await flushPromises()
+    const emit = progressListeners.get('miyo:scenario-progress')!
+    const runId = (runScenario.mock.calls[0]![0] as { runId: string }).runId
+    emit({ payload: { runId, done: 0, total: 1, url: 'http://localhost/users/1/posts' } })
+    await nextTick()
+    const live = wrapper.findAll('.se-rrow')
+    expect(live.length).toBe(1)
+    expect(live[0]!.text()).toContain('执行中')
+    expect(live[0]!.text()).toContain('http://localhost/users/1/posts')
+    expect(report.find('.se-pending-hint').exists()).toBe(true)
+
+    // 后端回传该步结果：同一行立即显示状态码与耗时，等待提示消失。
+    emit({ payload: {
+      runId,
+      done: 1,
+      total: 1,
+      result: {
+        endpoint_id: 'ep-1',
+        endpoint_name: '用户文章',
+        method: 'GET',
+        path: '/users/1/posts',
+        ok: true,
+        status: 200,
+        duration_ms: 12,
+        request_error: null,
+        url: 'http://localhost/users/1/posts',
+        step_index: 0,
+        cancelled: false,
+        outcomes: [],
+        response: null,
+      },
+    } })
+    await nextTick()
+    const done = wrapper.findAll('.se-rrow')
+    expect(done.length).toBe(1)
+    expect(done[0]!.text()).toContain('200')
+    expect(report.find('.se-pending-hint').exists()).toBe(false)
+
+    // 整轮返回后换成最终结果（含汇总），实时行不残留。
+    resolveRun({
+      results: [
+        {
+          endpoint_id: 'ep-1',
+          endpoint_name: '用户文章',
+          method: 'GET',
+          path: '/users/1/posts',
+          ok: true,
+          status: 200,
+          duration_ms: 12,
+          request_error: null,
+          url: 'http://localhost/users/1/posts',
+          step_index: 0,
+          cancelled: false,
+          outcomes: [],
+          response: null,
+        },
+      ],
+      cancelled: false,
+      stopped_on_failure: false,
+      variables: {},
+    })
+    await flushPromises()
+    expect(wrapper.find('.se-report').text()).toContain('全部通过')
+    expect(wrapper.find('.se-pending-hint').exists()).toBe(false)
   })
 
   it('页签切换（卸载重挂）不丢未保存编辑（模块级缓存恢复）', async () => {
