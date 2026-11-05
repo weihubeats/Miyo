@@ -197,7 +197,7 @@ describe('ScenarioEditor', () => {
     expect(wrapper.find('.se-missing').exists()).toBe(true)
   })
 
-  it('折叠态直接展示请求参数与链式引用来源（不必展开卡片）', async () => {
+  it('折叠态紧凑摘要：链式引用来源随卡展示；完整参数进右栏详情', async () => {
     const store = useWorkspaceStore()
     const login = makeEndpoint()
     const order = makeEndpoint()
@@ -226,13 +226,22 @@ describe('ScenarioEditor', () => {
     const wrapper = mountEditor({ scenarioId: 'sc-1' })
     await nextTick()
 
-    // 第 2 步折叠态：Query 参数、请求体原文、引用来源（来自步骤 1）
-    const brief = wrapper.findAll('.se-req-brief')
-    expect(brief.length).toBe(2)
-    const second = brief[1]!.text()
-    expect(second).toContain('channel=acquiring')
-    expect(second).toContain('{{token}}')
-    expect(wrapper.findAll('.se-chip-from')[0]!.text()).toContain('来自 1')
+    // 第 2 步紧凑卡：引用来源 chip（来自步骤 1）随卡展示，不再平铺参数全文
+    const cards = wrapper.findAll('.se-card')
+    expect(cards.length).toBe(2)
+    const second = cards[1]!
+    expect(second.text()).toContain('{{token}}')
+    expect(second.find('.se-chip-from').text()).toContain('来自 1')
+    expect(second.find('.se-req-brief').exists()).toBe(false)
+
+    // 完整请求参数（Query / Body）收纳进右栏详情：选中第 2 步后可见
+    await second.trigger('click')
+    await nextTick()
+    const detail = wrapper.find('.se-detail')
+    expect(detail.exists()).toBe(true)
+    expect(detail.text()).toContain('channel')
+    expect(detail.text()).toContain('acquiring')
+    expect(detail.text()).toContain('orderNo')
   })
 })
 
@@ -295,12 +304,14 @@ describe('ScenarioEditor：编排体验升级', () => {
 
     const panel = wrapper.find('.se-vars-panel')
     expect(panel.exists()).toBe(true)
-    // {{userId}} 被引用但无定义 → 未定义徽章；{{token}} 有定义 → 无警示。
+    // 默认折叠为总览行：{{userId}} 被引用但无定义 → 未定义警示 + warn chip。
     expect(panel.text()).toContain('1 个未定义')
     expect(panel.text()).toContain('未定义')
     const warnChip = panel.find('.se-var-chip.warn')
     expect(warnChip.text()).toBe('{{userId}}')
-    // 点击变量名展开详情：来源 / 引用位置行。
+    // 展开链路后点击变量名：来源 / 引用位置行。
+    await panel.find('.se-vars-head').trigger('click')
+    await nextTick()
     await panel.find('.se-var-entry-head').trigger('click')
     expect(panel.text()).toContain('来源')
   })
@@ -372,7 +383,10 @@ describe('ScenarioEditor：编排体验升级', () => {
     const report = wrapper.find('.se-report')
     expect(report.exists()).toBe(true)
     expect(report.text()).toContain('全部通过')
-    expect(report.text()).toContain('成功 1')
+    // 摘要统计 chips：成功 / 失败计数 + 断言通过 + 耗时。
+    expect(report.find('.se-report-chips .se-chip.ok').text()).toBe('1')
+    expect(report.find('.se-report-chips .se-chip.fail').text()).toBe('0')
+    expect(report.text()).toContain('断言 1/1')
     expect(report.text()).toContain('200')
     // 结果自描述：渲染后的实际 URL 随行。
     expect(report.text()).toContain('http://localhost/users/1/posts')
@@ -393,13 +407,14 @@ describe('ScenarioEditor：编排体验升级', () => {
     await nextTick()
     expect(wrapper.find('.rp').exists()).toBe(true)
 
-    // 结果行只做展示（点击不整行跳转，避免和行内展开抢事件）；
-    // 定位走步骤卡头部的「定位」按钮。
-    expect(wrapper.find('.se-step-body').exists()).toBe(false)
+    // 结果行行首可点定位；步骤卡「定位」按钮同样入口——选中后右栏详情
+    // 展示该步骤（旧内联展开卡体已由右栏详情面板取代）。
+    expect(wrapper.find('.se-detail-empty').exists()).toBe(true)
     const stepTools = wrapper.findAll('.se-step-tools .ib')
     await stepTools[0]!.trigger('click')
     await nextTick()
-    expect(wrapper.find('.se-step-body').exists()).toBe(true)
+    expect(wrapper.find('.se-detail-empty').exists()).toBe(false)
+    expect(wrapper.find('.se-detail').text()).toContain('/users/{{userId}}/posts')
   })
 
   it('运行中逐步展示：进入步显示执行中与实际 URL，结束后行内即有结果', async () => {
@@ -562,7 +577,7 @@ describe('ScenarioEditor：编排体验升级', () => {
     // 历史标记 + 摘要与结果渲染。
     expect(report.text()).toContain('历史')
     expect(report.text()).toContain('全部通过')
-    expect(report.text()).toContain('成功 1')
+    expect(report.find('.se-report-chips .se-chip.ok').text()).toBe('1')
     expect(report.text()).toContain('200')
     // 运行时值随历史恢复进变量链路。
     expect(wrapper.text()).toContain('abc')
@@ -647,7 +662,8 @@ describe('ScenarioEditor：编排体验升级', () => {
     // 回填原位次：合并后 2 步全部通过，变量池重跑值覆盖。
     const report = wrapper.find('.se-report')
     expect(report.text()).toContain('全部通过')
-    expect(report.text()).toContain('成功 2')
+    expect(report.find('.se-report-chips .se-chip.ok').text()).toBe('2')
+    expect(report.find('.se-report-chips .se-chip.fail').text()).toBe('0')
   })
 
   it('脚本 → 编排联动：修改脚本后同步，提取与断言回写步骤', async () => {

@@ -16,6 +16,7 @@ export interface EditorStep {
   enabled: boolean
   extract: ScenarioExtractRule[]
   assertions: EditorAssertion[]
+  /** 选中态（单选 accordion）：选中步骤的详情展示在右栏。 */
   open: boolean
 }
 
@@ -52,15 +53,15 @@ function nextStepKey(): string {
 /**
  * ScenarioEditor：场景编排视图（scenario:{id} 伪页签的内容区）。
  *
- * 结构（自上而下）：
- * - 头部：场景名 + 描述 + 元信息（项目 / 环境 / 步骤数 / 保存状态）+
- *   视图切换 + 执行策略 + 保存 / 运行；
- * - 变量链路（可折叠）：从启用步骤的真实配置推导「来源 → 引用」，未定义
- *   变量警示；运行后可查看运行时值（敏感名按 miyo-sync 同款词根脱敏）；
- * - 手动编排：纵向步骤卡片（轨道序号 + 连接线），拖拽 / 上移下移 / 复制 /
- *   删除（菜单内确认）/ 启用禁用；折叠态展示方法、URL、变量摘要与执行
- *   状态，展开态为只读请求摘要 + 提取 / 断言编辑；
- * - 执行结果面板（可折叠）：摘要统计 + 每步结果，点击行定位到对应步骤卡；
+ * 布局（三栏工作区，左栏为工作区侧栏的「场景」管理区 ScenarioPanel）：
+ * - 顶部工具栏：场景名 + 保存状态 + 元信息（项目 / 环境 / 步骤数）+
+ *   视图切换 + 执行策略 + 保存 / 运行（主操作突出）；
+ * - 中列流程编排：变量链路总览（可折叠，默认收起）+ 纵向步骤卡片
+ *   （紧凑摘要：序号 / 方法 / 名称 / URL / 执行状态 / 提取·断言数 / 耗时 /
+ *   变量出入参 chips）+ 拖拽 / 启停 / 复制 / 删除（菜单内确认）；
+ * - 右栏步骤详情（≥1360px 内联，窄屏抽屉）：Tab 划分请求配置（只读，含
+ *   「去接口编辑」直达）/ 变量提取 / 断言规则；
+ * - 底部结果 Dock：可折叠执行结果面板（摘要 chips + 每步结果 + 定位）；
  * - 脚本视图：由当前配置实时生成的只读预览（可编辑、复制、导出 .mjs）。
  *
  * 数据流不变：手动步骤是唯一编辑真源；运行串行（前步提取值经 runtime
@@ -80,13 +81,11 @@ import { useVarCandidates } from '../composables/useVarCandidates'
 import { copyText } from '../utils/clipboard'
 import { applyPathVars } from '../utils/pathVariables'
 import { formatDurationShort } from '../utils/format'
-import { formatDateTime } from '../utils/dateTime'
 import { methodBadgeTone } from '../utils/methodTone'
 import {
   computeVarChain,
   extractVarRefs,
   isSensitiveVarName,
-  type VarChainEntry,
   type VarScanStep,
 } from '../utils/scenarioVars'
 import { generateScenarioScript, type ScriptAuth, type ScriptStep } from '../utils/scenarioScript'
@@ -99,8 +98,6 @@ import { useScenarioRun, type ScenarioProgressEvent } from '../composables/useSc
 import { mergedVariableMap } from '../utils/environment'
 import CustomSelect from './ui/CustomSelect.vue'
 import JsonCodeMirror from './JsonCodeMirror.vue'
-import RequestDetail from './RequestDetail.vue'
-import ResponsePanel from './ResponsePanel.vue'
 import SegmentedControl, { type SegmentOption } from './ui/SegmentedControl.vue'
 import EmptyState from './ui/EmptyState.vue'
 import EnvBadge from './ui/EnvBadge.vue'
@@ -108,6 +105,9 @@ import Icon from './ui/Icon.vue'
 import IconButton from './ui/IconButton.vue'
 import Popconfirm from './ui/Popconfirm.vue'
 import Menu, { type MenuItem } from './ui/Menu.vue'
+import ScenarioVarsPanel from './scenario/ScenarioVarsPanel.vue'
+import ScenarioStepDetail from './scenario/ScenarioStepDetail.vue'
+import ScenarioRunReport from './scenario/ScenarioRunReport.vue'
 // ScenarioAssertionRule / ScenarioExtractRule / ScenarioRunResult 等类型
 // 由模块级 <script> 块导入（两块脚本同属一个模块作用域）。
 import type {
@@ -213,8 +213,8 @@ async function save(): Promise<boolean> {
 
 // ---------- 页签切换的编辑态缓存 ----------
 // WorkspaceView 以 v-if 挂载编辑器：切到其它页签会卸载本组件。未保存改动
-// / 运行结果 / 展开状态按 scenario id 暂存模块级缓存，切回时恢复（保存后
-// 仍保留，以维持展开态与运行结果；场景删除时随加载失败自然失效）。
+// / 运行结果 / 选中态按 scenario id 暂存模块级缓存，切回时恢复（保存后
+// 仍保留，以维持选中态与运行结果；场景删除时随加载失败自然失效）。
 
 function stashDraft(): void {
   if (!scenario.value) return
@@ -265,34 +265,19 @@ function stepMethodName(pos: number): string {
   return ep?.method ?? ''
 }
 
-const EXTRACT_FROM_OPTIONS = computed(() => [
-  { value: 'body', label: t('scenario.fromBody') },
-  { value: 'header', label: t('scenario.fromHeader') },
-])
-const ASSERT_TYPE_OPTIONS = computed(() => [
-  { value: 'status', label: t('scenario.assertStatus') },
-  { value: 'jsonpath', label: t('scenario.assertJsonpath') },
-  { value: 'header', label: t('scenario.assertHeader') },
-  { value: 'response_time_ms', label: t('scenario.assertTime') },
-])
-const ASSERT_OP_OPTIONS = computed(() =>
-  (
-    ['eq', 'neq', 'contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'exists', 'not_exists', 'empty', 'not_empty'] as const
-  ).map((op) => ({ value: op, label: t(`scenario.op_${op}`) })),
-)
-const NO_EXPECTED_OPS = new Set(['exists', 'not_exists', 'empty', 'not_empty'])
-
 function addStep(): void {
   if (running.value) return
   const first = store.endpoints[0]
-  steps.value.push({
+  const step: EditorStep = {
     key: nextStepKey(),
     endpointId: first?.id ?? '',
     enabled: true,
     extract: [],
     assertions: [],
-    open: steps.value.length === 0,
-  })
+    open: false,
+  }
+  steps.value.push(step)
+  selectStep(step)
 }
 
 function duplicateStep(i: number): void {
@@ -308,6 +293,7 @@ function duplicateStep(i: number): void {
     open: false,
   }
   steps.value.splice(i + 1, 0, copy)
+  selectStep(copy)
 }
 
 function removeAt(i: number): void {
@@ -321,6 +307,19 @@ function moveStep(i: number, delta: number): void {
   const [row] = steps.value.splice(i, 1)
   steps.value.splice(j, 0, row)
 }
+
+// ---------- 步骤选中态（单选 accordion；详情进右栏） ----------
+function selectStep(s: EditorStep): void {
+  for (const x of steps.value) x.open = x === s
+  drawerOpen.value = true
+}
+
+function closeDetail(): void {
+  drawerOpen.value = false
+}
+
+const selectedStep = computed(() => steps.value.find((s) => s.open) ?? null)
+const selectedIndex = computed(() => steps.value.findIndex((s) => s.open))
 
 // ---------- 步骤更多操作菜单 ----------
 const stepMenu = ref<InstanceType<typeof Menu> | null>(null)
@@ -466,17 +465,8 @@ const varScanSteps = computed<VarScanStep[]>(() =>
 )
 
 const varChain = computed(() => computeVarChain(varScanSteps.value, varCandidates.value))
-const missingVarCount = computed(() => varChain.value.filter((v) => v.missing).length)
 
-const varsExpanded = ref(true)
-const expandedVar = ref<string | null>(null)
-const revealedVars = ref(new Set<string>())
-
-function toggleVarDetail(name_: string): void {
-  expandedVar.value = expandedVar.value === name_ ? null : name_
-}
-
-/** 变量名 → 最早定义步骤（同步骤先引用后提取在运行时取不到值）。 */
+/** 某步骤引用的变量在该步执行时是否有值（更早步骤定义过，或来自外部变量池）。 */
 const definedAtIndex = computed(() => {
   const m = new Map<string, number>()
   for (const scan of varScanSteps.value) {
@@ -488,7 +478,6 @@ const definedAtIndex = computed(() => {
   return m
 })
 
-/** 某步骤引用的变量在该步执行时是否有值（更早步骤定义过，或来自外部变量池）。 */
 function isMissingAt(stepIndex: number, varName: string): boolean {
   if (varCandidates.value.includes(varName)) return false
   const at = definedAtIndex.value.get(varName)
@@ -513,46 +502,31 @@ function stepOutputVars(i: number): string[] {
   return s.extract.filter((r) => r.name.trim() && r.path.trim()).map((r) => r.name.trim())
 }
 
+/** 卡片引用 chips：该步引用的链路变量（有序去重）。 */
+function stepRefs(i: number): string[] {
+  return stepInputVars(i)
+}
+
 function varTag(n: string): string {
   return `{{${n}}}`
 }
 
-/** 链路条目的一行摘要：来源步骤 + 引用数。 */
-function varBrief(v: VarChainEntry): string {
-  const usePart = t('scenario.varUsageCount', { n: v.usages.length })
-  if (v.sources.length) {
-    const src = v.sources[0]!
-    return `${t('scenario.stepRef', { n: src.stepIndex + 1, name: src.stepName })} · ${usePart}`
+/** 变量名 → 最早定义步骤（卡片 chip 的来源标记用）。 */
+const varSourceIndex = computed<Map<string, number>>(() => {
+  const m = new Map<string, number>()
+  for (const v of varChain.value) {
+    if (!v.sources.length) continue
+    const first = v.sources.reduce((a, b) => (a.stepIndex <= b.stepIndex ? a : b))
+    m.set(v.name, first.stepIndex)
   }
-  if (v.external) return `${t('scenario.varExternal')} · ${usePart}`
-  return usePart
-}
+  return m
+})
 
-/** 运行时值（后端最终变量池）；敏感名默认掩码，眼睛切换。 */
-function runtimeValueOf(varName: string): string | null {
-  const vars = runResult.value?.variables
-  if (!vars || !(varName in vars)) return null
-  return vars[varName] ?? ''
-}
-
-/** 结果面板里的提取值：直接展示（排查链路数据流要用真实值）；脱敏策略与
- *  变量链路面板一致——那里的「运行时值」按敏感词根掩码 + 眼睛切换。 */
-function displayExtracted(_name: string, value: string): string {
-  return value
-}
-
-function displayRuntimeValue(varName: string): string {
-  const value = runtimeValueOf(varName)
-  if (value == null) return ''
-  if (isSensitiveVarName(varName) && !revealedVars.value.has(varName)) return '••••••'
-  return value
-}
-
-function toggleReveal(varName: string): void {
-  const next = new Set(revealedVars.value)
-  if (next.has(varName)) next.delete(varName)
-  else next.add(varName)
-  revealedVars.value = next
+/** 变量 chip 的悬浮说明：来自第 N 步 / 未定义。 */
+function refTitle(i: number, name_: string): string {
+  if (isMissingAt(i, name_)) return t('scenario.varMissingWarn')
+  const from = varSourceIndex.value.get(name_)
+  return from == null ? varTag(name_) : t('scenario.usesFrom', { n: from + 1 })
 }
 
 // ---------- 运行引擎（useScenarioRun） ----------
@@ -588,6 +562,7 @@ const {
   runSummary,
   finalState,
   progressPercent,
+  resultByStepIndex,
   run,
   stop,
   rerunAvailable,
@@ -608,9 +583,57 @@ const {
   openMenuAt: (anchor, items) => historyMenu.value?.openAt(anchor, items),
 })
 
+/** 结果 Dock 的「定位」事件：运行位次 → 编辑态步骤索引 → 步骤卡滚动定位。 */
+function onReportLocate(pos: number): void {
+  locateStep(runPosStepIndex(pos))
+}
+
+/** 步骤卡的执行耗时徽章（运行后展示）。 */
+function stepDurationMs(i: number): number | null {
+  return resultByStepIndex.value.get(i)?.duration_ms ?? null
+}
+
 // 拖拽容器挂载 / 运行态切换后同步 Sortable（disabled 声明在 running 之后，避开 TDZ）。
 watch(stepsEl, () => nextTick(initSortable))
 watch(running, () => sortable?.option('disabled', running.value))
+
+// ---------- 右栏（≥1360px 内联；窄屏抽屉叠加） ----------
+const NARROW_QUERY = '(max-width: 1359px)'
+const narrowMql = window.matchMedia(NARROW_QUERY)
+const isNarrow = ref(narrowMql.matches)
+function onNarrowChange(e: MediaQueryListEvent): void {
+  isNarrow.value = e.matches
+}
+narrowMql.addEventListener('change', onNarrowChange)
+
+/** 抽屉开关（窄屏有效；宽屏右栏常驻，仅控制选中态）。 */
+const drawerOpen = ref(false)
+
+function onEscKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && isNarrow.value && drawerOpen.value) drawerOpen.value = false
+}
+
+/** 右栏详情的只读请求分区（宿主按运行同口径物化后下发）。 */
+const selectedEndpoint = computed(() => (selectedIndex.value >= 0 ? stepEndpoint(selectedIndex.value) : null))
+const selectedUrl = computed(() => (selectedIndex.value >= 0 ? stepUrl(selectedIndex.value) : ''))
+const selectedPathVars = computed(() => (selectedIndex.value >= 0 ? enabledPathVars(selectedIndex.value) : []))
+const selectedParams = computed(() => (selectedIndex.value >= 0 ? enabledParams(selectedIndex.value) : []))
+const selectedHeaders = computed(() => (selectedIndex.value >= 0 ? enabledHeaders(selectedIndex.value) : []))
+const selectedBodyKind = computed(() => selectedEndpoint.value?.request.body.mode ?? 'none')
+const selectedBodyText = computed(() => (selectedIndex.value >= 0 ? bodyText(selectedIndex.value) : ''))
+const selectedTone = computed(() => (selectedIndex.value >= 0 ? stepTone(selectedIndex.value) : null))
+const selectedStatusText = computed(() => {
+  const tone = selectedTone.value
+  return tone ? t(STEP_TONE_TEXT[tone]) : null
+})
+const selectedDuration = computed(() => (selectedIndex.value >= 0 ? stepDurationMs(selectedIndex.value) : null))
+
+/** 「在接口编辑器中修改」直达：打开步骤引用的接口页签。 */
+function editSelectedEndpoint(): void {
+  const ep = selectedEndpoint.value
+  if (!ep) return
+  store.openEndpoint(ep)
+}
 
 // ---------- 视图模式：手动编排 ⇄ 脚本 ----------
 /** 手动是唯一编辑真源；脚本视图由步骤实时生成的只读预览（可复制/导出/进 CI）。 */
@@ -964,16 +987,14 @@ async function exportScript(): Promise<void> {
   }
 }
 
-// ---------- 重跑失败步骤 ----------
-/** 结果行 → 定位步骤卡（切回手动视图、展开并滚动到卡片）。
- *  结果行本身只做展示（行内要展开请求快照 / 响应详情，不能被点击抢走事件），
- *  定位统一走左侧步骤卡头部按钮。 */
+// ---------- 定位步骤（结果行 / 变量链路 → 步骤卡） ----------
+/** 选中对应步骤卡（右栏详情随之展示）并滚动到卡片。 */
 function locateStep(stepIdx: number | null): void {
   if (stepIdx == null) return
   const s = steps.value[stepIdx]
   if (!s) return
   viewMode.value = 'manual'
-  s.open = true
+  selectStep(s)
   void nextTick(() => {
     const root = rootEl.value
     if (!root) return
@@ -985,53 +1006,13 @@ function locateStep(stepIdx: number | null): void {
 
 defineExpose({ locateStep })
 
-// ---------- 只读请求摘要（展开态；配置真源在接口编辑器） ----------
+// ---------- 只读请求分区（右栏详情；配置真源在接口编辑器） ----------
 function enabledHeaders(i: number): { key: string; value: string }[] {
   const ep = stepEndpoint(i)
   if (!ep) return []
   return ep.request.headers.filter((h) => h.enabled && h.key.trim()).map((h) => ({ key: h.key.trim(), value: h.value }))
 }
 
-function enabledParamsCount(i: number): number {
-  const ep = stepEndpoint(i)
-  return ep ? ep.request.params.filter((p) => p.enabled && p.key.trim()).length : 0
-}
-
-function stepUrl(i: number): string {
-  const ep = stepEndpoint(i)
-  return ep ? urlTemplateFor(ep) : ''
-}
-
-// ---------- 折叠态「这一步到底发什么」摘要 ----------
-//
-// 用户实测诉求：步骤卡片原来只显示 URL，看不出这一步带了哪些参数、哪几个
-// 参数来自上一步——链路的「数据怎么流动」要靠展开卡片才看得到。这里把
-// 路径变量 / Query / 请求体 / 链式引用全部直接铺在折叠态。
-
-/** 变量 → 定义它的步骤序号（取最早的启用步骤）。 */
-const varSourceIndex = computed<Map<string, number>>(() => {
-  const m = new Map<string, number>()
-  for (const v of varChain.value) {
-    if (!v.sources.length) continue
-    const first = v.sources.reduce((a, b) => (a.stepIndex <= b.stepIndex ? a : b))
-    m.set(v.name, first.stepIndex)
-  }
-  return m
-})
-
-/** 该步引用的链路变量（有序去重）。 */
-function stepRefs(i: number): string[] {
-  return stepInputVars(i)
-}
-
-/** 变量 chip 的悬浮说明：来自第 N 步 / 未定义。 */
-function refTitle(i: number, name: string): string {
-  if (isMissingAt(i, name)) return t('scenario.varMissingWarn')
-  const from = varSourceIndex.value.get(name)
-  return from == null ? varTag(name) : t('scenario.usesFrom', { n: from + 1 })
-}
-
-/** 启用的 Query 参数（保持配置顺序）。 */
 function enabledParams(i: number): { key: string; value: string }[] {
   const ep = stepEndpoint(i)
   if (!ep) return []
@@ -1040,13 +1021,17 @@ function enabledParams(i: number): { key: string; value: string }[] {
     .map((p) => ({ key: p.key.trim(), value: p.value }))
 }
 
-/** 启用的路径变量。 */
 function enabledPathVars(i: number): { key: string; value: string }[] {
   const ep = stepEndpoint(i)
   if (!ep) return []
   return ep.request.path_variables
     .filter((p) => p.enabled && p.key.trim())
     .map((p) => ({ key: p.key.trim(), value: p.value }))
+}
+
+function stepUrl(i: number): string {
+  const ep = stepEndpoint(i)
+  return ep ? urlTemplateFor(ep) : ''
 }
 
 /** 实际发送的请求体文本：JSON 原样（含 {{var}} 模板），表单按字段拼接。 */
@@ -1071,45 +1056,6 @@ function bodyText(i: number): string {
     default:
       return ''
   }
-}
-
-/** 请求体预览（折叠态展示）：压掉换行缩进，过长截断。 */
-function bodyPreview(i: number, max = 160): string {
-  const text = bodyText(i).replace(/\s*\n\s*/g, ' ')
-  return text.length > max ? `${text.slice(0, max)}…` : text
-}
-
-// ---------- 结果行内响应正文速览 ----------
-
-/** 行内正文速览的行数上限与字符上限（完整正文仍走展开后的 ResponsePanel）。 */
-const PEEK_LINES = 8
-const PEEK_CHARS = 800
-
-/**
- * 把响应正文压成「可读的几行」：
- * - JSON 优先按结构重新序列化逐行（单行压缩 JSON 也能读）；
- * - 其它类型按原文分行；超长整行按字符截断。
- * 返回空串表示无可展示正文（204 / 空体）。
- */
-function responsePeek(body: string | null | undefined): string {
-  const raw = (body ?? '').trim()
-  if (!raw) return ''
-  let text = raw
-  if (raw.startsWith('{') || raw.startsWith('[')) {
-    try {
-      text = JSON.stringify(JSON.parse(raw), null, 2)
-    } catch {
-      // 非法 JSON：保留原文
-    }
-  }
-  if (text.length > PEEK_CHARS) text = `${text.slice(0, PEEK_CHARS)}\n…`
-  const lines = text.split('\n')
-  return lines.length > PEEK_LINES ? `${lines.slice(0, PEEK_LINES).join('\n')}\n…` : text
-}
-
-/** 折叠行里显示的正文速览（>0 才渲染）。 */
-function peekOf(response: { body?: string | null } | null | undefined): string {
-  return responsePeek(response?.body)
 }
 
 // ---------- 场景切换加载：放在全部状态声明之后——immediate 回调在 setup 期间同步
@@ -1153,9 +1099,8 @@ watch(
       viewMode.value = 'manual'
     }
     progress.value = { done: 0, total: 0 }
-    expandedVar.value = null
-    revealedVars.value = new Set()
     respOpenRows.value = new Set()
+    drawerOpen.value = false
     loading.value = false
     // 历史菜单数据总是刷新；重开（无缓存）时恢复最近一次运行结果。
     const scenarioIdAtLoad = props.scenarioId
@@ -1168,6 +1113,7 @@ watch(
 
 onBeforeUnmount(() => {
   stashDraft()
+  narrowMql.removeEventListener('change', onNarrowChange)
 })
 
 let unlistenProgress: UnlistenFn | null = null
@@ -1177,12 +1123,14 @@ onMounted(async () => {
   unlistenProgress = await listen<ScenarioProgressEvent>('miyo:scenario-progress', (e) => {
     applyProgressEvent(e.payload)
   })
+  window.addEventListener('keydown', onEscKeydown)
 })
 onBeforeUnmount(() => {
   sortable?.destroy()
   sortable = null
   unlistenProgress?.()
   unlistenProgress = null
+  window.removeEventListener('keydown', onEscKeydown)
 })
 
 const rootEl = ref<HTMLElement | null>(null)
@@ -1194,8 +1142,8 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
     <EmptyState icon="beaker" :title="t('scenario.missing')" compact />
   </div>
   <div v-else ref="rootEl" class="scenario-editor">
-    <!-- ===== 头部：标题 / 元信息 / 操作 ===== -->
-    <header class="se-head">
+    <!-- ===== 顶部工具栏：标题 / 保存状态 / 视图切换 / 执行策略 / 保存 / 运行 ===== -->
+    <header class="se-toolbar">
       <div class="se-head-main">
         <div class="se-title-row">
           <span class="se-kind">{{ t('scenario.kind') }}</span>
@@ -1218,572 +1166,237 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
               · {{ t('scenario.enabledCount', { n: enabledCount }) }}
             </template>
           </span>
+          <input v-model="description" class="se-desc" :placeholder="t('scenario.descPh')" spellcheck="false" />
         </div>
-        <input v-model="description" class="se-desc" :placeholder="t('scenario.descPh')" spellcheck="false" />
       </div>
-      <div class="se-side">
-        <div class="se-actions">
-          <SegmentedControl
-            v-model="viewMode"
-            :options="VIEW_MODES"
-            size="sm"
-            :aria-label="t('scenario.viewMode')"
-          />
-          <button
-            class="miyo-btn miyo-btn-sm"
-            type="button"
-            :disabled="saving || !dirty || running"
-            @click="save"
-          >
-            <Icon name="save" :size="13" /> {{ t('common.save') }}
-          </button>
-          <button
-            v-if="viewMode === 'manual' && !running"
-            class="miyo-btn miyo-btn-sm se-run"
-            type="button"
-            @click="run"
-          >
-            <Icon name="play" :size="13" /> {{ t('scenario.run') }}
-          </button>
-          <button
-            v-else-if="viewMode === 'manual'"
-            class="miyo-btn miyo-btn-sm"
-            type="button"
-            @click="stop"
-          >
-            <Icon name="stop" :size="13" /> {{ t('scenario.stop') }}
-          </button>
-        </div>
-        <label class="se-strategy" :title="stopOnFailure ? t('scenario.stopOnFailureHint') : t('scenario.strategyHintContinue')">
-          <span class="se-strategy-label">{{ t('scenario.strategyLabel') }}</span>
+      <div class="se-actions">
+        <SegmentedControl
+          v-model="viewMode"
+          :options="VIEW_MODES"
+          size="sm"
+          :aria-label="t('scenario.viewMode')"
+        />
+        <span
+          class="se-strategy"
+          :title="stopOnFailure ? t('scenario.stopOnFailureHint') : t('scenario.strategyHintContinue')"
+        >
           <CustomSelect
             v-model="execStrategy"
             :options="STRATEGY_OPTIONS"
             size="sm"
             class="se-strategy-select"
             :disabled="running"
+            :aria-label="t('scenario.strategyLabel')"
           />
-        </label>
+        </span>
+        <button
+          class="miyo-btn miyo-btn-sm"
+          type="button"
+          :disabled="saving || !dirty || running"
+          @click="save"
+        >
+          <Icon name="save" :size="13" /> {{ t('common.save') }}
+        </button>
+        <button
+          v-if="viewMode === 'manual' && !running"
+          class="miyo-btn miyo-btn-sm se-run"
+          type="button"
+          @click="run"
+        >
+          <Icon name="play" :size="13" /> {{ t('scenario.run') }}
+        </button>
+        <button
+          v-else-if="viewMode === 'manual'"
+          class="miyo-btn miyo-btn-sm se-stop"
+          type="button"
+          @click="stop"
+        >
+          <Icon name="stop" :size="13" /> {{ t('scenario.stop') }}
+        </button>
       </div>
     </header>
 
-    <!-- ===== 变量链路（可折叠；来源/引用从启用步骤配置推导） ===== -->
-    <section v-if="varChain.length" class="se-vars-panel">
-      <button
-        type="button"
-        class="se-vars-head"
-        :aria-label="varsExpanded ? t('scenario.collapseVars') : t('scenario.expandVars')"
-        @click="varsExpanded = !varsExpanded"
-      >
-        <Icon name="zap" :size="12" class="se-vars-glyph" />
-        <span class="se-vars-title">{{ t('scenario.linkVars') }}</span>
-        <code
-          v-for="v in varChain"
-          :key="v.name"
-          class="se-var-chip"
-          :class="{ warn: v.missing }"
-          :title="v.missing ? t('scenario.varMissingWarn') : undefined"
-        >{{ varTag(v.name) }}</code>
-        <span v-if="missingVarCount" class="se-vars-warn">
-          <Icon name="alert-triangle" :size="11" />
-          {{ t('scenario.varMissing', { n: missingVarCount }) }}
-        </span>
-        <span class="se-vars-caret">
-          <Icon :name="varsExpanded ? 'chevrons-down-up' : 'chevrons-up-down'" :size="13" />
-        </span>
-      </button>
-      <div v-if="varsExpanded" class="se-vars-body">
-        <div
-          v-for="v in varChain"
-          :key="v.name"
-          class="se-var-entry"
-          :class="{ missing: v.missing }"
-        >
-          <button type="button" class="se-var-entry-head" @click="toggleVarDetail(v.name)">
-            <code class="se-var-chip">{{ varTag(v.name) }}</code>
-            <span v-if="v.missing" class="se-var-badge warn">{{ t('scenario.varUndefinedBadge') }}</span>
-            <span v-else-if="v.external" class="se-var-badge ext">{{ t('scenario.varExternal') }}</span>
-            <span v-else class="se-var-badge ok">{{ t('scenario.varLinked') }}</span>
-            <span class="se-var-brief">{{ varBrief(v) }}</span>
-            <Icon
-              name="chevron-down"
-              :size="12"
-              class="se-var-caret"
-              :class="{ open: expandedVar === v.name }"
-            />
-          </button>
-          <div v-if="expandedVar === v.name" class="se-var-detail">
-            <div v-if="v.sources.length" class="se-var-line">
-              <span class="se-var-k">{{ t('scenario.varSource') }}</span>
-              <span v-for="src in v.sources" :key="src.stepIndex" class="se-var-v">
-                {{ t('scenario.stepRef', { n: src.stepIndex + 1, name: src.stepName }) }}
-                <code class="se-var-path">{{ src.path }}</code>
-              </span>
-            </div>
-            <div v-if="v.usages.length" class="se-var-line">
-              <span class="se-var-k">{{ t('scenario.varUsages') }}</span>
-              <span v-for="u in v.usages" :key="u.stepIndex" class="se-var-v">
-                {{ t('scenario.stepRef', { n: u.stepIndex + 1, name: u.stepName }) }}
-              </span>
-            </div>
-            <div class="se-var-line">
-              <span class="se-var-k">{{ t('scenario.varRuntime') }}</span>
-              <template v-if="runtimeValueOf(v.name) !== null">
-                <code
-                  class="se-var-value"
-                  :class="{ masked: isSensitiveVarName(v.name) && !revealedVars.has(v.name) }"
-                >{{ displayRuntimeValue(v.name) }}</code>
-                <IconButton
-                  v-if="isSensitiveVarName(v.name)"
-                  name="eye"
-                  :size="12"
-                  :label="t('scenario.varToggleValue')"
-                  :title="t('scenario.varToggleValue')"
-                  @click="toggleReveal(v.name)"
-                />
-              </template>
-              <span v-else class="se-var-none">{{ t('scenario.varRuntimeEmpty') }}</span>
-            </div>
-            <p v-if="v.missing" class="se-var-missing-hint">
-              <Icon name="alert-triangle" :size="11" />
-              {{ t('scenario.varMissingWarn') }}
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
+    <!-- ===== 中列编排 + 右栏详情 ===== -->
+    <div v-if="viewMode === 'manual'" class="se-layout">
+      <section class="se-flow">
+        <!-- 变量链路（默认折叠为总览行；来源/引用从启用步骤配置推导） -->
+        <ScenarioVarsPanel
+          :chain="varChain"
+          :runtime-vars="runResult?.variables ?? null"
+          @locate="locateStep"
+        />
 
-    <!-- ===== 手动编排：纵向步骤卡片 ===== -->
-    <template v-if="viewMode === 'manual'">
-      <div v-if="steps.length" ref="stepsEl" class="se-steps">
-        <div
-          v-for="(s, i) in steps"
-          :key="s.key"
-          class="se-step"
-          :class="{ off: !s.enabled, fail: stepTone(i) === 'fail' }"
-          :data-step-key="s.key"
-        >
-          <div class="se-rail">
-            <span class="se-step-idx" :class="`tone-${stepTone(i) ?? 'none'}`">{{ i + 1 }}</span>
-            <span v-if="i < steps.length - 1" class="se-rail-line" aria-hidden="true"></span>
-          </div>
-          <div class="se-card">
-            <div class="se-card-head">
-              <span class="se-drag" :title="t('scenario.dragSort')">
-                <Icon name="list" :size="13" />
-              </span>
-              <input
-                v-model="s.enabled"
-                type="checkbox"
-                class="se-step-check"
-                :title="t('scenario.stepEnable')"
-              />
-              <span
-                v-if="stepEndpoint(i)"
-                class="se-method"
-                :class="methodBadgeTone(stepEndpoint(i)!.method)"
-              >{{ stepEndpoint(i)!.method }}</span>
-              <CustomSelect
-                v-model="s.endpointId"
-                :options="endpointOptions"
-                size="sm"
-                :placeholder="t('scenario.pickEndpoint')"
-                class="se-step-ep"
-                :disabled="running"
-              />
-              <span v-if="s.endpointId && !endpointMap.has(s.endpointId)" class="se-step-missing">
-                {{ t('scenario.endpointMissing') }}
-              </span>
-              <span v-if="stepTone(i)" class="se-step-status" :class="`tone-${stepTone(i)}`">
-                <Icon :name="STEP_TONE_ICON[stepTone(i)!]" :size="11" />
-                {{ t(STEP_TONE_TEXT[stepTone(i)!]) }}
-              </span>
-              <div class="se-step-tools">
-                <IconButton
-                  name="arrow-up-right"
-                  :size="13"
-                  :title="t('scenario.locateStep')"
-                  @click="locateStep(i)"
-                />
-                <IconButton
-                  :name="s.open ? 'chevrons-down-up' : 'chevrons-up-down'"
-                  :size="13"
-                  :title="t('scenario.stepDetail')"
-                  @click="s.open = !s.open"
-                />
-                <IconButton
-                  name="more-horizontal"
-                  :size="13"
-                  :title="t('scenario.moreActions')"
-                  @click.stop="openStepMenu($event, i)"
-                />
-              </div>
-            </div>
-            <div class="se-card-sub">
-              <code v-if="stepUrl(i)" class="se-step-url" :title="stepUrl(i)">{{ stepUrl(i) }}</code>
-              <span v-if="stepRefs(i).length" class="se-step-vars">
-                <span class="se-sub-k">{{ t('scenario.usesUpstream') }}</span>
-                <code
-                  v-for="n in stepRefs(i)"
-                  :key="`in-${n}`"
-                  class="se-var-chip mini"
-                  :class="{ warn: isMissingAt(i, n) }"
-                  :title="refTitle(i, n)"
-                >{{ varTag(n) }}<span v-if="!isMissingAt(i, n) && varSourceIndex.get(n) != null" class="se-chip-from">← {{ t('scenario.usesFrom', { n: varSourceIndex.get(n)! + 1 }) }}</span></code>
-              </span>
-              <span v-if="stepOutputVars(i).length" class="se-step-vars">
-                <Icon name="download" :size="10" class="se-var-io" />
-                <code
-                  v-for="n in stepOutputVars(i).slice(0, 3)"
-                  :key="`out-${n}`"
-                  class="se-var-chip mini out"
-                  :title="varTag(n)"
-                >{{ varTag(n) }}</code>
-                <span v-if="stepOutputVars(i).length > 3" class="se-var-more">
-                  +{{ stepOutputVars(i).length - 3 }}
-                </span>
-              </span>
-            </div>
-
-            <!-- 折叠态请求参数速览：路径变量 / Query / 请求体 / 请求头，
-                 一眼看清这一步实际发什么（不必展开卡片）。 -->
-            <div v-if="stepEndpoint(i)" class="se-req-brief">
-              <div v-if="enabledPathVars(i).length" class="se-brief-row">
-                <span class="se-sub-k">{{ t('scenario.reqPathVars') }}</span>
-                <code
-                  v-for="p in enabledPathVars(i)"
-                  :key="`pv-${p.key}`"
-                  class="se-brief-pair"
-                >{{ p.key }}={{ p.value }}</code>
-              </div>
-              <div v-if="enabledParams(i).length" class="se-brief-row">
-                <span class="se-sub-k">{{ t('scenario.reqQuery') }}</span>
-                <code
-                  v-for="p in enabledParams(i)"
-                  :key="`q-${p.key}`"
-                  class="se-brief-pair"
-                >{{ p.key }}={{ p.value }}</code>
-              </div>
-              <div v-if="bodyPreview(i)" class="se-brief-row">
-                <span class="se-sub-k">{{ t('scenario.reqBody') }}</span>
-                <code class="se-brief-body" :title="bodyText(i)">{{ bodyPreview(i) }}</code>
-              </div>
-              <div v-if="enabledHeaders(i).length" class="se-brief-row">
-                <span class="se-sub-k">{{ t('scenario.reqHeaders') }}</span>
-                <code
-                  v-for="h in enabledHeaders(i).slice(0, 3)"
-                  :key="`h-${h.key}`"
-                  class="se-brief-pair"
-                >{{ h.key }}: {{ h.value }}</code>
-                <span v-if="enabledHeaders(i).length > 3" class="se-var-more">
-                  +{{ enabledHeaders(i).length - 3 }}
-                </span>
-              </div>
-            </div>
-
-            <div v-if="s.open" class="se-step-body">
-              <!-- 只读请求摘要：配置真源在接口编辑器（引用式步骤） -->
-              <div v-if="stepEndpoint(i)" class="se-req">
-                <div class="se-req-title">{{ t('scenario.reqSummary') }}</div>
-                <div class="se-req-row">
-                  <code class="se-req-url">{{ stepEndpoint(i)!.method }} {{ stepUrl(i) }}</code>
-                </div>
-                <div v-if="enabledHeaders(i).length" class="se-req-row">
-                  <span class="se-req-k">{{ t('scenario.reqHeaders') }} · {{ enabledHeaders(i).length }}</span>
-                  <code
-                    v-for="h in enabledHeaders(i).slice(0, 4)"
-                    :key="h.key"
-                    class="se-req-v"
-                  >{{ h.key }}: {{ h.value }}</code>
-                  <span v-if="enabledHeaders(i).length > 4" class="se-var-more">
-                    +{{ enabledHeaders(i).length - 4 }}
-                  </span>
-                </div>
-                <div v-if="enabledParamsCount(i)" class="se-req-row">
-                  <span class="se-req-k">{{ t('scenario.reqParams') }}</span>
-                  <code
-                    v-for="p in enabledParams(i)"
-                    :key="`eq-${p.key}`"
-                    class="se-req-v"
-                  >{{ p.key }}={{ p.value }}</code>
-                </div>
-                <div v-if="bodyText(i)" class="se-req-row">
-                  <span class="se-req-k">{{ t('scenario.reqBodyPreview') }}</span>
-                  <code class="se-req-v">{{ bodyText(i) }}</code>
-                </div>
-              </div>
-
-              <div class="se-rule-group">
-                <div class="se-rule-title">
-                  {{ t('scenario.extractSection') }}
-                  <button class="se-rule-add" type="button" @click="s.extract.push({ name: '', from: 'body', path: '' })">
-                    <Icon name="plus" :size="12" /> {{ t('scenario.addExtract') }}
-                  </button>
-                </div>
-                <div v-for="(r, j) in s.extract" :key="j" class="se-rule-row">
-                  <input
-                    v-model="r.name"
-                    class="miyo-input miyo-input-sm se-r-name"
-                    :placeholder="t('scenario.extractNamePh')"
-                    spellcheck="false"
-                  />
-                  <CustomSelect v-model="r.from" :options="EXTRACT_FROM_OPTIONS" size="sm" class="se-r-from" />
-                  <input
-                    v-model="r.path"
-                    class="miyo-input miyo-input-sm se-r-path"
-                    :placeholder="r.from === 'header' ? t('scenario.headerPathPh') : t('scenario.extractPathPh')"
-                    spellcheck="false"
-                  />
-                  <IconButton name="minus" :size="13" tone="danger" :title="t('common.delete')" @click="s.extract.splice(j, 1)" />
-                </div>
-              </div>
-
-              <div class="se-rule-group">
-                <div class="se-rule-title">
-                  {{ t('scenario.assertSection') }}
-                  <button
-                    class="se-rule-add"
-                    type="button"
-                    @click="s.assertions.push({ name: null, type: 'status', path: '', op: 'eq', expected: '' })"
-                  >
-                    <Icon name="plus" :size="12" /> {{ t('scenario.addAssert') }}
-                  </button>
-                </div>
-                <div v-for="(a, j) in s.assertions" :key="j" class="se-rule-row">
-                  <CustomSelect v-model="a.type" :options="ASSERT_TYPE_OPTIONS" size="sm" class="se-a-type" />
-                  <input
-                    v-if="a.type === 'jsonpath' || a.type === 'header'"
-                    v-model="a.path"
-                    class="miyo-input miyo-input-sm se-a-path"
-                    :placeholder="a.type === 'header' ? t('scenario.headerPathPh') : t('scenario.extractPathPh')"
-                    spellcheck="false"
-                  />
-                  <CustomSelect v-model="a.op" :options="ASSERT_OP_OPTIONS" size="sm" class="se-a-op" />
-                  <input
-                    v-if="!NO_EXPECTED_OPS.has(a.op ?? 'eq')"
-                    v-model="a.expected"
-                    class="miyo-input miyo-input-sm se-a-exp"
-                    :placeholder="t('scenario.expectedPh')"
-                    spellcheck="false"
-                  />
-                  <IconButton name="minus" :size="13" tone="danger" :title="t('common.delete')" @click="s.assertions.splice(j, 1)" />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-else class="se-no-steps">
-        <EmptyState icon="beaker" :title="t('scenario.noStepsTitle')" :description="t('scenario.noStepsDesc')" compact>
-          <button class="miyo-btn miyo-btn-sm" type="button" :disabled="running" @click="addStep">
-            <Icon name="plus" :size="13" /> {{ t('scenario.addStep') }}
-          </button>
-        </EmptyState>
-      </div>
-
-      <button v-if="steps.length" class="se-add-step" type="button" :disabled="running" @click="addStep">
-        <Icon name="plus" :size="13" /> {{ t('scenario.addStep') }}
-      </button>
-
-      <!-- ===== 执行结果面板（可折叠；支持历史回看 / 重开恢复） ===== -->
-      <section v-if="running || runResult" class="se-report" :class="{ fail: finalState?.tone === 'fail' }">
-        <div class="se-report-headrow">
-          <button type="button" class="se-report-head" @click="reportOpen = !reportOpen">
-            <Icon name="gauge" :size="13" />
-            <span class="se-report-title">{{ t('scenario.resultTitle') }}</span>
-            <span
-              v-if="runIsHistory && currentRunAt"
-              class="se-report-badge warn"
-              :title="t('scenario.historyBadge')"
-            >{{ t('scenario.historyBadge') }}</span>
-            <template v-if="running">
-              <span class="se-report-meta">{{ t('scenario.progress', { done: progress.done, total: progress.total }) }}</span>
-            </template>
-            <template v-else-if="runSummary && finalState">
-              <span class="se-report-badge" :class="finalState.tone">{{ finalState.text }}</span>
-              <span class="se-report-meta">
-                {{ t('scenario.summaryOk', { n: runSummary.ok }) }}
-                · {{ t('scenario.summaryFail', { n: runSummary.fail }) }}
-                <template v-if="runSummary.skipped"> · {{ t('scenario.summarySkip', { n: runSummary.skipped }) }}</template>
-                · {{ t('scenario.summaryTime', { t: formatDurationShort(runSummary.duration) }) }}
-              </span>
-            </template>
-            <span v-if="runResult?.stopped_on_failure && !running" class="se-report-warn">
-              {{ t('scenario.stoppedAt') }}
-            </span>
-            <span v-if="runResult?.cancelled && !running" class="se-report-warn">
-              {{ t('scenario.cancelled') }}
-            </span>
-            <span v-if="currentRunAt && !running" class="se-report-meta se-report-time">
-              {{ formatDateTime(currentRunAt) }}
-            </span>
-            <Icon
-              :name="reportOpen ? 'chevrons-down-up' : 'chevrons-up-down'"
-              :size="13"
-              class="se-report-caret"
-            />
-          </button>
-          <IconButton
-            v-if="rerunAvailable"
-            name="refresh"
-            :size="13"
-            :title="t('scenario.rerunFailed')"
-            @click.stop="rerunFailed"
-          />
-          <IconButton
-            name="history"
-            :size="13"
-            :title="t('scenario.history')"
-            :disabled="!runHistory.length"
-            @click.stop="openHistoryMenu($event)"
-          />
-        </div>
-        <div v-if="reportOpen" class="se-report-body">
-          <div v-if="running" class="se-progress">
-            <div class="se-progress-track">
-              <div class="se-progress-bar" :style="{ width: `${progressPercent}%` }"></div>
-            </div>
-          </div>
-          <div class="se-report-scroll">
-          <!-- 运行中逐步实时渲染：后端每步结束即回传结果，不必等整轮跑完；
-               运行结束后换成 runResult（含汇总 / 变量池 / 重跑入口）。 -->
-          <template v-if="running">
-            <div v-for="row in liveRows" :key="row.pos" class="se-rrow">
-              <div class="se-rrow-head">
-                <span
-                  class="se-rdot"
-                  :class="{ fail: row.result && !row.result.ok && !row.result.cancelled, cancelled: row.result?.cancelled, live: !row.result }"
-                  :aria-label="row.result ? undefined : t('scenario.stepStatusRun')"
-                ></span>
-                <span class="se-rmethod" :class="methodBadgeTone(row.result?.method ?? stepMethodName(row.pos))">
-                  {{ row.result?.method ?? stepMethodName(row.pos) }}
-                </span>
-                <span class="se-rname">
-                  {{ row.pos + 1 }}. {{ row.result?.endpoint_name ?? stepName(row.pos) }}
-                </span>
-                <template v-if="row.result">
-                  <span v-if="row.result.status != null" class="se-rstatus">{{ row.result.status }}</span>
-                  <span v-if="row.result.duration_ms != null" class="se-rtime">
-                    {{ formatDurationShort(row.result.duration_ms) }}
-                  </span>
-                </template>
-                <span v-else class="se-rtime se-rtime-live">{{ t('scenario.stepStatusRun') }}…</span>
-                <IconButton
-                  v-if="row.result?.response || row.result?.request_error"
-                  :name="respOpenRows.has(row.pos) ? 'chevrons-down-up' : 'chevrons-up-down'"
-                  :size="13"
-                  :title="t('scenario.viewRequestDetail')"
-                  @click.stop="toggleRespRow(row.pos)"
-                />
-              </div>
-              <!-- 请求参数：渲染后实际 URL + 实际发出的方法 / 头 / 体（请求快照） -->
-              <code v-if="row.result?.url || row.url" class="se-rurl" :title="row.result?.url ?? row.url ?? undefined">
-                {{ row.result?.url ?? row.url }}
-              </code>
-              <p v-if="row.result?.request_error" class="se-rerr">{{ row.result.request_error }}</p>
-              <ul v-if="row.result?.outcomes.length" class="se-routcomes">
-                <li v-for="(o, j) in row.result.outcomes" :key="j" :class="{ fail: !o.passed }">
-                  {{ o.description }}
-                  <span v-if="o.expected != null || o.actual != null" class="se-r-outcome-va">
-                    <template v-if="o.expected != null"> · {{ t('scenario.outcomeExpected', { v: o.expected }) }}</template>
-                    <template v-if="o.actual != null"> · {{ t('scenario.outcomeActual', { v: o.actual }) }}</template>
-                  </span>
-                  <span v-else-if="o.reason"> — {{ o.reason }}</span>
-                </li>
-              </ul>
-              <!-- 响应正文速览：不展开也能看到返回了什么（原来只有状态码） -->
-              <pre v-if="peekOf(row.result?.response)" class="se-rpeek">{{ peekOf(row.result?.response) }}</pre>
-              <div v-if="row.result?.extracted && Object.keys(row.result.extracted).length" class="se-rext">
-                <span class="se-rext-label">{{ t('scenario.extracted') }}</span>
-                <code v-for="(v, k) in row.result.extracted" :key="k" class="se-var-chip">
-                  {{ varTag(k) }} = {{ v }}
-                </code>
-              </div>
-              <div v-if="respOpenRows.has(row.pos) && row.result" class="se-rresp">
-                <RequestDetail
-                  v-if="row.result.response"
-                  :response="row.result.response"
-                  :url="row.result.url ?? undefined"
-                />
-                <p v-else-if="row.result.request_error" class="se-rerr">{{ row.result.request_error }}</p>
-                <ResponsePanel
-                  v-if="row.result.response"
-                  :response="row.result.response"
-                  :load-full-body="row.result.response.body_omitted ? fullBodyLoader(row.pos) : undefined"
-                />
-              </div>
-            </div>
-            <p v-if="livePending" class="se-pending-hint">
-              <Icon name="dot" :size="11" /> {{ t('scenario.pendingHint') }}
-            </p>
-          </template>
-          <template v-else>
+        <!-- 步骤列表（紧凑卡片；纵向轨道） -->
+        <div v-if="steps.length" ref="stepsEl" class="se-steps">
           <div
-            v-for="(r, i) in runResult?.results ?? []"
-            :key="i"
-            class="se-rrow"
-            :class="{ fail: !r.ok && !r.cancelled, cancelled: r.cancelled }"
+            v-for="(s, i) in steps"
+            :key="s.key"
+            class="se-step"
+            :class="{ off: !s.enabled, fail: stepTone(i) === 'fail' }"
+            :data-step-key="s.key"
           >
-            <div class="se-rrow-head">
-              <span class="se-rdot" :class="{ fail: !r.ok && !r.cancelled, cancelled: r.cancelled }" aria-hidden="true"></span>
-              <span class="se-rmethod" :class="methodBadgeTone(r.method)">{{ r.method }}</span>
-              <span class="se-rname">{{ i + 1 }}. {{ r.endpoint_name }}</span>
-              <span v-if="r.status != null" class="se-rstatus">{{ r.status }}</span>
-              <span v-if="r.duration_ms != null" class="se-rtime">{{ formatDurationShort(r.duration_ms) }}</span>
-              <span class="se-rtime se-rtime-assert" :title="t('scenario.assertPassedHint')">
-                {{ t('scenario.assertPassed', { n: r.outcomes.filter((o) => o.passed).length, m: r.outcomes.length }) }}
-              </span>
-              <IconButton
-                v-if="r.response || r.request_error"
-                :name="respOpenRows.has(i) ? 'chevrons-down-up' : 'chevrons-up-down'"
-                :size="13"
-                :title="t('scenario.viewRequestDetail')"
-                @click.stop="toggleRespRow(i)"
-              />
-              <Icon v-else name="arrow-up-right" :size="11" class="se-rloc" />
+            <div class="se-rail">
+              <span class="se-step-idx" :class="`tone-${stepTone(i) ?? 'none'}`">{{ i + 1 }}</span>
+              <span v-if="i < steps.length - 1" class="se-rail-line" aria-hidden="true"></span>
             </div>
-            <code v-if="r.url" class="se-rurl" :title="r.url">{{ r.url }}</code>
-            <p v-if="r.request_error" class="se-rerr">{{ r.request_error }}</p>
-            <ul v-if="r.outcomes.length" class="se-routcomes">
-              <li v-for="(o, j) in r.outcomes" :key="j" :class="{ fail: !o.passed }">
-                {{ o.description }}
-                <span v-if="o.expected != null || o.actual != null" class="se-r-outcome-va">
-                  <template v-if="o.expected != null"> · {{ t('scenario.outcomeExpected', { v: o.expected }) }}</template>
-                  <template v-if="o.actual != null"> · {{ t('scenario.outcomeActual', { v: o.actual }) }}</template>
+            <div
+              class="se-card"
+              :class="{ selected: s.open }"
+              role="button"
+              tabindex="0"
+              :aria-label="t('scenario.stepSelect')"
+              @click="selectStep(s)"
+              @keydown.enter="selectStep(s)"
+            >
+              <div class="se-card-head">
+                <span class="se-drag" :title="t('scenario.dragSort')" @click.stop>
+                  <Icon name="list" :size="13" />
                 </span>
-                <span v-else-if="o.reason"> — {{ o.reason }}</span>
-              </li>
-            </ul>
-            <!-- 响应正文速览：不展开也能看到返回了什么（原来只有状态码） -->
-            <pre v-if="peekOf(r.response)" class="se-rpeek">{{ peekOf(r.response) }}</pre>
-            <div v-if="r.extracted && Object.keys(r.extracted).length" class="se-rext">
-              <span class="se-rext-label">{{ t('scenario.extracted') }}</span>
-              <code v-for="(v, k) in r.extracted" :key="k" class="se-var-chip">
-                {{ varTag(k) }} = {{ displayExtracted(k, v) }}
-              </code>
+                <input
+                  v-model="s.enabled"
+                  type="checkbox"
+                  class="se-step-check"
+                  :title="t('scenario.stepEnable')"
+                  @click.stop
+                />
+                <span
+                  v-if="stepEndpoint(i)"
+                  class="se-method"
+                  :class="methodBadgeTone(stepEndpoint(i)!.method)"
+                >{{ stepEndpoint(i)!.method }}</span>
+                <CustomSelect
+                  v-model="s.endpointId"
+                  :options="endpointOptions"
+                  size="sm"
+                  :placeholder="t('scenario.pickEndpoint')"
+                  class="se-step-ep"
+                  :disabled="running"
+                  @click.stop
+                />
+                <span v-if="s.endpointId && !endpointMap.has(s.endpointId)" class="se-step-missing">
+                  {{ t('scenario.endpointMissing') }}
+                </span>
+                <span v-if="stepTone(i)" class="se-step-status" :class="`tone-${stepTone(i)}`">
+                  <Icon :name="STEP_TONE_ICON[stepTone(i)!]" :size="11" />
+                  {{ t(STEP_TONE_TEXT[stepTone(i)!]) }}
+                </span>
+                <div class="se-step-tools" @click.stop>
+                  <IconButton
+                    name="arrow-up-right"
+                    :size="13"
+                    :title="t('scenario.locateStep')"
+                    @click="locateStep(i)"
+                  />
+                  <IconButton
+                    name="more-horizontal"
+                    :size="13"
+                    :title="t('scenario.moreActions')"
+                    @click.stop="openStepMenu($event, i)"
+                  />
+                </div>
+              </div>
+              <div class="se-card-sub">
+                <code v-if="stepUrl(i)" class="se-step-url" :title="stepUrl(i)">{{ stepUrl(i) }}</code>
+                <span class="se-step-badges">
+                  <span v-if="stepOutputVars(i).length" class="se-badge" :title="t('scenario.detailTabExtract')">
+                    {{ t('scenario.stepExtractBadge', { n: stepOutputVars(i).length }) }}
+                  </span>
+                  <span v-if="s.assertions.length" class="se-badge" :title="t('scenario.detailTabAssert')">
+                    {{ t('scenario.stepAssertBadge', { n: s.assertions.length }) }}
+                  </span>
+                  <span v-if="stepDurationMs(i) != null" class="se-badge time" :title="t('scenario.stepDuration')">
+                    {{ formatDurationShort(stepDurationMs(i)!) }}
+                  </span>
+                </span>
+              </div>
+              <!-- 变量出入参 chips：一眼看清这一步的数据流向（详情在右栏） -->
+              <div v-if="stepRefs(i).length || stepOutputVars(i).length" class="se-card-vars">
+                <span v-if="stepRefs(i).length" class="se-step-vars">
+                  <code
+                    v-for="n in stepRefs(i)"
+                    :key="`in-${n}`"
+                    class="se-var-chip mini"
+                    :class="{ warn: isMissingAt(i, n) }"
+                    :title="refTitle(i, n)"
+                  >{{ varTag(n) }}<span v-if="!isMissingAt(i, n) && varSourceIndex.get(n) != null" class="se-chip-from">← {{ t('scenario.usesFrom', { n: varSourceIndex.get(n)! + 1 }) }}</span></code>
+                </span>
+                <span v-if="stepOutputVars(i).length" class="se-step-vars">
+                  <Icon name="download" :size="10" class="se-var-io" />
+                  <code
+                    v-for="n in stepOutputVars(i).slice(0, 3)"
+                    :key="`out-${n}`"
+                    class="se-var-chip mini out"
+                    :title="varTag(n)"
+                  >{{ varTag(n) }}</code>
+                  <span v-if="stepOutputVars(i).length > 3" class="se-var-more">
+                    +{{ stepOutputVars(i).length - 3 }}
+                  </span>
+                </span>
+              </div>
             </div>
-            <!-- 请求参数 + 响应详情：复用单请求的查看组件（请求快照 / 正文预览 /
-                 按需取全文）；请求级错误时也给出可展开的入口，避免只剩一行红字。 -->
-            <div v-if="respOpenRows.has(i) && (r.response || r.request_error)" class="se-rresp">
-              <RequestDetail v-if="r.response" :response="r.response" :url="r.url ?? undefined" />
-              <p v-else-if="r.request_error" class="se-rerr">{{ r.request_error }}</p>
-              <ResponsePanel
-                v-if="r.response"
-                :response="r.response"
-                :load-full-body="r.response.body_omitted ? fullBodyLoader(i) : undefined"
-              />
-            </div>
-          </div>
-          <p v-if="runResult?.results.length" class="se-locate-hint">
-            <Icon name="arrow-up-right" :size="11" /> {{ t('scenario.locateStep') }}
-          </p>
-          </template>
           </div>
         </div>
+
+        <div v-else class="se-no-steps">
+          <EmptyState icon="beaker" :title="t('scenario.noStepsTitle')" :description="t('scenario.noStepsDesc')" compact>
+            <button class="miyo-btn miyo-btn-sm" type="button" :disabled="running" @click="addStep">
+              <Icon name="plus" :size="13" /> {{ t('scenario.addStep') }}
+            </button>
+          </EmptyState>
+        </div>
+
+        <button v-if="steps.length" class="se-add-step" type="button" :disabled="running" @click="addStep">
+          <Icon name="plus" :size="13" /> {{ t('scenario.addStep') }}
+        </button>
+
+        <!-- ===== 底部结果 Dock（可折叠；支持历史回看 / 重跑失败 / 定位） ===== -->
+        <ScenarioRunReport
+          v-if="running || runResult"
+          v-model:open="reportOpen"
+          :running="running"
+          :progress="progress"
+          :progress-percent="progressPercent"
+          :run-result="runResult"
+          :run-is-history="runIsHistory"
+          :current-run-at="currentRunAt"
+          :live-rows="liveRows"
+          :live-pending="livePending"
+          :resp-open-rows="respOpenRows"
+          :run-summary="runSummary"
+          :final-state="finalState"
+          :rerun-available="rerunAvailable"
+          :has-history="runHistory.length > 0"
+          :step-name="stepName"
+          :step-method="stepMethodName"
+          :full-body-loader="fullBodyLoader"
+          @locate="onReportLocate"
+          @rerun="rerunFailed"
+          @history="openHistoryMenu"
+          @toggle-row="toggleRespRow"
+        />
+        <p v-else-if="steps.length" class="se-report-empty">{{ t('scenario.resultEmpty') }}</p>
       </section>
-      <p v-else-if="steps.length" class="se-report-empty">{{ t('scenario.resultEmpty') }}</p>
-    </template>
+
+      <!-- ===== 右栏：步骤详情（宽屏内联；窄屏抽屉叠加，Esc 关闭） ===== -->
+      <aside v-if="!isNarrow || drawerOpen" class="se-detail" :class="{ overlay: isNarrow }">
+        <ScenarioStepDetail
+          :step="selectedStep"
+          :index="selectedIndex + 1"
+          :endpoint="selectedEndpoint"
+          :url="selectedUrl"
+          :path-vars="selectedPathVars"
+          :params="selectedParams"
+          :headers="selectedHeaders"
+          :body-kind="selectedBodyKind"
+          :body-text="selectedBodyText"
+          :status-tone="selectedTone"
+          :status-text="selectedStatusText"
+          :duration-ms="selectedDuration"
+          @edit-endpoint="editSelectedEndpoint"
+          @close="closeDetail"
+        />
+      </aside>
+    </div>
 
     <!-- ===== 脚本视图：由当前配置实时生成；可编辑 / 复制 / 导出 .mjs ===== -->
     <template v-else>
@@ -1854,13 +1467,14 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
 
 <style scoped>
 .scenario-editor {
+  position: relative;
   height: 100%;
   min-height: 0;
-  overflow: auto;
-  padding: 14px 18px 20px;
+  overflow: hidden;
+  padding: 10px 14px 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .se-missing {
@@ -1870,10 +1484,11 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
   justify-content: center;
 }
 
-/* ---- 头部 ---- */
-.se-head {
+/* ---- 顶部工具栏 ---- */
+.se-toolbar {
+  flex: none;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 14px;
 }
 
@@ -1882,7 +1497,7 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 
 .se-title-row {
@@ -1982,23 +1597,18 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
   font-size: var(--fs-xs);
   outline: none;
   padding: 0;
-  width: 100%;
+  flex: 1;
+  min-width: 120px;
 }
 
 .se-desc:focus {
   border-bottom: 1px solid var(--border);
 }
 
-.se-side {
+.se-actions {
   flex: none;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 7px;
-}
-
-.se-actions {
-  display: flex;
+  align-items: center;
   gap: 8px;
 }
 
@@ -2007,310 +1617,79 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
   color: #fff;
 }
 
+.se-run:hover:not(:disabled) {
+  background: var(--accent-hover, var(--accent));
+  color: #fff;
+}
+
+.se-stop {
+  border-color: var(--danger-border, var(--danger));
+  color: var(--danger);
+}
+
 .se-strategy {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   cursor: default;
-}
-
-.se-strategy-label {
-  font-size: var(--fs-xxs);
-  color: var(--text-3);
-  white-space: nowrap;
 }
 
 .se-strategy-select {
   width: 132px;
 }
 
-/* ---- 变量链路面板 ---- */
-.se-vars-panel {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-}
-
-.se-vars-head {
+/* ---- 三栏布局：中列编排 + 右栏详情 ---- */
+.se-layout {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  width: 100%;
-  border: none;
-  background: transparent;
-  padding: 7px 10px;
-  cursor: pointer;
-  text-align: left;
-  color: var(--text-2);
+  gap: 10px;
 }
 
-.se-vars-glyph {
-  color: var(--accent);
-  flex: none;
-}
-
-.se-vars-title {
-  flex: none;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-2);
-}
-
-.se-vars-warn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--fs-xxs);
-  color: var(--warning);
-  margin-left: auto;
-}
-
-.se-vars-caret {
-  display: inline-flex;
-  color: var(--text-3);
-}
-
-.se-vars-body {
-  border-top: 1px solid var(--border);
-  padding: 6px 10px;
-  display: flex;
-  flex-direction: column;
-}
-
-.se-var-entry + .se-var-entry {
-  border-top: 1px dashed var(--border);
-}
-
-.se-var-entry-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  border: none;
-  background: transparent;
-  padding: 5px 2px;
-  cursor: pointer;
-  text-align: left;
-  color: var(--text-2);
-}
-
-.se-var-entry-head:hover {
-  background: var(--bg-hover);
-  border-radius: var(--radius-sm);
-}
-
-.se-var-entry.missing > .se-var-entry-head > .se-var-chip {
-  border-color: var(--warning);
-  color: var(--warning);
-}
-
-.se-var-badge {
-  flex: none;
-  font-size: var(--fs-xxs);
-  padding: 1px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--text-3);
-}
-
-.se-var-badge.ok {
-  background: var(--success-tint);
-  border-color: transparent;
-  color: var(--success);
-}
-
-.se-var-badge.ext {
-  background: var(--bg-hover);
-  border-color: transparent;
-  color: var(--text-3);
-}
-
-.se-var-badge.warn {
-  background: var(--warning-tint);
-  border-color: transparent;
-  color: var(--warning);
-}
-
-.se-var-brief {
+.se-flow {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-xxs);
-  color: var(--text-3);
-}
-
-.se-var-caret {
-  flex: none;
-  color: var(--text-3);
-  transition: transform var(--dur) var(--ease);
-}
-
-.se-var-caret.open {
-  transform: rotate(180deg);
-}
-
-.se-var-detail {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 4px 2px 8px 34px;
+  gap: 10px;
 }
 
-.se-var-line {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  font-size: var(--fs-xxs);
-  line-height: 1.6;
-}
-
-.se-var-k {
+.se-detail {
   flex: none;
-  width: 52px;
-  color: var(--text-3);
-}
-
-.se-var-v {
-  color: var(--text-2);
-}
-
-.se-var-path {
-  font-family: var(--font-mono);
-  color: var(--tok-key);
-  background: var(--bg-code);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0 5px;
-}
-
-.se-var-value {
-  font-family: var(--font-mono);
-  color: var(--text-1);
-  background: var(--bg-code);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0 5px;
-  max-width: 420px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.se-var-value.masked {
-  color: var(--text-3);
-  letter-spacing: 2px;
-}
-
-.se-var-none {
-  color: var(--text-3);
-}
-
-.se-var-missing-hint {
-  margin: 2px 0 0;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--fs-xxs);
-  color: var(--warning);
-}
-
-/* ---- 变量 chip（面板 / 卡片共用） ---- */
-.se-var-chip {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xxs);
-  padding: 2px 7px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-code);
-  border: 1px solid var(--border);
-  color: var(--tok-key);
-  white-space: nowrap;
-}
-
-.se-var-chip.warn {
-  border-color: var(--warning);
-  color: var(--warning);
-}
-
-.se-var-chip.mini {
-  padding: 0 5px;
-  font-size: 10px;
-  line-height: 16px;
-}
-
-.se-var-chip.out {
-  color: var(--accent);
-  border-color: var(--accent-tint);
-  background: var(--accent-tint);
-}
-
-.se-var-more {
-  font-size: 10px;
-  color: var(--text-3);
-}
-
-/* ---- 折叠态请求参数速览 ---- */
-.se-req-brief {
+  width: 400px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 0 10px 8px 36px;
-}
-
-.se-brief-row {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  font-size: var(--fs-xxs);
-  line-height: 1.55;
-  min-width: 0;
-}
-
-.se-sub-k {
-  flex: none;
-  color: var(--text-3);
-}
-
-.se-brief-pair {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xxs);
-  color: var(--text-2);
-  background: var(--bg-code);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0 5px;
-  white-space: nowrap;
-}
-
-.se-brief-body {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xxs);
-  color: var(--text-2);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  max-width: 100%;
 }
 
-.se-chip-from {
-  margin-left: 4px;
-  color: var(--text-3);
-  font-size: 10px;
+/* 窄屏抽屉：叠加在编排区右侧（Esc / 关闭按钮退出） */
+.se-detail.overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  box-shadow: var(--shadow-drawer);
 }
 
-.se-var-io {
-  color: var(--text-3);
+@media (max-width: 1359px) {
+  .se-detail {
+    width: min(420px, 92vw);
+  }
 }
 
 /* ---- 步骤列表（纵向轨道 + 卡片） ---- */
 .se-steps {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
+  /* 滚动条不遮拖拽手柄 */
+  scrollbar-gutter: stable;
 }
 
 .se-step {
@@ -2382,6 +1761,12 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .se-step-idx.tone-run {
+    animation: none;
+  }
+}
+
 .se-rail-line {
   flex: 1;
   min-height: 14px;
@@ -2398,6 +1783,17 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
   background: var(--bg-card);
   margin: 5px 0;
   overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease);
+}
+
+.se-card:hover {
+  border-color: var(--border-strong);
+}
+
+/* 选中态：accent 边框 + 序号同步高亮 */
+.se-card.selected {
+  border-color: var(--accent);
 }
 
 .se-step:last-child .se-card {
@@ -2414,6 +1810,10 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
 
 .se-step.fail .se-card {
   border-color: var(--danger-border, var(--danger));
+}
+
+.se-step.fail .se-card.selected {
+  border-color: var(--danger);
 }
 
 .se-card-head {
@@ -2454,17 +1854,6 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
 
 .se-step-check {
   flex: none;
-}
-
-.se-method {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
 }
 
 .se-step-ep {
@@ -2526,23 +1915,54 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
   margin-left: auto;
 }
 
+/* ---- 紧凑摘要行：URL + 提取/断言/耗时徽章 ---- */
 .se-card-sub {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 4px 10px;
   padding: 0 10px 7px 36px;
   min-height: 18px;
 }
 
 .se-step-url {
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-xxs);
   color: var(--text-3);
-  max-width: 46%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.se-step-badges {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.se-badge {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.se-badge.time {
+  font-family: var(--font-mono);
+}
+
+/* ---- 变量出入参 chips 行 ---- */
+.se-card-vars {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 0 10px 8px 36px;
 }
 
 .se-step-vars {
@@ -2552,120 +1972,13 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
   gap: 4px;
 }
 
-/* ---- 步骤展开态 ---- */
-.se-step-body {
-  border-top: 1px solid var(--border);
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.se-req {
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-md);
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.se-req-title {
-  font-size: var(--fs-xxs);
-  font-weight: 600;
+.se-var-io {
   color: var(--text-3);
-}
-
-.se-req-row {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  font-size: var(--fs-xxs);
-  line-height: 1.6;
-}
-
-.se-req-k {
-  flex: none;
-  color: var(--text-3);
-}
-
-.se-req-url,
-.se-req-v {
-  font-family: var(--font-mono);
-  color: var(--text-2);
-  word-break: break-all;
-}
-
-.se-req-url {
-  color: var(--text-1);
-}
-
-.se-rule-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.se-rule-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: var(--fs-xxs);
-  font-weight: 600;
-  color: var(--text-2);
-}
-
-.se-rule-add {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  font-size: var(--fs-xxs);
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: var(--radius-sm);
-}
-
-.se-rule-add:hover {
-  color: var(--text-1);
-  background: var(--bg-hover);
-}
-
-.se-rule-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.se-r-name {
-  flex: 0 0 130px;
-}
-
-.se-r-from {
-  flex: 0 0 90px;
-}
-
-.se-r-path,
-.se-a-path,
-.se-a-exp {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-mono);
-}
-
-.se-a-type {
-  flex: 0 0 120px;
-}
-
-.se-a-op {
-  flex: 0 0 100px;
 }
 
 /* ---- 添加步骤 / 空状态 ---- */
 .se-add-step {
+  flex: none;
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
@@ -2690,363 +2003,15 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
 }
 
 .se-no-steps {
+  flex: none;
   border: 1px dashed var(--border);
   border-radius: var(--radius-lg);
   padding: 18px 0;
 }
 
-/* ---- 执行结果面板 ---- */
-.se-report {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  margin-top: 4px;
-}
-
-.se-report.fail {
-  border-color: var(--danger-border, var(--danger));
-}
-
-.se-report-headrow {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding-right: 6px;
-}
-
-.se-report-head {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  border: none;
-  background: transparent;
-  padding: 8px 10px;
-  cursor: pointer;
-  text-align: left;
-  color: var(--text-2);
-}
-
-.se-report-title {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-2);
-}
-
-.se-report-meta,
-.se-report-warn {
-  font-size: var(--fs-xxs);
-  color: var(--text-3);
-}
-
-.se-report-warn {
-  color: var(--danger);
-}
-
-.se-report-badge {
-  flex: none;
-  font-size: var(--fs-xxs);
-  padding: 1px 8px;
-  border-radius: 999px;
-}
-
-.se-report-badge.ok {
-  background: var(--success-tint);
-  color: var(--success);
-}
-
-.se-report-badge.fail {
-  background: var(--danger-tint);
-  color: var(--danger);
-}
-
-.se-report-badge.warn {
-  background: var(--warning-tint);
-  color: var(--warning);
-}
-
-.se-report-caret {
-  margin-left: auto;
-  color: var(--text-3);
-}
-
-.se-report-body {
-  border-top: 1px solid var(--border);
-  padding: 8px 10px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-/* 结果面板限高 + 内部滚动：展开响应详情时整页不被撑出去，
-   ResponsePanel 才能在界内拿到高度渲染正文。 */
-.se-report-scroll {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  max-height: 70vh;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.se-progress {
-  padding: 2px 0 4px;
-}
-
-.se-progress-track {
-  height: 3px;
-  border-radius: 999px;
-  background: var(--bg-hover);
-  overflow: hidden;
-}
-
-.se-progress-bar {
-  height: 100%;
-  border-radius: 999px;
-  background: var(--accent);
-  transition: width 0.3s var(--ease);
-}
-
-.se-rrow {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.se-rrow:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-hover);
-}
-
-/* 结果行只做展示（请求详情在行内展开），不整体可点、不用手型光标 */
-
-.se-rrow.fail {
-  border-color: var(--danger-border, var(--danger));
-}
-
-.se-rrow.cancelled {
-  opacity: 0.75;
-}
-
-.se-rdot.cancelled {
-  background: var(--warning);
-}
-
-/* 渲染后的实际 URL（含变量替换结果），定位「跑的是哪个地址」 */
-.se-rurl {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xxs);
-  color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 结构化断言对比（期望 x · 实际 y），失败行红色承接 */
-.se-r-outcome-va {
-  font-family: var(--font-mono);
-  word-break: break-all;
-}
-
-/* 响应详情：复用 ResponsePanel（弹性布局，需给界内固定高度）。
-   收起时只占内容高度；展开时整体变成纵向 flex，让 ResponsePanel 拿到
-   剩余高度——空 div 压扁过 ResponsePanel 的高度。 */
-.se-rresp {
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-top: 1px dashed var(--border);
-  padding-top: 8px;
-}
-
-.se-rresp > :deep(.response-panel),
-.se-rresp > .response-panel {
-  flex: 1;
-  min-height: 320px;
-}
-
-/* 行内响应正文速览：常显一段（不展开也能看到返回了什么） */
-.se-rpeek {
-  margin: 2px 0 0;
-  max-height: 120px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xxs);
-  line-height: 1.5;
-  color: var(--text-2);
-  background: var(--bg-code);
-  border: 1px solid var(--border);
-  border-left: 2px solid var(--success);
-  border-radius: var(--radius-sm);
-  padding: 5px 8px;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.se-rrow.fail .se-rpeek {
-  border-left-color: var(--danger);
-}
-
-.se-rrow-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.se-rdot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--success);
-}
-
-.se-rdot.fail {
-  background: var(--danger);
-}
-
-/* 在途步：呼吸点，配合「执行中」文案 */
-.se-rdot.live {
-  background: var(--accent);
-  animation: se-rdot-pulse 1.2s var(--ease) infinite;
-}
-
-@keyframes se-rdot-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.35;
-    transform: scale(0.75);
-  }
-}
-
-.se-rtime-live {
-  color: var(--accent);
-}
-
-.se-rtime-assert {
-  color: var(--text-3);
-}
-
-.se-pending-hint {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--fs-xxs);
-  color: var(--text-3);
-}
-
-/* 步骤卡才是定位入口：结果行只做展示，提示文字指向左侧步骤卡 */
-.se-locate-hint {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--fs-xxs);
-  color: var(--text-3);
-  opacity: 0.75;
-}
-
-
-
-.se-rmethod {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
-  padding: 1px 5px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-}
-
-.se-rname {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-xs);
-  color: var(--text-1);
-}
-
-.se-rstatus {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xxs);
-  color: var(--text-2);
-}
-
-.se-rtime {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xxs);
-  color: var(--text-3);
-}
-
-.se-rloc {
-  flex: none;
-  color: var(--text-3);
-  opacity: 0;
-  transition: opacity var(--dur) var(--ease);
-}
-
-.se-rrow:hover .se-rloc {
-  opacity: 1;
-}
-
-.se-rerr {
-  margin: 0;
-  font-size: var(--fs-xxs);
-  color: var(--danger);
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.se-routcomes {
-  margin: 0;
-  padding: 0 0 0 16px;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.se-routcomes li {
-  font-size: var(--fs-xxs);
-  line-height: 1.5;
-  color: var(--text-2);
-  word-break: break-all;
-}
-
-.se-routcomes li.fail {
-  color: var(--danger);
-}
-
-.se-rext {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.se-rext-label {
-  font-size: var(--fs-xxs);
-  color: var(--text-3);
-}
-
+/* ---- 结果 Dock 之外的操作提示 ---- */
 .se-report-empty {
+  flex: none;
   margin: 0;
   padding: 8px 2px;
   border-top: 1px dashed var(--border);
@@ -3056,6 +2021,7 @@ const enabledCount = computed(() => steps.value.filter((s) => s.enabled).length)
 
 /* ---- 脚本视图 ---- */
 .se-script-bar {
+  flex: none;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;

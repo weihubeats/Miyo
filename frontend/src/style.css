@@ -909,6 +909,68 @@ kbd,
   letter-spacing: 0.4px;
 }
 
+/* ---- 场景编排（ScenarioEditor 族）：变量 chip / Method 徽章
+     （编辑器 / 变量链路 / 结果 Dock 三处共用，须全局） ---- */
+
+.se-var-chip {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xxs);
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  color: var(--tok-key);
+  white-space: nowrap;
+}
+
+.se-var-chip.warn {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.se-var-chip.ext {
+  color: var(--text-3);
+}
+
+.se-var-chip.mini {
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.se-var-chip.out {
+  color: var(--accent);
+  border-color: var(--accent-tint);
+  background: var(--accent-tint);
+}
+
+.se-var-more {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.se-chip-from {
+  margin-left: 4px;
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.se-var-io {
+  color: var(--text-3);
+}
+
+.se-method,
+.se-rmethod {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+}
+
 /* ---- macOS Overlay 标题栏：为左上角交通灯（x:12 起，宽约 62px）预留空间 ---- */
 html[data-platform='macos'] .app-brand {
   left: 92px;
