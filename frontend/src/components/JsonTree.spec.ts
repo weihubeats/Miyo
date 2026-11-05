@@ -159,3 +159,61 @@ describe('JsonTree：卸载间隙稳定性（回归：emitsOptions 崩溃类）'
     collector.restore()
   })
 })
+describe('JsonTree：行级复制（JSONPath / 字段值）', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('悬停操作钮：复制 JSONPath（点号安全键 + 数组下标），成功后短暂反馈', async () => {
+    const writeText = vi.fn().mockResolvedValue(true)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    const w = mount(JsonTree, { props: { data: DATA } })
+
+    // $.users[0].name 对应叶子行：name: "miyo"
+    const codeRows = w.findAll('.jt-line')
+    const target = codeRows.find((r) => r.text().includes('"miyo"'))
+    expect(target).toBeDefined()
+    const pathBtn = target!.find('.jt-act')
+    await pathBtn.trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith('$.users[0].name')
+    // 复制反馈：该行出现 ✓（check 图标）
+    expect(target!.find('svg use, .jt-act').exists()).toBe(true)
+  })
+
+  it('特殊键名走 ["key"] 写法；复制字符串值为原文（非 JSON 字面量）', async () => {
+    const writeText = vi.fn().mockResolvedValue(true)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    const w = mount(JsonTree, { props: { data: { 'odd key': 'hello' } } })
+
+    const leaf = w.findAll('.jt-line').find((r) => r.text().includes('"hello"'))!
+    const [pathBtn, valueBtn] = leaf.findAll('.jt-act')
+    expect(pathBtn).toBeDefined()
+    expect(valueBtn).toBeDefined()
+
+    await pathBtn.trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenLastCalledWith(`$["odd key"]`)
+
+    await valueBtn!.trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenLastCalledWith('hello')
+  })
+
+  it('非字符串叶子复制 JSON 字面量（数字 / null / 布尔）', async () => {
+    const writeText = vi.fn().mockResolvedValue(true)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    const w = mount(JsonTree, { props: { data: { n: 42, x: null, ok: true } } })
+
+    const rows = w.findAll('.jt-line')
+    const nRow = rows.find((r) => r.text().includes('42'))!
+    await nRow.findAll('.jt-act')[1]!.trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenLastCalledWith('42')
+
+    const nullRow = rows.find((r) => r.text().includes('null'))!
+    await nullRow.findAll('.jt-act')[1]!.trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenLastCalledWith('null')
+  })
+})

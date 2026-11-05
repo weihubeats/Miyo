@@ -680,6 +680,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
+  /** 历史重放标记：restoreFromHistory(…, { send: true }) 置入，
+   * EndpointEditor 激活该接口时消费并自动发送一次（跨组件联动，非持久状态）。 */
+  const autoSendEndpointId = ref<string | null>(null)
+
   let tabsPersistTimer: ReturnType<typeof setTimeout> | undefined
   function persistTabsState(): void {
     const pid = project.value?.id
@@ -1389,6 +1393,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   /** 关闭全部标签（返回关闭数；脏标签由调用方先确认）。 */
   function closeAllTabs(): number {
     const targets = [...openTabs.value]
+    targets.forEach((id) => closeTab(id))
+    return targets.length
+  }
+
+  /** 关闭 keepId 右侧的全部标签（返回关闭数；脏标签由调用方先确认）。 */
+  function closeTabsToRight(keepId: string): number {
+    const idx = openTabs.value.indexOf(keepId)
+    if (idx === -1) return 0
+    const targets = openTabs.value.slice(idx + 1)
     targets.forEach((id) => closeTab(id))
     return targets.length
   }
@@ -2332,9 +2345,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
    * - 归属接口存在：打开其草稿标签页并回填；不存在（临时请求）：新建「未命名接口」草稿；
    * - 回填 method / path / params / headers / body（摘要值为变量渲染后的实际发送值）；
    * - 认证保留接口自身配置（摘要入库时后端已置空）；URL origin 预填会话 Base URL；
-   *   展示前缀为环境变量时 origin+path 整条存入 path（重发直达原主机，不覆写环境）。
+   *   展示前缀为环境变量时 origin+path 整条存入 path（重发直达原主机，不覆写环境）；
+   * - `opts.send`（历史「重放」）：置 autoSendEndpointId 标记，EndpointEditor
+   *   激活该接口时消费并自动发送一次（gRPC 记录不支持，调用方不传）。
    */
-  function restoreFromHistory(h: RequestHistory): void {
+  function restoreFromHistory(h: RequestHistory, opts?: { send?: boolean }): void {
     let summary: HistorySummary = {}
     try {
       summary = JSON.parse(h.request_summary_json) as HistorySummary
@@ -2440,6 +2455,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (spec?.body) draft.request.body = spec.body
     if (spec?.path_variables?.length) draft.request.path_variables = spec.path_variables
     toast.info(t('ws.restoredToEditor'))
+    if (opts?.send) autoSendEndpointId.value = id
   }
 
   return {
@@ -2486,6 +2502,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     closeTab,
     closeOtherTabs,
     closeAllTabs,
+    closeTabsToRight,
     saveActiveDraft,
     deleteEndpoint,
     undoDelete,
@@ -2557,6 +2574,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     clearHistories,
     deleteHistory,
     restoreFromHistory,
+    autoSendEndpointId,
   }
 })
 

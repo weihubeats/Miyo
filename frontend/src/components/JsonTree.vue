@@ -13,6 +13,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { escapeHtml } from '../utils/highlight'
+import { copyText } from '../utils/clipboard'
 import { useLocaleStore } from '../stores/locale'
 import Icon from './ui/Icon.vue'
 
@@ -29,6 +30,10 @@ interface Line {
   title?: string
   toggleable?: string
   open?: boolean
+  /** 该行对应的 JSONPath（`$.data.items[0]`），悬停可复制。 */
+  path?: string
+  /** 叶子行的原始值（字符串复制原文，其余复制 JSON 字面量）。 */
+  rawValue?: unknown
 }
 
 /** 一行内的匹配范围（字符偏移，相对该行文本）。 */
@@ -106,10 +111,16 @@ const lines = computed<Line[]>(() => {
   const force = props.query.length > 0
   let capped = false
 
+  /** 对象键是否可走点号（JSONPath 惯例：标识符安全键用 `.key`，其余用 ['key']）。 */
+  function isPlainKey(k: string): boolean {
+    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k)
+  }
+
   function walk(
     value: unknown,
     depth: number,
     path: string,
+    displayPath: string,
     keyHtml: Seg[] | null,
     isLast: boolean,
   ): void {
@@ -120,7 +131,13 @@ const lines = computed<Line[]>(() => {
     if (value === null || typeof value !== 'object') {
       const segments = [...(keyHtml ?? []), ...leafSegs(value)]
       if (!isLast) segments.push(tok(',', 'punct'))
-      out.push({ depth, segments, ...(typeof value === 'string' ? { title: value } : {}) })
+      out.push({
+        depth,
+        segments,
+        path: displayPath,
+        rawValue: value,
+        ...(typeof value === 'string' ? { title: value } : {}),
+      })
       return
     }
 
@@ -130,7 +147,7 @@ const lines = computed<Line[]>(() => {
     if (count === 0) {
       const segments = [...(keyHtml ?? []), tok(isArray ? '[]' : '{}', 'punct')]
       if (!isLast) segments.push(tok(',', 'punct'))
-      out.push({ depth, segments })
+      out.push({ depth, segments, path: displayPath })
       return
     }
 
@@ -144,23 +161,33 @@ const lines = computed<Line[]>(() => {
         tok(isArray ? ']' : '}', 'punct'),
       ]
       if (!isLast) segments.push(tok(',', 'punct'))
-      out.push({ depth, segments, toggleable: path, open: false })
+      out.push({ depth, segments, toggleable: path, open: false, path: displayPath })
       return
     }
 
     const head: Seg[] = [...(keyHtml ?? []), tok(isArray ? '[' : '{', 'punct')]
-    out.push({ depth, segments: head, toggleable: path, open: true })
+    out.push({ depth, segments: head, toggleable: path, open: true, path: displayPath })
 
     if (isArray) {
       const arr = value as unknown[]
       for (let i = 0; i < arr.length; i++) {
-        walk(arr[i], depth + 1, `${path}[${i}]`, null, i === arr.length - 1)
+        walk(
+          arr[i],
+          depth + 1,
+          `${path}[${i}]`,
+          `${displayPath}[${i}]`,
+          null,
+          i === arr.length - 1,
+        )
       }
     } else {
       const entries = Object.entries(value as Record<string, unknown>)
       for (let i = 0; i < entries.length; i++) {
         const [k, v] = entries[i]
-        walk(v, depth + 1, `${path}[${JSON.stringify(k)}]`, keyToken(k), i === entries.length - 1)
+        const childDisplay = isPlainKey(k)
+          ? `${displayPath}.${k}`
+          : `${displayPath}[${JSON.stringify(k)}]`
+        walk(v, depth + 1, `${path}[${JSON.stringify(k)}]`, childDisplay, keyToken(k), i === entries.length - 1)
       }
     }
 
@@ -169,7 +196,7 @@ const lines = computed<Line[]>(() => {
     out.push({ depth, segments: tail })
   }
 
-  if (props.data !== undefined) walk(props.data, 0, '$', null, true)
+  if (props.data !== undefined) walk(props.data, 0, '$', '$', null, true)
   if (capped) {
     out.push({
       depth: 0,
@@ -313,6 +340,38 @@ function collapseAll(): void {
   forceOpen.value = false
 }
 
+// ---------- 行级复制（JSONPath / 字段值） ----------
+const copiedLine = ref<number | null>(null)
+const copiedKind = ref<'path' | 'value'>('path')
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+
+onBeforeUnmount(() => {
+  if (copiedTimer !== null) clearTimeout(copiedTimer)
+})
+
+function flashCopied(i: number, kind: 'path' | 'value'): void {
+  copiedLine.value = i
+  copiedKind.value = kind
+  if (copiedTimer !== null) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => {
+    copiedLine.value = null
+    copiedTimer = null
+  }, 1200)
+}
+
+/** 字符串复制原文（与展示截断无关），其余复制 JSON 字面量。 */
+function rawValueText(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+async function copyLinePath(i: number, line: Line): Promise<void> {
+  if (await copyText(line.path ?? '')) flashCopied(i, 'path')
+}
+
+async function copyLineValue(i: number, line: Line): Promise<void> {
+  if (await copyText(rawValueText(line.rawValue))) flashCopied(i, 'value')
+}
+
 defineExpose({ expandAll, collapseAll, matchCount })
 </script>
 
@@ -335,6 +394,27 @@ defineExpose({ expandAll, collapseAll, matchCount })
       </span>
       <span class="jt-indent" :style="{ width: `${line.depth * 16}px` }" aria-hidden="true"></span>
       <span class="jt-code" v-tooltip-overflow="line.title ?? ''" v-html="lineHtmls[i]"></span>
+      <span v-if="line.path" class="jt-actions">
+        <button
+          type="button"
+          class="jt-act"
+          :title="t('jsonTree.copyPath')"
+          :aria-label="t('jsonTree.copyPath')"
+          @click.stop="copyLinePath(i, line)"
+        >
+          <Icon :name="copiedLine === i && copiedKind === 'path' ? 'check' : 'code'" :size="11" />
+        </button>
+        <button
+          v-if="line.rawValue !== undefined"
+          type="button"
+          class="jt-act"
+          :title="t('jsonTree.copyValue')"
+          :aria-label="t('jsonTree.copyValue')"
+          @click.stop="copyLineValue(i, line)"
+        >
+          <Icon :name="copiedLine === i && copiedKind === 'value' ? 'check' : 'copy'" :size="11" />
+        </button>
+      </span>
     </div>
   </div>
 </template>
@@ -418,6 +498,40 @@ defineExpose({ expandAll, collapseAll, matchCount })
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 行尾复制钮：悬停显现，复制成功短暂变 ✓ */
+.jt-actions {
+  flex-shrink: 0;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 8px;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.jt-line:hover .jt-actions,
+.jt-line:focus-within .jt-actions {
+  opacity: 1;
+}
+.jt-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.jt-act:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
 }
 
 /* 语法着色（--tok-* 统一色阶，与请求 Body 编辑器共用，见 constants/editorTheme.ts）。

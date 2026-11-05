@@ -22,7 +22,7 @@ import { useWorkspaceStore } from '../stores/workspace'
 import { useLocaleStore } from '../stores/locale'
 import { useMiyoApi } from '../composables/useMiyoApi'
 import { useToast } from '../composables/useToast'
-import { envBaseUrl, envColorClass, normalizeBaseUrl } from '../utils/environment'
+import { envBaseUrl, envColorClass, isSensitiveVarKey, normalizeBaseUrl } from '../utils/environment'
 import { deepClone } from '../utils/clone'
 import { rowKey } from '../utils/rowKey'
 import Icon from './ui/Icon.vue'
@@ -60,6 +60,53 @@ const busy = ref(false)
 const dirty = ref(false)
 /** 新建环境是否仍未被编辑：仅创建本身不计入「未保存修改」，关闭时直接丢弃不弹确认。 */
 let newEnvPristine = false
+
+// ---------- 敏感值遮蔽（肩窥保护） ----------
+// key 命中敏感词根的变量，值列以 password 形态遮蔽；聚焦该单元格时临时明文
+//（编辑不受影响），失焦重新遮蔽。表头眼睛按钮一键开关，状态持久化。
+const MASK_KEY = 'miyo.envmgr-hide-sensitive'
+const hideSensitive = ref(tryReadHideSensitive())
+
+function tryReadHideSensitive(): boolean {
+  try {
+    return localStorage.getItem(MASK_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+function toggleHideSensitive(): void {
+  hideSensitive.value = !hideSensitive.value
+  try {
+    localStorage.setItem(MASK_KEY, hideSensitive.value ? '1' : '0')
+  } catch {
+    // 存储不可用仅丢持久化
+  }
+}
+
+/** 当前聚焦的值单元格（`scope:i:col`）：聚焦行临时明文。 */
+const focusedCell = ref<string | null>(null)
+
+/** 值列输入形态：非敏感 / 总开关关闭 / 聚焦中 → 明文；其余 password。 */
+function valueInputType(
+  v: { key: string },
+  scope: 'env' | 'global',
+  i: number,
+  col: 'remote' | 'local',
+): 'text' | 'password' {
+  if (!hideSensitive.value) return 'text'
+  if (!isSensitiveVarKey(v.key)) return 'text'
+  if (focusedCell.value === `${scope}:${i}:${col}`) return 'text'
+  return 'password'
+}
+
+function onCellFocus(scope: 'env' | 'global', i: number, col: 'remote' | 'local'): void {
+  focusedCell.value = `${scope}:${i}:${col}`
+}
+
+function onCellBlur(): void {
+  focusedCell.value = null
+}
 
 /** 独立管理模式：目标项目不是当前工作区项目——数据自加载、保存不回写工作区列表。 */
 const detached = computed(() => !!props.projectId && props.projectId !== store.project?.id)
@@ -800,6 +847,16 @@ async function remove(env: Environment): Promise<void> {
               <div class="em-section-head">
                 <span class="em-section-title">{{ t('envmgr.sectionVars') }}</span>
                 <span class="em-section-hint">{{ t('envmgr.varsHint') }}</span>
+                <button
+                  class="em-mask-toggle"
+                  :class="{ on: hideSensitive }"
+                  type="button"
+                  :title="t('envmgr.maskToggleTip')"
+                  @click="toggleHideSensitive"
+                >
+                  <Icon :name="hideSensitive ? 'eye-off' : 'eye'" :size="12" />
+                  {{ t('envmgr.maskSensitive') }}
+                </button>
               </div>
               <div class="em-table">
                 <div class="em-th em-th-var">
@@ -824,17 +881,23 @@ async function remove(env: Environment): Promise<void> {
                   />
                   <input
                     v-model="v.remote_value"
+                    :type="valueInputType(v, 'env', i, 'remote')"
                     class="miyo-input miyo-input-sm em-col-remote"
                     :placeholder="t('envmgr.varRemotePh')"
                     spellcheck="false"
                     @input="onAnyChange"
+                    @focus="onCellFocus('env', i, 'remote')"
+                    @blur="onCellBlur"
                   />
                   <input
                     v-model="v.local_value"
+                    :type="valueInputType(v, 'env', i, 'local')"
                     class="miyo-input miyo-input-sm em-col-local"
                     :placeholder="t('envmgr.varLocalPh')"
                     spellcheck="false"
                     @input="onAnyChange"
+                    @focus="onCellFocus('env', i, 'local')"
+                    @blur="onCellBlur"
                   />
                   <input
                     v-model="v.enabled"
@@ -896,17 +959,23 @@ async function remove(env: Environment): Promise<void> {
                   />
                   <input
                     v-model="v.remote_value"
+                    :type="valueInputType(v, 'global', i, 'remote')"
                     class="miyo-input miyo-input-sm em-col-remote"
                     :placeholder="t('envmgr.varRemotePh')"
                     spellcheck="false"
                     @input="onGlobalChange"
+                    @focus="onCellFocus('global', i, 'remote')"
+                    @blur="onCellBlur"
                   />
                   <input
                     v-model="v.local_value"
+                    :type="valueInputType(v, 'global', i, 'local')"
                     class="miyo-input miyo-input-sm em-col-local"
                     :placeholder="t('envmgr.varLocalPh')"
                     spellcheck="false"
                     @input="onGlobalChange"
+                    @focus="onCellFocus('global', i, 'local')"
+                    @blur="onCellBlur"
                   />
                   <input
                     v-model="v.enabled"
@@ -1445,6 +1514,33 @@ async function remove(env: Environment): Promise<void> {
   align-items: baseline;
   gap: 10px;
   padding: 0 2px;
+}
+
+/* 敏感值遮蔽开关：右对齐小型文字钮，眼睛图标随状态切换 */
+.em-mask-toggle {
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  font-family: inherit;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.em-mask-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+.em-mask-toggle.on {
+  color: var(--accent);
 }
 
 .em-section-title {

@@ -49,6 +49,7 @@ function applyHeaders(rows: KVRow[]): void {
       :key-placeholder="t('headers.keyPh')"
       :description-placeholder="t('headers.descPh')"
       :var-candidates="varCandidates"
+      searchable
       @update:model-value="applyHeaders"
     />
   </div>

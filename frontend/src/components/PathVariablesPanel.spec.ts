@@ -28,12 +28,12 @@ describe('PathVariablesPanel', () => {
       makeDraft({ path: 'https://example.com:8080/users/:id/posts/{slug}/{{lang}}?x=1' }),
     )
     const wrapper = mountPanel(draft)
-    expect(wrapper.text()).toContain('路径变量 (0)')
+    // 面板内不再重复展示数量徽标（数量在配置页签 Tab 上，唯一来源）
+    expect(wrapper.text()).not.toContain('路径变量')
 
     await wrapper.find('.pv-extract').trigger('click')
 
     expect(draft.request.path_variables.map((r) => r.key)).toEqual(['id', 'slug', 'lang'])
-    expect(wrapper.text()).toContain('路径变量 (3)')
     wrapper.unmount()
   })
 
@@ -61,7 +61,6 @@ describe('PathVariablesPanel', () => {
     await wrapper.find('.pv-extract').trigger('click')
 
     expect(draft.request.path_variables).toEqual([])
-    expect(wrapper.text()).toContain('路径变量 (0)')
     wrapper.unmount()
   })
 

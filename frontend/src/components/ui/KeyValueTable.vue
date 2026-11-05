@@ -1,17 +1,19 @@
 <script setup lang="ts">
 /**
- * KeyValueTable：键/值/描述 三列（可选启用列）表格，Postman 式自动追加行。
- * - 末尾常驻一条空白「幽灵行」（弱化显示）：在其中任一单元格输入即自动
- *   成为正式行，并立即在下方补齐新的空白行，无需点「+ 添加」；
- * - 行删除按钮仅对正式行显示（悬停显现）；中间空行失焦自动移除，只保留底部一条幽灵行；
+ * KeyValueTable：键/值/描述 三列（可选启用列）表格。
+ * - 无幽灵占位行：空表即空表，新增走底部「+ 添加」显式入口（空行占位曾
+ *   被用户误读为禁用数据行）；行内输入的行失焦若仍为空则自动移除；
  * - 键盘流：Tab 天然从 Key → Value；Value 内按 Enter / Tab 跳到下一行 Key，
- *   处于末尾时自动补行并聚焦。
+ *   处于末尾时自动补行并聚焦（快速连续录入）；
+ * - `searchable` 时顶部工具栏提供过滤条 + #toolbar-actions 插槽
+ *   （调用方放批量编辑 / 抽取等同级操作，避免两层工具栏）。
  */
 import { computed, nextTick, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useLocaleStore } from '../../stores/locale'
 import { useVarAutocomplete } from '../../composables/useVarAutocomplete'
 import { rowKey } from '../../utils/rowKey'
 import IconButton from './IconButton.vue'
+import Icon from './Icon.vue'
 import VarSuggest from './VarSuggest.vue'
 
 export interface KVRow {
@@ -38,12 +40,17 @@ const props = withDefaults(
      * 由调用方传 computed（如 useVarCandidates），变量增删后候选即时刷新。
      */
     varCandidates?: string[]
+    /** 顶部过滤框：按 key / value / 描述模糊过滤行（过滤只影响显示，不改数据）。 */
+    searchable?: boolean
+    /** 底部「+ 添加」按钮文案（缺省用 kv.addRow 兜底）。 */
+    addLabel?: string
   }>(),
   {
     showEnable: true,
     showDescription: true,
     descriptionPlaceholder: '',
     disabled: false,
+    searchable: false,
   },
 )
 
@@ -101,10 +108,8 @@ function contentFingerprint(list: KVRow[]): string {
 let lastEmittedFp: string | null = null
 
 function rebuild(v: KVRow[] | undefined): void {
-  const list = [...(v ?? [])]
-  const last = list[list.length - 1]
-  if (!last || !isEmpty(last)) list.push(blank())
-  rows.value = list
+  // 不追加幽灵行：空表保持空表，「+ 添加」是唯一的新行入口
+  rows.value = [...(v ?? [])]
   // 外部结构变化后，下一次输入必须重新上抛（本地指纹基线失效）。
   lastEmittedFp = null
 }
@@ -132,24 +137,28 @@ watch(
   { immediate: true },
 )
 
-/** 上抛：过滤掉中间的空行（保留底部幽灵行）；内容未变时跳过。 */
+/** 上抛：过滤全部空行（无幽灵行，空表上抛空数组）；内容未变时跳过。 */
 function sync(): void {
-  const list = rows.value.filter((r, i) => i === rows.value.length - 1 || r.key || r.value)
+  const list = rows.value.filter((r) => r.key || r.value)
   const fp = contentFingerprint(list)
   if (fp === lastEmittedFp) return
   lastEmittedFp = fp
   emit('update:modelValue', list)
 }
 
-function isGhost(row: KVRow): boolean {
-  return isEmpty(row) && row === rows.value[rows.value.length - 1]
-}
-
+/** 末尾非空则补一行（Value 内 Enter / Tab 跳行的快速录入路径）。 */
 function ensureTail(): void {
   const last = rows.value[rows.value.length - 1]
-  // 就地 push：ref 数组的 push 本身即触发重渲染，无需整体换新数组引用
-  //（换引用会让每次键入都触发整表 v-for 重摊一遍）。
-  if (!isEmpty(last)) rows.value.push(blank())
+  if (!last || !isEmpty(last)) rows.value.push(blank())
+}
+
+/** 显式添加一行并聚焦其 Key 输入框（唯一的新行入口）。 */
+async function addRow(): Promise<void> {
+  rows.value.push(blank())
+  lastEmittedFp = null
+  sync()
+  await nextTick()
+  keyInputs.get(rows.value.length - 1)?.focus()
 }
 
 function remove(index: number): void {
@@ -158,13 +167,13 @@ function remove(index: number): void {
 }
 
 function onCellInput(): void {
-  ensureTail()
   sync()
 }
 
 function onCellBlur(row: KVRow): void {
   const i = rows.value.indexOf(row)
-  if (i === -1 || i === rows.value.length - 1) return
+  if (i === -1) return
+  // 空行（键值皆空）失焦即移除：不留误导性的空白占位行
   if (isEmpty(row)) {
     rows.value.splice(i, 1)
     sync()
@@ -208,10 +217,48 @@ function gridStyle(): Record<string, string> | undefined {
   const cols = gridTemplate()
   return cols ? { gridTemplateColumns: cols, display: 'grid' } : undefined
 }
+
+// ---------- 行过滤（searchable）：只影响渲染，不改 rows 数据 ----------
+const filter = ref('')
+
+/** 命中的行（携带原索引，编辑 / 删除 / 跳格仍按原始行号工作）。 */
+const visibleItems = computed<{ i: number; row: KVRow }[]>(() => {
+  const q = filter.value.trim().toLowerCase()
+  const out: { i: number; row: KVRow }[] = []
+  if (!q) {
+    for (let i = 0; i < rows.value.length; i++) out.push({ i, row: rows.value[i] })
+    return out
+  }
+  for (let i = 0; i < rows.value.length; i++) {
+    const row = rows.value[i]
+    const hay = `${row.key ?? ''}\n${row.value ?? ''}\n${row.description ?? ''}`.toLowerCase()
+    if (hay.includes(q)) out.push({ i, row })
+  }
+  return out
+})
+
+function clearFilter(): void {
+  filter.value = ''
+}
 </script>
 
 <template>
   <div class="kvt" :class="{ disabled }">
+    <div v-if="searchable" class="kvt-search">
+      <Icon name="search" :size="12" class="kvt-search-icon" />
+      <input
+        v-model="filter"
+        class="kvt-search-input"
+        :placeholder="t('kv.searchPh')"
+        spellcheck="false"
+      />
+      <button v-if="filter" type="button" class="kvt-search-clear" :title="t('common.clearSearch')" @click="clearFilter">
+        <Icon name="x" :size="11" />
+      </button>
+      <!-- 同级操作入口（批量编辑 / 抽取等），与过滤条同一工具栏 -->
+      <slot name="toolbar-actions"></slot>
+    </div>
+
     <div class="kvt-head" :style="gridStyle()">
       <span v-if="showEnable" class="kvt-col kvt-enable"></span>
       <span class="kvt-col kvt-key miyo-mono" :style="gridStyle() ? { width: '100%' } : undefined">{{ t('kv.colKey') }}</span>
@@ -221,67 +268,74 @@ function gridStyle(): Record<string, string> | undefined {
     </div>
 
     <div
-      v-for="(row, i) in rows"
-      :key="rowKey(row)"
+      v-for="entry in visibleItems"
+      :key="rowKey(entry.row)"
       class="kvt-row"
-      :class="{ off: showEnable && row.enabled === false, ghost: isGhost(row) }"
+      :class="{ off: showEnable && entry.row.enabled === false }"
       :style="gridStyle()"
     >
       <span v-if="showEnable" class="kvt-col kvt-enable">
         <input
-          v-model="row.enabled"
+          v-model="entry.row.enabled"
           type="checkbox"
           class="kvt-check"
-          :disabled="disabled || isGhost(row)"
+          :disabled="disabled"
           @change="sync"
         />
       </span>
       <input
-        v-model="row.key"
+        v-model="entry.row.key"
         class="kvt-input kvt-col kvt-key miyo-mono"
         :style="gridStyle() ? { width: '100%' } : undefined"
         :placeholder="effectiveKeyPh"
         :disabled="disabled"
         spellcheck="false"
-        :ref="setKeyRef(i)"
+        :ref="setKeyRef(entry.i)"
         @input="onCellInput"
-        @keydown="onKeydown($event, i)"
-        @blur="onCellBlur(row)"
+        @keydown="onKeydown($event, entry.i)"
+        @blur="onCellBlur(entry.row)"
       />
       <input
-        v-model="row.value"
+        v-model="entry.row.value"
         class="kvt-input kvt-col kvt-value miyo-mono"
         :style="gridStyle() ? { width: '100%' } : undefined"
         :placeholder="effectiveValuePh"
         :disabled="disabled"
         spellcheck="false"
         @input="onValueAcInput"
-        @keydown="onKeydown($event, i)"
-        @blur="onValueBlur(row)"
+        @keydown="onKeydown($event, entry.i)"
+        @blur="onValueBlur(entry.row)"
       />
       <input
         v-if="showDescription"
-        v-model="row.description"
+        v-model="entry.row.description"
         class="kvt-input kvt-col kvt-desc"
         :style="gridStyle() ? { width: '100%' } : undefined"
         :placeholder="effectiveDescPh"
         :disabled="disabled"
         spellcheck="false"
         @input="onCellInput"
-        @keydown="onKeydown($event, i)"
-        @blur="onCellBlur(row)"
+        @keydown="onKeydown($event, entry.i)"
+        @blur="onCellBlur(entry.row)"
       />
       <span class="kvt-col kvt-actions">
         <IconButton
-          v-if="!isGhost(row)"
           name="trash"
           :size="13"
           tone="danger"
           :title="t('common.delete')"
-          @click="remove(i)"
+          @click="remove(entry.i)"
         />
       </span>
     </div>
+
+    <div v-if="filter && !visibleItems.length" class="kvt-empty">{{ t('kv.noMatch') }}</div>
+
+    <!-- 显式添加入口：空表 / 过滤中亦可添加 -->
+    <button v-if="!disabled" class="kvt-add" type="button" @click="addRow">
+      <Icon name="plus" :size="12" />
+      {{ addLabel || t('kv.addRow') }}
+    </button>
 
     <VarSuggest
       v-if="varAcOpen && varAcAnchor"
@@ -307,6 +361,88 @@ function gridStyle(): Record<string, string> | undefined {
   pointer-events: none;
 }
 
+/* 顶部过滤条（searchable）：只过滤显示，不改数据 */
+.kvt-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-code);
+  color: var(--text-3);
+}
+.kvt-search-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.kvt-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  outline: none;
+  padding: 0;
+}
+.kvt-search-input::placeholder {
+  color: var(--text-3);
+}
+/* 工具栏插槽内容（批量编辑等按钮）不参与压缩 */
+.kvt-search :slotted(*) {
+  flex-shrink: 0;
+}
+.kvt-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.kvt-search-clear:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.kvt-empty {
+  padding: 14px 8px;
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* 显式添加入口：整宽弱按钮（与历史「加载更多」同语言），补齐幽灵行移除后的新行路径 */
+.kvt-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  height: 26px;
+  border: none;
+  border-top: 1px dashed var(--border);
+  background: none;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.kvt-add:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
 .kvt-head {
   display: flex;
   align-items: center;
@@ -325,7 +461,7 @@ function gridStyle(): Record<string, string> | undefined {
 .kvt-row {
   display: flex;
   align-items: center;
-  min-height: 32px;
+  min-height: 28px;
   border-bottom: 1px solid var(--border);
   transition: background var(--dur) var(--ease);
 }
@@ -339,16 +475,18 @@ function gridStyle(): Record<string, string> | undefined {
   align-items: center;
   justify-content: center;
 }
+/* 三列统一节奏：key 30% / value 弹性 / 描述 24%（value 是主编辑列占最大） */
 .kvt-key {
-  width: 34%;
-  min-width: 120px;
+  width: 30%;
+  min-width: 110px;
 }
 .kvt-value {
   flex: 1;
   min-width: 0;
 }
 .kvt-desc {
-  width: 150px;
+  width: 24%;
+  min-width: 110px;
 }
 .kvt-actions {
   width: 32px;
@@ -357,13 +495,6 @@ function gridStyle(): Record<string, string> | undefined {
   justify-content: flex-end;
 }
 
-.kvt-row {
-  display: flex;
-  align-items: center;
-  min-height: 32px;
-  border-bottom: 1px solid var(--border);
-  transition: background var(--dur) var(--ease);
-}
 .kvt-row:last-child {
   border-bottom: none;
 }
@@ -374,21 +505,13 @@ function gridStyle(): Record<string, string> | undefined {
   opacity: 0.45;
 }
 
-/* 底部幽灵行：弱化占位，输入即自动成为正式行 */
-.kvt-row.ghost .kvt-input {
-  opacity: 0.5;
-}
-.kvt-row.ghost .kvt-input:focus {
-  opacity: 1;
-}
-
 .kvt-check {
   accent-color: var(--accent);
   cursor: pointer;
 }
 
 .kvt-input {
-  height: 32px;
+  height: 28px;
   border: none;
   background: transparent;
   color: var(--text-1);

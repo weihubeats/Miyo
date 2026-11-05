@@ -127,6 +127,8 @@ const {
   SIDEBAR_DEFAULT,
   sidebarWidth,
   sidebarResizing,
+  sidebarCollapsed,
+  toggleSidebarCollapsed,
   onSidebarResizeDown,
   onSidebarKeydown,
   dispose: disposeSidebarResize,
@@ -579,9 +581,19 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="workspace-body">
-      <aside class="miyo-sidebar" :style="{ width: `${sidebarWidth}px` }">
+      <aside v-show="!sidebarCollapsed" class="miyo-sidebar" :style="{ width: `${sidebarWidth}px` }">
         <div data-tauri-drag-region class="sidebar-drag" aria-hidden="true"></div>
-        <Tabs v-model="sidebarTab" :tabs="sidebarTabs" size="sm" class="sidebar-tabs" />
+        <div class="sidebar-top">
+          <Tabs v-model="sidebarTab" :tabs="sidebarTabs" size="sm" class="sidebar-tabs" />
+          <Tooltip :content="t('workspace.collapseSidebar')">
+            <IconButton
+              name="panel-left-close"
+              :size="14"
+              :label="t('workspace.collapseSidebar')"
+              @click="toggleSidebarCollapsed"
+            />
+          </Tooltip>
+        </div>
         <div v-show="sidebarTab === 'collections'" class="sidebar-collections">
           <div class="sidebar-toolbar">
             <div class="sidebar-search">
@@ -656,7 +668,19 @@ onBeforeUnmount(() => {
         <HistoryPanel v-if="sidebarTab === 'history'" class="sidebar-history" />
         <CookiePanel v-if="sidebarTab === 'cookies'" class="sidebar-history" />
       </aside>
+      <!-- 折叠态：窄条展开钮（主区独占宽度） -->
+      <div v-if="sidebarCollapsed" class="sidebar-rail">
+        <Tooltip :content="t('workspace.expandSidebar')">
+          <IconButton
+            name="panel-left-open"
+            :size="14"
+            :label="t('workspace.expandSidebar')"
+            @click="toggleSidebarCollapsed"
+          />
+        </Tooltip>
+      </div>
       <div
+        v-show="!sidebarCollapsed"
         class="sidebar-resizer"
         :class="{ active: sidebarResizing }"
         role="separator"
@@ -951,6 +975,37 @@ onBeforeUnmount(() => {
   border-right: 1px solid var(--sidebar-border);
   background: var(--sidebar-bg);
   overflow: hidden;
+}
+
+/* ---- 页签行：Tabs 占满 + 右侧折叠钮 ---- */
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 12px 0;
+}
+.sidebar-top .sidebar-tabs {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.sidebar-top :deep(.ib) {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  color: var(--text-3);
+}
+
+/* ---- 折叠态窄条：顶对齐展开钮（与页签行同高节奏） ---- */
+.sidebar-rail {
+  flex-shrink: 0;
+  width: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 10px;
+  border-right: 1px solid var(--sidebar-border);
+  background: var(--sidebar-bg);
 }
 
 /* ---- 顶部拖拽区：扩大窗口拖拽面积（内无交互元素，避免吞点击） ---- */

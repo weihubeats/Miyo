@@ -14,9 +14,10 @@ import { join } from 'node:path'
 import EndpointTree from './EndpointTree.vue'
 import { useLocaleStore } from '../stores/locale'
 import { useWorkspaceStore } from '../stores/workspace'
+import { __resetEndpointFavorites } from '../composables/useEndpointFavorites'
 import { stubScrollIntoView } from '../testUtils/componentTest'
 import { makeDraft } from '../testUtils/draftFixture'
-import type { Folder } from '../types/miyoApi'
+import type { Endpoint, Folder } from '../types/miyoApi'
 
 vi.mock('../composables/useMiyoApi', () => ({
   useMiyoApi: () => ({
@@ -354,5 +355,78 @@ describe('EndpointTree：ARIA 树语义 + 键盘导航', () => {
       restore()
       document.body.innerHTML = ''
     }
+  })
+})
+
+describe('EndpointTree：收藏 / 最近访问分组', () => {
+  function ep(id: string, name: string): Endpoint {
+    return makeDraft({ id, name, path: `/${name}` })
+  }
+
+  async function mountTreeWithEndpoints() {
+    ;(globalThis as { __resetTreeExpanded?: () => void }).__resetTreeExpanded?.()
+    __resetEndpointFavorites()
+    localStorage.removeItem('miyo.tree-expanded.proj-test-1')
+    localStorage.removeItem('miyo.endpoint-favorites.proj-test-1')
+    const { wrapper, store } = await mountTree()
+    return { wrapper, store }
+  }
+
+  it('星标接口 → 收藏分组置顶显示并持久化，取消收藏后消失', async () => {
+    const { wrapper, store } = await mountTreeWithEndpoints()
+    store.endpoints = [ep('ep-a', '登录'), ep('ep-b', '订单')]
+    await nextTick()
+    expect(wrapper.find('.tree-section').exists()).toBe(false)
+
+    // 行 hover 星标：点击收藏
+    await wrapper.find('[data-dnd-id="ep-a"] .tree-star').trigger('click')
+    await nextTick()
+    const sections = wrapper.findAll('.tree-section')
+    expect(sections).toHaveLength(1)
+    expect(sections[0]!.text()).toContain('收藏')
+    expect(sections[0]!.text()).toContain('登录')
+    // localStorage 按项目持久化
+    expect(JSON.parse(localStorage.getItem('miyo.endpoint-favorites.proj-test-1') ?? '[]')).toEqual(['ep-a'])
+
+    // 分组行上的常亮星标点击 → 取消收藏，分组消失
+    await sections[0]!.find('.tree-star').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.tree-section').exists()).toBe(false)
+  })
+
+  it('不再渲染「最近访问」分组（目录区只保留唯一真源；最近打开走 ⌘K）', async () => {
+    const { wrapper, store } = await mountTreeWithEndpoints()
+    store.endpoints = [ep('ep-a', '登录')]
+    store.recentEndpointIds = ['ep-a']
+    await nextTick()
+    expect(wrapper.text()).not.toContain('最近访问')
+  })
+
+  it('收藏分组行不挂 active 高亮（活动接口唯一高亮在正式目录）', async () => {
+    const { wrapper, store } = await mountTreeWithEndpoints()
+    store.endpoints = [ep('ep-a', '登录')]
+    await nextTick()
+    await wrapper.find('[data-dnd-id="ep-a"] .tree-star').trigger('click')
+    await nextTick()
+    const secRow = wrapper.find('.tree-section .sec-row')
+    expect(secRow.exists()).toBe(true)
+    // 激活该接口后：正式目录行 active，收藏分组行不带
+    store.activeTabId = 'ep-a'
+    await nextTick()
+    expect(wrapper.find('[data-dnd-id="ep-a"].tree-row.active').exists()).toBe(true)
+    expect(secRow.classes()).not.toContain('active')
+  })
+
+  it('搜索态隐藏收藏分组（过滤只发生在目录树内）', async () => {
+    const { wrapper, store } = await mountTreeWithEndpoints()
+    store.endpoints = [ep('ep-a', '登录')]
+    await nextTick()
+    await wrapper.find('[data-dnd-id="ep-a"] .tree-star').trigger('click')
+    await nextTick()
+    expect(wrapper.findAll('.tree-section')).toHaveLength(1)
+
+    await wrapper.setProps({ search: '登录' })
+    await nextTick()
+    expect(wrapper.findAll('.tree-section')).toHaveLength(0)
   })
 })

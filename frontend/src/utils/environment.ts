@@ -33,6 +33,18 @@ export function effectiveVariable(v: { remote_value: string; local_value: string
   return v.local_value.trim() || v.remote_value.trim()
 }
 
+/**
+ * 敏感变量名启发式（值列遮蔽用）：key 含 token / secret / password /
+ * api_key / access_key / authorization / credential 等词根即视为敏感。
+ * 命中面宁窄勿宽——误伤普通变量会让值列莫名打点，比漏遮一个密码更恼人。
+ */
+const SENSITIVE_KEY_RE =
+  /(token|secret|password|passwd|pwd|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret|authorization|credential|session[-_]?id)/i
+
+export function isSensitiveVarKey(key: string | null | undefined): boolean {
+  return SENSITIVE_KEY_RE.test(key ?? '')
+}
+
 /** 结构化变量列表 → 扁平注入表（enabled 才注入、本地值优先、本地覆盖生效）。 */
 export function variableListToMap(
   vars: { key: string; remote_value: string; local_value: string; enabled: boolean }[] | null | undefined,

@@ -28,6 +28,7 @@ import { useRequestSettings } from '../composables/useRequestSettings'
 import { useRequestUrl } from '../composables/useRequestUrl'
 import { lazyComponent } from '../composables/lazyComponent'
 import { deepClone } from '../utils/clone'
+import { extractPathVarNames } from '../utils/pathVariables'
 import {
   applyMethodDefaults,
   methodNeedsBody,
@@ -151,6 +152,22 @@ const {
   grpcResponses,
   flashEl,
 })
+
+/** 历史记录「重放」联动：restoreFromHistory(…, { send: true }) 恢复配置后标记
+ * 待发送接口，本编辑器激活该接口时消费标记并自动发送一次。
+ * watch 源带上 draft id：restore 同步打开标签页后，draft 已指向恢复的接口；
+ * immediate 兜底「restore 时编辑器尚未挂载」的时序（如切项目后直接重放）。 */
+watch(
+  () => [store.autoSendEndpointId, draft.value?.id] as const,
+  ([pendingId, currentId]) => {
+    if (!pendingId || pendingId !== currentId) return
+    store.autoSendEndpointId = null
+    if (store.activeView !== 'debug') store.setActiveView('debug')
+    if (sending.value) return
+    void send()
+  },
+  { immediate: true },
+)
 
 
 // 请求设置 Popover（超时 / 重定向）状态机抽至 composables/useRequestSettings。
@@ -352,6 +369,53 @@ function prettyBody(raw: string): string {
 
 function isAbsolutePath(p: string): boolean {
   return p.startsWith('http://') || p.startsWith('https://')
+}
+
+// ---------- 地址栏历史下拉（快速回填最近请求的 Method + 地址） ----------
+const historyMenu = ref<InstanceType<typeof Menu> | null>(null)
+const URL_HISTORY_MAX = 8
+
+/** 最近请求去重（method+url 保序取新），最多 8 条。 */
+const urlHistoryItems = computed<MenuItem[]>(() => {
+  const seen = new Set<string>()
+  const items: MenuItem[] = []
+  for (const h of store.histories) {
+    const k = `${h.method} ${h.url}`
+    if (seen.has(k)) continue
+    seen.add(k)
+    items.push({ key: h.id, label: h.url, icon: 'history' })
+    if (items.length >= URL_HISTORY_MAX) break
+  }
+  return items
+})
+
+function openUrlHistory(event: MouseEvent): void {
+  // 历史可能尚未加载（首屏未发送过请求）：无记录时先拉一次再开
+  if (!store.histories.length) void store.loadHistories()
+  historyMenu.value?.openAt(event.currentTarget as HTMLElement, urlHistoryItems.value, 'left')
+}
+
+/** 选中历史：只回填 Method + 地址（完整配置恢复走侧栏历史页签「点击记录」）。
+ * 复用 applyUrlInput 的归一化：绝对地址拆 origin / query 并参数，环境前缀语义一致。 */
+function onUrlHistorySelect(item: MenuItem): void {
+  const h = store.histories.find((x) => x.id === item.key)
+  if (!h || !draft.value) return
+  if (h.method !== 'GRPC') draft.value.method = h.method as HttpMethod
+  applyUrlInput(h.url, true)
+}
+
+// ---------- 路径变量缺失提示（URL 栏下方 chips，点击直达 Path 页签） ----------
+const missingPathVars = computed<string[]>(() => {
+  const d = draft.value
+  if (!d || d.method === 'GRPC' || isAbsolutePath(d.path)) return []
+  const names = extractPathVarNames(d.path)
+  if (!names.length) return []
+  const defined = new Set((d.request.path_variables ?? []).map((r) => (r.key ?? '').trim()))
+  return names.filter((n) => !defined.has(n))
+})
+
+function gotoPathTab(): void {
+  activeTab.value = 'path'
 }
 
 /** 面包屑：接口所属文件夹名。 */
@@ -634,6 +698,19 @@ async function removeExample(ex: ResponseExample): Promise<void> {
 // ---------- 工具抽屉（生成代码 / 测试 / 压测） ----------
 const showTools = ref(false)
 
+// ---------- 编辑器动作下拉（低频操作收纳：工具抽屉入口） ----------
+const actionsMenu = ref<InstanceType<typeof Menu> | null>(null)
+
+function openActionsMenu(event: MouseEvent): void {
+  actionsMenu.value?.openAt(event.currentTarget as HTMLElement, [
+    { key: 'tools', label: t('editor.tools'), icon: 'gauge' },
+  ], 'right')
+}
+
+function onActionsMenuSelect(item: MenuItem): void {
+  if (item.key === 'tools') showTools.value = true
+}
+
 const requestUrl = computed(() => (draft.value ? buildUrl() : ''))
 
 /** 路径输入框 Enter → 发送；Esc → 清空路径（setter 忽略空串，直接写草稿）。 */
@@ -837,12 +914,11 @@ onUnmounted(() => {
   <div ref="editorEl" v-if="draft" class="editor">
     <div class="editor-row breadcrumb-row">
       <span class="crumb">
-        <span class="crumb-part">{{ store.project?.name ?? t('default.projectName') }}</span>
+        <!-- 项目名不再重复展示：顶栏 ProjectTabs 已有全局项目上下文 -->
         <template v-if="folderName">
-          <span class="crumb-sep">/</span>
           <span class="crumb-part">{{ folderName }}</span>
+          <span class="crumb-sep">/</span>
         </template>
-        <span class="crumb-sep">/</span>
         <input
           v-model="draft.name"
           class="crumb-name"
@@ -970,13 +1046,23 @@ onUnmounted(() => {
             :active-index="urlAcIndex"
             @pick="onUrlAcPick"
           />
+          <Tooltip :content="t('editor.urlHistory')" placement="top" class="url-qbtn">
+            <button
+              type="button"
+              class="url-qbtn-btn"
+              :aria-label="t('editor.urlHistory')"
+              @click="openUrlHistory"
+            >
+              <Icon name="history" :size="14" />
+            </button>
+          </Tooltip>
           <template v-if="urlPath">
             <Tooltip :content="t('editor.copyUrl')" placement="top" class="url-qbtn url-qbtn-copy">
               <button type="button" class="url-qbtn-btn" @click="copyRequestUrl">
                 <Icon name="copy" :size="14" />
               </button>
             </Tooltip>
-            <Tooltip :content="t('editor.clearPath')" placement="top" class="url-qbtn">
+            <Tooltip :content="t('editor.clearPath')" placement="top" class="url-qbtn url-qbtn-clear">
               <button type="button" class="url-qbtn-btn" @click="clearPath">
                 <Icon name="x" :size="14" />
               </button>
@@ -1000,9 +1086,18 @@ onUnmounted(() => {
         </button>
       </div>
       <div class="editor-actions">
-        <button class="miyo-btn miyo-btn-sm" type="button" :title="t('editor.toolsHint')" @click="showTools = true">
-          <Icon name="gauge" :size="16" /> {{ t('editor.tools') }}
-        </button>
+        <!-- 低频工具（断言 / 压测）收进「⋯」下拉：给地址栏让出横向空间 -->
+        <Menu ref="actionsMenu" @select="onActionsMenuSelect" />
+        <Tooltip :content="t('common.moreActions')" placement="bottom">
+          <button
+            type="button"
+            class="miyo-btn miyo-btn-sm actions-more"
+            :aria-label="t('common.moreActions')"
+            @click="openActionsMenu"
+          >
+            <Icon name="more-horizontal" :size="15" />
+          </button>
+        </Tooltip>
         <CodeExportMenu
           v-if="!isGrpc"
           :method="draft.method"
@@ -1027,6 +1122,22 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- 路径变量缺失提示：URL 栏下轻量条，点击直达 Path 页签补配置 -->
+    <div v-if="missingPathVars.length" class="pathvar-hint">
+      <Icon name="alert-triangle" :size="12" class="pathvar-hint-icon" />
+      <span class="pathvar-hint-label">{{ t('editor.pathMissing') }}</span>
+      <button
+        v-for="n in missingPathVars"
+        :key="n"
+        class="pathvar-chip miyo-mono"
+        type="button"
+        :title="t('editor.pathMissingGo')"
+        @click="gotoPathTab"
+      >
+        {{ n }}
+      </button>
+    </div>
+
     <!-- 请求区 + 响应区合并为一张卡（Single Border Architecture）：
          两卡各自带完整边框、又相距 14px 时会出现两条平行线，且拖拽热区与
          两条线都不重合 → 「看着有线、拖起来没反应」。合并后中间只剩分割条
@@ -1040,10 +1151,22 @@ onUnmounted(() => {
       >
         <div class="config-head">
           <Tabs v-model="activeTab" :tabs="configTabs" size="sm" />
+          <span class="config-head-spacer"></span>
+          <!-- 响应区最大化 ⇄ 恢复：请求区塌到最小（分割条双击同语义），响应区独占 -->
+          <Tooltip :content="requestBodyCollapsed ? t('editor.requestRestore') : t('editor.responseMax')" placement="bottom">
+            <button
+              type="button"
+              class="rs-trigger req-max-toggle"
+              :aria-label="requestBodyCollapsed ? t('editor.requestRestore') : t('editor.responseMax')"
+              @click="toggleRequestBody"
+            >
+              <Icon :name="requestBodyCollapsed ? 'chevrons-up-down' : 'chevrons-down-up'" :size="13" />
+            </button>
+          </Tooltip>
           <button
             ref="settingsTriggerEl"
             type="button"
-            class="rs-trigger"
+            class="rs-trigger rs-settings"
             :class="{ open: settingsOpen }"
             aria-haspopup="dialog"
             :aria-expanded="settingsOpen"
@@ -1307,6 +1430,7 @@ onUnmounted(() => {
   <MockRuleDialog v-if="showMockRules" @close="showMockRules = false" />
 
   <Menu ref="saveMenuEl" @select="onSaveMenuSelect" />
+  <Menu ref="historyMenu" @select="onUrlHistorySelect" />
 </template>
 
 <style scoped>
@@ -1676,12 +1800,13 @@ onUnmounted(() => {
   background: transparent;
   box-shadow: none;
   border-radius: 0;
-  /* 右侧快捷图标区 58px + gap 8px：正文与图标组之间留出明确间距 */
-  padding: 0 66px 0 10px;
+  /* 右侧快捷图标区 84px（历史/复制/清空三枚）+ gap 8px：正文与图标组留出间距 */
+  padding: 0 90px 0 10px;
   font-family: var(--font-mono);
 }
 
-/* 地址栏快捷按钮：悬浮输入框时浮现（Tooltip 触发器 span 承载绝对定位） */
+/* 地址栏快捷按钮：悬浮输入框时浮现（Tooltip 触发器 span 承载绝对定位）
+ * 从右到左：历史(6) → 清空(32) → 复制(58) */
 .url-qbtn {
   position: absolute;
   top: 50%;
@@ -1695,6 +1820,9 @@ onUnmounted(() => {
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .url-qbtn-copy {
+  right: 58px;
+}
+.url-qbtn-clear {
   right: 32px;
 }
 .url-qbtn:hover {
@@ -1713,6 +1841,46 @@ onUnmounted(() => {
   cursor: pointer;
   border-radius: 6px;
   padding: 0;
+}
+
+/* 路径变量缺失提示条：URL 栏下轻量单行，chips 点击直达 Path 页签 */
+.pathvar-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 16px 0;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--warning-tint);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+.pathvar-hint-icon {
+  flex-shrink: 0;
+  color: var(--warning);
+}
+.pathvar-hint-label {
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+.pathvar-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  border-radius: 999px;
+  background: var(--bg-card);
+  font-size: var(--fs-xxs);
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.pathvar-chip:hover {
+  border-color: var(--warning);
+  background: var(--bg-hover);
 }
 
 /* 请求栏右侧「发送」按钮：与输入组无缝贴合 */
@@ -1933,10 +2101,17 @@ onUnmounted(() => {
 
 .editor-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-shrink: 0;
   /* 与发送按钮（主 CTA）之间保持 12px 独立间隔（ml-3） */
   margin-left: 12px;
+}
+
+/* 动作区统一 32px（与发送按钮同高）；⋯ 下拉为纯图标钮 */
+.actions-more {
+  height: var(--h-md);
+  padding: 0 8px;
 }
 
 /* 请求卡 + 响应卡合并容器：两卡之间无 gap，接缝由 .rp-splitter 独占一条线。
@@ -1992,6 +2167,17 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 配置页签占位后推：右侧「响应区最大化 / 请求设置」靠右成组 */
+.config-head-spacer {
+  flex: 1;
+  min-width: 4px;
+}
+
+/* 响应区最大化按钮：与请求设置同形态的纯图标钮 */
+.req-max-toggle {
+  padding: 0 6px;
 }
 
 .rs-trigger {

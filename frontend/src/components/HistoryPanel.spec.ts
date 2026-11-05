@@ -119,4 +119,30 @@ describe('HistoryPanel', () => {
     expect(wrapper.find('.hp-url').text()).toBe('/api/v1/orders')
     wrapper.unmount()
   })
+
+  it('一键重放：hover 钮触发 restoreFromHistory(…, { send: true })，gRPC 记录不渲染', async () => {
+    const store = useWorkspaceStore()
+    store.histories = [
+      history({ id: 'h-http', url: 'https://api.example.com/users', method: 'GET' }),
+      history({ id: 'h-grpc', url: 'helloworld.Greeter/SayHello', method: 'GRPC' }),
+    ]
+    const wrapper = mount(HistoryPanel, { attachTo: document.body })
+    await nextTick()
+    const store2 = useWorkspaceStore()
+    const restoreSpy = vi.spyOn(store2, 'restoreFromHistory').mockImplementation(() => undefined)
+
+    // 重放钮 hover 显现、每条 HTTP 记录一个；GRPC 记录没有
+    const replayBtns = wrapper.findAll('.hp-replay')
+    expect(replayBtns).toHaveLength(1)
+    await replayBtns[0]!.trigger('click')
+    expect(restoreSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'h-http' }),
+      { send: true },
+    )
+    // 点击行点亮激活态
+    expect(wrapper.find('.hp-row.active').exists()).toBe(true)
+
+    restoreSpy.mockRestore()
+    wrapper.unmount()
+  })
 })

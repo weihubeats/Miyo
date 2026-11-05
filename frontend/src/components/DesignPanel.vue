@@ -1475,33 +1475,7 @@ onBeforeUnmount(() => {
   word-break: break-all;
 }
 
-/* v-html 高亮 span 无 data-v 属性，必须 :deep；色阶走全局 --tok-*（深/浅各一套） */
-.preview-code :deep(.hl-k) {
-  color: var(--tok-key);
-}
-.preview-code :deep(.hl-s) {
-  color: var(--tok-str);
-}
-.preview-code :deep(.hl-n) {
-  color: var(--tok-num);
-}
-.preview-code :deep(.hl-b) {
-  color: var(--tok-bool);
-}
-.preview-code :deep(.hl-null) {
-  color: var(--tok-null);
-  font-style: italic;
-}
-.preview-code :deep(.hl-p) {
-  color: var(--tok-punct);
-}
-.preview-code :deep(.hl-c) {
-  color: var(--tok-gutter);
-  font-style: italic;
-}
-.preview-code :deep(.hl-v) {
-  color: var(--tok-bool);
-}
+/* （.hl-* 语法色已收口到 style.css 全局单源，此处不再重复定义） */
 
 .preview-empty {
   margin: 0;

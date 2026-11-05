@@ -33,6 +33,8 @@ const props = withDefaults(
     maxHeight?: number
     /** 工具栏内渲染校验状态 Tag；false 时不渲染（宿主自行经 status-change 事件在外部展示）。 */
     showStatus?: boolean
+    /** 提供全屏切换（工具栏放大按钮 + Esc 退出）；默认关闭，宿主按场景启用。 */
+    fullscreenable?: boolean
   }>(),
   {
     placeholder: '',
@@ -42,6 +44,7 @@ const props = withDefaults(
     autoHeight: false,
     maxHeight: 480,
     showStatus: true,
+    fullscreenable: false,
   },
 )
 
@@ -94,6 +97,7 @@ watch(
 )
 onUnmounted(() => {
   if (shownTimer) clearTimeout(shownTimer)
+  window.removeEventListener('keydown', onFsKeydown)
   wrapRef.value?.removeEventListener('scroll', clampWrapScroll)
   availObserver?.disconnect()
   availObserver = null
@@ -188,13 +192,36 @@ const wrapHeight = computed<number | null>(() => {
   return availH.value > 0 ? Math.min(h, availH.value) : Math.min(h, props.maxHeight)
 })
 
-const wrapStyle = computed(() => ({
-  /* CSS min-height 优先级高于 height：面板被拖到 availH < 地板值时，height 会被
-   * min-height 顶回去 → wrap 高出面板可用区、panel overflow:hidden 裁出无滚动条
-   * 死区（实测 avail152 被 160 地板顶成 160，底裁 8px）。地板必须钳到 availH。 */
-  minHeight: `${availH.value > 0 ? Math.min(props.minHeight, availH.value) : props.minHeight}px`,
-  ...(wrapHeight.value ? { height: `${wrapHeight.value}px` } : {}),
-}))
+const wrapStyle = computed(() => {
+  // 全屏态由 fixed inset 定尺寸，wrap 走 flex:1 拉伸，不参与 autoHeight 高度推导
+  if (fullscreen.value) return {}
+  return {
+    /* CSS min-height 优先级高于 height：面板被拖到 availH < 地板值时，height 会被
+     * min-height 顶回去 → wrap 高出面板可用区、panel overflow:hidden 裁出无滚动条
+     * 死区（实测 avail152 被 160 地板顶成 160，底裁 8px）。地板必须钳到 availH。 */
+    minHeight: `${availH.value > 0 ? Math.min(props.minHeight, availH.value) : props.minHeight}px`,
+    ...(wrapHeight.value ? { height: `${wrapHeight.value}px` } : {}),
+  }
+})
+
+// ---------- 全屏（fixed 覆盖视口；Esc 退出） ----------
+const fullscreen = ref(false)
+
+function toggleFullscreen(): void {
+  fullscreen.value = !fullscreen.value
+}
+
+function onFsKeydown(e: KeyboardEvent): void {
+  if (fullscreen.value && e.key === 'Escape') {
+    e.preventDefault()
+    fullscreen.value = false
+  }
+}
+
+watch(fullscreen, (on) => {
+  if (on) window.addEventListener('keydown', onFsKeydown)
+  else window.removeEventListener('keydown', onFsKeydown)
+})
 
 /* 行号槽宽度走全局 --code-gutter-w（固定 54px，与响应树/行视图共用，
  * 不随位数伸缩——保证与响应区代码左缘绝对对齐），见 style.css。 */
@@ -413,7 +440,7 @@ async function copyJson(): Promise<void> {
 </script>
 
 <template>
-  <div ref="editorRef" class="json-editor">
+  <div ref="editorRef" class="json-editor" :class="{ fullscreen }">
     <!-- 顶部工具栏：状态 Tag + 快捷操作（替代原悬浮层，不遮挡代码） -->
     <div class="je-toolbar">
       <span
@@ -464,6 +491,16 @@ async function copyJson(): Promise<void> {
         >
           <Icon name="copy" :size="12" />
         </button>
+        <button
+          v-if="fullscreenable"
+          class="je-btn"
+          type="button"
+          :title="fullscreen ? t('jsonEditor.exitFullscreen') : t('jsonEditor.fullscreen')"
+          :aria-label="fullscreen ? t('jsonEditor.exitFullscreen') : t('jsonEditor.fullscreen')"
+          @click="toggleFullscreen"
+        >
+          <Icon :name="fullscreen ? 'minimize-2' : 'maximize-2'" :size="12" />
+        </button>
       </div>
     </div>
 
@@ -506,6 +543,19 @@ async function copyJson(): Promise<void> {
   gap: 4px;
   flex: 1;
   min-height: 0;
+}
+
+/* 全屏：fixed 覆盖视口（祖先链无 transform），wrap 由 flex:1 拉伸 */
+.json-editor.fullscreen {
+  position: fixed;
+  inset: 16px;
+  z-index: 80;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
 }
 
 .hl-wrap {
@@ -586,32 +636,8 @@ async function copyJson(): Promise<void> {
   padding-left: 12px;
 }
 
-/* ---- 语法高亮色系 ---- */
-:deep(.hl-k) {
-  color: var(--tok-key, #e06c75);
-}
-:deep(.hl-s) {
-  color: var(--tok-str, #98c379);
-}
-:deep(.hl-n) {
-  color: var(--tok-num, #d19a66);
-}
-:deep(.hl-b) {
-  color: var(--tok-bool, #56b6c2);
-}
-:deep(.hl-null) {
-  color: var(--tok-null, #56b6c2);
-  font-style: italic;
-}
-:deep(.hl-p) {
-  color: var(--tok-punct, #abb2bf);
-}
-:deep(.hl-c) {
-  color: var(--tok-gutter, #5c6370);
-  font-style: italic;
-}
-
 /* ---- 查找标记 ---- */
+/* （.hl-* 语法色已收口到 style.css 全局单源，此处不再重复定义） */
 :deep(.rp-find-mark) {
   background: var(--accent-tint, rgba(99, 102, 241, 0.25));
   color: inherit;

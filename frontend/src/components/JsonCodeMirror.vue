@@ -2,7 +2,8 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Compartment, EditorState } from '@codemirror/state'
 import { Decoration, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers, placeholder } from '@codemirror/view'
-import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
+import { closeBrackets, closeBracketsKeymap, autocompletion } from '@codemirror/autocomplete'
+import { jsonCompletionSource } from '../utils/jsonCompletion'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { javascript } from '@codemirror/lang-javascript'
 import { json, jsonParseLinter } from '@codemirror/lang-json'
@@ -270,6 +271,8 @@ onMounted(() => {
       highlightActiveLine(),
       keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
       props.language === 'javascript' ? javascript() : json(),
+      // JSON 上下文补全（键=同文已出现键，值=true/false/null）；JS 模式不启用
+      ...(props.language === 'json' ? [autocompletion({ override: [jsonCompletionSource] })] : []),
       themeCompartment.of(currentThemeExtension()),
       // 大文档跳过实时 lint（见 LARGE_DOC_CHARS 说明）；JS 无 JSON lint。
       ...(props.language === 'javascript' || largeDoc ? [] : [linter(jsonParseLinter())]),

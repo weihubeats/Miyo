@@ -74,14 +74,14 @@ describe('EndpointEditor：Path 页签', () => {
 describe('EndpointEditor：请求设置 Popover', () => {
   /** 点触发钮展开面板，返回 document 层的弹层元素。 */
   async function openSettings(wrapper: ReturnType<typeof mount>) {
-    await wrapper.find('.rs-trigger').trigger('click')
+    await wrapper.find('.rs-trigger.rs-settings').trigger('click')
     await nextTick()
     return document.body.querySelector('.rs-pop')
   }
 
   it('默认收起：页签行有触发钮且无常驻设置行；展开后字段齐全、占位带全局值', async () => {
     const { wrapper } = await mountEditor()
-    const trigger = wrapper.find('.rs-trigger')
+    const trigger = wrapper.find('.rs-trigger.rs-settings')
     expect(trigger.exists()).toBe(true)
     expect(trigger.text()).toContain('请求设置')
     // 无常驻设置行：面板默认不在文档中
@@ -171,11 +171,11 @@ describe('EndpointEditor：请求设置 Popover', () => {
       ep.request.follow_redirects = false
     })
     expect(second.wrapper.find('.rs-dot').exists()).toBe(true)
-    await second.wrapper.find('.rs-trigger').trigger('click')
+    await second.wrapper.find('.rs-trigger.rs-settings').trigger('click')
     await nextTick()
     expect(second.wrapper.find('.rs-dot').exists()).toBe(false)
 
-    await second.wrapper.find('.rs-trigger').trigger('click')
+    await second.wrapper.find('.rs-trigger.rs-settings').trigger('click')
     await nextTick()
     expect(document.body.querySelector('.rs-pop')).toBeNull()
     second.wrapper.unmount()

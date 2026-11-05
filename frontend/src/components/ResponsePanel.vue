@@ -15,12 +15,14 @@ import { countOccurrences, useFindInText } from '../composables/useFindInText'
 import { useMiyoApi } from '../composables/useMiyoApi'
 import { useLocaleStore } from '../stores/locale'
 import { copyText } from '../utils/clipboard'
-import { escapeHtml, highlightJSONText } from '../utils/highlight'
+import { escapeHtml, highlightCode, highlightJSONText, highlightXMLText } from '../utils/highlight'
+import { formatXml, isXmlContentType } from '../utils/xmlFormat'
 import { EDITOR_INDENT } from '../constants/editorTheme'
 import { formatBytes, formatDuration } from '../utils/format'
 import FindBar from './ui/FindBar.vue'
 import Icon from './ui/Icon.vue'
 import JsonTree from './JsonTree.vue'
+import Menu, { type MenuItem } from './ui/Menu.vue'
 import MethodText from './ui/MethodText.vue'
 import SegmentedControl, { type SegmentOption } from './ui/SegmentedControl.vue'
 import Tabs, { type TabItem } from './ui/Tabs.vue'
@@ -45,7 +47,7 @@ const t = locale.t
 
 // ---------- 状态 ----------
 const activeTab = ref<'request' | 'body' | 'headers' | 'cookies' | 'scripts' | 'examples'>('body')
-type ViewMode = 'pretty' | 'raw' | 'preview'
+type ViewMode = 'pretty' | 'raw' | 'tree' | 'preview'
 const viewMode = ref<ViewMode>('pretty')
 
 const REASON_PHRASES: Record<number, string> = {
@@ -141,19 +143,42 @@ const parsed = computed<unknown | null>(() => {
 
 const isJson = computed(() => parsed.value !== null)
 
-/** 树视图是否接管 pretty 展示（接管时跳过 stringify + 切分，见 pretty/prettySplit）。 */
-const useTree = computed(
-  () => activeTab.value === 'body' && viewMode.value === 'pretty' && isJson.value && !bodyTooLarge.value,
+/** 树视图可见性：独立「Tree」模式的渲染条件（JSON 且未超渲染上限）。
+ * Pretty 与 Tree 彻底分离：Pretty 永远是格式化代码视图，不再被树接管。 */
+const treeVisible = computed(
+  () => activeTab.value === 'body' && viewMode.value === 'tree' && isJson.value && !bodyTooLarge.value,
 )
 
-const pretty = computed(() => {
-  if (parsed.value === null) return props.response.body
-  // 树接管时不需要 pretty 文本：跳过体积放大 2-3 倍的 stringify。
-  if (useTree.value) return ''
-  return JSON.stringify(parsed.value, null, EDITOR_INDENT)
+const isHtml = computed(() => props.response.content_type.toLowerCase().includes('html'))
+
+/** XML 家族 Content-Type（application/xml、text/xml、*+xml）。 */
+const isXml = computed(() => isXmlContentType(props.response.content_type))
+
+/** Pretty 行视图的高亮语言分派：JSON 以解析成功为准（problem+json 等同样命中），
+ * 其余按 MIME（XML / HTML / JS），未知类型纯文本——不把所有响应当 JSON。 */
+const highlightLang = computed<'json' | 'xml' | 'html' | 'js' | 'plain'>(() => {
+  if (isJson.value) return 'json'
+  if (isXml.value) return 'xml'
+  if (isHtml.value) return 'html'
+  if (/javascript|ecmascript/i.test(props.response.content_type)) return 'js'
+  return 'plain'
 })
 
-const isHtml = computed(() => props.response.content_type.toLowerCase().includes('html'))
+const pretty = computed(() => {
+  if (parsed.value !== null) {
+    return JSON.stringify(parsed.value, null, EDITOR_INDENT)
+  }
+  // XML（含 *+xml）：Pretty 模式缩进重排，压缩单行报文展开为可读结构；
+  // 失败（残缺报文 / 超限）回退原文。Raw 视图不受影响。
+  if (isXml.value && props.response.body.length <= PARSE_LIMIT_BYTES) {
+    try {
+      return formatXml(props.response.body)
+    } catch {
+      return props.response.body
+    }
+  }
+  return props.response.body
+})
 
 /** 内容类型支持「预览」：HTML（沙箱 iframe）与图片（data URL）——渲染分支
  *  实际只覆盖这两类，正则必须与渲染能力一致，否则 Preview 点开只有「无法预览」。 */
@@ -189,7 +214,7 @@ function splitLines(text: string): { lines: string[]; truncated: boolean; longLi
  *（20MB body → 数十万行字符串 ×2 份驻留）。
  */
 const prettySplit = computed(() => {
-  if (useTree.value || viewMode.value !== 'pretty' || activeTab.value !== 'body')
+  if (viewMode.value !== 'pretty' || activeTab.value !== 'body')
     return { lines: [] as string[], truncated: false, longLine: false }
   return splitLines(pretty.value)
 })
@@ -362,21 +387,23 @@ async function downloadBody(): Promise<void> {
 const MODE_OPTIONS = computed<SegmentOption[]>(() => [
   { value: 'pretty', label: t('response.pretty'), icon: 'list' },
   { value: 'raw', label: t('response.raw'), icon: 'code' },
+  // Tree 仅对可解析的 JSON 提供（树查看器只吃结构化数据）；非 JSON 时整个选项不出现
+  ...(isJson.value && !bodyTooLarge.value
+    ? [{ value: 'tree' as const, label: t('response.tree'), icon: 'network' as const }]
+    : []),
   ...(isPreviewable.value ? [{ value: 'preview', label: t('response.preview'), icon: 'eye' as const }] : []),
 ])
 
-/** 响应类型不支持预览时，强制退回「格式化」，避免残留 preview 状态。 */
+/** 响应类型不支持预览 / 树时，强制退回「格式化」，避免残留无效模式状态。 */
 watch(viewMode, (m) => {
   if (m === 'preview' && !isPreviewable.value) viewMode.value = 'pretty'
+  if (m === 'tree' && !(isJson.value && !bodyTooLarge.value)) viewMode.value = 'pretty'
 })
 
 // ---------- 查找（Find in Response） ----------
 // 状态机（开关 / 防抖 / 激活序号 / 导航）走 composables/useFindInText；
 // 计数保持本视图口径：树视图由 JsonTree 上报 treeTotal，行视图本地统计。
 const treeTotal = ref(0)
-
-/** JSON 树是否可见（查找对其生效；行视图走本地计数）——即 useTree 别名。 */
-const treeVisible = useTree
 
 /** 行视图（rp-lines）当前渲染的行；仅按实际可见行计数，保证大响应不卡顿。 */
 const searchLines = computed(() => {
@@ -432,9 +459,25 @@ function highlightText(raw: string, q: string): string {
   }
 }
 
-/** Pretty 行视图：JSON 语法高亮 + 查找标记（与请求 Body 编辑器共用同一主题，见 utils/highlight.ts）。 */
+/**
+ * Pretty 行视图：按 highlightLang 分派语法高亮 + 查找标记。
+ * JSON / XML / HTML 与请求侧共用同一分词器与 --tok-* 主题（utils/highlight.ts）；
+ * JS 走代码生成高亮器（highlightCode 无查找 mark 叠加，计数不受影响）；
+ * 未知类型纯转义。
+ */
 function highlightPrettyText(raw: string, q: string): string {
-  return highlightJSONText(raw, q)
+  switch (highlightLang.value) {
+    case 'json':
+      return highlightJSONText(raw, q)
+    case 'xml':
+    case 'html':
+      // 同一标签高亮器：标签名 / 属性值 / 注释着色，对 HTML 同样成立
+      return highlightXMLText(raw, q)
+    case 'js':
+      return highlightCode('js', raw)
+    default:
+      return q ? highlightText(raw, q) : escapeHtml(raw)
+  }
 }
 
 /**
@@ -498,8 +541,13 @@ const rawRows = computed<LineRow[]>(() => {
   }))
 })
 
-/** ⌘F / Ctrl+F 打开查找（输入框内不拦截）。 */
+/** ⌘F / Ctrl+F 打开查找（输入框内不拦截）；Esc 退出全屏。 */
 function onWindowKeydown(e: KeyboardEvent): void {
+  if (fullscreen.value && e.key === 'Escape') {
+    e.preventDefault()
+    fullscreen.value = false
+    return
+  }
   if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'f') return
   if (activeTab.value !== 'body' || !hasBody.value) return
   const target = e.target as HTMLElement | null
@@ -537,6 +585,66 @@ function toggleCollapsed(): void {
   collapsed.value = !collapsed.value
 }
 
+// ---------- 自动换行（行视图：Pretty / Raw） ----------
+// 默认换行（延续旧渲染习惯）；关闭后 white-space: pre + 容器横向滚动。
+const WRAP_KEY = 'miyo.resp-wrap'
+const wrapLines = ref(((): boolean => {
+  try {
+    return localStorage.getItem(WRAP_KEY) !== '0'
+  } catch {
+    return true
+  }
+})())
+
+function toggleWrap(): void {
+  wrapLines.value = !wrapLines.value
+  try {
+    localStorage.setItem(WRAP_KEY, wrapLines.value ? '1' : '0')
+  } catch {
+    // 存储不可用仅丢持久化
+  }
+}
+
+/** 行视图开关是否可见（Pretty / Raw 行视图 + 有正文）。 */
+const wrapToggleVisible = computed(
+  () => activeTab.value === 'body' && hasBody.value && (viewMode.value === 'pretty' || viewMode.value === 'raw'),
+)
+
+// ---------- 全屏（响应面板 fixed 覆盖编辑器；祖先链无 transform，fixed 可靠） ----------
+const fullscreen = ref(false)
+
+function toggleFullscreen(): void {
+  fullscreen.value = !fullscreen.value
+}
+
+// ---------- 更多菜单（低频操作收纳：复制 / 保存示例 / 下载 / 树展开 / 全屏） ----------
+const moreMenu = ref<InstanceType<typeof Menu> | null>(null)
+
+function openMoreMenu(event: MouseEvent): void {
+  const items: MenuItem[] = [
+    { key: 'save-example', label: t('response.saveExample'), icon: 'save' },
+  ]
+  if (treeVisible.value) {
+    items.push({
+      key: 'tree-all',
+      label: treeExpanded.value ? t('response.collapseAll') : t('response.expandAll'),
+      icon: 'list',
+    })
+  }
+  items.push({
+    key: 'fullscreen',
+    label: fullscreen.value ? t('response.exitFullscreen') : t('response.fullscreen'),
+    icon: 'maximize-2',
+  })
+  moreMenu.value?.openAt(event.currentTarget as HTMLElement, items, 'right')
+}
+
+function onMoreMenuSelect(item: MenuItem): void {
+  if (item.key === 'save-example') emit('saveExample')
+  else if (item.key === 'tree-all') toggleTreeAll()
+  else if (item.key === 'fullscreen') toggleFullscreen()
+}
+
 onMounted(() => window.addEventListener('keydown', onWindowKeydown))
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
@@ -544,7 +652,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="rp" :class="[`tone-${tone}`, { collapsed }]">
+  <div class="rp" :class="[`tone-${tone}`, { collapsed, fullscreen }]">
+    <!-- 第一层：执行信息（状态 / 耗时 / 大小 / 类型）+ 面板级操作 -->
     <div class="rp-toolbar">
       <div class="rp-metrics">
         <span class="rp-status">
@@ -561,7 +670,30 @@ onUnmounted(() => {
         <span v-if="response.content_type" class="rp-type">{{ response.content_type }}</span>
         <span v-if="response.truncated" class="rp-truncated" :title="t('response.truncatedHint')">{{ t('response.truncated') }}</span>
       </div>
+      <span class="rp-toolbar-spacer"></span>
+      <Tooltip :content="collapsed ? t('response.expand') : t('response.collapse')" placement="bottom">
+        <button
+          class="rp-icon-btn"
+          type="button"
+          :aria-label="collapsed ? t('response.expand') : t('response.collapse')"
+          @click="toggleCollapsed"
+        >
+          <Icon :name="collapsed ? 'chevron-down' : 'chevron-up'" :size="13" />
+        </button>
+      </Tooltip>
+      <!-- 面板高度拖拽把手（视觉 affordance）：按下向宿主上报，拖拽热区仍在整条分割带 -->
+      <span
+        class="rp-drag-grip"
+        aria-hidden="true"
+        :title="t('editor.splitterHint')"
+        @mousedown="emit('dragStart', $event as MouseEvent)"
+      >
+        <Icon name="chevrons-up-down" :size="14" />
+      </span>
+    </div>
 
+    <!-- 第二层：内容页签 + 视图模式 + 行内操作（低频操作收进「更多」菜单） -->
+    <div v-show="!collapsed" class="rp-subtoolbar">
       <Tabs v-model="activeTab" :tabs="responseTabs" size="sm" class="rp-inline-tabs" />
       <span class="rp-toolbar-spacer"></span>
 
@@ -574,6 +706,21 @@ onUnmounted(() => {
         @update:model-value="viewMode = $event as ViewMode"
       />
       <span class="rp-actions">
+        <Tooltip
+          v-if="wrapToggleVisible"
+          :content="t('response.wrap')"
+          placement="bottom"
+        >
+          <button
+            class="rp-icon-btn"
+            type="button"
+            :class="{ active: wrapLines }"
+            :aria-label="t('response.wrap')"
+            @click="toggleWrap"
+          >
+            <Icon name="text-wrap" :size="15" />
+          </button>
+        </Tooltip>
         <Tooltip :content="t('response.findHint')" placement="bottom">
           <button
             class="rp-icon-btn"
@@ -583,26 +730,6 @@ onUnmounted(() => {
             @click="toggleFind"
           >
             <Icon name="search" :size="16" />
-          </button>
-        </Tooltip>
-        <Tooltip v-if="treeVisible" :content="treeExpanded ? t('response.collapseAll') : t('response.expandAll')" placement="bottom">
-          <button
-            class="rp-icon-btn"
-            type="button"
-            :aria-label="treeExpanded ? t('response.collapseAll') : t('response.expandAll')"
-            @click="toggleTreeAll"
-          >
-            <Icon :name="treeExpanded ? 'chevron-up' : 'chevron-down'" :size="13" />
-          </button>
-        </Tooltip>
-        <Tooltip :content="t('response.saveExample')" placement="bottom">
-          <button
-            class="rp-icon-btn"
-            type="button"
-            :aria-label="t('response.saveExample')"
-            @click="emit('saveExample')"
-          >
-            <Icon name="save" :size="16" />
           </button>
         </Tooltip>
         <Tooltip :content="t('response.copyBody')" placement="bottom">
@@ -621,25 +748,11 @@ onUnmounted(() => {
             <Icon name="download" :size="16" />
           </button>
         </Tooltip>
-        <Tooltip :content="collapsed ? t('response.expand') : t('response.collapse')" placement="bottom">
-          <button
-            class="rp-icon-btn"
-            type="button"
-            :aria-label="collapsed ? t('response.expand') : t('response.collapse')"
-            @click="toggleCollapsed"
-          >
-            <Icon :name="collapsed ? 'chevron-down' : 'chevron-up'" :size="13" />
+        <Tooltip :content="t('common.moreActions')" placement="bottom">
+          <button class="rp-icon-btn" type="button" :aria-label="t('common.moreActions')" @click="openMoreMenu">
+            <Icon name="more-horizontal" :size="15" />
           </button>
         </Tooltip>
-      </span>
-      <!-- 面板高度拖拽把手（视觉 affordance）：按下向宿主上报，拖拽热区仍在整条分割带 -->
-      <span
-        class="rp-drag-grip"
-        aria-hidden="true"
-        :title="t('editor.splitterHint')"
-        @mousedown="emit('dragStart', $event as MouseEvent)"
-      >
-        <Icon name="chevrons-up-down" :size="14" />
       </span>
     </div>
 
@@ -699,14 +812,14 @@ onUnmounted(() => {
         <p v-if="longLinesTruncated" class="rp-note">{{ t('response.lineTooLong') }}</p>
         <p v-if="!hasBody" class="rp-empty">{{ t('response.emptyBody') }}</p>
         <JsonTree
-          v-else-if="viewMode === 'pretty' && isJson"
+          v-else-if="viewMode === 'tree' && isJson"
           ref="treeRef"
           :data="parsed"
           :query="treeVisible ? searchQuery : ''"
           :active-match="activeMatch"
           @match-count="treeTotal = $event"
         />
-        <div v-else-if="viewMode === 'pretty'" class="rp-lines">
+        <div v-else-if="viewMode === 'pretty'" class="rp-lines" :class="{ nowrap: !wrapLines }">
           <div v-for="row in prettyRows" :key="row.key" class="rp-line">
             <span class="rp-line-gutter">{{ row.n }}</span>
             <span class="rp-line-text" v-html="row.html"></span>
@@ -720,7 +833,7 @@ onUnmounted(() => {
             {{ t('response.showMore', { shown: visibleLines, total: prettyLines.length }) }}
           </button>
         </div>
-        <div v-else-if="viewMode === 'raw'" class="rp-lines">
+        <div v-else-if="viewMode === 'raw'" class="rp-lines" :class="{ nowrap: !wrapLines }">
           <div v-for="row in rawRows" :key="row.key" class="rp-line">
             <span class="rp-line-gutter">{{ row.n }}</span>
             <span class="rp-line-text" v-html="row.html"></span>
@@ -810,6 +923,8 @@ onUnmounted(() => {
     <div v-show="!collapsed" v-else-if="activeTab === 'examples'" class="rp-scroll">
       <slot name="examples" />
     </div>
+
+    <Menu ref="moreMenu" @select="onMoreMenuSelect" />
   </div>
 </template>
 
@@ -834,18 +949,43 @@ onUnmounted(() => {
   height: auto;
 }
 
-/* ---- 单行工具栏：状态指标 + 页签 + 模式 + 操作 ----
- * 整排 flex items-center 同一水平中轴；横向节奏统一 12px（gap-3） */
+/* 全屏：fixed 覆盖编辑器（祖先链无 transform，fixed 可靠）；Esc / 菜单退出 */
+.rp.fullscreen {
+  position: fixed;
+  inset: 14px;
+  z-index: 80;
+  height: auto;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+
+/* ---- 两层工具栏 ----
+ * 第一层 = 执行信息（状态/耗时/大小/类型）+ 面板折叠与拖拽把手；
+ * 第二层 = 内容页签 + 视图模式 + 行内操作。横向节奏统一 12px。 */
 .rp-toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 40px;
-  padding: 4px 12px;
+  min-height: 34px;
+  padding: 2px 12px;
   border-bottom: 1px solid var(--border);
   background: transparent;
   flex-shrink: 0;
   overflow: hidden;
+}
+
+.rp-subtoolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  padding: 2px 12px;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.rp.collapsed .rp-subtoolbar {
+  display: none;
 }
 
 .rp-inline-tabs {
@@ -1030,7 +1170,8 @@ onUnmounted(() => {
 
 .rp-lines {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  /* 与请求 Body 编辑器（JsonEditor）同一字号档，行高同 1.55——两侧并排无差异 */
+  font-size: var(--fs-sm);
   line-height: 1.55;
 }
 
@@ -1041,6 +1182,15 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-1);
+}
+
+/* 自动换行关闭：单行不折行 + 容器横向滚动（保留横向滚动能力） */
+.rp-lines.nowrap {
+  overflow-x: auto;
+}
+.rp-lines.nowrap .rp-line {
+  white-space: pre;
+  word-break: normal;
 }
 
 /* 空折叠列占位：与树视图（箭头专列）同宽，Body/原始 切换时代码与行号不横跳 */

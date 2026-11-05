@@ -83,13 +83,6 @@ function onBulkKeydown(e: KeyboardEvent): void {
 
 <template>
   <div class="panel">
-    <div class="params-head">
-      <span class="params-count">{{ t('params.count', { n: (params as KeyValue[]).length }) }}</span>
-      <button class="bulk-btn" type="button" @click="bulkMode ? commitBulk() : enterBulk()">
-        {{ bulkMode ? t('params.tableEdit') : t('params.bulkEdit') }}
-      </button>
-    </div>
-
     <div v-if="bulkMode" class="bulk-wrap">
       <textarea
         ref="bulkArea"
@@ -110,8 +103,16 @@ function onBulkKeydown(e: KeyboardEvent): void {
       v-else
       :model-value="params"
       :var-candidates="varCandidates"
+      :add-label="t('params.add')"
+      searchable
       @update:model-value="applyParams"
-    />
+    >
+      <template #toolbar-actions>
+        <button class="bulk-btn" type="button" @click="enterBulk()">
+          {{ t('params.bulkEdit') }}
+        </button>
+      </template>
+    </KeyValueTable>
   </div>
 </template>
 
@@ -122,18 +123,7 @@ function onBulkKeydown(e: KeyboardEvent): void {
   gap: 6px;
 }
 
-.params-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.params-count {
-  font-size: var(--fs-xs);
-  color: var(--text-3);
-}
-
+/* 批量编辑按钮（KeyValueTable 工具栏插槽）：与过滤条同排的弱按钮 */
 .bulk-btn {
   height: 22px;
   padding: 0 8px;
@@ -144,6 +134,7 @@ function onBulkKeydown(e: KeyboardEvent): void {
   font-family: inherit;
   color: var(--text-2);
   cursor: pointer;
+  white-space: nowrap;
   transition:
     background var(--dur) var(--ease),
     color var(--dur) var(--ease);

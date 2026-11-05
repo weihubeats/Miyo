@@ -15,6 +15,8 @@ export const SIDEBAR_MAX = 520
 export const SIDEBAR_DEFAULT = 300
 /** 侧栏宽度持久化键：与请求区高度等「用户布局偏好」同一策略（localStorage）。 */
 const SIDEBAR_WIDTH_KEY = 'miyo.sidebar-width'
+/** 侧栏整体折叠持久化键（折叠 ≠ 宽度 0：折叠时侧栏连同分割条一起移出布局）。 */
+const SIDEBAR_COLLAPSED_KEY = 'miyo.sidebar-collapsed'
 
 function clampSidebarWidth(v: number): number {
   return Math.min(Math.max(v, SIDEBAR_MIN), SIDEBAR_MAX)
@@ -37,6 +39,26 @@ export function useSidebarResize() {
   let sidebarDragging = false
   let resizeStartX = 0
   let resizeStartWidth = 0
+
+  /** 侧栏折叠（隐藏整栏，主区独占宽度）：持久化，重启后保持。 */
+  const sidebarCollapsed = ref(
+    (() => {
+      try {
+        return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
+      } catch {
+        return false
+      }
+    })(),
+  )
+
+  function toggleSidebarCollapsed(): void {
+    sidebarCollapsed.value = !sidebarCollapsed.value
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed.value ? '1' : '0')
+    } catch {
+      // 存储不可用时静默：仅影响重启后的折叠恢复
+    }
+  }
 
   function onSidebarResizeDown(event: MouseEvent): void {
     if (event.button !== 0) return
@@ -103,6 +125,8 @@ export function useSidebarResize() {
     SIDEBAR_DEFAULT,
     sidebarWidth,
     sidebarResizing,
+    sidebarCollapsed,
+    toggleSidebarCollapsed,
     onSidebarResizeDown,
     onSidebarKeydown,
     setSidebarWidth,

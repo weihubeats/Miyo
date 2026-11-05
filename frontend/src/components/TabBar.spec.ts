@@ -29,6 +29,7 @@ function makeStore() {
     closeTab: vi.fn(),
     closeOtherTabs: vi.fn(),
     closeAllTabs: vi.fn(),
+    closeTabsToRight: vi.fn(),
     openNewEndpoint: vi.fn(),
     saveFolder: vi.fn(),
   })
@@ -155,9 +156,14 @@ describe('TabBar：新建按钮紧跟末尾且不被滚丢', () => {
     item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   }
 
-  it('下拉为标签管理三项：无新建/导入重复项', async () => {
+  it('下拉为标签管理四项（当前/其他/右侧/全部）：无新建/导入重复项', async () => {
     const wrapper = mountBar()
-    expect(await openMenuLabels()).toEqual(['关闭当前标签页', '关闭其他标签页', '关闭全部标签页'])
+    expect(await openMenuLabels()).toEqual([
+      '关闭当前标签页',
+      '关闭其他标签页',
+      '关闭右侧标签页',
+      '关闭全部标签页',
+    ])
     wrapper.unmount()
   })
 
@@ -236,14 +242,14 @@ describe('TabBar：新建按钮紧跟末尾且不被滚丢', () => {
     }
   })
 
-  it('仅剩一个标签时关闭其他禁用', async () => {
+  it('仅剩一个标签时关闭其他 / 关闭右侧均禁用', async () => {
     mocked.openTabs.splice(0, mocked.openTabs.length, 't8')
     const wrapper = mountBar()
     await openMenuLabels()
     const disabled = Array.from(
       document.querySelectorAll<HTMLButtonElement>('.miyo-menu-item[disabled]'),
     ).map((m) => m.textContent?.trim())
-    expect(disabled).toEqual(['关闭其他标签页'])
+    expect(disabled).toEqual(['关闭其他标签页', '关闭右侧标签页'])
     wrapper.unmount()
   })
 })
@@ -311,6 +317,74 @@ describe('TabBar：键盘导航（role=tablist + roving tabindex + ←→ / Dele
     await nextTick()
     expect(mocked.closeTab).not.toHaveBeenCalled()
     expect(document.querySelector('.pc-pop')).toBeTruthy()
+    wrapper.unmount()
+  })
+})
+
+describe('TabBar：右键菜单与批量关闭', () => {
+  afterEach(() => {
+    document.querySelectorAll('.miyo-menu').forEach((el) => el.remove())
+  })
+
+  /** 打开右键菜单并点选指定项（Menu teleport 到 body）。 */
+  async function pickContextItem(wrapper: ReturnType<typeof mount>, index: number, label: string) {
+    await rows(wrapper)[index].trigger('contextmenu')
+    await nextTick()
+    const item = [...document.querySelectorAll<HTMLButtonElement>('.miyo-menu .miyo-menu-item')].find(
+      (b) => b.textContent?.includes(label),
+    )
+    expect(item).toBeTruthy()
+    item!.click()
+    await nextTick()
+  }
+
+  function rows(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('.tab')
+  }
+
+  it('右键页签弹出 关闭/关闭其他/关闭右侧/关闭全部 菜单，动作以被点页签为基准', async () => {
+    const wrapper = mountBar()
+
+    // 右键非激活页签 t2
+    await rows(wrapper)[1].trigger('contextmenu')
+    await nextTick()
+    const labels = [...document.querySelectorAll('.miyo-menu .miyo-menu-item')].map(
+      (b) => b.textContent ?? '',
+    )
+    expect(labels.some((l) => l.includes('关闭当前'))).toBe(true)
+    expect(labels.some((l) => l.includes('关闭其他'))).toBe(true)
+    expect(labels.some((l) => l.includes('关闭右侧'))).toBe(true)
+    expect(labels.some((l) => l.includes('关闭全部'))).toBe(true)
+
+    // 「关闭右侧」以 t2 为基准：t3..t8 共 6 个
+    await pickContextItem(wrapper, 1, '关闭右侧')
+    expect(mocked.closeTabsToRight).toHaveBeenCalledWith('t2')
+    wrapper.unmount()
+  })
+
+  it('⋯ 菜单含「关闭右侧」，以激活页签为基准', async () => {
+    mocked.activeTabId = 't5' // 非末尾，右侧有 t6..t8
+    const wrapper = mountBar()
+    await wrapper.find('.tab-more').trigger('click')
+    await nextTick()
+    const item = [...document.querySelectorAll<HTMLButtonElement>('.miyo-menu .miyo-menu-item')].find(
+      (b) => b.textContent?.includes('关闭右侧'),
+    )
+    expect(item).toBeTruthy()
+    item!.click()
+    await nextTick()
+    expect(mocked.closeTabsToRight).toHaveBeenCalledWith('t5')
+    wrapper.unmount()
+  })
+
+  it('末尾页签右键时「关闭右侧」禁用', async () => {
+    const wrapper = mountBar()
+    await rows(wrapper)[7].trigger('contextmenu')
+    await nextTick()
+    const item = [...document.querySelectorAll<HTMLButtonElement>('.miyo-menu .miyo-menu-item')].find(
+      (b) => b.textContent?.includes('关闭右侧'),
+    )
+    expect(item?.hasAttribute('disabled')).toBe(true)
     wrapper.unmount()
   })
 })

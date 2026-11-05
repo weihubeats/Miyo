@@ -909,6 +909,38 @@ kbd,
   letter-spacing: 0.4px;
 }
 
+/* ---- 语法高亮 token 色（全局单源）----
+ * utils/highlight.ts 的分词器只产出 .hl-* 类名，颜色唯一真源在此：
+ * 深色 = :root 的 One Dark 系 --tok-*，浅色 = [data-theme='light'] 覆盖套。
+ * 此前各组件 scoped 各自定义（响应面板漏配 → JSON 全白），现统一收口；
+ * GraphQLView 的 GraphQL 查询高亮是另一套刻意语义色，保留其 scoped 定义。 */
+.hl-k {
+  color: var(--tok-key);
+}
+.hl-s {
+  color: var(--tok-str);
+}
+.hl-n {
+  color: var(--tok-num);
+}
+.hl-b {
+  color: var(--tok-bool);
+}
+.hl-null {
+  color: var(--tok-null);
+  font-style: italic;
+}
+.hl-p {
+  color: var(--tok-punct);
+}
+.hl-c {
+  color: var(--tok-gutter);
+  font-style: italic;
+}
+.hl-v {
+  color: var(--tok-bool);
+}
+
 /* ---- 场景编排（ScenarioEditor 族）：变量 chip / Method 徽章
      （编辑器 / 变量链路 / 结果 Dock 三处共用，须全局） ---- */
 

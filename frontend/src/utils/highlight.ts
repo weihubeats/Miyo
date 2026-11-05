@@ -150,6 +150,122 @@ export function highlightJSONText(code: string, query: string, activeMatch?: num
 }
 
 /* ==========================================================================
+ * XML 高亮（响应区 XML Pretty 行视图）：注释 / CDATA / 声明 / 标签名 /
+ * 属性值着色，正文默认色。与 JSON 同思路——单遍正则分词 + 先转义再包 span。
+ * ========================================================================== */
+
+const XML_RE =
+  /(<!--[\s\S]*?-->)|(<!\[CDATA\[[\s\S]*?\]\]>)|(<\?[\s\S]*?\?>)|(<\/?)([A-Za-z_][\w.:_-]*)((?:\s+[A-Za-z_][\w.:_-]*\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?>)/g
+
+/** 轻量 XML 高亮：标签名 hl-k、属性值 hl-s、注释/CDATA/声明 hl-c、括号 hl-p。 */
+export function highlightXML(code: string): string {
+  let out = ''
+  let last = 0
+  for (const m of code.matchAll(XML_RE)) {
+    out += escapeHtml(code.slice(last, m.index))
+    const [full, comment, cdata, decl, open, name, attrs, close] = m
+    if (comment || cdata || decl) {
+      out += `<span class="hl-c">${escapeHtml(full)}</span>`
+    } else {
+      out += `<span class="hl-p">${escapeHtml(open ?? '')}</span>`
+      out += `<span class="hl-k">${escapeHtml(name ?? '')}</span>`
+      if (attrs) {
+        // 属性串逐段拆：名默认色、= hl-p、值 hl-s
+        const attrRe = /([A-Za-z_][\w.:_-]*)(\s*=\s*)("[^"]*"|'[^']*')/g
+        let pos = 0
+        for (const am of attrs.matchAll(attrRe)) {
+          out += escapeHtml(attrs.slice(pos, am.index))
+          out += escapeHtml(am[1] ?? '')
+          out += `<span class="hl-p">${escapeHtml(am[2] ?? '')}</span>`
+          out += `<span class="hl-s">${escapeHtml(am[3] ?? '')}</span>`
+          pos = am.index! + am[0].length
+        }
+        out += escapeHtml(attrs.slice(pos))
+      }
+      out += `<span class="hl-p">${escapeHtml(close ?? '')}</span>`
+    }
+    last = m.index! + full.length
+  }
+  out += escapeHtml(code.slice(last))
+  return out
+}
+
+/** XML 高亮 + 查找标记（结构与 highlightJSONText 相同：先全局匹配区间，再逐 token 渲染）。 */
+export function highlightXMLText(code: string, query: string, activeMatch?: number): string {
+  if (!query) return highlightXML(code)
+  const ql = query.toLowerCase()
+  const lower = code.toLowerCase()
+
+  const matches: Array<{ start: number; end: number; index: number }> = []
+  let from = 0
+  let matchIdx = 0
+  for (;;) {
+    const idx = lower.indexOf(ql, from)
+    if (idx === -1) break
+    matches.push({ start: idx, end: idx + query.length, index: matchIdx })
+    matchIdx += 1
+    from = idx + query.length
+  }
+  if (!matches.length) return highlightXML(code)
+
+  // 逐段推进：用 XML_RE 分词并按偏移叠加查找 mark
+  let currentOffset = 0
+  let out = ''
+  type Seg = { text: string; cls: string | null }
+  const segments: Seg[] = []
+  let last = 0
+  for (const m of code.matchAll(XML_RE)) {
+    if (m.index! > last) segments.push({ text: code.slice(last, m.index), cls: null })
+    const [full, comment, cdata, decl, open, name, attrs, close] = m
+    if (comment || cdata || decl) {
+      segments.push({ text: full, cls: 'hl-c' })
+    } else {
+      segments.push({ text: open ?? '', cls: 'hl-p' })
+      segments.push({ text: name ?? '', cls: 'hl-k' })
+      if (attrs) {
+        const attrRe = /([A-Za-z_][\w.:_-]*)(\s*=\s*)("[^"]*"|'[^']*')/g
+        let pos = 0
+        for (const am of attrs.matchAll(attrRe)) {
+          segments.push({ text: attrs.slice(pos, am.index), cls: null })
+          segments.push({ text: am[1] ?? '', cls: null })
+          segments.push({ text: am[2] ?? '', cls: 'hl-p' })
+          segments.push({ text: am[3] ?? '', cls: 'hl-s' })
+          pos = am.index! + am[0].length
+        }
+        segments.push({ text: attrs.slice(pos), cls: null })
+      }
+      segments.push({ text: close ?? '', cls: 'hl-p' })
+    }
+    last = m.index! + full.length
+  }
+  if (last < code.length) segments.push({ text: code.slice(last), cls: null })
+
+  for (const seg of segments) {
+    const tokStart = currentOffset
+    const tokEnd = tokStart + seg.text.length
+    currentOffset = tokEnd
+    const overlapping = matches.filter((m) => m.start < tokEnd && m.end > tokStart)
+    let tokenHtml = ''
+    if (!overlapping.length) {
+      tokenHtml = escapeHtml(seg.text)
+    } else {
+      let relFrom = 0
+      for (const m of overlapping) {
+        const s = Math.max(0, m.start - tokStart)
+        const e = Math.min(seg.text.length, m.end - tokStart)
+        if (s > relFrom) tokenHtml += escapeHtml(seg.text.slice(relFrom, s))
+        const cls = activeMatch !== undefined && m.index === activeMatch ? 'rp-find-mark active' : 'rp-find-mark'
+        tokenHtml += `<mark class="${cls}">${escapeHtml(seg.text.slice(s, e))}</mark>`
+        relFrom = e
+      }
+      if (relFrom < seg.text.length) tokenHtml += escapeHtml(seg.text.slice(relFrom))
+    }
+    out += seg.cls ? `<span class="${seg.cls}">${tokenHtml}</span>` : tokenHtml
+  }
+  return out
+}
+
+/* ==========================================================================
  * 代码生成高亮（cURL / JavaScript / Java / Go / Rust …）
  * 与 JSON/GraphQL 同思路：单遍正则分词 + 先转义再包 span；
  * 分类依据匹配文本本身（首字符 / 关键字表），因此只需一个捕获组。

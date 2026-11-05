@@ -83,6 +83,12 @@ function restore(h: RequestHistory): void {
   store.restoreFromHistory(h)
 }
 
+/** 一键重放：恢复配置到编辑器并立即自动发送（gRPC 记录不支持，按钮不渲染）。 */
+function replay(h: RequestHistory): void {
+  activeId.value = h.id
+  store.restoreFromHistory(h, { send: true })
+}
+
 /** 展示用短地址：去协议域名；兼容存量记录剥渲染前 `{{变量}}` 前缀（`{{base_url}}/api` → `/api`）。 */
 function shortUrl(url: string): string {
   let stripped = url.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/]+/, '')
@@ -181,6 +187,15 @@ function shortTime(iso: string): string {
           <span class="hp-meta hp-time">{{ shortTime(h.created_at) }}</span>
         </span>
         </button>
+        <IconButton
+          v-if="h.method !== 'GRPC'"
+          class="hp-replay"
+          name="play"
+          :size="12"
+          tone="accent"
+          :title="t('history.replay')"
+          @click="replay(h)"
+        />
         <Popconfirm
           :title="t('ws.historyDeleteConfirm')"
           :confirm-text="t('common.delete')"
@@ -368,13 +383,15 @@ function shortTime(iso: string): string {
   gap: 2px;
 }
 
-/** 行内删除钮：hover 才出现（与树行「⋯」同节奏） */
+/** 行内操作钮（重放 / 删除）：hover 才出现（与树行「⋯」同节奏） */
+.hp-replay,
 .hp-del {
   flex: none;
   display: none;
   margin-right: 6px;
 }
 
+.hp-item:hover .hp-replay,
 .hp-item:hover .hp-del {
   display: inline-flex;
 }

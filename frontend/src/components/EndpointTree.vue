@@ -90,6 +90,7 @@ import { escapeHtml } from '../utils/highlight'
 import { useTreeExpanded } from './endpointTreeExpanded'
 import { TREE_EDIT_STATE, useTreeOperations, type TreeEditState } from '../composables/useTreeOperations'
 import { fuzzyScore } from '../utils/fuzzyMatch'
+import { useEndpointFavorites } from '../composables/useEndpointFavorites'
 import { methodTone } from '../utils/methodTone'
 import Icon from './ui/Icon.vue'
 import IconButton from './ui/IconButton.vue'
@@ -241,6 +242,39 @@ const childFolders = computed(() =>
 const childEndpoints = computed(() =>
   (childIndex.value.endpointsByFolder.get(props.folderId) ?? []).filter(endpointMatches),
 )
+
+// ---------- 收藏分组（仅根实例、非搜索态渲染） ----------
+// 注：不再提供「最近访问」独立分组——同一接口会在分组与正式目录出现两份、
+// 且两边都可能挂 active 高亮（用户实测双重选中）；「最近打开」能力保留在
+// ⌘K QuickSearch 的空查询首屏，目录区只保留唯一真源（正式目录树）。
+const { isFavorite, toggleFavorite, favoriteEndpoints } = useEndpointFavorites()
+
+/** 分组折叠态：localStorage 持久化（仅根实例读写）。 */
+const FAV_COLLAPSED_KEY = 'miyo.tree-fav-collapsed'
+const favCollapsed = ref(tryReadCollapsed(FAV_COLLAPSED_KEY))
+
+function tryReadCollapsed(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+
+function toggleFavSection(): void {
+  favCollapsed.value = !favCollapsed.value
+  try {
+    localStorage.setItem(FAV_COLLAPSED_KEY, favCollapsed.value ? '1' : '0')
+  } catch {
+    // 配额满不影响主流程
+  }
+}
+
+/** 分组行点击（无多选语义）：清空选择并打开接口。 */
+function openSectionEndpoint(e: Endpoint): void {
+  clearTreeSelection()
+  store.openEndpoint(e)
+}
 
 function toggleFolder(id: string): void {
   const next = new Set(expanded.value)
@@ -508,7 +542,9 @@ function openFolderMenu(event: MouseEvent, f: Folder): void {
 
 function openEndpointMenu(event: MouseEvent, e: Endpoint): void {
   menuTarget.value = { kind: 'endpoint', id: e.id }
+  const fav = isFavorite(e.id)
   menu.value?.openAt(event.currentTarget as HTMLElement, [
+    { key: 'favorite', label: fav ? t('tree.unfavorite') : t('tree.favorite'), icon: fav ? 'star-fill' : 'star' },
     { key: 'copy', label: t('common.copyAction'), icon: 'copy' },
     { key: 'rename', label: t('common.rename'), icon: 'pencil' },
     {
@@ -527,6 +563,10 @@ function onMenuSelect(item: MenuItem): void {
   if (item.key === 'delete') {
     deleteTarget.value = target
     showDeleteConfirm.value = true
+    return
+  }
+  if (item.key === 'favorite') {
+    toggleFavorite(target.id)
     return
   }
   if (target.kind === 'folder') {
@@ -803,6 +843,44 @@ function onBatchMenuSelect(item: MenuItem): void {
     @keydown="onTreeKeydown"
     @focusin="onTreeFocusIn"
   >
+    <!-- 收藏分组（仅根实例、非搜索态）：星标接口置顶直达。
+         分组行不挂 active 高亮——活动接口的唯一高亮在正式目录行（防双高亮）。 -->
+    <div v-if="folderId === null && !searchActive && favoriteEndpoints.length" class="tree-section">
+      <button
+        class="tree-sec-head"
+        type="button"
+        :aria-expanded="!favCollapsed"
+        @click="toggleFavSection"
+      >
+        <Icon name="chevron-right" :size="12" :stroke-width="1.25" class="tree-sec-chevron" :class="{ open: !favCollapsed }" />
+        <Icon name="star-fill" :size="12" class="tree-sec-icon" />
+        <span class="tree-sec-title">{{ t('tree.favorites') }}</span>
+        <span class="tree-sec-count">{{ favoriteEndpoints.length }}</span>
+      </button>
+      <div v-show="!favCollapsed">
+        <button
+          v-for="e in favoriteEndpoints"
+          :key="e.id"
+          class="tree-row sec-row"
+          type="button"
+          @click="openSectionEndpoint(e)"
+        >
+          <span class="tree-chevron spacer" aria-hidden="true"></span>
+          <span class="tree-method" :class="methodTone(e.method)">{{ e.method }}</span>
+          <span class="tree-name">{{ e.name || e.path }}</span>
+          <span class="tree-star-slot pinned">
+            <IconButton
+              class="tree-star"
+              name="star-fill"
+              :size="13"
+              :title="t('tree.unfavorite')"
+              @click.stop="toggleFavorite(e.id)"
+            />
+          </span>
+        </button>
+      </div>
+    </div>
+
     <template v-for="f in childFolders" :key="f.id">
       <div
         class="tree-row"
@@ -911,6 +989,15 @@ function onBatchMenuSelect(item: MenuItem): void {
             <span class="tree-name-text" v-html="highlightName(e.name || e.path)"></span>
             <Icon v-if="store.isDirty(e.id)" class="tree-dirty" name="dot" :size="8" />
           </span>
+          <span class="tree-star-slot" :class="{ pinned: isFavorite(e.id) }">
+            <IconButton
+              class="tree-star"
+              :name="isFavorite(e.id) ? 'star-fill' : 'star'"
+              :size="13"
+              :title="isFavorite(e.id) ? t('tree.unfavorite') : t('tree.favorite')"
+              @click.stop="toggleFavorite(e.id)"
+            />
+          </span>
           <span class="tree-actions">
             <IconButton name="more-horizontal" :size="13" :title="t('common.moreActions')" @click="openEndpointMenu($event, e)" />
           </span>
@@ -989,6 +1076,109 @@ function onBatchMenuSelect(item: MenuItem): void {
   border-radius: var(--radius-md);
   cursor: default;
   transition: background var(--dur) var(--ease);
+}
+
+/* ---- 收藏 / 最近访问分组（根实例） ---- */
+.tree-section {
+  margin-bottom: 4px;
+}
+.tree-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 26px;
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  font-family: inherit;
+  font-size: var(--fs-xxs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  cursor: pointer;
+  text-align: left;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.tree-sec-head:hover {
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+.tree-sec-chevron {
+  flex-shrink: 0;
+}
+.tree-sec-chevron.open {
+  transform: rotate(90deg);
+}
+.tree-sec-chevron,
+.tree-sec-chevron.open {
+  transition: transform var(--dur) var(--ease);
+}
+.tree-sec-icon {
+  flex-shrink: 0;
+  color: var(--warning);
+}
+.tree-sec-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-sec-count {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+/* 分组行复用 .tree-row 形态（button 元素重置） */
+.sec-row {
+  width: 100%;
+  border: none;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* ---- 行级星标（收藏） ----
+ * 独立于 .tree-actions（后者整体 hover 显隐）：已收藏行的星标常亮，
+ * 未收藏行 hover 才浮现，互不牵连。 */
+.tree-star-slot {
+  flex-shrink: 0;
+  display: inline-flex;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.tree-row:hover .tree-star-slot,
+.tree-row:focus-within .tree-star-slot,
+.tree-star-slot.pinned {
+  opacity: 1;
+}
+.tree-star-slot :deep(.ib) {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+}
+.tree-star-slot :deep(.ib:hover) {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+.tree-star-slot.pinned :deep(.ib) {
+  color: var(--warning);
+}
+/* 已收藏行的星标 hover 保持琥珀（不退灰），点亮感更明确 */
+.tree-star-slot.pinned :deep(.ib:hover) {
+  background: var(--warning-tint);
+  color: var(--warning);
+}
+/* 激活行（紫 pill）上的星标保持白色可读 */
+.tree-row.active .tree-star-slot :deep(.ib) {
+  color: rgba(255, 255, 255, 0.85);
 }
 .tree-row:hover {
   background: var(--bg-hover);

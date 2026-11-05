@@ -531,9 +531,10 @@ defineExpose({
       v-if="activeTab === 'raw' && rawSubtype === 'json'"
       v-model="bodyAny.raw"
       placeholder='{ "key": "value" }'
-      :min-height="160"
+      :min-height="120"
       :max-height="480"
       :show-status="false"
+      fullscreenable
       :query="findOpen ? searchQuery : ''"
       :active-match="activeMatch"
       @status-change="jsonStatus = $event"

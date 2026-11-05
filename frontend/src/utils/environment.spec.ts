@@ -7,6 +7,7 @@ import {
   envColorClass,
   environmentVariableMap,
   findUnknownVars,
+  isSensitiveVarKey,
   joinBaseUrl,
   normalizeBaseUrl,
   requestTemplateTexts,
@@ -242,5 +243,24 @@ describe('requestTemplateTexts / findUnknownVars（发送前未定义变量扫�
       known,
     )
     expect(unknown).toEqual(['tok'])
+  })
+})
+
+describe('isSensitiveVarKey（敏感变量名启发式）', () => {
+  it('命中 token / secret / password / api_key / authorization 等词根', () => {
+    expect(isSensitiveVarKey('access_token')).toBe(true)
+    expect(isSensitiveVarKey('CLIENT_SECRET')).toBe(true)
+    expect(isSensitiveVarKey('db_password')).toBe(true)
+    expect(isSensitiveVarKey('api-key')).toBe(true)
+    expect(isSensitiveVarKey('Authorization')).toBe(true)
+    expect(isSensitiveVarKey('session_id')).toBe(true)
+  })
+
+  it('普通变量名不误伤', () => {
+    expect(isSensitiveVarKey('base_url')).toBe(false)
+    expect(isSensitiveVarKey('page_size')).toBe(false)
+    expect(isSensitiveVarKey('user_name')).toBe(false)
+    expect(isSensitiveVarKey('')).toBe(false)
+    expect(isSensitiveVarKey(null)).toBe(false)
   })
 })

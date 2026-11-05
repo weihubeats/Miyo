@@ -47,7 +47,7 @@ describe('EndpointEditor 底部单分割线契约', () => {
     expect(SOURCE, '常驻设置行不得回归（夹在 Body 与响应之间显乱）').not.toContain(
       'class="req-settings"',
     )
-    expect(SOURCE, '页签行须有请求设置触发钮').toContain('class="rs-trigger"')
+    expect(SOURCE, '页签行须有请求设置触发钮').toContain('rs-trigger rs-settings')
     // config-box 是 overflow 滚动容器，内部绝对定位会被裁剪 → 必须 Teleport
     expect(SOURCE, '设置面板须 Teleport 到 body').toContain('<Teleport to="body">')
   })

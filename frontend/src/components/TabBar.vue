@@ -106,7 +106,7 @@ const tabs = computed(() =>
   })),
 )
 
-// ---------- 标签管理菜单：关闭当前 / 其他 / 全部（有未保存时行内二次确认） ----------
+// ---------- 标签管理菜单：关闭当前 / 其他 / 右侧 / 全部（有未保存时行内二次确认） ----------
 // 菜单在触发器右侧展开（left 对齐），贴着 ⋯ 按钮往右下开，避免盖住左侧标签。
 const tabMenu = ref<InstanceType<typeof Menu> | null>(null)
 const tabMoreEl = ref<HTMLButtonElement | null>(null)
@@ -116,24 +116,34 @@ function unsavedConfirm(count: number): string {
   return t('tabbar.closeUnsavedConfirm', { n: count })
 }
 
-const TAB_MENU_ITEMS = computed<MenuItem[]>(() => {
+function dirtyCount(ids: string[]): number {
+  return ids.filter((id) => store.isDirty(id)).length
+}
+
+/** 以某页签为基准的批量关闭菜单项：⋯ 菜单以激活页签为基准；右键菜单以被点页签为基准。 */
+function tabMenuItemsFor(targetId: string | null): MenuItem[] {
   const ids = store.openTabs
-  const active = store.activeTabId
-  const others = ids.filter((id) => id !== active)
-  const othersDirty = others.filter((id) => store.isDirty(id)).length
-  const allDirty = ids.filter((id) => store.isDirty(id)).length
+  const idx = targetId ? ids.indexOf(targetId) : -1
+  const others = ids.filter((id) => id !== targetId)
+  const rightIds = targetId && idx !== -1 ? ids.slice(idx + 1) : []
   return [
     {
       key: 'close-current',
       label: t('tabbar.closeCurrent'),
-      disabled: !active,
-      ...(active && store.isDirty(active) ? { confirm: t('tabbar.closeConfirm'), confirmDanger: true } : {}),
+      disabled: !targetId,
+      ...(targetId && store.isDirty(targetId) ? { confirm: t('tabbar.closeConfirm'), confirmDanger: true } : {}),
     },
     {
       key: 'close-others',
       label: t('tabbar.closeOthers'),
       disabled: others.length === 0,
-      ...(othersDirty > 0 ? { confirm: unsavedConfirm(othersDirty), confirmDanger: true } : {}),
+      ...(dirtyCount(others) > 0 ? { confirm: unsavedConfirm(dirtyCount(others)), confirmDanger: true } : {}),
+    },
+    {
+      key: 'close-right',
+      label: t('tabbar.closeRight'),
+      disabled: rightIds.length === 0,
+      ...(dirtyCount(rightIds) > 0 ? { confirm: unsavedConfirm(dirtyCount(rightIds)), confirmDanger: true } : {}),
     },
     {
       key: 'close-all',
@@ -141,20 +151,33 @@ const TAB_MENU_ITEMS = computed<MenuItem[]>(() => {
       danger: true,
       dividerBefore: true,
       disabled: ids.length === 0,
-      ...(allDirty > 0 ? { confirm: unsavedConfirm(allDirty), confirmDanger: true } : {}),
+      ...(dirtyCount(ids) > 0 ? { confirm: unsavedConfirm(dirtyCount(ids)), confirmDanger: true } : {}),
     },
   ]
-})
+}
 
 function openTabMenu(): void {
-  if (tabMoreEl.value) tabMenu.value?.openAt(tabMoreEl.value, TAB_MENU_ITEMS.value, 'left')
+  contextTabId.value = store.activeTabId
+  if (tabMoreEl.value) tabMenu.value?.openAt(tabMoreEl.value, tabMenuItemsFor(store.activeTabId), 'left')
+}
+
+/** 右键菜单目标：右键的页签（可能是非激活页签），批量动作围绕它展开。 */
+const contextTabId = ref<string | null>(null)
+
+function onTabContextMenu(event: MouseEvent, id: string): void {
+  event.preventDefault()
+  contextTabId.value = id
+  tabMenu.value?.openAt(event.currentTarget as HTMLElement, tabMenuItemsFor(id), 'left')
 }
 
 function runMenuAction(item: MenuItem): void {
-  if (item.key === 'close-current' && store.activeTabId) {
-    store.closeTab(store.activeTabId)
-  } else if (item.key === 'close-others' && store.activeTabId) {
-    store.closeOtherTabs(store.activeTabId)
+  const target = contextTabId.value ?? store.activeTabId
+  if (item.key === 'close-current' && target) {
+    store.closeTab(target)
+  } else if (item.key === 'close-others' && target) {
+    store.closeOtherTabs(target)
+  } else if (item.key === 'close-right' && target) {
+    store.closeTabsToRight(target)
   } else if (item.key === 'close-all') {
     store.closeAllTabs()
   }
@@ -246,6 +269,7 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
         @click="store.activeTabId = tab.id"
         @mousedown="onTabMouseDown($event)"
         @keydown="onTabActivateKey($event, tab.id)"
+        @contextmenu="onTabContextMenu($event, tab.id)"
       >
         <!-- 「新建」伪页签：无方法徽章，闪电指代“待创建” -->
         <span v-if="tab.create" class="tab-spark" aria-hidden="true"><Icon name="zap" :size="12" /></span>
@@ -413,7 +437,6 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
   height: 2px;
   border-radius: 1px;
   background: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
 }
 
 /* 方法标签：胶囊布局，颜色走共享 methodTone（utils/methodTone.ts） */

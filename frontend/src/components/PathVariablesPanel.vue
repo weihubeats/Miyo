@@ -22,7 +22,6 @@ const t = locale.t
 const toast = useToast()
 
 const rows = computed(() => props.draft?.request.path_variables ?? [])
-const count = computed(() => rows.value.filter((r) => (r.key ?? '').trim()).length)
 
 /** 上抛：直接赋值（path_variables 可能缺省，splice 到临时数组会静默丢失）。 */
 function apply(next: KVRow[]): void {
@@ -60,13 +59,13 @@ function extract(): void {
 
 <template>
   <div class="panel">
-    <div class="pv-head">
-      <span class="pv-count">{{ t('editor.pathCount', { n: count }) }}</span>
-      <button class="pv-extract" type="button" @click="extract">
-        {{ t('editor.pathExtract') }}
-      </button>
-    </div>
-    <KeyValueTable :model-value="rows" @update:model-value="apply" />
+    <KeyValueTable :model-value="rows" searchable @update:model-value="apply">
+      <template #toolbar-actions>
+        <button class="pv-extract" type="button" @click="extract">
+          {{ t('editor.pathExtract') }}
+        </button>
+      </template>
+    </KeyValueTable>
     <p class="pv-hint">{{ t('editor.pathHint') }}</p>
   </div>
 </template>
@@ -78,18 +77,7 @@ function extract(): void {
   gap: 6px;
 }
 
-.pv-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.pv-count {
-  font-size: var(--fs-xs);
-  color: var(--text-3);
-}
-
+/* 抽取按钮（KeyValueTable 工具栏插槽）：与过滤条同排的弱按钮 */
 .pv-extract {
   height: 22px;
   padding: 0 8px;
@@ -100,6 +88,7 @@ function extract(): void {
   font-family: inherit;
   color: var(--text-2);
   cursor: pointer;
+  white-space: nowrap;
   transition:
     background var(--dur) var(--ease),
     color var(--dur) var(--ease);

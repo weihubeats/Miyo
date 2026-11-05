@@ -23,11 +23,39 @@ function makeResponse(body: string): ExecuteResponse {
   }
 }
 
-/** 按语义定位复制按钮（新增下载钮后位置索引脆弱）。 */
+/** 按语义定位复制按钮（第二层常驻操作）。 */
 function findCopyBtn(wrapper: ReturnType<typeof mount>) {
   return wrapper
     .findAll('.rp-icon-btn')
     .find((b) => b.attributes('aria-label')?.includes('复制响应正文'))
+}
+
+/** 按语义定位「更多操作」按钮（低频操作收进 ⋯ 菜单）。 */
+function findMoreBtn(wrapper: ReturnType<typeof mount>) {
+  return wrapper
+    .findAll('.rp-icon-btn')
+    .find((b) => b.attributes('aria-label')?.includes('更多操作'))
+}
+
+/** 打开「更多」菜单并点选指定标签的操作项（菜单 teleport 到 body，用后清理）。 */
+async function pickMoreItem(wrapper: ReturnType<typeof mount>, label: string): Promise<void> {
+  const moreBtn = findMoreBtn(wrapper)
+  expect(moreBtn).toBeTruthy()
+  await moreBtn!.trigger('click')
+  await wrapper.vm.$nextTick()
+  const item = [...document.querySelectorAll<HTMLButtonElement>('.miyo-menu .miyo-menu-item')].find(
+    (b) => b.textContent?.includes(label),
+  )
+  expect(item).toBeTruthy()
+  item!.click()
+  await flushPromises()
+  document.querySelectorAll('.miyo-menu').forEach((el) => el.remove())
+}
+
+/** 切换视图模式（SegmentedControl：pretty=0 / raw=1 / tree=2 / preview=3…）。 */
+async function switchMode(wrapper: ReturnType<typeof mount>, index: number): Promise<void> {
+  await wrapper.findAll('.seg-item')[index]!.trigger('click')
+  await wrapper.vm.$nextTick()
 }
 
 /** 通过 ⌘F 打开查找条并输入关键词。 */
@@ -84,6 +112,8 @@ describe('ResponsePanel：查找（Find in Response）', () => {
     const wrapper = mount(ResponsePanel, {
       props: { response: makeResponse(JSON.stringify({ users: [{ id: 1 }, { id: 2 }] })) },
     })
+    // 查找在树视图口径（treeTotal 上报）：切到 Tree 模式
+    await switchMode(wrapper, 2)
 
     await openFind(wrapper)
     expect(wrapper.text()).toContain('1 / 2')
@@ -140,15 +170,14 @@ describe('ResponsePanel：查找（Find in Response）', () => {
 })
 
 describe('ResponsePanel：复制响应正文', () => {
-  it('树接管 pretty 视图时复制源为原始 body 而非空串（回归）', async () => {
+  it('Tree 视图复制源为原始 body 而非格式化文本（回归）', async () => {
     const body = JSON.stringify({ users: [{ id: 1 }, { id: 2 }] })
     const wrapper = mount(ResponsePanel, { props: { response: makeResponse(body) } })
+    await switchMode(wrapper, 2)
 
     expect(wrapper.find('.jt-line').exists()).toBe(true)
 
-    const copyBtn = findCopyBtn(wrapper)
-    expect(copyBtn).toBeTruthy()
-    await copyBtn!.trigger('click')
+    await findCopyBtn(wrapper)!.trigger('click')
 
     expect(vi.mocked(copyText)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(copyText)).toHaveBeenCalledWith(body)
@@ -158,7 +187,7 @@ describe('ResponsePanel：复制响应正文', () => {
   it('raw 视图复制源为原始 body', async () => {
     const body = JSON.stringify({ a: 1 })
     const wrapper = mount(ResponsePanel, { props: { response: makeResponse(body) } })
-    await wrapper.findAll('.seg-item')[1].trigger('click')
+    await switchMode(wrapper, 1)
 
     await findCopyBtn(wrapper)!.trigger('click')
     expect(vi.mocked(copyText)).toHaveBeenCalledWith(body)
@@ -217,7 +246,6 @@ describe('ResponsePanel：全文缓存回退（body_omitted）', () => {
     const wrapper = mount(ResponsePanel, { props: { response: resp, loadFullBody } })
 
     await findCopyBtn(wrapper)!.trigger('click')
-    await flushPromises()
     expect(loadFullBody).toHaveBeenCalledTimes(1)
     expect(vi.mocked(copyText)).toHaveBeenCalledWith('"full-body"')
     wrapper.unmount()
@@ -230,7 +258,6 @@ describe('ResponsePanel：全文缓存回退（body_omitted）', () => {
     const wrapper = mount(ResponsePanel, { props: { response: resp, loadFullBody } })
 
     await findCopyBtn(wrapper)!.trigger('click')
-    await flushPromises()
     expect(vi.mocked(copyText)).toHaveBeenCalledWith('"preview"')
     wrapper.unmount()
   })
@@ -241,16 +268,15 @@ describe('ResponsePanel：展开全部 / 收起全部', () => {
     const wrapper = mount(ResponsePanel, {
       props: { response: makeResponse(JSON.stringify({ a: { b: { c: 1 } } })) },
     })
+    await switchMode(wrapper, 2)
     expect(wrapper.find('.jt-line').exists()).toBe(true)
 
-    // 展开/收起已合并为单个切换图标按钮（操作区第 2 个，前为查找）
-    const toggleBtn = wrapper.findAll('.rp-icon-btn')[1]
-
-    await toggleBtn.trigger('click')
+    // 展开/收起已收进「更多」菜单（O(1) 标记，动作随当前树状态切换）
+    await pickMoreItem(wrapper, '展开全部')
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).not.toMatch(/…\s+\d+\s+项/)
 
-    await wrapper.findAll('.rp-icon-btn')[1].trigger('click')
+    await pickMoreItem(wrapper, '收起全部')
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toMatch(/…\s+\d+\s+项/)
     wrapper.unmount()
@@ -357,3 +383,53 @@ async function fallbackTick(): Promise<void> {
   await flushPromises()
   await new Promise((r) => setTimeout(r, 0))
 }
+describe('ResponsePanel：Pretty 语法高亮按 Content-Type 分派', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    useLocaleStore().setMode('zh')
+  })
+
+  it('JSON 响应：行视图带 hl-k/hl-s/hl-n/hl-b/hl-null token（回归：响应区漏配色全白）', () => {
+    const body = JSON.stringify({ name: 'miyo', n: 1, ok: true, x: null })
+    const wrapper = mount(ResponsePanel, { props: { response: makeResponse(body) } })
+    const html = wrapper.find('.rp-lines').html()
+    expect(html).toContain('hl-k') // 键
+    expect(html).toContain('hl-s') // 字符串
+    expect(html).toContain('hl-n') // 数字
+    expect(html).toContain('hl-b') // 布尔
+    expect(html).toContain('hl-null') // null
+    wrapper.unmount()
+  })
+
+  it('application/problem+json 同样按 JSON 高亮（MIME 后缀不漏判）', () => {
+    const resp = makeResponse(JSON.stringify({ title: 'boom' }))
+    resp.content_type = 'application/problem+json'
+    const wrapper = mount(ResponsePanel, { props: { response: resp } })
+    expect(wrapper.find('.rp-lines').html()).toContain('hl-k')
+    wrapper.unmount()
+  })
+
+  it('text/plain 纯文本：不套 JSON token span', () => {
+    const resp = makeResponse('plain text {"not":"json"}')
+    resp.content_type = 'text/plain'
+    const wrapper = mount(ResponsePanel, { props: { response: resp } })
+    expect(wrapper.find('.rp-line-text').html()).not.toContain('class="hl-')
+    wrapper.unmount()
+  })
+
+  it('XML 响应走标签高亮（hl-k 标签名），HTML 同样不吃 JSON 键色', () => {
+    const xml = makeResponse('<root><name>miyo</name></root>')
+    xml.content_type = 'application/xml'
+    const w1 = mount(ResponsePanel, { props: { response: xml } })
+    expect(w1.find('.rp-line-text').html()).toContain('hl-k')
+    w1.unmount()
+
+    const html = makeResponse('<p class="x">hi</p>')
+    html.content_type = 'text/html'
+    const w2 = mount(ResponsePanel, { props: { response: html } })
+    const h2 = w2.find('.rp-line-text').html()
+    expect(h2).toContain('hl-k') // 标签名 p
+    expect(h2).toContain('hl-s') // 属性值 "x"
+    w2.unmount()
+  })
+})
