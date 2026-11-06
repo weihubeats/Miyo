@@ -86,6 +86,10 @@ pub struct AppState {
     /// 在途长任务的取消令牌注册表（run_id → token；
     /// 压测 `cancel_load_test` 与集合测试 `cancel_test_collection` 共用）。
     pub run_cancels: Mutex<HashMap<String, CancellationToken>>,
+    /// 在途场景运行注册表（scenario_id → run_id）：同一场景同时只允许一个
+    /// 运行（并发限制 + 变量上下文不互扰的 UI 兜底）；场景粒度而非全局，
+    /// 不同场景仍可并行。
+    pub scenario_running: Mutex<HashMap<uuid::Uuid, String>>,
     /// WebSocket 会话（connection_id → 会话；含事件转发任务句柄）。
     pub ws: AsyncRwLock<HashMap<String, crate::commands::ws::WsSession>>,
     /// SSE 订阅任务（connection_id → 转发任务句柄；断开即 abort）。
@@ -182,6 +186,7 @@ impl AppState {
             agent: AsyncRwLock::new(None),
             request_cancels: Mutex::new(HashMap::new()),
             run_cancels: Mutex::new(HashMap::new()),
+            scenario_running: Mutex::new(HashMap::new()),
             ws: AsyncRwLock::new(HashMap::new()),
             sse: AsyncRwLock::new(HashMap::new()),
             grpc_streams: Mutex::new(HashMap::new()),

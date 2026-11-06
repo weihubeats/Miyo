@@ -52,6 +52,7 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-run-scenario`
 - `allow-cancel-scenario-run`
 - `allow-list-scenario-runs`
+- `allow-list-scenario-summaries`
 - `allow-get-scenario-run`
 - `allow-codegen-render`
 - `allow-cookie-list`
@@ -1916,6 +1917,32 @@ Enables the list_scenario_runs command without any pre-configured scope.
 <td>
 
 Denies the list_scenario_runs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-list-scenario-summaries`
+
+</td>
+<td>
+
+Enables the list_scenario_summaries command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-scenario-summaries`
+
+</td>
+<td>
+
+Denies the list_scenario_summaries command without any pre-configured scope.
 
 </td>
 </tr>

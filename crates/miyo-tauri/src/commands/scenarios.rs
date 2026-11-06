@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
-use miyo_core::model::{Endpoint, Scenario, ScenarioRun};
+use miyo_core::model::{Endpoint, HttpMethod, Scenario, ScenarioRun};
 use miyo_core::VariableMap;
 use miyo_storage::repository as repo;
+use miyo_sync::redact::{is_sensitive_key, PLACEHOLDER};
 use miyo_test::runner::{ScenarioOptions, ScenarioProgress, ScenarioStepInput};
 
 use crate::commands::request::{cap_ipc_body, resolve_timeout_ms};
@@ -51,6 +52,26 @@ pub async fn save_scenario(
     let mut scenario = scenario;
     scenario.name = scenario.name.trim().to_string();
     scenario.description = scenario.description.trim().to_string();
+    scenario.category = scenario.category.trim().to_string();
+    // 内联步骤校验：URL 非空、方法合法（引用式步骤跳过——配置在接口上）。
+    for (idx, step) in scenario.steps.iter().enumerate() {
+        let Some(req) = &step.request else {
+            continue;
+        };
+        if req.url.trim().is_empty() {
+            return Err(CommandError::validation(format!(
+                "第 {} 步的内联请求 URL 不能为空",
+                idx + 1
+            )));
+        }
+        if req.method.parse::<HttpMethod>().is_err() {
+            return Err(CommandError::validation(format!(
+                "第 {} 步的 HTTP 方法无效：{}",
+                idx + 1,
+                req.method
+            )));
+        }
+    }
     scenario.updated_at = chrono::Utc::now();
     repo::save_scenario(&state.db, &scenario).await?;
     Ok(scenario)
@@ -132,11 +153,9 @@ pub async fn run_scenario(
     let global_params = settings.global_params.clone();
 
     // 物化步骤：URL / 规格保留模板；步骤级提取/断言解析为 TestSpec 形状。
+    // 禁用步骤照传（runner 落 skipped 行，结果面板完整呈现「为什么没跑」）。
     let mut steps = Vec::with_capacity(args.steps.len());
     for (idx, step) in args.steps.into_iter().enumerate() {
-        if !step.enabled {
-            continue;
-        }
         let mut spec = step.endpoint.request.clone();
         crate::commands::request::apply_global_params(&mut spec, &global_params, &vars);
         let config = miyo_test::config::TestSpec::from_request_value(Some(&serde_json::json!({
@@ -152,11 +171,33 @@ pub async fn run_scenario(
             spec_template: spec,
             extract: config.extract,
             assertions: config.assertions,
+            enabled: step.enabled,
         });
     }
-    if steps.is_empty() {
+    if steps.iter().all(|s| !s.enabled) {
         return Err(CommandError::validation("场景没有启用中的步骤"));
     }
+
+    // 执行并发限制：同一场景同时只允许一个运行（不同场景互不影响）。
+    // 运行上下文本就按 run 隔离（独立 runtime），这里挡的是重复触发。
+    if let Some(scenario_id) = args.scenario_id {
+        let mut running = state
+            .scenario_running
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if running.contains_key(&scenario_id) {
+            return Err(CommandError::validation(
+                "该场景正在运行中，请等待当前运行结束",
+            ));
+        }
+        if let Some(run_id) = &args.run_id {
+            running.insert(scenario_id, run_id.clone());
+        }
+    }
+    let started_at = chrono::Utc::now();
+    // 当时配置快照（材料化后的步骤，含全局参数注入结果）：历史 meta 落库，
+    // 「从历史重跑」基于这份快照而非场景当前配置。
+    let steps_snapshot_json = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".to_string());
 
     // 取消令牌注册（「停止运行」→ 中止）。
     let cancel = args.run_id.as_ref().map(|id| {
@@ -216,6 +257,14 @@ pub async fn run_scenario(
             .unwrap_or_else(|p| p.into_inner())
             .remove(id);
     }
+    // 释放场景级并发守卫。
+    if let Some(scenario_id) = args.scenario_id {
+        state
+            .scenario_running
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&scenario_id);
+    }
 
     // 正文 IPC 预览口径与单请求流程一致：超 2MB 截断，全文入缓存
     // （键 `{run_id}:{结果位次}`），前端经 get_response_body 按需取回；
@@ -248,6 +297,10 @@ pub async fn run_scenario(
             scenario_id,
             args.environment_id,
             args.run_id.as_deref(),
+            started_at,
+            args.stop_on_failure,
+            &steps_snapshot_json,
+            &vars,
             total_enabled,
             &result,
         )
@@ -274,6 +327,50 @@ pub struct ScenarioRunSummary {
     pub stopped_on_failure: bool,
 }
 
+impl ScenarioRunSummary {
+    fn from_record(r: miyo_core::model::ScenarioRun) -> Self {
+        ScenarioRunSummary {
+            id: r.id.to_string(),
+            finished_at: r.finished_at,
+            duration_ms: r.duration_ms,
+            total_steps: r.total_steps,
+            ok_count: r.ok_count,
+            fail_count: r.fail_count,
+            skipped_count: r.skipped_count,
+            cancelled: r.cancelled,
+            stopped_on_failure: r.stopped_on_failure,
+        }
+    }
+}
+
+/// 场景库列表项：场景 + 最近一次运行摘要（单次 IPC 供列表页渲染，
+/// 免去前端逐场景 N+1 查询——与 dashboard list_project_stats 同思路）。
+#[derive(Debug, Serialize)]
+pub struct ScenarioLibraryItem {
+    #[serde(flatten)]
+    pub scenario: Scenario,
+    pub last_run: Option<ScenarioRunSummary>,
+}
+
+/// 列出项目的场景库条目（编排序 → 名称序；每项带最近一次运行摘要）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_scenario_summaries(
+    state: State<'_, AppState>,
+    project_id: Uuid,
+) -> CommandResult<Vec<ScenarioLibraryItem>> {
+    let scenarios = repo::list_scenarios(&state.db, project_id).await?;
+    let mut items = Vec::with_capacity(scenarios.len());
+    for scenario in scenarios {
+        let last_run = repo::list_scenario_runs(&state.db, scenario.id, 1)
+            .await
+            .ok()
+            .and_then(|runs| runs.into_iter().next())
+            .map(ScenarioRunSummary::from_record);
+        items.push(ScenarioLibraryItem { scenario, last_run });
+    }
+    Ok(items)
+}
+
 /// 场景运行历史详情：摘要 + 回读的步骤结果与变量池。
 #[derive(Debug, Serialize)]
 pub struct ScenarioRunDetail {
@@ -283,23 +380,102 @@ pub struct ScenarioRunDetail {
     pub variables: HashMap<String, String>,
 }
 
-/// 运行完成后落历史：剥离 response 正文（体积），统计摘要，保留最近 N 条。
+/// 历史中每步响应正文的保留上限（超限截断并标记 `history_truncated`）。
+/// 与请求快照体预览（SNAPSHOT_BODY_BYTES = 64KB）同口径。
+const HISTORY_BODY_BYTES: usize = 64 * 1024;
+
+/// 请求快照脱敏：headers / cookies 中敏感键值替换为占位符，URL query 同样
+/// 处理（凭据不落历史库；与请求历史的 redact_history_spec 同口径）。
+fn redact_request_snapshot(snapshot: &mut miyo_http::client::RequestSnapshot) {
+    snapshot.headers = snapshot
+        .headers
+        .iter()
+        .map(|(k, v)| {
+            if is_sensitive_key(k) && !v.is_empty() {
+                (k.clone(), PLACEHOLDER.to_string())
+            } else {
+                (k.clone(), v.clone())
+            }
+        })
+        .collect();
+    snapshot.cookies = snapshot
+        .cookies
+        .iter()
+        .map(|(k, v)| {
+            if is_sensitive_key(k) && !v.is_empty() {
+                (k.clone(), PLACEHOLDER.to_string())
+            } else {
+                (k.clone(), v.clone())
+            }
+        })
+        .collect();
+    snapshot.url = crate::commands::request::redact_url_query(&snapshot.url);
+}
+
+/// 变量池脱敏：键名命中敏感词根的值替换为占位符（历史 / meta 中的变量
+/// 快照不落明文凭据）。
+fn redact_vars(vars: &HashMap<String, String>) -> HashMap<String, String> {
+    vars.iter()
+        .map(|(k, v)| {
+            if is_sensitive_key(k) && !v.is_empty() {
+                (k.clone(), PLACEHOLDER.to_string())
+            } else {
+                (k.clone(), v.clone())
+            }
+        })
+        .collect()
+}
+
+/// 运行完成后落历史：响应正文 64KB 截断保留（可回看），请求快照与变量池
+/// 脱敏，meta_json 存开始时间 / 当时配置快照 / 初始变量（脱敏）/ 策略 /
+/// 预检警告；计数按执行状态；保留最近 N 条。
+#[allow(clippy::too_many_arguments)]
 async fn persist_scenario_run(
     state: &State<'_, AppState>,
     scenario_id: Uuid,
     environment_id: Option<Uuid>,
     run_id: Option<&str>,
-    enabled_steps: usize,
+    started_at: chrono::DateTime<chrono::Utc>,
+    stop_on_failure: bool,
+    steps_snapshot_json: &str,
+    base_vars: &HashMap<String, String>,
+    total_steps: usize,
     result: &miyo_test::runner::ScenarioRunResult,
 ) -> CommandResult<()> {
-    // 结果序列化前剥离 response（正文预览最大 2MB，历史不需要；
-    // 状态码 / 断言明细 / 提取值 / 实际 URL 均在结果字段里保留）。
     let mut results = result.results.clone();
     for r in &mut results {
-        r.response = None;
+        if let Some(resp) = r.response.as_mut() {
+            if resp.body.len() > HISTORY_BODY_BYTES {
+                resp.body = crate::commands::request::byte_truncate(&resp.body, HISTORY_BODY_BYTES)
+                    .to_string();
+                resp.history_truncated = true;
+            }
+            if let Some(snapshot) = resp.request.as_mut() {
+                redact_request_snapshot(snapshot);
+            }
+        }
     }
-    let executed = results.len() as i64;
-    let ok_count = results.iter().filter(|r| r.ok).count() as i64;
+    // 计数按执行状态（results 含 skipped / blocked 行，不再用差值推算）。
+    let count = |statuses: &[&str]| {
+        results
+            .iter()
+            .filter(|r| statuses.contains(&r.effective_status()))
+            .count() as i64
+    };
+    let ok_count = count(&["success"]);
+    let fail_count = count(&["failed", "cancelled"]);
+    let skipped_count = count(&["skipped", "blocked"]);
+    let meta = serde_json::json!({
+        "version": 1,
+        "startedAt": started_at.to_rfc3339(),
+        "stopOnFailure": stop_on_failure,
+        // 当时配置快照（材料化后的步骤）——历史重跑基于它而非当前场景。
+        "steps": serde_json::from_str::<serde_json::Value>(steps_snapshot_json)
+            .unwrap_or(serde_json::Value::Null),
+        // 初始变量（环境 / 项目 / 全局合并结果），敏感值脱敏。
+        "initialVars": redact_vars(base_vars),
+        "warnings": result.warnings,
+    });
     let record = ScenarioRun {
         // id 即前端生成的 run_id（同一次重试覆盖旧行，不膨胀）。
         id: run_id
@@ -309,16 +485,17 @@ async fn persist_scenario_run(
         environment_id,
         finished_at: chrono::Utc::now(),
         duration_ms: Some(results.iter().filter_map(|r| r.duration_ms).sum()),
-        total_steps: enabled_steps as i64,
+        total_steps: total_steps as i64,
         ok_count,
-        fail_count: executed - ok_count,
-        skipped_count: (enabled_steps as i64 - executed).max(0),
+        fail_count,
+        skipped_count,
         cancelled: result.cancelled,
         stopped_on_failure: result.stopped_on_failure,
         results_json: serde_json::to_string(&results)
             .map_err(|e| CommandError::validation(format!("运行结果序列化失败：{e}")))?,
-        variables_json: serde_json::to_string(&result.variables)
+        variables_json: serde_json::to_string(&redact_vars(&result.variables))
             .map_err(|e| CommandError::validation(format!("变量池序列化失败：{e}")))?,
+        meta_json: Some(meta.to_string()),
     };
     repo::save_scenario_run(&state.db, &record).await?;
     repo::prune_scenario_runs(&state.db, scenario_id, repo::SCENARIO_RUN_KEEP).await?;
@@ -335,17 +512,7 @@ pub async fn list_scenario_runs(
     let runs = repo::list_scenario_runs(&state.db, scenario_id, limit.unwrap_or(20)).await?;
     Ok(runs
         .into_iter()
-        .map(|r| ScenarioRunSummary {
-            id: r.id.to_string(),
-            finished_at: r.finished_at,
-            duration_ms: r.duration_ms,
-            total_steps: r.total_steps,
-            ok_count: r.ok_count,
-            fail_count: r.fail_count,
-            skipped_count: r.skipped_count,
-            cancelled: r.cancelled,
-            stopped_on_failure: r.stopped_on_failure,
-        })
+        .map(ScenarioRunSummary::from_record)
         .collect())
 }
 
@@ -366,17 +533,7 @@ pub async fn get_scenario_run(
     let variables: HashMap<String, String> = serde_json::from_str(&run.variables_json)
         .map_err(|e| CommandError::validation(format!("运行历史变量解析失败：{e}")))?;
     Ok(Some(ScenarioRunDetail {
-        summary: ScenarioRunSummary {
-            id: run.id.to_string(),
-            finished_at: run.finished_at,
-            duration_ms: run.duration_ms,
-            total_steps: run.total_steps,
-            ok_count: run.ok_count,
-            fail_count: run.fail_count,
-            skipped_count: run.skipped_count,
-            cancelled: run.cancelled,
-            stopped_on_failure: run.stopped_on_failure,
-        },
+        summary: ScenarioRunSummary::from_record(run),
         results,
         variables,
     }))
@@ -395,5 +552,76 @@ pub fn cancel_scenario_run(state: State<'_, AppState>, run_id: String) -> Comman
         Ok(true)
     } else {
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use miyo_http::client::RequestSnapshot;
+    use std::collections::HashMap;
+
+    #[test]
+    fn redact_vars_masks_sensitive_keys() {
+        let mut vars = HashMap::new();
+        vars.insert("orderNo".to_string(), "SO-1".to_string());
+        vars.insert("password".to_string(), "明文密码".to_string());
+        vars.insert("accessToken".to_string(), "tok".to_string());
+        let out = redact_vars(&vars);
+        assert_eq!(out.get("orderNo").map(String::as_str), Some("SO-1"));
+        assert_eq!(out.get("password").map(String::as_str), Some(PLACEHOLDER));
+        assert_eq!(
+            out.get("accessToken").map(String::as_str),
+            Some(PLACEHOLDER)
+        );
+    }
+
+    #[test]
+    fn redact_vars_keeps_empty_values() {
+        let mut vars = HashMap::new();
+        vars.insert("token".to_string(), String::new());
+        let out = redact_vars(&vars);
+        // 空值无泄露风险，保持原样（占位符反而误导「有值被隐藏」）。
+        assert_eq!(out.get("token").map(String::as_str), Some(""));
+    }
+
+    #[test]
+    fn redact_request_snapshot_masks_headers_cookies_and_query() {
+        let mut snapshot = RequestSnapshot {
+            method: "POST".into(),
+            url: "http://x/api?api_key=secret&page=2".into(),
+            url_template: Some("http://x/api?api_key={{key}}&page=2".into()),
+            headers: vec![
+                ("Content-Type".to_string(), "application/json".to_string()),
+                ("Authorization".to_string(), "Bearer real".to_string()),
+            ],
+            cookies: vec![("sessionid".to_string(), "sid-9".to_string())],
+            body: r#"{"password": "kept-in-body"}"#.into(),
+            body_omitted: false,
+        };
+        redact_request_snapshot(&mut snapshot);
+        let auth = snapshot
+            .headers
+            .iter()
+            .find(|(k, _)| k == "Authorization")
+            .unwrap();
+        assert_eq!(auth.1, PLACEHOLDER);
+        assert_eq!(
+            snapshot
+                .headers
+                .iter()
+                .find(|(k, _)| k == "Content-Type")
+                .unwrap()
+                .1,
+            "application/json"
+        );
+        assert_eq!(snapshot.cookies[0].1, PLACEHOLDER);
+        assert!(snapshot.url.contains("api_key=") && !snapshot.url.contains("secret"));
+        // url_template 保留模板语义（渲染前），不参与脱敏。
+        assert!(snapshot
+            .url_template
+            .as_deref()
+            .unwrap()
+            .contains("{{key}}"));
     }
 }

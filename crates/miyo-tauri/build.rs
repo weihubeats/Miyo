@@ -49,6 +49,7 @@ const COMMANDS: &[&str] = &[
     "cancel_scenario_run",
     "list_scenario_runs",
     "get_scenario_run",
+    "list_scenario_summaries",
     "codegen_render",
     "cookie_list",
     "cookie_clear",

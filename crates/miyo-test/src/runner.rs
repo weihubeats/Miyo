@@ -39,6 +39,9 @@ pub struct StepResponse {
     /// 正文是否仅为 IPC 预览（命令层超限截断时置位）。
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub body_omitted: bool,
+    /// 正文是否为历史落库截断版（64KB 上限；全文不可再取回，仅提示）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history_truncated: bool,
     /// 实际发出形态（变量渲染 / 认证注入 / Cookie 回放后的最终值）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request: Option<RequestSnapshot>,
@@ -55,6 +58,7 @@ impl StepResponse {
             size_bytes: resp.size_bytes,
             truncated: resp.truncated,
             body_omitted: false,
+            history_truncated: false,
             request: resp.request.clone(),
         }
     }
@@ -437,7 +441,7 @@ pub async fn run_collection(
 ///
 /// `enabled = false` 的禁用步骤同样进入 runner：产出 skipped 结果行
 /// （不发送请求），结果面板得以完整呈现「为什么这一步没跑」。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ScenarioStepInput {
     pub endpoint: Endpoint,
     pub url_template: String,

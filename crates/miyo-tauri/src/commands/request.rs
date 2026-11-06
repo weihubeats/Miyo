@@ -452,7 +452,7 @@ fn redact_history_spec(spec_value: &mut serde_json::Value) {
 
 /// 渲染后 URL 的 query 脱敏：逐对检查键名，敏感值替换为占位符。
 /// 字符串级处理（保持原文其余部分不动），值内含 `=` 时按首个 `=` 切分。
-fn redact_url_query(url: &str) -> String {
+pub(crate) fn redact_url_query(url: &str) -> String {
     let (base, query) = match url.split_once('?') {
         Some((b, q)) => (b, q),
         None => return url.to_string(),
@@ -532,7 +532,7 @@ fn build_history(
 ///
 /// 上限内原样返回 `&s`（零分配）；超限时返回前缀切片——同样是借用，
 /// 不再像返回 `String` 那样在 `<= max` 分支多做一次整体拷贝。
-fn byte_truncate(s: &str, max_bytes: usize) -> &str {
+pub(crate) fn byte_truncate(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
         return s;
     }

@@ -283,6 +283,7 @@ pub mod plugin {
                 commands::cancel_scenario_run,
                 commands::list_scenario_runs,
                 commands::get_scenario_run,
+                commands::list_scenario_summaries,
                 commands::get_data_dir,
                 commands::get_default_data_dir,
                 commands::set_data_dir,
