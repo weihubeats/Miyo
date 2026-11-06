@@ -999,6 +999,7 @@ export const en: Record<ZhKey, string> = {
   'settings.mcpTool.list_endpoints': 'List endpoints in project',
   'settings.mcpTool.list_scenarios': 'List scenarios',
   'settings.mcpTool.get_scenario': 'Read scenario context (for script writing)',
+  'settings.mcpTool.create_scenario': 'Create scenario (optional initial endpoint steps)',
   'settings.mcpTool.save_scenario_script': 'Write scenario custom script',
   'settings.mcpTool.get_endpoint': 'Read a single endpoint definition',
   'settings.mcpTool.send_endpoint': 'Send an endpoint: real request from the saved config, overridable, full response back (for AI chaining)',

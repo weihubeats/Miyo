@@ -13,7 +13,7 @@ use reqwest::Client;
 use uuid::Uuid;
 
 use crate::server::{
-    ExecuteEndpointResult, ImportCurlResult, McpToolState, RunScenarioResult,
+    CreateScenarioResult, ExecuteEndpointResult, ImportCurlResult, McpToolState, RunScenarioResult,
     SaveScenarioScriptResult, ScenarioDetail, ScenarioSummary, MAX_PORT_TRIES,
 };
 
@@ -200,6 +200,26 @@ impl ControlClient {
     /// MCP 工具及启停状态（miyo-mcp 的 tools/list 过滤数据源）。
     pub async fn list_tool_states(&self) -> Result<Vec<McpToolState>, AppError> {
         self.get_json("/agent/tools").await
+    }
+
+    /// 新建场景（可带初始步骤，按 endpointIds 顺序）；返回新场景 id。
+    pub async fn create_scenario(
+        &self,
+        name: &str,
+        project_id: Option<Uuid>,
+        description: Option<&str>,
+        endpoint_ids: &[Uuid],
+    ) -> Result<CreateScenarioResult, AppError> {
+        let body = serde_json::json!({
+            "name": name,
+            "projectId": project_id,
+            "description": description,
+            "endpointIds": endpoint_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+        });
+        self.post_json("/agent/scenarios", body).await
     }
 
     /// 写入 / 清除场景自定义脚本（null 或空串 = 清除，回到实时生成）。

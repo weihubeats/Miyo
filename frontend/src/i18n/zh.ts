@@ -995,6 +995,7 @@ export const zh = {
   'settings.mcpTool.list_endpoints': '列出项目下的接口',
   'settings.mcpTool.list_scenarios': '列出集成测试场景',
   'settings.mcpTool.get_scenario': '读取场景上下文（AI 写脚本用）',
+  'settings.mcpTool.create_scenario': '新建场景（可指定初始步骤的接口列表）',
   'settings.mcpTool.get_endpoint': '读取单个接口定义',
   'settings.mcpTool.send_endpoint': '执行接口：按已保存配置发真实请求，可覆盖参数并返回完整响应（AI 链式调用用）',
   'settings.mcpTool.run_scenario': '运行整个场景：按步骤串行执行，链路变量自动传递，返回分步结果',

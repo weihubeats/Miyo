@@ -197,6 +197,20 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "create_scenario",
+            "description": "新建一个集成测试场景（接口链路）。可按 endpointIds 顺序把已有接口落为初始步骤（默认全部启用，无提取/断言）；不传 endpointIds 则先建空场景。返回新场景的 scenarioId，之后可用 get_scenario 读上下文、用 save_scenario_script 写脚本、用 run_scenario 执行。多个项目时必须传 projectId。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "场景名称（不可为空）" },
+                    "projectId": { "type": "string", "description": "可选，目标项目 UUID；缺省时仅一个项目自动选中" },
+                    "description": { "type": "string", "description": "可选，场景说明" },
+                    "endpointIds": { "type": "array", "items": { "type": "string" }, "description": "可选，按顺序作为步骤的接口 UUID 列表（list_endpoints 返回）" }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
             "name": "get_scenario",
             "description": "读取集成测试场景的完整上下文，用于编写或修改场景脚本（Node fetch 风格）：每一步引用接口的当前配置（方法 / 路径 / 请求规格）、提取规则与断言、链路变量（前步提取、后步引用）、项目变量（含 base_url 兜底地址）与当前自定义脚本。",
             "inputSchema": {
@@ -285,6 +299,15 @@ fn validate_tool_call(params: &Value) -> Result<(), (i64, String)> {
         }
         "list_scenarios" => {
             opt_uuid_arg(&args, "projectId").map_err(|e| (-32602, e))?;
+            Ok(())
+        }
+        "create_scenario" => {
+            match str_arg(&args, "name") {
+                Some(n) if !n.trim().is_empty() => {}
+                _ => return Err((-32602, "缺少必填参数 name（不可为空）".to_string())),
+            }
+            opt_uuid_arg(&args, "projectId").map_err(|e| (-32602, e))?;
+            uuid_list_arg(&args, "endpointIds").map_err(|e| (-32602, e))?;
             Ok(())
         }
         "get_scenario" => {
@@ -435,6 +458,21 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, (i64
             )
             .expect("序列化失败")
         }
+        "create_scenario" => {
+            let name = str_arg(&args, "name")
+                .ok_or_else(|| (-32602, "缺少必填参数 name（不可为空）".to_string()))?
+                .to_string();
+            let project_id = opt_uuid_arg(&args, "projectId").map_err(|e| (-32602, e))?;
+            let description = str_arg(&args, "description").map(str::to_string);
+            let endpoint_ids = uuid_list_arg(&args, "endpointIds").map_err(|e| (-32602, e))?;
+            serde_json::to_value(
+                client
+                    .create_scenario(&name, project_id, description.as_deref(), &endpoint_ids)
+                    .await
+                    .map_err(|e| tool_error(&e.user_message()))?,
+            )
+            .expect("序列化失败")
+        }
         "get_scenario" => {
             let scenario_id: Uuid = str_arg(&args, "scenarioId")
                 .ok_or_else(|| (-32602, "缺少必填参数 scenarioId".to_string()))?
@@ -473,7 +511,7 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, (i64
             "address": client.base(),
             "tokenPath": miyo_agent::token::token_path(&miyo_agent::default_data_dir()),
             "auth": "Authorization: Bearer <token 文件内容>",
-            "docs": "POST /agent/curl | GET /agent/projects | GET /agent/endpoints/:projectId | GET /agent/endpoints/:id/detail | POST /agent/endpoints/:id/execute | GET /agent/scenarios?projectId= | GET /agent/scenarios/:id | POST /agent/scenarios/:id/run | PUT /agent/scenarios/:id/script"
+            "docs": "POST /agent/curl | GET /agent/projects | GET /agent/endpoints/:projectId | GET /agent/endpoints/:id/detail | POST /agent/endpoints/:id/execute | GET /agent/scenarios?projectId= | POST /agent/scenarios | GET /agent/scenarios/:id | POST /agent/scenarios/:id/run | PUT /agent/scenarios/:id/script"
         }),
         other => return Err((-32602, format!("未知工具：{other}"))),
     };
@@ -514,6 +552,24 @@ fn opt_uuid_arg(args: &Value, key: &str) -> Result<Option<Uuid>, String> {
             .parse::<Uuid>()
             .map(Some)
             .map_err(|_| format!("{key} 不是合法 UUID")),
+    }
+}
+
+/// 可选的 UUID 数组参数（endpointIds）：缺省 / null → 空列表；
+/// 提供时必须是数组且每项为合法 UUID 字符串。
+fn uuid_list_arg(args: &Value, key: &str) -> Result<Vec<Uuid>, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .ok_or_else(|| format!("{key} 的元素必须是 UUID 字符串"))?
+                    .parse::<Uuid>()
+                    .map_err(|_| format!("{key} 含非法 UUID"))
+            })
+            .collect(),
+        Some(_) => Err(format!("{key} 必须是 UUID 字符串数组")),
     }
 }
 
@@ -562,6 +618,7 @@ mod tests {
             "send_endpoint",
             "run_scenario",
             "list_scenarios",
+            "create_scenario",
             "get_scenario",
             "save_scenario_script",
             "agent_info",
@@ -699,6 +756,119 @@ mod tests {
         .await
         .unwrap();
         assert!(reply.contains("save_curl"), "{reply}");
+    }
+
+    #[tokio::test]
+    async fn create_scenario_via_mcp_with_initial_steps() {
+        use miyo_storage::repository as repo;
+
+        let dir = std::env::temp_dir().join(format!("miyo-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = init_db(&dir.join("t.db")).await.unwrap();
+        let project = repo::create_project(&db, "下单项目", "").await.unwrap();
+        let make_ep = |name: &str, path: &str| miyo_core::model::Endpoint {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            folder_id: None,
+            name: name.into(),
+            method: miyo_core::model::HttpMethod::POST,
+            path: path.into(),
+            description: String::new(),
+            status: miyo_core::model::EndpointStatus::Developing,
+            sort_order: 0,
+            request: miyo_core::model::RequestSpec::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let first = make_ep("下单", "/orders");
+        let second = make_ep("支付", "/pay");
+        repo::save_endpoint(&db, &first).await.unwrap();
+        repo::save_endpoint(&db, &second).await.unwrap();
+
+        let state = AgentState::new(db.clone(), "tok");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_router(state)).await });
+        let base_url = format!("http://{addr}");
+        let connect = || {
+            let url = base_url.clone();
+            Box::pin(async move { Ok(ControlClient::new(url, "tok")) })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+                >
+        };
+
+        // 1. 建带两步的场景：唯一项目自动选中，步骤按 endpointIds 顺序落库
+        let line = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "create_scenario", "arguments": {
+                "name": "收单全流程",
+                "description": "下单 → 支付",
+                "endpointIds": [first.id.to_string(), second.id.to_string()]
+            } }
+        })
+        .to_string();
+        let reply = handle_line_with(&line, connect).await.unwrap();
+        let parsed: Value = serde_json::from_str(&reply).unwrap();
+        let text = parsed["result"]["content"][0]["text"].as_str().unwrap();
+        let body: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(body["name"], "收单全流程");
+        assert_eq!(body["stepCount"], 2);
+        assert_eq!(parsed["result"]["isError"], false);
+
+        // 2. 持久化正确：步骤顺序、默认启用、无提取/断言
+        let scenarios = repo::list_scenarios(&db, project.id).await.unwrap();
+        assert_eq!(scenarios.len(), 1);
+        let created = &scenarios[0];
+        assert_eq!(created.name, "收单全流程");
+        assert_eq!(created.steps.len(), 2);
+        assert_eq!(created.steps[0].endpoint_id, first.id);
+        assert_eq!(created.steps[1].endpoint_id, second.id);
+        assert!(created.steps.iter().all(|s| s.enabled));
+        assert_eq!(created.script, None);
+
+        // 3. 空场景（不传 endpointIds）
+        let line = serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": "create_scenario", "arguments": { "name": "空场景" } }
+        })
+        .to_string();
+        let reply = handle_line_with(&line, connect).await.unwrap();
+        let parsed: Value = serde_json::from_str(&reply).unwrap();
+        let body: Value =
+            serde_json::from_str(parsed["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body["name"], "空场景");
+        assert_eq!(body["stepCount"], 0);
+
+        // 4. 参数校验：name 缺失 / 空串 → -32602；非法 UUID 数组 → -32602
+        for args in [
+            serde_json::json!({}),
+            serde_json::json!({ "name": "   " }),
+            serde_json::json!({ "name": "x", "endpointIds": ["not-a-uuid"] }),
+            serde_json::json!({ "name": "x", "endpointIds": "abc" }),
+        ] {
+            let line = serde_json::json!({
+                "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                "params": { "name": "create_scenario", "arguments": args }
+            })
+            .to_string();
+            let reply = handle_line_with(&line, connect).await.unwrap();
+            assert!(reply.contains("-32602"), "应拒绝 {args}：{reply}");
+        }
+
+        // 5. 引用不存在的接口 → 工具级错误，且不落库
+        let line = serde_json::json!({
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": { "name": "create_scenario", "arguments": {
+                "name": "坏链路", "endpointIds": [Uuid::new_v4().to_string()]
+            } }
+        })
+        .to_string();
+        let reply = handle_line_with(&line, connect).await.unwrap();
+        assert!(reply.contains("-32000"), "{reply}");
+        assert!(!reply.contains("坏链路"), "{reply}");
+        let after = repo::list_scenarios(&db, project.id).await.unwrap();
+        assert_eq!(after.len(), 2, "失败的新建不应留下记录");
     }
 
     #[tokio::test]

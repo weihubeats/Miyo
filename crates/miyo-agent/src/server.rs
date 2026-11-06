@@ -11,7 +11,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use miyo_core::model::{BodySpec, Endpoint, Project, RequestSpec, Scenario};
+use miyo_core::model::{BodySpec, Endpoint, Project, RequestSpec, Scenario, ScenarioStep};
 use miyo_storage::repository as repo;
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
@@ -62,6 +62,10 @@ pub const MCP_TOOLS: &[McpToolDef] = &[
     McpToolDef {
         name: "get_scenario",
         kind: "read",
+    },
+    McpToolDef {
+        name: "create_scenario",
+        kind: "write",
     },
     McpToolDef {
         name: "save_scenario_script",
@@ -233,6 +237,36 @@ pub struct ScenarioDetail {
     pub project_variables: std::collections::HashMap<String, String>,
     /// 当前自定义脚本；None = 未自定义（视图实时由步骤生成）。
     pub script: Option<String>,
+}
+
+/// POST `/agent/scenarios` 请求体。
+///
+/// 新建场景必须带 `name`；`endpointIds` 按数组顺序落为步骤（首个即链路起点的
+/// 典型形态），每步默认启用、无提取 / 断言——后续用 `get_scenario` 读回、
+/// 再 `save_scenario_script` 补脚本。
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateScenarioRequest {
+    /// 场景名（去空白后不得为空）。
+    pub name: String,
+    /// 项目 id；缺省时：仅一个项目 → 自动选中，多项目 → 报错列候选。
+    #[serde(default)]
+    pub project_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// 按顺序作为步骤的接口 UUID 列表（可空 = 先建空场景再逐步加）。
+    #[serde(default)]
+    pub endpoint_ids: Vec<uuid::Uuid>,
+}
+
+/// POST `/agent/scenarios` 响应体。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateScenarioResult {
+    pub id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub name: String,
+    pub step_count: usize,
 }
 
 /// PUT `/agent/scenarios/{id}/script` 请求体。
@@ -519,6 +553,80 @@ async fn resolve_project_read(
                 .join(", ")
         ))),
     }
+}
+
+/// POST `/agent/scenarios`：新建场景（可带初始步骤）。
+///
+/// 写路径：`projectId` 缺省时沿用「唯一项目自动选中」，多项目报错列候选，
+/// 但**不**自动建项目（项目是用户资产，AI 随手创建会污染侧栏）。
+async fn create_scenario_handler(
+    State(state): State<AgentState>,
+    Json(body): Json<CreateScenarioRequest>,
+) -> ApiResult<CreateScenarioResult> {
+    ensure_tool_enabled(&state, "create_scenario").await?;
+    let name = body.name.trim();
+    if name.is_empty() {
+        return Err(api_error(miyo_core::AppError::Validation(
+            "场景名不能为空".into(),
+        )));
+    }
+    let project = resolve_project_read(&state.db, body.project_id)
+        .await
+        .map_err(api_error)?;
+    // 步骤引用的接口必须真实存在于同一项目：先校验再落库，
+    // 避免建出指向不存在接口的「空壳步骤」（执行期才会暴露）。
+    for id in &body.endpoint_ids {
+        match repo::get_endpoint(&state.db, *id).await {
+            Ok(ep) if ep.project_id == project.id => {}
+            Ok(_) => {
+                return Err(api_error(miyo_core::AppError::Validation(format!(
+                    "接口 {id} 不属于项目 {}",
+                    project.id
+                ))))
+            }
+            Err(_) => {
+                return Err(api_error(miyo_core::AppError::NotFound(format!(
+                    "接口（{id}）"
+                ))))
+            }
+        }
+    }
+    let now = chrono::Utc::now();
+    let steps: Vec<ScenarioStep> = body
+        .endpoint_ids
+        .iter()
+        .map(|id| ScenarioStep {
+            endpoint_id: *id,
+            enabled: true,
+            extract: serde_json::Value::Array(Vec::new()),
+            assertions: serde_json::Value::Array(Vec::new()),
+        })
+        .collect();
+    // sort_order 接在该项目现有场景之后，列表里排在末尾（与手动新建一致）。
+    let sort_order = repo::list_scenarios(&state.db, project.id)
+        .await
+        .map_err(api_error)?
+        .len() as i64;
+    let scenario = Scenario {
+        id: uuid::Uuid::new_v4(),
+        project_id: project.id,
+        name: name.to_string(),
+        description: body.description.unwrap_or_default(),
+        sort_order,
+        steps,
+        script: None,
+        created_at: now,
+        updated_at: now,
+    };
+    repo::save_scenario(&state.db, &scenario)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(CreateScenarioResult {
+        id: scenario.id,
+        project_id: scenario.project_id,
+        name: scenario.name,
+        step_count: scenario.steps.len(),
+    }))
 }
 
 async fn list_scenarios_handler(
@@ -1138,7 +1246,10 @@ pub fn build_router(state: AgentState) -> Router {
         )
         .route("/agent/scenarios/{id}/run", post(run_scenario_handler))
         .route("/agent/curl", post(import_curl_handler))
-        .route("/agent/scenarios", get(list_scenarios_handler))
+        .route(
+            "/agent/scenarios",
+            get(list_scenarios_handler).post(create_scenario_handler),
+        )
         .route("/agent/scenarios/{id}", get(get_scenario_handler))
         .route(
             "/agent/scenarios/{id}/script",
@@ -1666,6 +1777,99 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn create_scenario_endpoint_semantics() {
+        use serde_json::json;
+
+        let (url, token, db, _state) = spawn_test_server().await;
+        let project = repo::create_project(&db, "下单项目", "").await.unwrap();
+        let other = repo::create_project(&db, "另一个项目", "").await.unwrap();
+        let make_ep = |pid: uuid::Uuid, name: &str| miyo_core::model::Endpoint {
+            id: uuid::Uuid::new_v4(),
+            project_id: pid,
+            folder_id: None,
+            name: name.into(),
+            method: miyo_core::model::HttpMethod::POST,
+            path: "/orders".into(),
+            description: String::new(),
+            status: miyo_core::model::EndpointStatus::Developing,
+            sort_order: 0,
+            request: miyo_core::model::RequestSpec::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let ep = make_ep(project.id, "下单");
+        let foreign = make_ep(other.id, "别家的接口");
+        repo::save_endpoint(&db, &ep).await.unwrap();
+        repo::save_endpoint(&db, &foreign).await.unwrap();
+        let auth = format!("Bearer {token}");
+
+        // 指定命名项目 + 一步 → 201/200 + 落库 + sort_order 追加到尾
+        let res = client()
+            .post(format!("{url}/agent/scenarios"))
+            .header("Authorization", &auth)
+            .json(&json!({
+                "name": "收单链路",
+                "projectId": project.id,
+                "endpointIds": [ep.id],
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: serde_json::Value = res.json().await.unwrap();
+        let new_id: uuid::Uuid = body["id"].as_str().unwrap().parse().unwrap();
+        assert_eq!(body["stepCount"], 1);
+        let saved = repo::get_scenario(&db, new_id).await.unwrap();
+        assert_eq!(saved.steps.len(), 1);
+        assert_eq!(saved.steps[0].endpoint_id, ep.id);
+
+        // 空名 → 400（Validation）
+        let res = client()
+            .post(format!("{url}/agent/scenarios"))
+            .header("Authorization", &auth)
+            .json(&json!({ "name": "   ", "projectId": project.id }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+        // 引用别的项目的接口 → 400，且不落库
+        let res = client()
+            .post(format!("{url}/agent/scenarios"))
+            .header("Authorization", &auth)
+            .json(&json!({
+                "name": "跨项目",
+                "projectId": project.id,
+                "endpointIds": [foreign.id],
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            repo::list_scenarios(&db, project.id).await.unwrap().len(),
+            1
+        );
+
+        // 工具停用 → 403 TOOL_DISABLED
+        repo::set_setting(
+            &db,
+            MCP_DISABLED_TOOLS_KEY,
+            &json!(["create_scenario"]).to_string(),
+        )
+        .await
+        .unwrap();
+        let res = client()
+            .post(format!("{url}/agent/scenarios"))
+            .header("Authorization", &auth)
+            .json(&json!({ "name": "停用后", "projectId": project.id }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

@@ -87,15 +87,19 @@ v0.0.10+ 安装包的二进制**不在 PATH**，推荐直接填 §3.1 表中绝�
 
 **Cursor** — Settings → MCP → Add Server，Command 填绝对路径 `/Applications/Miyo.app/Contents/MacOS/miyo-mcp`（macOS）或对应平台路径。
 
-配置后重启客户端 / 重载会话，工具列表出现 7 个工具即成功：
+配置后重启客户端 / 重载会话，工具列表出现 11 个工具即成功：
 
 | 工具 | 说明 |
 | --- | --- |
 | `save_curl` | 解析 cURL 并保存为接口（返回 endpointId） |
 | `list_projects` | 项目列表 |
 | `list_endpoints` | 项目下的接口列表（需 projectId） |
+| `get_endpoint` | 单个接口的完整定义（方法 / 路径 / 请求规格） |
+| `send_endpoint` | 按已保存接口发真实请求，可覆盖 url / headers / query / body / variables |
 | `list_scenarios` | 集成测试场景列表（projectId 可选） |
+| `create_scenario` | 新建场景（name 必填；可按 endpointIds 顺序落初始步骤） |
 | `get_scenario` | 场景详情：步骤 + 接口当前配置 + 链路变量 + 项目变量（AI 写脚本的完整上下文） |
+| `run_scenario` | 运行整个场景：按步骤串行、链路变量自动传递 |
 | `save_scenario_script` | 写入 / 清除场景自定义脚本（空串 = 清除） |
 | `agent_info` | 控制面地址与令牌路径 |
 
@@ -103,6 +107,10 @@ v0.0.10+ 安装包的二进制**不在 PATH**，推荐直接填 §3.1 表中绝�
 场景脚本协作：让 AI 先 `get_scenario` 拿上下文（每步接口配置 + 链路变量 +
 base_url），再 `save_scenario_script` 写回——脚本在桌面端「场景 → 脚本」页签
 可见、可继续手改；应用内运行始终以手动步骤为准。
+新建场景：`create_scenario`（`name` 必填，`endpointIds` 按顺序成为初始步骤，
+缺省即空场景）→ 用 `get_scenario` 读回 → 需要时 `save_scenario_script` 补脚本
+→ `run_scenario` 执行。`projectId` 缺省时仅一个项目自动选中，多项目会报错并
+列出候选（不会自动建项目）。
 
 ### 3.3 save_curl 参数说明
 
