@@ -136,7 +136,7 @@ describe('EnvironmentManager 新建环境未保存确认', () => {
     await clickAddEnv()
     await settled()
 
-    const save = document.querySelector<HTMLButtonElement>('.m-foot .miyo-btn-primary')
+    const save = document.querySelector<HTMLButtonElement>('.em-savebar .miyo-btn-primary')
     expect(save).toBeTruthy()
     ;(save as HTMLButtonElement).click()
     await flushPromises()

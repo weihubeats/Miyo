@@ -13,7 +13,6 @@ import { relaunch } from '@tauri-apps/plugin-process'
 import { copyText } from '../utils/clipboard'
 import { useMiyoApi } from '../composables/useMiyoApi'
 import { useToast } from '../composables/useToast'
-import { lazyComponent } from '../composables/lazyComponent'
 import { useThemeStore, type ThemeMode } from '../stores/theme'
 import { useLocaleStore, type LocaleMode } from '../stores/locale'
 import { useWorkspaceStore, FALLBACK_GLOBAL_TIMEOUT_MS } from '../stores/workspace'
@@ -48,18 +47,14 @@ import Icon, { type IconName } from './ui/Icon.vue'
 import Popconfirm from './ui/Popconfirm.vue'
 import CustomNumberInput from './ui/CustomNumberInput.vue'
 import CustomSelect from './ui/CustomSelect.vue'
-import { envBaseUrl } from '../utils/environment'
+import EnvWorkspace from './env/EnvWorkspace.vue'
 import type {
-  Environment,
   LogFile,
   McpToolStatus,
   Project,
   ProjectStat,
   SeqCounter,
 } from '../types/miyoApi'
-
-// 环境管理是独立大弹窗：设置面板只在点「编辑 / 新建环境」时才需要它的 chunk。
-const EnvironmentManager = lazyComponent(() => import('./EnvironmentManager.vue'))
 
 const emit = defineEmits<{ close: []; restored: [projectId: string] }>()
 
@@ -100,19 +95,18 @@ const tabs = computed<TabDef[]>(() => [
 ])
 const activeTab = ref<TabId>('general')
 
-const showManager = ref(false)
-/** 「编辑」某环境时，传给 EnvironmentManager 让它初始聚焦该环境。 */
-const managerEnvId = ref<string | null>(null)
+// ---------- 环境工作区（内嵌，常驻挂载） ----------
+// 「环境」页签直接内嵌 EnvWorkspace 统一工作区（一层直达，无二级弹窗）；
+// 跨项目下拉保留在页签头，非当前项目自动进入工作区的 detached 独立管理模式。
+// 首次激活才挂载（懒加载），之后 v-show 切换——返回环境管理不重挂载、不闪、不丢状态。
+const envWorkspace = ref<InstanceType<typeof EnvWorkspace> | null>(null)
+const envTabVisited = ref(false)
 
 const project = ref<Project | null>(null)
 const projectStat = ref<ProjectStat | null>(null)
 const busy = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 
-// ---------- 环境概览 ----------
-const environments = ref<Environment[]>([])
-const activeEnvId = ref<string | null>(null)
-const envLoading = ref(false)
 /** 环境页签可选项目列表 + 当前选中项（默认后端激活项目；首页可切换管理任意项目）。 */
 const envProjects = ref<Project[]>([])
 const envProjectId = ref('')
@@ -139,46 +133,26 @@ const envProjectOptions = computed(() =>
 
 function onEnvProjectChange(value: string | number): void {
   envProjectId.value = String(value)
-  void loadEnvironments()
 }
 
-async function loadEnvironments(): Promise<void> {
-  envLoading.value = true
-  try {
-    const [envs, active] = await Promise.all([
-      api.listEnvironments(envProjectId.value),
-      api.getActiveEnvironment(),
-    ])
-    environments.value = envs
-    activeEnvId.value = active?.id ?? null
-  } catch {
-    environments.value = []
-    activeEnvId.value = null
-  } finally {
-    envLoading.value = false
-  }
+// ---------- 页签切换 / 弹窗关闭守卫 ----------
+// 环境工作区常驻挂载（首次激活后 v-show 切换，不随页签切换卸载）：切页签不丢
+// 未保存修改、无重挂载闪烁；仅在关闭整个设置弹窗（组件卸载）时经三选确认拦截。
+
+/** 切页签：直接切换（环境工作区 v-show 常驻，无需守卫）。 */
+function onTabClick(id: TabId): void {
+  if (id === 'environments') envTabVisited.value = true
+  activeTab.value = id
 }
 
-/** 打开环境管理弹窗；envId 为空则聚焦当前激活（或第一个）环境。 */
-function openEnvironmentManager(envId: string | null = null): void {
-  managerEnvId.value = envId
-  showManager.value = true
+/** 关闭设置弹窗守卫：环境工作区常驻挂载（切页签不卸载），只要存在未保存修改
+ *  （无论当前在哪个页签）都拦截并弹三选确认，避免静默丢失编辑。 */
+function guardSettingsClose(): boolean {
+  const ws = envWorkspace.value
+  if (!ws || !ws.hasPending()) return true
+  ws.guardAction(() => emit('close'))
+  return false
 }
-
-/** 环境概览辅助：环境声明的 Base URL。 */
-function envBase(env: Environment): string {
-  return envBaseUrl(env)
-}
-
-/** 环境概览辅助：启用中的变量数量。 */
-function envVarCount(env: Environment): number {
-  return env.variables.filter((v) => v.enabled).length
-}
-
-// 管理弹窗关闭后刷新概览（可能新增/删除/改激活环境）
-watch(showManager, (open) => {
-  if (!open) void loadEnvironments()
-})
 
 onMounted(async () => {
   try {
@@ -221,7 +195,6 @@ onMounted(async () => {
     timeoutSec.value = DEFAULT_TIMEOUT_SEC
   }
   await loadEnvProjects()
-  await loadEnvironments()
   await loadCounters()
   reloadSkipped()
   await loadDataDirs()
@@ -985,10 +958,19 @@ const projectSummary = computed(() => {
 </script>
 
 <template>
-  <Modal :open="true" :title="t('settings.title')" width="880px" dialog-class="sd-dialog" @close="emit('close')">
-    <div class="flex h-[min(520px,70vh)]">
-      <!-- 左：极简 List 导航（.m-body 已贴边，内距由本栏自持；分隔线与标题栏 hairline 同源） -->
-      <aside class="flex w-52 shrink-0 flex-col gap-1 border-r border-line p-3">
+  <Modal
+    :open="true"
+    :title="t('settings.title')"
+    width="min(1200px, 94vw)"
+    dialog-class="sd-dialog"
+    :guard-close="guardSettingsClose"
+    @close="emit('close')"
+  >
+    <!-- 弹窗主体恒定高度：切页签不改变弹窗尺寸（高度跳变是闪烁感来源之一） -->
+    <div class="flex h-[min(680px,80vh)]">
+      <!-- 左：极简 List 导航（.m-body 已贴边，内距由本栏自持；分隔线与标题栏 hairline 同源）。
+           窄屏优先收缩导航（min(220px, 18vw)），保住右侧变量表格不被挤压 -->
+      <aside class="flex w-[min(220px,18vw)] shrink-0 flex-col gap-1 border-r border-line p-3">
         <button
           v-for="tab in tabs"
           :key="tab.id"
@@ -999,7 +981,7 @@ const projectSummary = computed(() => {
               ? 'bg-purple-50 font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300'
               : 'bg-transparent text-zinc-600 hover:bg-slate-100/80 hover:text-slate-700 dark:text-zinc-400 dark:hover:bg-white/[0.05] dark:hover:text-zinc-200'
           "
-          @click="activeTab = tab.id"
+          @click="onTabClick(tab.id)"
         >
           <!-- 选中时的左侧高亮细条 -->
           <span
@@ -1026,10 +1008,55 @@ const projectSummary = computed(() => {
         </button>
       </aside>
 
-      <!-- 右：内容区（Tab 切换淡入） -->
-      <div class="flex-1 min-w-0 overflow-y-auto p-6">
+      <!-- 右：内容区。环境工作区是绝对定位覆盖层（首访挂载后 v-show 常驻，切换不重挂载）；
+           其余页签走 keyed 淡入淡出。容器类恒定，切换只更新内容不抖布局。 -->
+      <div class="relative flex-1 min-w-0 overflow-y-auto p-6">
+        <!-- 环境工作区（覆盖层） -->
+        <Transition name="pane">
+          <section
+            v-if="envTabVisited"
+            v-show="activeTab === 'environments'"
+            class="absolute inset-0 flex flex-col p-6"
+          >
+            <header class="shrink-0">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <h2 class="text-base font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.environments') }}</h2>
+                  <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-500">{{ t('settings.environmentsDesc') }}</p>
+                </div>
+                <div class="flex shrink-0 items-center gap-2 pt-0.5">
+                  <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ t('settings.envProject') }}</span>
+                  <CustomSelect
+                    :model-value="envProjectId"
+                    :options="envProjectOptions"
+                    size="sm"
+                    class="w-56"
+                    @update:model-value="onEnvProjectChange"
+                  />
+                </div>
+              </div>
+            </header>
+
+            <div
+              v-if="!envProjectId"
+              class="mt-4 flex flex-1 items-center justify-center rounded-lg border border-zinc-200/70 bg-zinc-50/80 text-center text-xs text-zinc-600 dark:border-white/[0.06] dark:bg-zinc-900/40 dark:text-zinc-500"
+            >
+              {{ t('settings.envNoProject') }}
+            </div>
+            <div v-else class="mt-3 min-h-0 flex-1">
+              <EnvWorkspace
+                ref="envWorkspace"
+                embedded
+                :project-id="envProjectId || null"
+                :project-name="envProjectName || null"
+              />
+            </div>
+          </section>
+        </Transition>
+
+        <!-- 其余页签内容（keyed 淡入淡出） -->
         <Transition name="pane" mode="out-in">
-          <div :key="activeTab" class="space-y-4">
+          <div v-if="activeTab !== 'environments'" :key="activeTab" class="space-y-4">
             <!-- 通用设置 -->
             <section v-if="activeTab === 'general'">
               <header>
@@ -1754,92 +1781,7 @@ const projectSummary = computed(() => {
               </div>
             </section>
 
-            <!-- 环境管理 -->
-            <section v-if="activeTab === 'environments'">
-              <header>
-                <h2 class="text-base font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.environments') }}</h2>
-                <p class="mt-1 mb-4 text-xs text-zinc-600 dark:text-zinc-500">{{ t('settings.environmentsDesc') }}</p>
-                <div class="mb-4 flex items-center gap-2">
-                  <span class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{{ t('settings.envProject') }}</span>
-                  <CustomSelect
-                    :model-value="envProjectId"
-                    :options="envProjectOptions"
-                    size="sm"
-                    class="w-64"
-                    @update:model-value="onEnvProjectChange"
-                  />
-                </div>
-              </header>
-
-              <div class="space-y-2">
-                <div
-                  v-if="!envProjectId && !envLoading"
-                  class="rounded-lg border border-zinc-200/70 bg-zinc-50/80 p-6 text-center text-xs text-zinc-600 dark:border-white/[0.06] dark:bg-zinc-900/40 dark:text-zinc-500"
-                >
-                  {{ t('settings.envNoProject') }}
-                </div>
-                <div
-                  v-for="env in environments"
-                  :key="env.id"
-                  class="flex items-center justify-between gap-3 rounded-lg border border-zinc-200/70 bg-zinc-50/80 p-3.5 dark:border-white/[0.06] dark:bg-zinc-900/40"
-                >
-                  <div class="flex min-w-0 items-center gap-2.5">
-                    <span
-                      class="sd-dot"
-                      :class="env.id === activeEnvId ? 'sd-dot-active' : ''"
-                      aria-hidden="true"
-                    ></span>
-                    <div class="min-w-0">
-                      <div class="flex items-center gap-1.5">
-                        <span class="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ env.name }}</span>
-                        <span
-                          v-if="env.id === activeEnvId"
-                          class="rounded-full bg-emerald-100 px-1.5 py-px text-xxs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
-                        >
-                          {{ t('envmgr.current') }}
-                        </span>
-                      </div>
-                      <div class="truncate font-mono text-xxs text-zinc-600 dark:text-zinc-500">
-                        {{ envBase(env) || t('settings.envNoBase') }}
-                      </div>
-                    </div>
-                  </div>
-                  <div class="flex shrink-0 items-center gap-2">
-                    <span
-                      class="rounded-full bg-zinc-200/70 px-2 py-0.5 text-xxs text-zinc-600 dark:bg-white/[0.04] dark:text-zinc-400"
-                    >
-                      {{ t('settings.envVarCount', { n: envVarCount(env) }) }}
-                    </span>
-                    <button
-                      type="button"
-                      class="rounded-md px-2 py-1 text-xxs text-zinc-500 transition-colors duration-150 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/[0.06] dark:hover:text-zinc-200"
-                      @click="openEnvironmentManager(env.id)"
-                    >
-                      {{ t('common.edit') }}
-                    </button>
-                  </div>
-                </div>
-
-                <div
-                  v-if="envProjectId && !environments.length && !envLoading"
-                  class="rounded-lg border border-zinc-200/70 bg-zinc-50/80 p-6 text-center text-xs text-zinc-600 dark:border-white/[0.06] dark:bg-zinc-900/40 dark:text-zinc-500"
-                >
-                  {{ t('settings.envEmpty') }}
-                </div>
-              </div>
-
-              <div class="mt-4 border-t border-zinc-200/70 pt-4 dark:border-white/[0.06]">
-                <button
-                  class="miyo-btn w-full"
-                  type="button"
-                  :disabled="!envProjectId"
-                  @click="openEnvironmentManager()"
-                >
-                  <Icon name="settings" :size="13" />
-                  {{ t('settings.envOpenManager') }}
-                </button>
-              </div>
-            </section>
+            <!-- 环境页签已迁出：见上方绝对定位覆盖层（常驻挂载，v-show 切换） -->
 
             <!-- 日志 -->
             <section v-if="activeTab === 'logs'">
@@ -1893,13 +1835,6 @@ const projectSummary = computed(() => {
         </Transition>
       </div>
     </div>
-
-    <EnvironmentManager
-      v-model:open="showManager"
-      :initial-env-id="managerEnvId"
-      :project-id="envProjectId || null"
-      :project-name="envProjectName || null"
-    />
   </Modal>
 </template>
 
@@ -1911,11 +1846,12 @@ const projectSummary = computed(() => {
   background: var(--primary);
 }
 
+/* 页签切换 / 环境覆盖层淡入：120~160ms 规范区间，轻微透明度 + 位移 */
 .pane-enter-active,
 .pane-leave-active {
   transition:
-    opacity 160ms var(--ease),
-    transform 160ms var(--ease);
+    opacity 140ms var(--ease),
+    transform 140ms var(--ease);
 }
 .pane-enter-from {
   opacity: 0;
@@ -1924,19 +1860,6 @@ const projectSummary = computed(() => {
 .pane-leave-to {
   opacity: 0;
   transform: translateY(-2px);
-}
-
-/* 环境概览状态点：默认灰，激活绿 + 柔光 */
-.sd-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
-  background: var(--text-3);
-  flex-shrink: 0;
-}
-.sd-dot-active {
-  background: var(--success);
-  box-shadow: 0 0 0 3px var(--success-tint);
 }
 
 /* 数据目录：路径井 + 次级按钮组同行。两者等高（--h-md = 32px，与面板内

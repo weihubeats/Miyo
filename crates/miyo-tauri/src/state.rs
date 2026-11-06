@@ -502,6 +502,8 @@ mod tests {
                 remote_value: "tok".into(),
                 local_value: String::new(),
                 enabled: true,
+                local_override: None,
+                sensitive: None,
                 description: None,
             }],
             created_at: chrono::Utc::now(),

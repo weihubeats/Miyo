@@ -1056,3 +1056,86 @@ body.dragging-dnd {
 }
 
 /* 动效偏好：统一在「减少动态效果（分层策略）」基线块处理（:focus-visible 之后）。
+
+/* ---- 环境工作区共享表格（EnvWorkspace 参数表使用 em-col-*；变量表的 grid 列
+        布局在 EnvVarTable scoped 内。跨组件类按规范放全局） ---- */
+.em-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-code);
+  padding: 6px;
+}
+
+.em-th {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 6px;
+  font-size: var(--fs-xxs);
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  /* 表头禁止换行 */
+  white-space: nowrap;
+}
+
+.em-th-param {
+  margin-bottom: 4px;
+}
+
+.em-tr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+/* 停用行：整行淡显 */
+.em-tr.off {
+  opacity: 0.45;
+}
+
+/* 参数表列（EnvWorkspace 全局参数表） */
+.em-col-key {
+  width: 20%;
+  min-width: 0;
+}
+
+.em-col-remote {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+.em-col-loc {
+  width: 96px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.em-col-enabled {
+  width: 36px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.em-col-op {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+/* 表尾虚线「添加」按钮 */
+.em-add-var {
+  margin-top: 4px;
+  border-style: dashed;
+  color: var(--text-2);
+}

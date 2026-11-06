@@ -578,15 +578,23 @@ export interface Endpoint {
   updated_at: string
 }
 
-/** 环境变量（Rust `EnvironmentVariable`）：本地值优先覆盖远程值。 */
+/** 环境变量（Rust `EnvironmentVariable`）：本地覆盖值按 local_override 三态生效。 */
 export interface EnvironmentVariable {
   key: string
   /** 远程 / 公共值。 */
   remote_value: string
-  /** 本地私有覆盖值（非空时优先于 remote_value）。 */
+  /** 本地私有覆盖值。 */
   local_value: string
   /** 是否参与注入。 */
   enabled: boolean
+  /**
+   * 本地覆盖开关三态：true = 启用覆盖（生效值取 local_value，允许空串）；
+   * false = 停用覆盖（恒用 remote_value）；null/undefined = 未标注，走旧推断
+   * （local_value 非空优先）。Rust 侧 `Option<bool>`，序列化缺省即 undefined。
+   */
+  local_override?: boolean | null
+  /** 密钥型变量标注：true = 密钥（默认掩码）；null/undefined 未标注时按键名启发式。 */
+  sensitive?: boolean | null
   description?: string | null
 }
 

@@ -214,13 +214,20 @@ onBeforeUnmount(() => {
   padding: 12px 16px 14px;
 }
 
+/* 进 200ms / 出 160ms（动画规范：弹窗进 180~220ms、出 150~180ms）；transform 仅轻微位移 */
 .m-enter-active,
 .m-leave-active {
-  transition: opacity 160ms var(--ease);
+  transition: opacity 200ms var(--ease);
+}
+.m-leave-active {
+  transition-duration: 160ms;
 }
 .m-enter-active .m-dialog,
 .m-leave-active .m-dialog {
-  transition: transform 160ms var(--ease);
+  transition: transform 200ms var(--ease);
+}
+.m-leave-active .m-dialog {
+  transition-duration: 160ms;
 }
 .m-enter-from,
 .m-leave-to {

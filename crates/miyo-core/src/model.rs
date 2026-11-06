@@ -826,12 +826,22 @@ pub struct EnvironmentVariable {
     pub key: String,
     /// 远程 / 公共值。
     pub remote_value: String,
-    /// 本地私有覆盖值（非空时优先于 remote_value）。
+    /// 本地私有覆盖值。
     #[serde(default)]
     pub local_value: String,
     /// 是否参与注入（关闭后该变量不进入请求变量表）。
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// 本地覆盖开关（显式三态，允许区分「覆盖为空串」与「未设置覆盖」）：
+    /// - `Some(true)`：启用覆盖，生效值取 local_value（允许显式空串）；
+    /// - `Some(false)`：停用覆盖，生效值恒取 remote_value；
+    /// - `None`：旧兼容行为——local_value 非空（trim 后）优先，否则回退 remote_value。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_override: Option<bool>,
+    /// 密钥型变量标注（前端默认掩码 + 导出脱敏计数口径）：
+    /// `None` = 未显式标注，UI / 导出回退键名启发式（is_sensitive_key）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensitive: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
@@ -884,13 +894,22 @@ pub struct Environment {
 }
 
 impl EnvironmentVariable {
-    /// 生效值：本地覆盖值非空时取本地，否则取远程 / 公共值。
+    /// 生效值（本地覆盖三态）：
+    /// - 显式启用覆盖 → 本地值（允许显式空串）；
+    /// - 显式停用覆盖 → 远程值；
+    /// - 未标注 → 旧兼容行为：本地值非空（trim 后）优先，否则远程值。
     pub fn effective_value(&self) -> &str {
-        let local = self.local_value.trim();
-        if !local.is_empty() {
-            local
-        } else {
-            self.remote_value.trim()
+        match self.local_override {
+            Some(true) => self.local_value.trim(),
+            Some(false) => self.remote_value.trim(),
+            None => {
+                let local = self.local_value.trim();
+                if local.is_empty() {
+                    self.remote_value.trim()
+                } else {
+                    local
+                }
+            }
         }
     }
 
@@ -1190,6 +1209,58 @@ mod tests {
         let full = serde_json::to_string(&KeyValue::new("a", "1")).unwrap();
         assert!(full.contains("\"field_type\":\"string\""));
         assert!(full.contains("\"required\":true"));
+    }
+
+    fn var(
+        key: &str,
+        remote: &str,
+        local: &str,
+        local_override: Option<bool>,
+    ) -> EnvironmentVariable {
+        EnvironmentVariable {
+            key: key.into(),
+            remote_value: remote.into(),
+            local_value: local.into(),
+            enabled: true,
+            local_override,
+            sensitive: None,
+            description: None,
+        }
+    }
+
+    /// 本地覆盖三态：显式启用（含显式空串）/ 显式停用 / 未标注走旧推断。
+    #[test]
+    fn env_var_effective_value_tri_state() {
+        // 未标注（旧行为）：本地非空优先，否则远程。
+        let v = var("a", "remote", "local", None);
+        assert_eq!(v.effective_value(), "local");
+        let v = var("a", "remote", "   ", None);
+        assert_eq!(v.effective_value(), "remote");
+
+        // 显式启用覆盖：空串也生效（区分「覆盖为空串」与「未设置覆盖」）。
+        let v = var("a", "remote", "", Some(true));
+        assert_eq!(v.effective_value(), "");
+        // 显式停用覆盖：本地有值也不参与生效。
+        let v = var("a", "remote", "local", Some(false));
+        assert_eq!(v.effective_value(), "remote");
+        // 停用后 is_effective 只看远程值。
+        let v = var("a", "", "local", Some(false));
+        assert!(!v.is_effective());
+    }
+
+    /// 旧 JSON（无 local_override / sensitive 字段）反序列化走 None，序列化时
+    /// Option::is_none 跳过字段——落库 JSON 保持与旧客户端互通。
+    #[test]
+    fn env_var_legacy_json_compat() {
+        let legacy = serde_json::json!({
+            "key": "token", "remote_value": "abc", "local_value": "", "enabled": true
+        });
+        let v: EnvironmentVariable = serde_json::from_value(legacy).unwrap();
+        assert_eq!(v.local_override, None);
+        assert_eq!(v.sensitive, None);
+        let json = serde_json::to_value(&v).unwrap();
+        assert!(json.get("local_override").is_none());
+        assert!(json.get("sensitive").is_none());
     }
 
     #[test]

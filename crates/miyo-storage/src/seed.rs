@@ -2148,6 +2148,8 @@ fn env_var(key: &str, value: &str, description: &str) -> EnvironmentVariable {
         remote_value: value.to_string(),
         local_value: String::new(),
         enabled: true,
+        local_override: None,
+        sensitive: None,
         description: Some(description.to_string()),
     }
 }

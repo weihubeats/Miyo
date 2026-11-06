@@ -567,6 +567,8 @@ mod tests {
                     remote_value: "tok-123".into(),
                     local_value: "".into(),
                     enabled: true,
+                    local_override: None,
+                    sensitive: None,
                     description: None,
                 },
                 EnvironmentVariable {
@@ -574,6 +576,8 @@ mod tests {
                     remote_value: "cn-north".into(),
                     local_value: "local-only".into(),
                     enabled: true,
+                    local_override: None,
+                    sensitive: None,
                     description: None,
                 },
             ],

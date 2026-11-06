@@ -34,6 +34,10 @@ const env = computed(
 interface Row {
   key: string
   value: string
+  /** 源变量快照（新增行无）：保存时原样保留启用态 / 敏感标注，避免快编副作用。 */
+  source: EnvironmentVariable | null
+  /** 值列是否被编辑过：编辑过的行才把值写入本地覆盖，未动行保持原字段。 */
+  edited: boolean
 }
 
 const rows = ref<Row[]>([])
@@ -46,7 +50,12 @@ const pos = ref({ left: 0, top: 0, up: false })
 function toRows(environment: typeof env.value): Row[] {
   return (environment?.variables ?? [])
     .filter((v) => v.key !== 'base_url')
-    .map((v) => ({ key: v.key, value: effectiveVariable(v) }))
+    .map((v) => ({
+      key: v.key,
+      value: effectiveVariable(v),
+      source: v,
+      edited: false,
+    }))
 }
 
 watch(
@@ -93,15 +102,30 @@ function buildVariables(): EnvironmentVariable[] {
   for (const row of rows.value) {
     const key = row.key.trim()
     if (!key || key.startsWith('{{') || key.startsWith('$')) continue
-    const prev = env.value?.variables.find((v) => v.key === key)
-    // 保留远程值，本地值为本次编辑值（快速编辑即本地覆盖）。
-    next.push({
-      key,
-      remote_value: prev?.remote_value ?? '',
-      local_value: row.value,
-      enabled: true,
-      description: prev?.description ?? null,
-    })
+    if (row.source) {
+      // 既有变量：保留启用态 / 本地覆盖开关 / 敏感标注（曾实测保存把停用变量全部复活）；
+      // 仅编辑过的行把值写入本地覆盖（快速编辑即本地覆盖语义）。
+      next.push({
+        key,
+        remote_value: row.source.remote_value,
+        local_value: row.edited ? row.value : row.source.local_value,
+        enabled: row.source.enabled,
+        local_override: row.edited ? true : (row.source.local_override ?? null),
+        sensitive: row.source.sensitive ?? null,
+        description: row.source.description,
+      })
+    } else {
+      // 新增行：快速编辑值即本地覆盖
+      next.push({
+        key,
+        remote_value: '',
+        local_value: row.value,
+        enabled: true,
+        local_override: true,
+        sensitive: null,
+        description: null,
+      })
+    }
   }
   return next
 }
@@ -125,12 +149,13 @@ async function save(): Promise<void> {
   }
 }
 
-function onEdit(): void {
+function onEdit(row?: Row): void {
   dirty.value = true
+  if (row) row.edited = true
 }
 
 function addVariable(): void {
-  rows.value.push({ key: '', value: '' })
+  rows.value.push({ key: '', value: '', source: null, edited: false })
   dirty.value = true
   void nextTick(() => {
     const inputs = popupEl.value?.querySelectorAll<HTMLInputElement>('.qv-row input.qv-key')
@@ -183,7 +208,7 @@ onBeforeUnmount(() => {
           spellcheck="false"
           :disabled="busy"
           :placeholder="t('envquick.basePh')"
-          @input="onEdit"
+          @input="onEdit()"
           @blur="save"
           @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"
         />
@@ -201,7 +226,7 @@ onBeforeUnmount(() => {
             spellcheck="false"
             :disabled="busy"
             :placeholder="t('envmgr.colKey')"
-            @input="onEdit"
+            @input="onEdit()"
             @blur="save"
             @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"
           />
@@ -211,7 +236,7 @@ onBeforeUnmount(() => {
             spellcheck="false"
             :disabled="busy"
             :placeholder="row.key ? '' : t('envquick.valuePh')"
-            @input="onEdit"
+            @input="onEdit(row)"
             @blur="save"
             @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"
           />

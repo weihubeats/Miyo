@@ -554,6 +554,8 @@ pub(crate) fn variables_from_value(value: serde_json::Value) -> Result<Vec<Envir
                     remote_value: raw,
                     local_value: String::new(),
                     enabled: true,
+                    local_override: None,
+                    sensitive: None,
                     description: None,
                 });
             }

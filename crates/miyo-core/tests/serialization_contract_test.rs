@@ -123,6 +123,8 @@ fn ipc_models_serialize_snake_case_keys() {
                 remote_value: "abc".into(),
                 local_value: String::new(),
                 enabled: true,
+                local_override: None,
+                sensitive: None,
                 description: Some("示例".into()),
             }],
             created_at: now,

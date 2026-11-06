@@ -56,6 +56,8 @@ mod tests {
                 remote_value: "example.com".into(),
                 local_value: String::new(),
                 enabled: true,
+                local_override: None,
+                sensitive: None,
                 description: Some("全局域名".into()),
             },
             EnvironmentVariable {
@@ -63,6 +65,8 @@ mod tests {
                 remote_value: "x".into(),
                 local_value: String::new(),
                 enabled: false,
+                local_override: None,
+                sensitive: None,
                 description: None,
             },
         ];

@@ -118,27 +118,52 @@ pub enum EnvExchangeFormat {
 pub struct ExportedEnv {
     pub content: String,
     pub suggested_name: String,
-    /// 明文凭证变量计数（键名命中敏感词根且有值；仅提示不脱敏——导出需可回导）。
+    /// 敏感变量计数（显式 `sensitive` 标注或键名命中敏感词根，且有值；
+    /// 未脱敏时仅提示不处理——导出需可回导）。
     pub sensitive_count: usize,
 }
 
-/// 导出单个环境（变量以明文落盘，与备份 JSON 口径一致）。
+/// 敏感判定统一口径：显式 `sensitive` 标注优先，未标注回退键名启发式。
+fn is_var_sensitive(v: &EnvironmentVariable) -> bool {
+    match v.sensitive {
+        Some(s) => s,
+        None => is_sensitive_key(&v.key),
+    }
+}
+
+/// 脱敏：敏感变量的 remote / local 值打码为 `"***"`（非敏感变量保持明文，仍可回导）。
+fn redact_sensitive_vars(env: &mut Environment) {
+    for v in &mut env.variables {
+        if is_var_sensitive(v) {
+            v.remote_value = "***".into();
+            v.local_value = String::new();
+        }
+    }
+}
+
+/// 导出单个环境。`redact = Some(true)` 时敏感变量的值以 `"***"` 打码
+///（remote / local 一并处理），非敏感变量保持明文（仍可回导）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn export_environment(
     state: State<'_, AppState>,
     environment_id: Uuid,
     format: EnvExchangeFormat,
+    redact: Option<bool>,
 ) -> CommandResult<ExportedEnv> {
-    let env = repo::get_environment(&state.db, environment_id).await?;
+    let mut env = repo::get_environment(&state.db, environment_id).await?;
+    let redact = redact.unwrap_or(false);
     let sensitive_count = env
         .variables
         .iter()
         .filter(|v| {
             v.enabled
-                && is_sensitive_key(&v.key)
+                && is_var_sensitive(v)
                 && (!v.remote_value.is_empty() || !v.local_value.is_empty())
         })
         .count();
+    if redact {
+        redact_sensitive_vars(&mut env);
+    }
     let safe_name: String = env
         .name
         .chars()
@@ -252,6 +277,8 @@ pub async fn import_environment(text: String, project_id: Uuid) -> CommandResult
                     .to_string(),
                 local_value: String::new(),
                 enabled: v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(true),
+                local_override: None,
+                sensitive: None,
                 description: None,
             });
         }
@@ -339,4 +366,53 @@ pub async fn save_global_params(
     repo::save_global_params(&state.db, &params).await?;
     state.invalidate_global_settings();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn var(key: &str, remote: &str, local: &str, sensitive: Option<bool>) -> EnvironmentVariable {
+        EnvironmentVariable {
+            key: key.into(),
+            remote_value: remote.into(),
+            local_value: local.into(),
+            enabled: true,
+            local_override: None,
+            sensitive,
+            description: None,
+        }
+    }
+
+    fn env_with(vars: Vec<EnvironmentVariable>) -> Environment {
+        Environment {
+            id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            name: "test".into(),
+            base_url: String::new(),
+            variables: vars,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    /// 脱敏口径：显式标注与键名启发式都打码，显式非敏感放行（优先于启发式）。
+    #[test]
+    fn redact_masks_explicit_and_heuristic_sensitive_vars() {
+        let mut env = env_with(vec![
+            var("api_token", "tok-123", "", None),        // 启发式命中
+            var("region", "cn-north", "local", None),     // 普通变量
+            var("custom", "secret-x", "loc", Some(true)), // 显式标注（键名不命中）
+            var("my_token", "v", "l", Some(false)),       // 显式非敏感：键名命中也放行
+        ]);
+        redact_sensitive_vars(&mut env);
+        assert_eq!(env.variables[0].remote_value, "***");
+        assert_eq!(env.variables[1].remote_value, "cn-north");
+        assert_eq!(env.variables[1].local_value, "local");
+        assert_eq!(env.variables[2].remote_value, "***");
+        assert_eq!(env.variables[2].local_value, "");
+        assert_eq!(env.variables[3].remote_value, "v");
+        assert_eq!(env.variables[3].local_value, "l");
+    }
 }

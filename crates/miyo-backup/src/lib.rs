@@ -401,6 +401,8 @@ mod tests {
                 remote_value: "t1".into(),
                 local_value: String::new(),
                 enabled: true,
+                local_override: None,
+                sensitive: None,
                 description: None,
             }],
             created_at: Utc::now(),

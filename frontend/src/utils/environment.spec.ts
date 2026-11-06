@@ -10,9 +10,12 @@ import {
   isSensitiveVarKey,
   joinBaseUrl,
   normalizeBaseUrl,
+  parseVarBatch,
   requestTemplateTexts,
   resolveRequestUrl,
+  resolveSensitive,
   resolveVariables,
+  validateBaseUrl,
   variableListToMap,
 } from './environment'
 import type { Endpoint } from '../types/miyoApi'
@@ -58,6 +61,16 @@ describe('effectiveVariable / variableListToMap', () => {
     expect(effectiveVariable({ remote_value: '', local_value: '' })).toBe('')
   })
 
+  it('覆盖开关三态：显式启用取本地（含空串）、显式停用恒取远程、未标注走旧推断', () => {
+    // 未标注（旧数据）：本地非空优先。
+    expect(effectiveVariable({ remote_value: 'r', local_value: 'l', local_override: null })).toBe('l')
+    expect(effectiveVariable({ remote_value: 'r', local_value: ' ', local_override: undefined })).toBe('r')
+    // 显式启用：空串也生效（区分「覆盖为空串」与「未设置覆盖」）。
+    expect(effectiveVariable({ remote_value: 'r', local_value: '', local_override: true })).toBe('')
+    // 显式停用：本地有值也不生效。
+    expect(effectiveVariable({ remote_value: 'r', local_value: 'l', local_override: false })).toBe('r')
+  })
+
   it('扁平注入表：enabled 才注入、本地优先、禁用跳过', () => {
     const map = variableListToMap([
       { key: 'token', remote_value: 'abc', local_value: 'LOCAL', enabled: true },
@@ -71,6 +84,17 @@ describe('effectiveVariable / variableListToMap', () => {
     expect(map.junk).toBeUndefined()
     expect(map['']).toBeUndefined()
     expect(map['{{sys}}']).toBeUndefined()
+  })
+
+  it('扁平注入表遵循覆盖三态（与后端 effective_variables 同口径）', () => {
+    const map = variableListToMap([
+      { key: 'a', remote_value: 'r', local_value: 'l', enabled: true, local_override: false },
+      { key: 'b', remote_value: 'r', local_value: '', enabled: true, local_override: true },
+      { key: 'c', remote_value: 'r', local_value: 'l', enabled: true, local_override: null },
+    ])
+    expect(map.a).toBe('r')
+    expect(map.b).toBeUndefined() // 显式空串覆盖 → 生效值为空，不注入
+    expect(map.c).toBe('l')
   })
 })
 
@@ -262,5 +286,61 @@ describe('isSensitiveVarKey（敏感变量名启发式）', () => {
     expect(isSensitiveVarKey('user_name')).toBe(false)
     expect(isSensitiveVarKey('')).toBe(false)
     expect(isSensitiveVarKey(null)).toBe(false)
+  })
+})
+
+describe('resolveSensitive（显式标注优先，未标注回退启发式）', () => {
+  it('三态：显式 true/false 生效，未标注按键名启发式', () => {
+    expect(resolveSensitive({ key: 'page_size', sensitive: true })).toBe(true)
+    // 显式非敏感可豁免键名误报
+    expect(resolveSensitive({ key: 'my_token', sensitive: false })).toBe(false)
+    expect(resolveSensitive({ key: 'my_token', sensitive: null })).toBe(true)
+    expect(resolveSensitive({ key: 'my_token', sensitive: undefined })).toBe(true)
+    expect(resolveSensitive({ key: 'page_size', sensitive: null })).toBe(false)
+  })
+})
+
+describe('validateBaseUrl（Base URL 格式校验）', () => {
+  it('空值 / http(s) / {{变量}} 合法，其余返回错误键', () => {
+    expect(validateBaseUrl('')).toBeNull()
+    expect(validateBaseUrl('   ')).toBeNull()
+    expect(validateBaseUrl('https://api.example.com')).toBeNull()
+    expect(validateBaseUrl('HTTP://api.example.com')).toBeNull()
+    expect(validateBaseUrl('{{host}}')).toBeNull()
+    expect(validateBaseUrl('api.example.com')).toBe('envmgr.baseUrlInvalid')
+    expect(validateBaseUrl('localhost:8080')).toBe('envmgr.baseUrlInvalid')
+    expect(validateBaseUrl('ftp://x.com')).toBe('envmgr.baseUrlInvalid')
+  })
+})
+
+describe('parseVarBatch（批量导入解析）', () => {
+  it('JSON 对象形态', () => {
+    const { rows, invalid } = parseVarBatch('{"host": "https://x.com", "port": 8080}')
+    expect(rows).toEqual([
+      { key: 'host', remote_value: 'https://x.com' },
+      { key: 'port', remote_value: '8080' },
+    ])
+    expect(invalid).toEqual([])
+  })
+
+  it('k=v / k: v 行形态（含 trim 与空行跳过）', () => {
+    const { rows, invalid } = parseVarBatch('host=https://x.com\n port : 8080 \n\n')
+    expect(rows).toEqual([
+      { key: 'host', remote_value: 'https://x.com' },
+      { key: 'port', remote_value: '8080' },
+    ])
+    expect(invalid).toEqual([])
+  })
+
+  it('空 key / {{ }} / $ 开头 / 无分隔行进 invalid；重复 key 后者覆盖', () => {
+    const { rows, invalid } = parseVarBatch('=v\n{{sys}}=x\n$key=y\nnoDelim\nhost=a\nhost=b')
+    expect(rows).toEqual([{ key: 'host', remote_value: 'b' }])
+    expect(invalid).toEqual(['=v', '{{sys}}=x', '$key=y', 'noDelim'])
+  })
+
+  it('非法 JSON 落入行解析并进 invalid', () => {
+    const { rows, invalid } = parseVarBatch('{not json')
+    expect(rows).toEqual([])
+    expect(invalid.length).toBeGreaterThan(0)
   })
 })

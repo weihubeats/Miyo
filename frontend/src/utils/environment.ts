@@ -28,8 +28,14 @@ export function envBaseUrl(env: Environment | null | undefined): string {
   return env?.base_url?.trim() ?? ''
 }
 
-/** 变量生效值：本地覆盖值非空时优先，否则取远程 / 公共值。 */
-export function effectiveVariable(v: { remote_value: string; local_value: string }): string {
+/** 变量生效值（镜像后端 `effective_value` 三态）：显式覆盖开关优先，未标注走旧推断。 */
+export function effectiveVariable(v: {
+  remote_value: string
+  local_value: string
+  local_override?: boolean | null
+}): string {
+  if (v.local_override === true) return v.local_value.trim()
+  if (v.local_override === false) return v.remote_value.trim()
   return v.local_value.trim() || v.remote_value.trim()
 }
 
@@ -45,9 +51,95 @@ export function isSensitiveVarKey(key: string | null | undefined): boolean {
   return SENSITIVE_KEY_RE.test(key ?? '')
 }
 
-/** 结构化变量列表 → 扁平注入表（enabled 才注入、本地值优先、本地覆盖生效）。 */
+/**
+ * 变量敏感判定（镜像后端 `is_var_sensitive`）：显式 `sensitive` 标注优先，
+ * 未标注（null / undefined）回退键名启发式。显式「非敏感」可豁免键名误报。
+ */
+export function resolveSensitive(v: {
+  key: string
+  sensitive?: boolean | null
+}): boolean {
+  if (v.sensitive != null) return v.sensitive
+  return isSensitiveVarKey(v.key)
+}
+
+/**
+ * Base URL 格式校验：空值合法（未配置）；其余须以 `http(s)://` 开头或为
+ * `{{变量}}` 引用。返回错误信息键名，合法返回 null。
+ */
+export function validateBaseUrl(value: string): 'envmgr.baseUrlInvalid' | null {
+  const s = value.trim()
+  if (!s) return null
+  if (/^https?:\/\//i.test(s)) return null
+  if (s.startsWith('{{')) return null
+  return 'envmgr.baseUrlInvalid'
+}
+
+/** 变量行（组件新增行时的最小形态，含三态扩展字段缺省）。 */
+export interface ParsedVarRow {
+  key: string
+  remote_value: string
+}
+
+/**
+ * 批量导入文本解析：JSON 对象 `{k: v}` / 每行 `k=v` / `k: v` 三种形态。
+ * 返回解析结果与被跳过的无效行；空 key、`{{`/`$` 开头的行按无效处理
+ * （与注入过滤口径一致）。key 重复时后者覆盖前者（保持出现顺序）。
+ */
+export function parseVarBatch(text: string): {
+  rows: ParsedVarRow[]
+  invalid: string[]
+} {
+  const rows: ParsedVarRow[] = []
+  const invalid: string[] = []
+  const byKey = new Map<string, string>()
+  const push = (rawKey: string, rawValue: string): void => {
+    const key = rawKey.trim()
+    const value = rawValue.trim()
+    if (!key || key.startsWith('{{') || key.startsWith('$')) {
+      invalid.push(`${rawKey.trim()}=${rawValue.trim()}`)
+      return
+    }
+    if (!byKey.has(key)) rows.push({ key, remote_value: '' })
+    byKey.set(key, value)
+  }
+  const s = text.trim()
+  if (s.startsWith('{')) {
+    try {
+      const obj = JSON.parse(s) as Record<string, unknown>
+      for (const [k, v] of Object.entries(obj)) {
+        push(k, typeof v === 'string' ? v : String(v ?? ''))
+      }
+      return { rows: rows.map((r) => ({ ...r, remote_value: byKey.get(r.key) ?? '' })), invalid }
+    } catch {
+      // 非法 JSON 落入行解析（多数会进 invalid），由调用方提示
+    }
+  }
+  for (const line of s.split(/\r?\n/)) {
+    const t = line.trim()
+    if (!t) continue
+    const m = /^(.*?)[:=](.*)$/.exec(t)
+    if (!m || !m[1].trim()) {
+      invalid.push(t)
+      continue
+    }
+    push(m[1], m[2])
+  }
+  return { rows: rows.map((r) => ({ ...r, remote_value: byKey.get(r.key) ?? '' })), invalid }
+}
+
+/** 结构化变量列表 → 扁平注入表（enabled 才注入、覆盖三态生效）。 */
 export function variableListToMap(
-  vars: { key: string; remote_value: string; local_value: string; enabled: boolean }[] | null | undefined,
+  vars:
+    | {
+        key: string
+        remote_value: string
+        local_value: string
+        enabled: boolean
+        local_override?: boolean | null
+      }[]
+    | null
+    | undefined,
 ): Record<string, string> {
   const out: Record<string, string> = {}
   for (const v of vars ?? []) {
@@ -86,7 +178,16 @@ export const BUILTIN_VARIABLES = ['$uuid', '$timestamp', '$isoTimestamp', '$rand
  */
 export function mergedVariableMap(
   sources: {
-    globalVariables: { key: string; remote_value: string; local_value: string; enabled: boolean }[] | null | undefined
+    globalVariables:
+      | {
+          key: string
+          remote_value: string
+          local_value: string
+          enabled: boolean
+          local_override?: boolean | null
+        }[]
+      | null
+      | undefined
     projectVariables: Record<string, string> | null | undefined
     env: Environment | null | undefined
   },

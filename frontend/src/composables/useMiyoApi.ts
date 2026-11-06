@@ -250,9 +250,9 @@ export function useMiyoApi() {
   const deleteEnvironment = (environmentId: string) =>
     run(() => call<void>('delete_environment', { environmentId }))
 
-  /** 导出单个环境（变量以明文落盘，与备份 JSON 口径一致）。 */
-  const exportEnvironment = (environmentId: string, format: EnvExchangeFormat) =>
-    run(() => call<ExportedEnv>('export_environment', { environmentId, format }))
+  /** 导出单个环境；redact=true 时敏感变量值打码（仍可回导，非敏感保持明文）。 */
+  const exportEnvironment = (environmentId: string, format: EnvExchangeFormat, redact = false) =>
+    run(() => call<ExportedEnv>('export_environment', { environmentId, format, redact }))
 
   /** 导入环境预览（不落库；自动识别 Miyo / Postman 格式，归属当前项目）。 */
   const importEnvironment = (text: string, projectId: string) =>
