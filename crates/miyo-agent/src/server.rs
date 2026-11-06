@@ -1645,6 +1645,159 @@ mod tests {
         db.close().await;
     }
 
+    /// 验收主链路（电商下单 → 支付预览 → 支付）：DB 场景 → 控制面运行 →
+    /// 变量链路自动传递 → 断言 → 运行历史落库。
+    #[tokio::test]
+    async fn run_scenario_ecommerce_full_chain() {
+        use axum::routing::get as axum_get;
+        let (url, token, db, _state) = spawn_test_server().await;
+        let auth = format!("Bearer {token}");
+
+        // 三步上游：校验链路传参（缺参 400）+ 金额数字类型。
+        let app = axum::Router::new()
+            .route(
+                "/shop/orders",
+                axum::routing::post(|| async {
+                    Json(serde_json::json!({
+                        "orderNo": "SO-1",
+                        "payToken": "pt-9"
+                    }))
+                }),
+            )
+            .route(
+                "/shop/pay-preview",
+                axum_get(|Query(q): Query<std::collections::HashMap<String, String>>| async move {
+                    let ok = q.get("orderNo").map(|v| v == "SO-1").unwrap_or(false)
+                        && q.get("payToken").map(|v| v == "pt-9").unwrap_or(false);
+                    if ok {
+                        (axum::http::StatusCode::OK, Json(serde_json::json!({"payableAmount": 388.2})))
+                    } else {
+                        (axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "x"})))
+                    }
+                }),
+            )
+            .route(
+                "/shop/pay",
+                axum::routing::post(|body: String| async move {
+                    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                    let number_amount = matches!(v.get("amount"), Some(serde_json::Value::Number(_)));
+                    if number_amount && v.get("payToken").and_then(|t| t.as_str()) == Some("pt-9") {
+                        // 回显金额类型：类型保留渲染的验证信号（数字 ≠ 字符串）。
+                        (axum::http::StatusCode::OK, Json(serde_json::json!({"status": "PAID", "tradeNo": "ALI-1", "amountWasNumber": number_amount})))
+                    } else {
+                        (axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "x"})))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        // 项目变量 base_url → 上游。
+        let project = repo::create_project(&db, "电商验收", "").await.unwrap();
+        let mut with_base = repo::get_project(&db, project.id).await.unwrap();
+        with_base
+            .variables
+            .insert("base_url".into(), upstream.clone());
+        repo::save_project(&db, &with_base).await.unwrap();
+
+        let order = make_endpoint(project.id, "创建订单", "POST", "/shop/orders");
+        // 预览：Query 带第 1 步提取的 orderNo / payToken（种子场景同款）。
+        let mut preview = make_endpoint(project.id, "支付预览", "GET", "/shop/pay-preview");
+        preview.request.params = vec![
+            miyo_core::model::KeyValue::new("orderNo", "{{orderNo}}"),
+            miyo_core::model::KeyValue::new("payToken", "{{payToken}}"),
+        ];
+        let mut pay = make_endpoint(project.id, "确认支付", "POST", "/shop/pay");
+        pay.request.body = miyo_core::model::BodySpec::Json {
+            raw: r#"{"amount": "{{payableAmount}}", "payToken": "{{payToken}}"}"#.into(),
+        };
+        for ep in [&order, &preview, &pay] {
+            repo::save_endpoint(&db, ep).await.unwrap();
+        }
+        let scenario = Scenario {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            name: "电商主流程".into(),
+            description: String::new(),
+            category: "电商".into(),
+            sort_order: 0,
+            steps: vec![
+                miyo_core::model::ScenarioStep {
+                    endpoint_id: Some(order.id),
+                    enabled: true,
+                    extract: serde_json::json!([
+                        {"name": "orderNo", "from": "body", "path": "$.orderNo"},
+                        {"name": "payToken", "from": "body", "path": "$.payToken"}
+                    ]),
+                    assertions: serde_json::json!([{"type": "status", "op": "eq", "expected": 200}]),
+                    name: None,
+                    request: None,
+                },
+                miyo_core::model::ScenarioStep {
+                    endpoint_id: Some(preview.id),
+                    enabled: true,
+                    extract: serde_json::json!([
+                        {"name": "payableAmount", "from": "body", "path": "$.payableAmount"}
+                    ]),
+                    assertions: serde_json::json!([{"type": "status", "op": "eq", "expected": 200}]),
+                    name: None,
+                    request: None,
+                },
+                miyo_core::model::ScenarioStep {
+                    endpoint_id: Some(pay.id),
+                    enabled: true,
+                    extract: serde_json::json!([
+                        {"name": "tradeNo", "from": "body", "path": "$.tradeNo"}
+                    ]),
+                    assertions: serde_json::json!([
+                        {"type": "jsonpath", "path": "$.status", "op": "eq", "expected": "PAID"}
+                    ]),
+                    name: None,
+                    request: None,
+                },
+            ],
+            script: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_scenario(&db, &scenario).await.unwrap();
+
+        // 控制面运行。
+        let res = client()
+            .post(format!("{url}/agent/scenarios/{}/run", scenario.id))
+            .header("Authorization", &auth)
+            .json(&serde_json::json!({ "stopOnFailure": false }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(body["passed"], 3, "三步全过：{body}");
+        assert_eq!(body["failed"], 0);
+        // 变量链路：无需手动复制任何返回值。
+        assert_eq!(body["variables"]["orderNo"], "SO-1");
+        assert_eq!(body["variables"]["payableAmount"], "388.2");
+        assert_eq!(body["variables"]["tradeNo"], "ALI-1");
+        // 第三步：金额保持数字（类型保留）——上游校验通过且回显 amountWasNumber=true。
+        let steps = body["steps"].as_array().unwrap();
+        let pay_body = steps[2]["bodyPreview"].as_str().unwrap_or("");
+        let resp: serde_json::Value = serde_json::from_str(pay_body).unwrap_or_default();
+        assert_eq!(
+            resp["amountWasNumber"],
+            serde_json::json!(true),
+            "金额应为数字类型：{pay_body}"
+        );
+
+        // 运行历史已落库（可回看）。
+        let runs = repo::list_scenario_runs(&db, scenario.id, 5).await.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].ok_count, 3);
+        db.close().await;
+    }
+
     #[tokio::test]
     async fn run_scenario_stop_on_failure_halts() {
         let (url, token, db, _state) = spawn_test_server().await;
