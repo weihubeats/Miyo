@@ -2,11 +2,14 @@
 /**
  * Popconfirm：危险操作确认气泡（替代原生 confirm）。
  * - 触发区为默认插槽；点击展开气泡，外部点击 / Esc 关闭；
+ * - 展开监听走**捕获阶段**：插槽里的触发按钮常带 `@click.stop`（行内操作按钮
+ *   要阻止触发行点击），冒泡阶段到不了外层 .pc-trigger，气泡就永远弹不出来
+ *   （v0.0.54 用户实测「场景点删除没反应」即此因）；
  * - Teleport + 定位测量，底部空间不足自动向上翻转；
  * - 视觉：危险图标徽章 + 标题（可选补充说明 description）+ 实心危险确认键；
  *   danger=false 时为普通确认（accent 徽章 + 主色确认键）。
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useLocaleStore } from '../../stores/locale'
 import Icon from './Icon.vue'
 
@@ -69,6 +72,24 @@ function toggle(): void {
   }
 }
 
+/**
+ * 捕获阶段监听触发区的点击。
+ *
+ * 改用捕获而非模板里的 `@click.stop`：插槽内容可能自带 `@click.stop`（行内按钮
+ * 阻止触发行点击），那会在目标阶段截断冒泡，外层永远收不到事件。捕获阶段在
+ * 冒泡之前执行，无论插槽怎么 stop 都能收到。
+ */
+function onTriggerClick(event: Event): void {
+  const target = event.target as Node | null
+  if (!target || !triggerEl.value?.contains(target)) return
+  toggle()
+}
+
+onMounted(() => {
+  // 捕获阶段：第三个参数必须为 true
+  triggerEl.value?.addEventListener('click', onTriggerClick, true)
+})
+
 function close(): void {
   open.value = false
 }
@@ -106,11 +127,12 @@ watch(open, (isOpen) => {
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocMouseDown, true)
   document.removeEventListener('keydown', onKeydown)
+  triggerEl.value?.removeEventListener('click', onTriggerClick, true)
 })
 </script>
 
 <template>
-  <span ref="triggerEl" class="pc-trigger" @click.stop="toggle">
+  <span ref="triggerEl" class="pc-trigger">
     <slot />
     <Teleport to="body">
       <div

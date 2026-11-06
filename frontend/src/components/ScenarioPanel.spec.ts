@@ -138,6 +138,37 @@ describe('ScenarioPanel', () => {
     expect(store.activeTabId).toBe(`scenario:${saved.id}`)
   })
 
+  /**
+   * 真实点击链路：点垃圾桶 → 气泡展开 → 点气泡里的删除。
+   * 旧用例直接 $emit('confirm')，跳过了「气泡能不能弹出来」这一段，
+   * 气泡根本没展开时测试照样绿（v0.0.54 用户实测点删除无反应即此情形）。
+   */
+  it('删除场景：点垃圾桶弹出确认气泡，点确认才真正删除', async () => {
+    const store = useWorkspaceStore()
+    store.scenarios = [makeScenario('sc-a', '下单链路')]
+
+    const wrapper = mount(ScenarioPanel, { attachTo: document.body })
+    await flushPromises()
+
+    await wrapper.find('.sp-act[aria-label="删除场景"]').trigger('click')
+    await flushPromises()
+    const pop = document.body.querySelector('.pc-pop')
+    expect(pop).not.toBeNull()
+    // 点图标不应触发行的 openScenario，也不应直接删除
+    expect(deleteScenario).not.toHaveBeenCalled()
+
+    const confirmBtn = Array.from(pop!.querySelectorAll('button')).find(
+      (b) => b.textContent?.trim() === '删除',
+    )
+    expect(confirmBtn).toBeTruthy()
+    confirmBtn!.click()
+    await flushPromises()
+
+    expect(deleteScenario).toHaveBeenCalledWith('sc-a')
+    expect(store.scenarios.length).toBe(0)
+    wrapper.unmount()
+  })
+
   it('删除场景：Popconfirm 确认后调用删除', async () => {
     const store = useWorkspaceStore()
     store.scenarios = [makeScenario('sc-a', '下单链路')]
