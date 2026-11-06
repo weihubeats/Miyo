@@ -20,6 +20,7 @@ const t = locale.t
 
 const NAV_ITEMS = [
   { key: 'dashboard', labelKey: 'pnav.dashboard', icon: 'gauge' as const, route: '/projects' },
+  { key: 'integration', labelKey: 'pnav.integration', icon: 'beaker' as const, route: '/integration' },
   { key: 'realtime', labelKey: 'pnav.realtime', icon: 'globe' as const, route: '/realtime' },
 ]
 

@@ -24,6 +24,17 @@ import { formatDateTime } from '../../utils/dateTime'
 import { methodBadgeTone } from '../../utils/methodTone'
 import type { ScenarioRunResult, ScenarioStepResult } from '../../types/miyoApi'
 
+/** Blocked / Skipped 行的展示文本（不发送请求的步骤给原因行）。 */
+function holdText(r: ScenarioStepResult): { reason: string; blocked: boolean } | null {
+  if (r.step_status === 'blocked') {
+    return { reason: r.blocked_reason ?? r.request_error ?? '', blocked: true }
+  }
+  if (r.step_status === 'skipped' && r.request_error) {
+    return { reason: r.request_error, blocked: false }
+  }
+  return null
+}
+
 /** 运行中的实时结果行（已结束步带 result，在途步占位）。 */
 export interface LiveRow {
   result: ScenarioStepResult | null
@@ -46,6 +57,8 @@ const props = defineProps<{
   finalState: { text: string; tone: 'ok' | 'fail' | 'warn' } | null
   rerunAvailable: boolean
   hasHistory: boolean
+  /** 历史回看态的「按当时配置重跑」入口（meta 快照存在时才显示）。 */
+  rerunHistoryAvailable?: boolean
   /** 在途步的接口名 / 方法（结果尚未回传时占位；宿主按运行位次反查）。 */
   stepName: (pos: number) => string
   stepMethod: (pos: number) => string
@@ -57,6 +70,7 @@ const emit = defineEmits<{
   (e: 'update:open', v: boolean): void
   (e: 'locate', pos: number): void
   (e: 'rerun'): void
+  (e: 'rerun-history'): void
   (e: 'history', event: MouseEvent): void
   (e: 'toggle-row', i: number): void
 }>()
@@ -168,6 +182,13 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
         @click.stop="emit('rerun')"
       />
       <IconButton
+        v-if="rerunHistoryAvailable"
+        name="play"
+        :size="13"
+        :title="t('integration.rerunFromHistory')"
+        @click.stop="emit('rerun-history')"
+      />
+      <IconButton
         name="history"
         :size="13"
         :title="t('scenario.history')"
@@ -230,6 +251,7 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
               <span v-else-if="o.reason"> — {{ o.reason }}</span>
             </li>
           </ul>
+          <p v-if="row.result?.response?.history_truncated" class="se-rtrunc">{{ t('integration.historyTruncated') }}</p>
           <!-- 响应正文速览：不展开也能看到返回了什么 -->
           <pre v-if="peekOf(row.result?.response)" class="se-rpeek">{{ peekOf(row.result?.response) }}</pre>
           <div v-if="row.result?.extracted && Object.keys(row.result.extracted).length" class="se-rext">
@@ -284,7 +306,11 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
           />
         </div>
         <code v-if="r.url" class="se-rurl" :title="r.url">{{ r.url }}</code>
-        <p v-if="r.request_error" class="se-rerr">{{ r.request_error }}</p>
+        <p v-if="holdText(r)" class="se-rblocked" :class="{ blocked: holdText(r)?.blocked }">
+          <Icon name="alert-triangle" :size="11" />
+          <template v-if="holdText(r)?.blocked">{{ t('integration.blockedReason') }}：</template>{{ holdText(r)?.reason }}
+        </p>
+        <p v-else-if="r.request_error" class="se-rerr">{{ r.request_error }}</p>
         <ul v-if="r.outcomes.length" class="se-routcomes">
           <li v-for="(o, j) in r.outcomes" :key="j" :class="{ fail: !o.passed }">
             {{ o.description }}
@@ -295,6 +321,7 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
             <span v-else-if="o.reason"> — {{ o.reason }}</span>
           </li>
         </ul>
+        <p v-if="r.response?.history_truncated" class="se-rtrunc">{{ t('integration.historyTruncated') }}</p>
         <!-- 响应正文速览：不展开也能看到返回了什么 -->
         <pre v-if="peekOf(r.response)" class="se-rpeek">{{ peekOf(r.response) }}</pre>
         <div v-if="r.extracted && Object.keys(r.extracted).length" class="se-rext">
@@ -702,6 +729,26 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
   color: var(--danger);
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.se-rtrunc {
+  margin: 0;
+  font-size: var(--fs-xxs);
+  color: var(--warning);
+}
+
+.se-rblocked {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+  word-break: break-all;
+}
+
+.se-rblocked.blocked {
+  color: var(--warning);
 }
 
 .se-routcomes {

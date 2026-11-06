@@ -99,7 +99,6 @@ const tabs = computed(() =>
   store.openTabs.map((id) => ({
     id,
     create: store.isCreateTab(id),
-    scenario: store.isScenarioTab(id),
     method: store.draftOf(id)?.method ?? 'GET',
     title: store.titleOf(id),
     dirty: store.isDirty(id),
@@ -273,13 +272,6 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
       >
         <!-- 「新建」伪页签：无方法徽章，闪电指代“待创建” -->
         <span v-if="tab.create" class="tab-spark" aria-hidden="true"><Icon name="zap" :size="12" /></span>
-        <!-- 「场景」伪页签：主题色烧瓶徽章区分于接口方法页签 -->
-        <span
-          v-else-if="tab.scenario"
-          class="tab-scenario-tag"
-          :title="t('tabbar.scenarioTab')"
-          aria-hidden="true"
-        ><Icon name="beaker" :size="12" /></span>
         <span v-else class="method-tag" :class="methodTone(tab.method)">{{ tab.method }}</span>
         <span class="tab-title" v-tooltip-overflow="tab.title">{{ tab.title }}</span>
         <span v-if="tab.dirty" class="tab-dirty" :title="t('tabbar.unsaved')"><Icon name="dot" :size="8" /></span>
@@ -458,17 +450,6 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
 }
 
 /* 「场景」伪页签：主题色淡底烧瓶胶囊（区别于接口的方法色文字徽章） */
-.tab-scenario-tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 22px;
-  height: 18px;
-  border-radius: 999px;
-  background: var(--accent-tint);
-  color: var(--accent);
-}
 
 .tab-title {
   flex: 1;

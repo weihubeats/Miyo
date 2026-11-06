@@ -1,29 +1,30 @@
 /**
- * useScenarioRun：场景运行引擎（自 ScenarioEditor 抽出）。
+ * useScenarioRun：场景运行引擎（集成测试工作流复用）。
  *
- * 职责（原 ScenarioEditor「运行状态 / 运行 / 步骤执行状态 / 执行结果面板 /
- * 重跑失败步骤」五个区块，行为不变）：
+ * 职责（从 WorkflowEditor 抽出的运行状态机）：
  * - 运行状态：running/runId/进度/结果/步骤位次/runtime 快照（历史回看无快照）；
- * - 运行：未保存先落库（避免「跑的不是看到的」）→ 构建启用步骤（URL 保留
- *   {{}} 模板，执行期 runtime 二次渲染）→ 调 runScenario；
+ * - 运行：未保存先落库（避免「跑的不是看到的」）→ 宿主 buildRunSteps 物化
+ *   （内联请求 / 接口引用统一成运行入参，URL 保留 {{}} 模板）→ 调 runScenario；
+ * - 预检警告：后端返回 warnings（未定义变量）→ 非阻断 toast；
+ * - 从步骤执行 / 单步执行：以原运行的 runtime 快照重建链路上下文（无快照
+ *   时仅环境变量并提示）；
  * - 重跑失败：以原运行 runtime 快照重建链路上下文，失败步按原位次回填合并；
- * - 运行历史：列表加载 / 最近一次恢复 / 详情回看（历史无快照不提供重跑）；
- * - 结果面板派生：步骤 tone、汇总、终态、进度百分比、响应行展开、全文加载。
+ * - 运行历史：列表加载 / 最近一次恢复 / 详情回看 / 按历史配置重跑；
+ * - 结果面板派生：步骤 tone（六态）、汇总、终态、进度百分比、响应行展开、全文加载。
  *
- * 留在宿主的视图层：Sortable 拖拽、locateStep（切视图 + 滚动定位）、
- * historyMenu DOM 锚点经 options 传入。
+ * 留在宿主的视图层：Sortable 拖拽、locateStep、historyMenu DOM 锚点经 options 传入。
  */
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, type ComputedRef } from 'vue'
 import type { useWorkspaceStore } from '../stores/workspace'
 import type { useMiyoApi } from '../composables/useMiyoApi'
 import type { useToast } from '../composables/useToast'
 import type {
   Endpoint,
-  ScenarioAssertionRule,
-  ScenarioExtractRule,
   ScenarioRunDetail,
+  ScenarioRunMeta,
   ScenarioRunResult,
   ScenarioRunSummary,
+  ScenarioStepResult,
 } from '../types/miyoApi'
 import { formatDateTime } from '../utils/dateTime'
 import type { MenuItem } from '../components/ui/Menu.vue'
@@ -31,13 +32,31 @@ import type { MenuItem } from '../components/ui/Menu.vue'
 /** 菜单打开能力（宿主持有 Menu 实例；组合式不依赖组件实例类型）。 */
 export type MenuOpener = (anchor: HTMLElement, items: MenuItem[]) => void
 
-/** 编辑态步骤的最小形状（ScenarioEditor 的 EditorStep；本组合式只读）。
- *  断言字段保持编辑态原始宽形状（op/expected 可空），构建入参时统一兜底。 */
-export interface RunEditorStep {
+/** 步骤执行状态 tone（六态 + 运行中/等待两个过程态）。 */
+export type StepTone = 'ok' | 'fail' | 'skip' | 'run' | 'wait' | 'cancel' | 'blocked'
+
+/** 结果 → 徽章 tone：step_status 单源（六态），旧结果（无字段）回退
+ *  cancelled / ok 推导。供运行面板与比较视图共用。 */
+export function toneOf(r: ScenarioStepResult): StepTone {
+  const s = r.step_status
+  if (s === 'blocked') return 'blocked'
+  if (s === 'skipped') return 'skip'
+  if (r.cancelled) return 'cancel'
+  if (s === 'success') return 'ok'
+  if (s === 'failed') return 'fail'
+  return r.ok ? 'ok' : 'fail'
+}
+
+/** 运行入参步骤（宿主物化后的形状：内联请求 / 接口引用统一）。 */
+export interface BuiltRunStep {
+  /** 编辑态步骤位次（结果按 step_index 映射回步骤卡）。 */
+  index: number
+  endpoint: Endpoint
+  /** 渲染前 URL 模板（含 {{base_url}} / {{var}} 等未解析占位）。 */
+  url: string
   enabled: boolean
-  endpointId: string
-  extract: ScenarioExtractRule[]
-  assertions: ScenarioAssertionRule[]
+  extract: { name: string; path: string }[]
+  assertions: { type: string; path: string | null; op: string; expected: unknown }[]
 }
 
 export interface UseScenarioRunOptions {
@@ -50,14 +69,8 @@ export interface UseScenarioRunOptions {
   scenario: ComputedRef<{ id: string; name: string } | null>
   /** props.scenarioId（防异步竞态：恢复历史前校验仍是当前场景）。 */
   scenarioId: string
-  /** 编辑态步骤数组（构建运行入参 / 重跑可用性判定用）。 */
-  steps: Ref<RunEditorStep[]>
-  /** 接口 id → 接口配置。 */
-  endpointMap: ComputedRef<Map<string, Endpoint>>
-  /** 接口 → URL 模板（路径变量先行代入，{{var}} 保留）。 */
-  urlTemplateFor: (ep: Endpoint) => string
-  /** 断言期望值字面量转型（数字 / 布尔 / 字符串）。 */
-  coerceExpected: (raw: string) => unknown
+  /** 宿主物化：编辑态 → 运行入参步骤（调用方保证顺序与启用标记）。 */
+  buildRunSteps: () => BuiltRunStep[]
   /** 编辑态是否有未保存修改（运行前先落库）。 */
   dirty: ComputedRef<boolean>
   /** 落库（运行前置）。 */
@@ -78,18 +91,8 @@ export interface ScenarioProgressEvent {
   result?: ScenarioRunResult['results'][number] | null
 }
 
-/** 单个启用步骤 → 运行入参（URL 保留 {{}} 模板，执行期 runtime 二次渲染）。 */
-export interface BuiltRunStep {
-  index: number
-  endpoint: Endpoint
-  url: string
-  enabled: boolean
-  extract: { name: string; path: string }[]
-  assertions: { type: string; path: string | null; op: string; expected: unknown }[]
-}
-
 export function useScenarioRun(options: UseScenarioRunOptions) {
-  const { store, api, toast, t, scenario, scenarioId, steps, endpointMap, urlTemplateFor, coerceExpected, dirty, save, openMenuAt } =
+  const { store, api, toast, t, scenario, scenarioId, buildRunSteps, dirty, save, openMenuAt } =
     options
 
   // ---------- 运行状态 ----------
@@ -104,7 +107,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
   // ---------- 逐步实时结果（后端进度事件 `miyo:scenario-progress`） ----------
   /** 运行中按位累积的已完成步结果：后端每步结束即回传，前端立刻可见
    *  （不必等整轮跑完）；运行结束后由 runScenario 的返回整体覆盖。 */
-  const liveResults = ref<(ScenarioRunResult['results'][number] | undefined)[]>([])
+  const liveResults = ref<(ScenarioStepResult | undefined)[]>([])
   /** 运行中「已进入但未结束」的步：位次 + 渲染后实际发出的 URL。 */
   const inFlight = ref<{ pos: number; url: string } | null>(null)
 
@@ -127,11 +130,11 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
 
   /** 运行中的结果行：已完成步 + 在途步占位（步骤一进入就有行，不必等整轮）。 */
   const liveRows = computed<
-    { result: ScenarioRunResult['results'][number] | null; pos: number; url: string | null }[]
+    { result: ScenarioStepResult | null; pos: number; url: string | null }[]
   >(() => {
     if (!running.value) return []
     const rows: {
-      result: ScenarioRunResult['results'][number] | null
+      result: ScenarioStepResult | null
       pos: number
       url: string | null
     }[] = []
@@ -156,8 +159,8 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
 
   /** 执行策略（失败即停的可读化表达，底层仍是 stop_on_failure 布尔）。 */
   const STRATEGY_OPTIONS = computed(() => [
-    { value: 'stop', label: t('scenario.stopOnFailure') },
-    { value: 'continue', label: t('scenario.strategyContinue') },
+    { value: 'stop', label: t('integration.strategyStop') },
+    { value: 'continue', label: t('integration.strategyContinue') },
   ])
   const execStrategy = computed({
     get: () => (stopOnFailure.value ? 'stop' : 'continue'),
@@ -166,11 +169,9 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     },
   })
 
-  // ---------- 步骤执行状态（卡片徽章 + 结果面板共用） ----------
-  type StepTone = 'ok' | 'fail' | 'skip' | 'run' | 'done' | 'wait' | 'cancel'
-
+  // ---------- 步骤执行状态（卡片徽章 + 结果面板共用；六态） ----------
   const resultByStepIndex = computed(() => {
-    const m = new Map<number, ScenarioRunResult['results'][number]>()
+    const m = new Map<number, ScenarioStepResult>()
     const results = runResult.value?.results ?? []
     runStepIndexes.value.forEach((stepIdx, i) => {
       const r = results[i]
@@ -179,45 +180,39 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     return m
   })
 
-  /** 结果按位对应 runStepIndexes；运行中已完成步按真实结果着色（ok / fail），
+  /** 结果按位对应 runStepIndexes；运行中已完成步按真实结果着色，
    * 在途步「执行中」，未到达的「待执行」。 */
   function stepTone(i: number): StepTone | null {
     const pos = runStepIndexes.value.indexOf(i)
     if (pos === -1) return null
     if (running.value) {
       const live = liveResults.value[pos]
-      if (live) {
-        if (live.cancelled) return 'cancel'
-        return live.ok ? 'ok' : 'fail'
-      }
+      if (live) return toneOf(live)
       return inFlight.value?.pos === pos ? 'run' : 'wait'
     }
     if (!runResult.value) return null
     const r = resultByStepIndex.value.get(i)
-    if (r) {
-      if (r.cancelled) return 'cancel'
-      return r.ok ? 'ok' : 'fail'
-    }
+    if (r) return toneOf(r)
     return runResult.value.stopped_on_failure || runResult.value.cancelled ? 'skip' : 'wait'
   }
 
   const STEP_TONE_TEXT: Record<StepTone, string> = {
-    ok: 'scenario.stepStatusOk',
-    fail: 'scenario.stepStatusFail',
-    skip: 'scenario.stepStatusSkip',
-    run: 'scenario.stepStatusRun',
-    done: 'scenario.stepStatusDone',
-    wait: 'scenario.stepStatusWait',
+    ok: 'integration.statusSuccess',
+    fail: 'integration.statusFailed',
+    skip: 'integration.statusSkipped',
+    run: 'integration.statusRunning',
+    wait: 'integration.statusPending',
     cancel: 'scenario.stepStatusCancelled',
+    blocked: 'integration.statusBlocked',
   }
   const STEP_TONE_ICON: Record<StepTone, 'check' | 'x' | 'chevron-right' | 'dot' | 'clock' | 'stop'> = {
     ok: 'check',
     fail: 'x',
     skip: 'chevron-right',
     run: 'dot',
-    done: 'check',
     wait: 'clock',
     cancel: 'stop',
+    blocked: 'x',
   }
 
   // ---------- 执行结果面板 ----------
@@ -227,8 +222,12 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
   const runIsHistory = ref(false)
   /** 当前展示结果的完成时刻（RFC3339）。 */
   const currentRunAt = ref<string | null>(null)
-  /** 每步执行前的 runtime 快照（与 results 同位序；重跑失败步骤的初始变量来源，
-   * 仅实时运行有，历史回看无）。 */
+  /** 当前展示结果的开始时刻（meta.startedAt；旧历史缺失为 null）。 */
+  const currentRunStartedAt = ref<string | null>(null)
+  /** 当前展示结果的运行元信息（历史重跑的配置真源；实时运行为 null）。 */
+  const runMeta = ref<ScenarioRunMeta | null>(null)
+  /** 每步执行前的 runtime 快照（与 results 同位序；重跑失败步骤 / 从本步
+   * 执行的初始变量来源，仅实时运行有，历史回看无）。 */
   const varsSnapshots = ref<Record<string, string>[]>([])
 
   /** 运行历史列表（新→旧；场景切换后刷新）。 */
@@ -271,6 +270,8 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     runId.value = detail.id
     progress.value = { done: detail.results.length, total: detail.total_steps }
     currentRunAt.value = detail.finished_at
+    currentRunStartedAt.value = detail.meta?.startedAt ?? null
+    runMeta.value = detail.meta ?? null
     runIsHistory.value = true
     reportOpen.value = true
     respOpenRows.value = new Set()
@@ -295,7 +296,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
             icon: r.cancelled ? ('stop' as const) : r.fail_count > 0 ? ('x' as const) : ('check' as const),
           }
         })
-      : [{ key: 'empty', label: t('scenario.historyEmpty'), disabled: true }]
+      : [{ key: 'empty', label: t('integration.historyEmpty'), disabled: true }]
     openMenuAt(e.currentTarget as HTMLElement, items)
   }
 
@@ -303,65 +304,27 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     try {
       const detail = await api.getScenarioRun(item.key)
       if (!detail) {
-        toast.warning(t('scenario.historyMissing'))
+        toast.warning(t('integration.historyMissing'))
         await loadHistory()
         return
       }
       applyHistoryDetail(detail)
     } catch (err) {
-      toast.error(t('scenario.runFail'), {
+      toast.error(t('integration.runStartFail'), {
         message: err instanceof Error ? err.message : String(err),
       })
     }
   }
 
   // ---------- 运行 ----------
-  /** 单个启用步骤 → 运行入参。 */
-  function buildOneRunStep(stepIdx: number): BuiltRunStep | null {
-    const s = steps.value[stepIdx]
-    if (!s || !s.enabled) return null
-    const ep = endpointMap.value.get(s.endpointId)
-    if (!ep) return null
-    return {
-      index: stepIdx,
-      endpoint: ep,
-      url: urlTemplateFor(ep),
-      enabled: true,
-      extract: s.extract.filter((r) => r.name.trim() && r.path.trim()),
-      assertions: s.assertions
-        .filter((r) => r.type)
-        .map((r) => ({
-          type: r.type as string,
-          path: r.path?.trim() || null,
-          op: r.op || 'eq',
-          expected: coerceExpected(r.expected as unknown as string),
-        })),
-    }
-  }
-
-  function buildRunSteps(): BuiltRunStep[] {
-    const out: BuiltRunStep[] = []
-    steps.value.forEach((_, i) => {
-      const built = buildOneRunStep(i)
-      if (built) out.push(built)
-    })
-    return out
-  }
-
-  async function run(): Promise<void> {
-    if (!scenario.value || running.value) return
-    // 未保存先落库（后端按提交内容执行，避免「跑的不是看到的」）。
-    if (dirty.value && !(await save())) return
-    const built = buildRunSteps()
-    if (!built.length) {
-      toast.warning(t('scenario.noEnabledSteps'))
-      return
-    }
+  function resetRunState(built: BuiltRunStep[]): void {
     runResult.value = null
     runStepIndexes.value = built.map((b) => b.index)
     respOpenRows.value = new Set()
     runIsHistory.value = false
     currentRunAt.value = null
+    currentRunStartedAt.value = null
+    runMeta.value = null
     varsSnapshots.value = []
     liveResults.value = []
     inFlight.value = null
@@ -369,6 +332,44 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     reportOpen.value = true
     running.value = true
     runId.value = crypto.randomUUID()
+  }
+
+  /** 运行前置：未保存先落库 + 物化步骤（空启用步骤时 toast 并返回 null）。 */
+  async function prepareRun(): Promise<BuiltRunStep[] | null> {
+    if (!scenario.value || running.value) return null
+    if (dirty.value && !(await save())) return null
+    const built = buildRunSteps()
+    if (!built.length) {
+      toast.warning(t('scenario.noEnabledSteps'))
+      return null
+    }
+    return built
+  }
+
+  /** 运行后置：接收结果 / 预检警告 / 历史刷新。 */
+  function finishRun(result: ScenarioRunResult, built: BuiltRunStep[]): void {
+    runResult.value = result
+    varsSnapshots.value = result.vars_snapshots ?? []
+    currentRunAt.value = new Date().toISOString()
+    if (result.warnings?.length) {
+      toast.warning(t('integration.undefinedVarsWarning', { vars: result.warnings.join('；') }), {
+        duration: 8000,
+      })
+    }
+    void loadHistory()
+    void built
+  }
+
+  function runErrorToast(err: unknown): void {
+    toast.error(t('integration.runStartFail'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  async function run(): Promise<void> {
+    const built = await prepareRun()
+    if (!built) return
+    resetRunState(built)
     try {
       const result = await api.runScenario({
         steps: built,
@@ -377,23 +378,18 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
         runId: runId.value,
         scenarioId,
       })
-      runResult.value = result
-      varsSnapshots.value = result.vars_snapshots ?? []
-      currentRunAt.value = new Date().toISOString()
-      void loadHistory()
+      finishRun(result, built)
     } catch (err) {
       // 抛错时把已跑完的步骤留住（实时结果不清空），便于排查是哪一步出的问题。
       if (liveResults.value.some(Boolean)) {
         runResult.value = {
-          results: liveResults.value.filter((r): r is NonNullable<typeof r> => !!r),
+          results: liveResults.value.filter((r): r is ScenarioStepResult => !!r),
           cancelled: false,
           stopped_on_failure: false,
           variables: {},
         }
       }
-      toast.error(t('scenario.runFail'), {
-        message: err instanceof Error ? err.message : String(err),
-      })
+      runErrorToast(err)
     } finally {
       running.value = false
       inFlight.value = null
@@ -409,22 +405,72 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     }
   }
 
+  // ---------- 从指定步骤执行 / 单步执行 ----------
+  /**
+   * 从编辑态位次 `fromIdx` 起（含）执行到末尾；单步执行 = 只跑该位次。
+   * 初始变量：原运行在该步执行前的 runtime 快照（重建链路上下文）；
+   * 无快照（从未整跑过 / 历史回看）时仅用环境变量并提示。
+   */
+  async function runFrom(fromIdx: number, onlyThis: boolean): Promise<void> {
+    const built = await prepareRun()
+    if (!built) return
+    const all = buildRunSteps()
+    const start = all.findIndex((b) => b.index === fromIdx)
+    if (start === -1) return
+    const subset = onlyThis ? [all[start]] : all.slice(start)
+    if (!subset.length) return
+
+    const snapshot = varsSnapshots.value[start]
+    const initialVars = snapshot ? { ...snapshot } : undefined
+    if (!snapshot) {
+      toast.info(t('integration.runFromStepNoSnapshot'))
+    }
+
+    resetRunState(subset)
+    try {
+      const result = await api.runScenario({
+        steps: subset,
+        environmentId: store.activeEnvId,
+        stopOnFailure: stopOnFailure.value,
+        runId: runId.value,
+        scenarioId,
+        initialVars,
+      })
+      finishRun(result, subset)
+    } catch (err) {
+      if (liveResults.value.some(Boolean)) {
+        runResult.value = {
+          results: liveResults.value.filter((r): r is ScenarioStepResult => !!r),
+          cancelled: false,
+          stopped_on_failure: false,
+          variables: {},
+        }
+      }
+      runErrorToast(err)
+    } finally {
+      running.value = false
+      inFlight.value = null
+    }
+  }
+
   // ---------- 重跑失败步骤 ----------
   // 仅实时运行结果可重跑（需要 runtime 快照重建链路上下文；历史无快照不提供入口）。
   // 语义：失败步骤按原顺序串行重跑；首个重跑步以当时的 runtime 为初始变量，
   // 其后每个重跑步先合并原运行中「位于两者之间的成功步骤」的提取增量——
   // 即「若这些步骤依次重跑」的链路状态；失败步骤自身不并入旧提取值（重跑会重新提取）。
 
-  /** 可重跑的结果位次（失败且非取消、且对应步骤仍能按当前编辑态构建）。 */
+  /** 可重跑的结果位次（失败 / Blocked 且非取消、且对应步骤仍能按当前编辑态构建）。 */
   function rerunPositions(): number[] {
     const res = runResult.value
     if (!res) return []
     const out: number[] = []
     res.results.forEach((r, i) => {
-      if (r.ok || r.cancelled) return
+      const status = r.step_status
+      const rerunnable = status === 'failed' || status === 'blocked' || (!status && !r.ok)
+      if (!rerunnable || r.cancelled) return
       const stepIdx = runStepIndexes.value[i]
       if (stepIdx == null || stepIdx < 0) return
-      if (buildOneRunStep(stepIdx)) out.push(i)
+      out.push(i)
     })
     return out
   }
@@ -441,11 +487,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     const res = runResult.value
     if (!res) return
     const positions = rerunPositions()
-    if (!positions.length) {
-      toast.warning(t('scenario.rerunUnavailable'))
-      return
-    }
-    if (!varsSnapshots.value.length) {
+    if (!positions.length || !varsSnapshots.value.length) {
       toast.warning(t('scenario.rerunUnavailable'))
       return
     }
@@ -462,9 +504,10 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     // 子集步骤按当前编辑态重建（修正后的配置即参跑）。
     const built: BuiltRunStep[] = []
     const builtPositions: number[] = []
+    const all = buildRunSteps()
     for (const pos of positions) {
       const stepIdx = runStepIndexes.value[pos]
-      const one = buildOneRunStep(stepIdx)
+      const one = all.find((b) => b.index === stepIdx)
       if (!one) continue
       built.push(one)
       builtPositions.push(pos)
@@ -476,6 +519,8 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
 
     runIsHistory.value = false
     currentRunAt.value = null
+    currentRunStartedAt.value = null
+    runMeta.value = null
     respOpenRows.value = new Set()
     // 重跑的结果按原位次回填，实时事件位次是「重跑子集内」的位次，两者不同位序，
     // 故重跑不做逐步实时渲染，整轮回填后一次展示（避免错位）。
@@ -516,11 +561,63 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
       currentRunAt.value = new Date().toISOString()
       void loadHistory()
     } catch (err) {
-      toast.error(t('scenario.runFail'), {
-        message: err instanceof Error ? err.message : String(err),
-      })
+      runErrorToast(err)
     } finally {
       running.value = false
+    }
+  }
+
+  // ---------- 按历史配置重跑 ----------
+  /**
+   * 历史回看态的「重跑」：用 meta.steps（运行当时的材料化配置快照）重建
+   * 运行入参——不是「当前编辑态」，正是「历史执行基于当时配置快照」的兑现。
+   * 初始变量取 meta.initialVars（敏感值已脱敏，缺失的敏感变量需用户重配环境）。
+   */
+  const rerunHistoryAvailable = computed(
+    () => !running.value && runIsHistory.value && !!runMeta.value?.steps?.length,
+  )
+
+  async function rerunFromHistory(): Promise<void> {
+    const meta = runMeta.value
+    if (!scenario.value || running.value || !meta?.steps?.length) return
+    const built: BuiltRunStep[] = meta.steps.map((m, i) => ({
+      index: i,
+      endpoint: { ...m.endpoint, request: m.spec_template },
+      url: m.url_template,
+      enabled: true,
+      extract: m.extract.map((e) => ({ name: e.name, path: e.path })),
+      assertions: m.assertions.map((a) => ({
+        type: a.type,
+        path: a.path,
+        op: a.op ?? 'eq',
+        expected: a.expected,
+      })),
+    }))
+    resetRunState(built)
+    const initialVars = meta.initialVars && Object.keys(meta.initialVars).length ? { ...meta.initialVars } : undefined
+    try {
+      const result = await api.runScenario({
+        steps: built,
+        environmentId: store.activeEnvId,
+        stopOnFailure: meta.stopOnFailure ?? stopOnFailure.value,
+        runId: runId.value,
+        scenarioId,
+        initialVars,
+      })
+      finishRun(result, built)
+    } catch (err) {
+      if (liveResults.value.some(Boolean)) {
+        runResult.value = {
+          results: liveResults.value.filter((r): r is ScenarioStepResult => !!r),
+          cancelled: false,
+          stopped_on_failure: false,
+          variables: {},
+        }
+      }
+      runErrorToast(err)
+    } finally {
+      running.value = false
+      inFlight.value = null
     }
   }
 
@@ -543,14 +640,19 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
   const runSummary = computed(() => {
     const r = runResult.value
     if (!r) return null
-    const ok = r.results.filter((x) => x.ok).length
+    const byStatus = (statuses: string[]) =>
+      r.results.filter((x) => statuses.includes(x.step_status ?? '')).length
+    const ok = byStatus(['success'])
+    const blocked = byStatus(['blocked'])
+    const skipped = byStatus(['skipped'])
+    const failed = r.results.length - ok - blocked - skipped
     const duration = r.results.reduce((acc, x) => acc + (x.duration_ms ?? 0), 0)
     return {
       total: runStepIndexes.value.length,
       ok,
-      fail: r.results.length - ok,
-      // 失败即停 / 取消时未执行的启用步骤计为跳过。
-      skipped: Math.max(0, runStepIndexes.value.length - r.results.length),
+      fail: failed,
+      blocked,
+      skipped,
       duration,
     }
   })
@@ -592,6 +694,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     reportOpen,
     runIsHistory,
     currentRunAt,
+    currentRunStartedAt,
     varsSnapshots,
     runHistory,
     loadHistory,
@@ -605,12 +708,14 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     runSummary,
     finalState,
     progressPercent,
-    // 运行 / 重跑
-    buildOneRunStep,
-    buildRunSteps,
+    // 运行 / 停止 / 子集执行 / 重跑
     run,
     stop,
+    runFrom,
     rerunAvailable,
     rerunFailed,
+    runMeta,
+    rerunHistoryAvailable,
+    rerunFromHistory,
   }
 }

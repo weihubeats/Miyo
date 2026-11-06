@@ -26,6 +26,11 @@ const router = createRouter({
       component: () => import('../views/RealtimeView.vue'),
     },
     {
+      path: '/integration',
+      name: 'integration',
+      component: () => import('../views/IntegrationView.vue'),
+    },
+    {
       path: '/workspace',
       name: 'workspace',
       component: () => import('../views/WorkspaceView.vue'),

@@ -11,6 +11,9 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useLocaleStore } from '../stores/locale'
 import { useWorkspaceStore } from '../stores/workspace'
+import { useIntegrationStore } from '../stores/integration'
+import { useMiyoApi } from '../composables/useMiyoApi'
+import { useRouter } from 'vue-router'
 import { useThemeStore } from '../stores/theme'
 import { fuzzyScore } from '../utils/fuzzyMatch'
 import { methodTextTone } from '../utils/methodTone'
@@ -91,28 +94,51 @@ const matchedEndpoints = computed<Item[]>(() => {
     .slice(0, 12)
 })
 
-const matchedScenarios = computed<Item[]>(() => {
-  const q = query.value.trim()
-  if (!q) return []
-  return store.scenarios
-    .map((s): Item | null => {
-      const score = fuzzyScore(s.name, q)
-      return score == null
-        ? null
-        : {
-            key: `sc:${s.id}`,
-            group: 'scenarios' as const,
-            title: s.name,
-            subtitle: t('scenario.stepCount', { n: s.steps.length }),
-            icon: 'beaker' as const,
-            score,
-            run: () => store.openScenario(s.id),
-          }
-    })
-    .filter((v): v is Item => v !== null)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 6)
-})
+const integration = useIntegrationStore()
+const quickApi = useMiyoApi()
+const router = useRouter()
+/** 场景搜索：异步取当前项目场景（集成测试入口收敛后，工作区 store 不再持有场景列表）。 */
+const scenarioHits = ref<Item[]>([])
+const matchedScenarios = computed<Item[]>(() => scenarioHits.value)
+watch(
+  [query, () => store.project?.id],
+  async ([q]) => {
+    const kw = String(q ?? '').trim()
+    if (!kw || !store.project?.id) {
+      scenarioHits.value = []
+      return
+    }
+    try {
+      const list = await quickApi.listScenarios(store.project.id)
+      scenarioHits.value = list
+        .map((s): Item | null => {
+          const score = fuzzyScore(s.name, kw)
+          return score == null
+            ? null
+            : {
+                key: `sc:${s.id}`,
+                group: 'scenarios' as const,
+                title: s.name,
+                subtitle: t('scenario.stepCount', { n: s.steps.length }),
+                icon: 'beaker' as const,
+                score,
+                run: () => {
+                  integration.setProject(store.project!.id)
+                  integration.openScenario(s.id)
+                  // 测试环境无 router 实例：可跳转时进入集成测试视图
+                  void router?.push('/integration')
+                },
+              }
+        })
+        .filter((v): v is Item => v !== null)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 6)
+    } catch {
+      scenarioHits.value = []
+    }
+  },
+  { immediate: true },
+)
 
 const matchedEnvs = computed<Item[]>(() => {
   const q = query.value.trim()

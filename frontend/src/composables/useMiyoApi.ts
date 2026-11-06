@@ -66,6 +66,7 @@ import type {
   ProtoFile,
   ResponseExample,
   Scenario,
+  ScenarioLibraryItem,
   ScenarioRunResult,
   ScenarioRunSummary,
   ScenarioRunDetail,
@@ -376,6 +377,10 @@ export function useMiyoApi() {
   // ---------- 场景（集成链路测试） ----------
   const listScenarios = (projectId: string) =>
     run(() => call<Scenario[]>('list_scenarios', { projectId }))
+
+  /** 场景库条目（场景 + 最近运行摘要单次 IPC；列表页用，免 N+1）。 */
+  const listScenarioSummaries = (projectId: string) =>
+    run(() => call<ScenarioLibraryItem[]>('list_scenario_summaries', { projectId }))
 
   const saveScenario = (scenario: Scenario) =>
     run(() => call<Scenario>('save_scenario', { scenario }))
@@ -775,6 +780,7 @@ export function useMiyoApi() {
     oauthAccessToken,
     oauthFetchToken,
     listScenarios,
+    listScenarioSummaries,
     saveScenario,
     deleteScenario,
     runScenario,

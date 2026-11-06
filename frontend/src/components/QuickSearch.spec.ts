@@ -4,13 +4,21 @@
  * store 直接置数据（无 IPC 依赖；store 创建期的后台项目恢复失败已被吞掉）。
  */
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(async (cmd: string) => {
+    if (cmd === 'plugin:miyo|list_scenarios') return [makeScenario()]
+    return null
+  }),
+}))
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import QuickSearch from './QuickSearch.vue'
 import { useLocaleStore } from '../stores/locale'
 import { useWorkspaceStore } from '../stores/workspace'
+import { useIntegrationStore } from '../stores/integration'
 import type { Endpoint, Scenario } from '../types/miyoApi'
 
 function makeEndpoint(): Endpoint {
@@ -49,6 +57,7 @@ function makeScenario(): Scenario {
     project_id: 'p-1',
     name: '登录链路',
     description: '',
+    category: '',
     sort_order: 0,
     steps: [],
     created_at: '2026-01-01T00:00:00.000Z',
@@ -84,8 +93,16 @@ describe('QuickSearch 命令面板', () => {
     useLocaleStore().setMode('zh')
     const store = useWorkspaceStore()
     store.endpoints = [makeEndpoint()]
-    store.scenarios = [makeScenario()]
     store.environments = []
+    // 场景搜索按项目拉取（list_scenarios IPC），需要项目上下文
+    store.project = {
+      id: 'p-1',
+      name: '演示项目',
+      description: '',
+      variables: {},
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    }
     store.histories = []
     store.recentEndpointIds = ['ep-1']
   })
@@ -110,16 +127,19 @@ describe('QuickSearch 命令面板', () => {
     wrapper.unmount()
   })
 
-  it('模糊查询命中场景（子序列），Enter 打开场景页签', async () => {
-    const store = useWorkspaceStore()
+  it('模糊查询命中场景（子序列），Enter 跳转集成测试编辑', async () => {
+    const integration = useIntegrationStore()
     const wrapper = mount(QuickSearch, { props: { open: true }, attachTo: document.body })
     await nextTick()
     await setQuery('登链')
+    // 场景结果异步拉取（list_scenarios IPC），等微任务 flush
+    await new Promise((r) => setTimeout(r, 0))
+    await nextTick()
     expect(bodyText()).toContain('登录链路')
     // 接口名不含该子序列（「用户文章」），不应混入结果
     expect(bodyText()).not.toContain('用户文章')
     await pressKey('Enter')
-    expect(store.activeTabId).toBe('scenario:sc-1')
+    expect(integration.activeScenarioId).toBe('sc-1')
     wrapper.unmount()
   })
 

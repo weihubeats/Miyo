@@ -371,13 +371,16 @@ pub async fn list_scenario_summaries(
     Ok(items)
 }
 
-/// 场景运行历史详情：摘要 + 回读的步骤结果与变量池。
+/// 场景运行历史详情：摘要 + 回读的步骤结果与变量池 + 运行元信息。
 #[derive(Debug, Serialize)]
 pub struct ScenarioRunDetail {
     #[serde(flatten)]
     pub summary: ScenarioRunSummary,
     pub results: Vec<miyo_test::runner::EndpointResult>,
     pub variables: HashMap<String, String>,
+    /// 运行元信息（meta_json 解析：startedAt / 当时配置快照 steps / 初始变量
+    /// initialVars（脱敏）/ stopOnFailure / warnings）；旧行为 None。
+    pub meta: Option<serde_json::Value>,
 }
 
 /// 历史中每步响应正文的保留上限（超限截断并标记 `history_truncated`）。
@@ -532,10 +535,15 @@ pub async fn get_scenario_run(
             .map_err(|e| CommandError::validation(format!("运行历史结果解析失败：{e}")))?;
     let variables: HashMap<String, String> = serde_json::from_str(&run.variables_json)
         .map_err(|e| CommandError::validation(format!("运行历史变量解析失败：{e}")))?;
+    let meta = run
+        .meta_json
+        .as_deref()
+        .and_then(|m| serde_json::from_str(m).ok());
     Ok(Some(ScenarioRunDetail {
         summary: ScenarioRunSummary::from_record(run),
         results,
         variables,
+        meta,
     }))
 }
 

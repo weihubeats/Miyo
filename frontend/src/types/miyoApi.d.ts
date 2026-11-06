@@ -327,14 +327,29 @@ export interface Team {
   updated_at: string
 }
 
-/** 场景步骤：引用接口 + 步骤级提取 / 断言（URL/头/体用接口当前配置）。 */
+/** 场景步骤的内联请求定义（步骤自持请求配置，不引用接口）。 */
+export interface ScenarioInlineRequest {
+  /** 宽松字符串（未知方法运行时报错，徽章兜底中性灰）。 */
+  method: string
+  /** 请求 URL 模板，支持 {{base_url}} / {{var}}。 */
+  url: string
+  /** 与接口 RequestSpec 同构（params/headers/body/auth/timeout 等）。 */
+  spec: RequestSpec
+}
+
+/** 场景步骤：引用接口（endpoint_id 有值）或内联请求（request 有值）+ 步骤级提取 / 断言。 */
 export interface ScenarioStep {
-  endpoint_id: string
+  /** 引用式步骤的接口 id；内联步骤为 null。 */
+  endpoint_id: string | null
   enabled: boolean
   /** 提取规则（ExtractSpec 数组形状，JSON 透传）。 */
   extract: unknown
   /** 断言规则（AssertionSpec 数组形状，JSON 透传）。 */
   assertions: unknown
+  /** 步骤名（内联必填；引用缺省用接口名展示）。 */
+  name?: string | null
+  /** 内联请求定义；缺省 = 引用式步骤。 */
+  request?: ScenarioInlineRequest | null
 }
 
 /** 集成测试场景（Rust `Scenario`）：项目级接口链路。 */
@@ -343,12 +358,19 @@ export interface Scenario {
   project_id: string
   name: string
   description: string
+  /** 分类标签（场景库过滤；空 = 未分类）。 */
+  category: string
   sort_order: number
   steps: ScenarioStep[]
   /** 自定义脚本（脚本视图编辑后持久化）；缺省 = 未自定义，视图实时由 steps 生成。 */
   script?: string | null
   created_at: string
   updated_at: string
+}
+
+/** 场景库列表项（Rust `ScenarioLibraryItem`；场景字段平铺 + 最近运行摘要）。 */
+export interface ScenarioLibraryItem extends Scenario {
+  last_run?: ScenarioRunSummary | null
 }
 
 /** 提取规则编辑形状（与后端 ExtractSpec 同构）。 */
@@ -391,6 +413,8 @@ export interface ScenarioStepResponse {
   truncated: boolean
   /** `body` 是否仅为 IPC 预览（超 2MB 截断；全文按 `{runId}:{结果位次}` 取回）。 */
   body_omitted?: boolean
+  /** `body` 是否为历史落库截断版（64KB 上限；全文不可再取回）。 */
+  history_truncated?: boolean
   /** 实际发出形态（变量渲染 / 认证注入后的最终值；旧后端缺失）。 */
   request?: RequestSnapshot | null
 }
@@ -423,7 +447,20 @@ export interface ScenarioStepResult {
   cancelled?: boolean
   /** 响应快照（发送成功时存在；旧后端缺失）。 */
   response?: ScenarioStepResponse | null
+  /** 步骤执行状态（success/failed/blocked/skipped/cancelled；旧后端缺失）。 */
+  step_status?: string | null
+  /** Blocked 原因（缺哪个变量、产自哪步）；仅 blocked 状态有值。 */
+  blocked_reason?: string | null
 }
+
+/** 步骤执行状态（六态；结果行与徽章共用）。 */
+export type WorkflowStepStatus =
+  | 'pending'
+  | 'running'
+  | 'success'
+  | 'failed'
+  | 'skipped'
+  | 'blocked'
 
 /** 场景运行结果（Rust `ScenarioRunResult`）。 */
 export interface ScenarioRunResult {
@@ -431,9 +468,11 @@ export interface ScenarioRunResult {
   cancelled: boolean
   stopped_on_failure: boolean
   variables: Record<string, string>
-  /** 每步执行前的 runtime 快照（与 results 同位序；重跑失败步骤的初始变量来源；
-   * 旧后端缺失）。 */
+  /** 每步执行前的 runtime 快照（与 results 同位序；重跑失败步骤 / 从本步
+   * 执行的初始变量来源；旧后端缺失）。 */
   vars_snapshots?: Record<string, string>[]
+  /** 运行前预检警告（未定义变量按字面量发送的提示；旧后端缺失）。 */
+  warnings?: string[]
 }
 
 /** 场景运行历史（Rust `ScenarioRunSummary`；命令层已剥 results/variables 正文）。 */
@@ -451,11 +490,37 @@ export interface ScenarioRunSummary {
   stopped_on_failure: boolean
 }
 
+/** 运行元信息（meta_json；历史重跑的配置真源）。 */
+export interface ScenarioRunMeta {
+  version: number
+  startedAt: string
+  stopOnFailure: boolean
+  /** 材料化步骤快照（ScenarioStepInput[]，含当时接口配置 / 内联请求）。 */
+  steps: {
+    endpoint: Endpoint
+    url_template: string
+    spec_template: RequestSpec
+    extract: { name: string; from: string; path: string }[]
+    assertions: {
+      name: string | null
+      type: string
+      path: string | null
+      op: string | null
+      expected: unknown
+    }[]
+    enabled: boolean
+  }[]
+  /** 初始变量（敏感值已脱敏）。 */
+  initialVars: Record<string, string>
+  warnings: string[]
+}
+
 /** 场景运行历史详情（Rust `ScenarioRunDetail`；results 与实时运行同形，
- * response 正文已剥离——历史回看不加载响应体）。 */
+ * 响应正文 64KB 内保留可回看；meta 供按当时配置重跑）。 */
 export interface ScenarioRunDetail extends ScenarioRunSummary {
   results: ScenarioStepResult[]
   variables: Record<string, string>
+  meta?: ScenarioRunMeta | null
 }
 
 /** 同步远端类型。 */

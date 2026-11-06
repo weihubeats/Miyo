@@ -18,8 +18,6 @@ import HeaderUpdateTag from '../components/HeaderUpdateTag.vue'
 import ProjectTabs from '../components/ProjectTabs.vue'
 import WindowControls from '../components/WindowControls.vue'
 import EndpointTree from '../components/EndpointTree.vue'
-import ScenarioEditor from '../components/ScenarioEditor.vue'
-import ScenarioPanel from '../components/ScenarioPanel.vue'
 import EnvironmentBar from '../components/EnvironmentBar.vue'
 import Icon from '../components/ui/Icon.vue'
 import IconButton from '../components/ui/IconButton.vue'
@@ -68,11 +66,6 @@ const showSettings = ref(false)
 const activeIsCreate = computed(
   () => !!store.activeTabId && store.isCreateTab(store.activeTabId),
 )
-/** 激活页签是「场景」伪页签 → 内容区渲染场景编排视图。 */
-const activeScenarioId = computed(() => {
-  const id = store.activeTabId
-  return id && store.isScenarioTab(id) ? id.slice('scenario:'.length) : null
-})
 const showSync = ref(false)
 const showShortcuts = ref(false)
 
@@ -135,11 +128,11 @@ const {
 } = useSidebarResize()
 
 // ---------- 侧栏页签：接口目录 / 请求历史 ----------
-type SidebarTab = 'collections' | 'scenarios' | 'history' | 'cookies'
+// 集成测试已收敛到顶级「集成测试」入口（/integration），工作区不再提供场景页签。
+type SidebarTab = 'collections' | 'history' | 'cookies'
 const sidebarTab = ref<SidebarTab>('collections')
 const sidebarTabs = computed<TabItem[]>(() => [
   { key: 'collections', label: t('workspace.collections') },
-  { key: 'scenarios', label: t('workspace.scenarios'), count: store.scenarios.length || undefined },
   { key: 'history', label: t('workspace.history'), count: store.histories.length || undefined },
   { key: 'cookies', label: t('workspace.cookies') },
 ])
@@ -434,6 +427,7 @@ const TOOLS_ITEMS = computed<MenuItem[]>(() => {
   const items: MenuItem[] = []
   if (!wideTools.value) {
     items.push(
+      { key: 'tools-integration', label: t('pnav.integration'), icon: 'beaker', checked: route.path === '/integration' },
       { key: 'tools-graphql', label: t('workspace.graphql'), icon: 'code', checked: route.path === '/graphql' },
       { key: 'tools-realtime', label: t('workspace.realtime'), icon: 'zap', checked: route.path === '/realtime' },
     )
@@ -454,6 +448,7 @@ function openToolsMenu(): void {
 function onMenuSelect(item: MenuItem): void {
   if (item.key === 'new-project') openCreateProject()
   else if (item.key === 'import' || item.key === 'export') onDocsSelect(item)
+  else if (item.key === 'tools-integration') router.push('/integration')
   else if (item.key === 'tools-graphql') router.push('/graphql')
   else if (item.key === 'tools-realtime') router.push('/realtime')
   else if (item.key === 'tools-shortcuts') showShortcuts.value = true
@@ -558,6 +553,14 @@ onBeforeUnmount(() => {
         <div class="tb-tool-group" role="toolbar" :aria-label="t('workspace.tools')">
           <!-- 直达按钮：GraphQL/实时（常规宽度展示，窄窗口由溢出菜单接管） -->
           <template v-if="wideTools">
+            <IconButton
+              class="tb-tool"
+              :class="{ active: route.path === '/integration' }"
+              name="beaker"
+              :size="15"
+              :title="t('pnav.integration')"
+              @click="router.push('/integration')"
+            />
             <IconButton
               class="tb-tool"
               :class="{ active: route.path === '/graphql' }"
@@ -686,7 +689,6 @@ onBeforeUnmount(() => {
             />
           </div>
         </div>
-        <ScenarioPanel v-if="sidebarTab === 'scenarios'" class="sidebar-history" />
         <HistoryPanel v-if="sidebarTab === 'history'" class="sidebar-history" />
         <CookiePanel v-if="sidebarTab === 'cookies'" class="sidebar-history" />
       </aside>
@@ -722,7 +724,6 @@ onBeforeUnmount(() => {
           v-if="store.openTabs.length"
           @create="store.openCreateTab()"
         />
-        <ScenarioEditor v-if="activeScenarioId" :scenario-id="activeScenarioId" />
         <CreateChoicePage
           v-else-if="activeIsCreate"
           @pick="onCreatePick"
