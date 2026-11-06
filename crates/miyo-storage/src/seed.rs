@@ -968,10 +968,11 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
         description:
             "第一步提取 userId，后续步骤的 URL 与断言期望用 {{userId}} 引用——链路变量传递演示。"
                 .into(),
+        category: "链路演示".into(),
         sort_order: 0,
         steps: vec![
             ScenarioStep {
-                endpoint_id: open_endpoints["文章详情"].id,
+                endpoint_id: Some(open_endpoints["文章详情"].id),
                 enabled: true,
                 extract: serde_json::json!([
                     { "name": "userId", "from": "body", "path": "$.userId" }
@@ -979,23 +980,29 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                 assertions: serde_json::json!([
                     { "type": "status", "op": "eq", "expected": 200 }
                 ]),
+                name: None,
+                request: None,
             },
             ScenarioStep {
-                endpoint_id: chain_ep.id,
+                endpoint_id: Some(chain_ep.id),
                 enabled: true,
                 extract: serde_json::json!([]),
                 assertions: serde_json::json!([
                     { "type": "status", "op": "eq", "expected": 200 },
                     { "type": "jsonpath", "path": "$[0].userId", "op": "eq", "expected": "{{userId}}" }
                 ]),
+                name: None,
+                request: None,
             },
             ScenarioStep {
-                endpoint_id: open_endpoints["用户详情"].id,
+                endpoint_id: Some(open_endpoints["用户详情"].id),
                 enabled: true,
                 extract: serde_json::json!([]),
                 assertions: serde_json::json!([
                     { "type": "jsonpath", "path": "$.id", "op": "eq", "expected": "{{userId}}" }
                 ]),
+                name: None,
+                request: None,
             },
         ],
         script: None,
@@ -1138,10 +1145,11 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             "第 1 步 POST 下单，提取 orderNo / payToken；第 2 步 GET 用它们拼路径变量与 Query \
              预览支付页，提取 payableAmount；第 3 步 POST 支付，Body 带上预览算出的实付金额。"
                 .into(),
+        category: "电商".into(),
         sort_order: 0,
         steps: vec![
             ScenarioStep {
-                endpoint_id: create_order.id,
+                endpoint_id: Some(create_order.id),
                 enabled: true,
                 extract: serde_json::json!([
                     { "name": "orderNo", "from": "body", "path": "$.orderNo" },
@@ -1151,9 +1159,11 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                     { "type": "status", "op": "eq", "expected": 201 },
                     { "type": "jsonpath", "path": "$.orderNo", "op": "exists", "expected": null }
                 ]),
+                name: None,
+                request: None,
             },
             ScenarioStep {
-                endpoint_id: preview_pay.id,
+                endpoint_id: Some(preview_pay.id),
                 enabled: true,
                 extract: serde_json::json!([
                     { "name": "payableAmount", "from": "body", "path": "$.payableAmount" }
@@ -1162,9 +1172,11 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                     { "type": "status", "op": "eq", "expected": 200 },
                     { "type": "jsonpath", "path": "$.payableAmount", "op": "exists", "expected": null }
                 ]),
+                name: None,
+                request: None,
             },
             ScenarioStep {
-                endpoint_id: pay_order.id,
+                endpoint_id: Some(pay_order.id),
                 enabled: true,
                 extract: serde_json::json!([
                     { "name": "tradeNo", "from": "body", "path": "$.tradeNo" }
@@ -1173,6 +1185,8 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                     { "type": "status", "op": "eq", "expected": 200 },
                     { "type": "jsonpath", "path": "$.status", "op": "eq", "expected": "PAID" }
                 ]),
+                name: None,
+                request: None,
             },
         ],
         script: None,

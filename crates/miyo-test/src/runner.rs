@@ -90,6 +90,22 @@ pub struct EndpointResult {
     /// 响应快照（发送成功时存在；failed_fast 无响应）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<StepResponse>,
+    /// 场景步骤执行状态（六态：success / failed / blocked / skipped /
+    /// cancelled / 旧数据 None）。单接口 / 集合运行为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_status: Option<String>,
+    /// Blocked 原因（缺哪个变量、应产自哪一步）；仅 blocked 状态有值。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_reason: Option<String>,
+}
+
+/// 场景步骤执行状态常量（`EndpointResult.step_status`）。
+pub mod step_status {
+    pub const SUCCESS: &str = "success";
+    pub const FAILED: &str = "failed";
+    pub const BLOCKED: &str = "blocked";
+    pub const SKIPPED: &str = "skipped";
+    pub const CANCELLED: &str = "cancelled";
 }
 
 impl EndpointResult {
@@ -114,6 +130,25 @@ impl EndpointResult {
             step_index: None,
             cancelled: false,
             response: None,
+            step_status: None,
+            blocked_reason: None,
+        }
+    }
+
+    /// 派生执行状态：显式 `step_status` 优先；旧结果（无该字段）按
+    /// cancelled / ok 推导，兼容历史 JSON 回读。
+    pub fn effective_status(&self) -> &'static str {
+        match self.step_status.as_deref() {
+            Some(s) => match s {
+                step_status::BLOCKED => step_status::BLOCKED,
+                step_status::SKIPPED => step_status::SKIPPED,
+                step_status::CANCELLED => step_status::CANCELLED,
+                step_status::FAILED => step_status::FAILED,
+                _ => step_status::SUCCESS,
+            },
+            None if self.cancelled => step_status::CANCELLED,
+            None if self.ok => step_status::SUCCESS,
+            None => step_status::FAILED,
         }
     }
 }
@@ -183,6 +218,8 @@ async fn run_one(
                 step_index: None,
                 cancelled: false,
                 response: None,
+                step_status: None,
+                blocked_reason: None,
             },
             None,
         );
@@ -280,6 +317,8 @@ async fn run_one_core(
             step_index: None,
             cancelled: false,
             response: Some(StepResponse::from_resp(&resp)),
+            step_status: None,
+            blocked_reason: None,
         },
         Some(resp),
     )
@@ -395,6 +434,9 @@ pub async fn run_collection(
 /// 场景步骤输入：URL / 规格保留**渲染前模板**（执行期用 runtime 二次渲染，
 /// 前步提取的变量即可成为后续请求的入参），提取与断言为步骤级配置
 /// （不读 `endpoint.tests`）。
+///
+/// `enabled = false` 的禁用步骤同样进入 runner：产出 skipped 结果行
+/// （不发送请求），结果面板得以完整呈现「为什么这一步没跑」。
 #[derive(Debug, Clone)]
 pub struct ScenarioStepInput {
     pub endpoint: Endpoint,
@@ -402,6 +444,7 @@ pub struct ScenarioStepInput {
     pub spec_template: RequestSpec,
     pub extract: Vec<crate::config::ExtractSpec>,
     pub assertions: Vec<crate::config::AssertionSpec>,
+    pub enabled: bool,
 }
 
 /// 场景进度快照（回调参数）。
@@ -443,6 +486,148 @@ pub struct ScenarioRunResult {
     /// 初始变量回传，重建当时的链路上下文。随 IPC 下发、不落运行历史。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vars_snapshots: Vec<HashMap<String, String>>,
+    /// 运行前预检警告：执行期仍未定义（环境 / 项目 / 全局 / 前步提取都
+    /// 覆盖不到）的变量引用，渲染时按字面量保留。每项如
+    /// `"第 2 步：{{payableAmount}} 未定义"`。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+/// 禁用步骤的占位结果行（skipped；不发送请求）。
+fn skipped_result(step: &ScenarioStepInput, idx: usize, reason: &str) -> EndpointResult {
+    EndpointResult {
+        endpoint_id: step.endpoint.id,
+        endpoint_name: step.endpoint.name.clone(),
+        method: step.endpoint.method.to_string(),
+        path: step.endpoint.path.clone(),
+        ok: false,
+        status: None,
+        duration_ms: None,
+        request_error: Some(reason.to_string()),
+        outcomes: Vec::new(),
+        extracted: HashMap::new(),
+        url: None,
+        step_index: Some(idx),
+        cancelled: false,
+        response: None,
+        step_status: Some(step_status::SKIPPED.to_string()),
+        blocked_reason: None,
+    }
+}
+
+/// Blocked 占位结果行（依赖失败步骤产出的变量；不发送请求）。
+fn blocked_result(step: &ScenarioStepInput, idx: usize, reason: String) -> EndpointResult {
+    EndpointResult {
+        endpoint_id: step.endpoint.id,
+        endpoint_name: step.endpoint.name.clone(),
+        method: step.endpoint.method.to_string(),
+        path: step.endpoint.path.clone(),
+        ok: false,
+        status: None,
+        duration_ms: None,
+        request_error: None,
+        outcomes: Vec::new(),
+        extracted: HashMap::new(),
+        url: None,
+        step_index: Some(idx),
+        cancelled: false,
+        response: None,
+        step_status: Some(step_status::BLOCKED.to_string()),
+        blocked_reason: Some(reason),
+    }
+}
+
+/// 收集一个步骤全部模板里的变量引用（URL + 规格 + Body + 断言期望值）。
+fn step_var_refs(step: &ScenarioStepInput) -> Vec<String> {
+    let mut refs = miyo_core::collect_var_refs(&step.url_template);
+    for kv in step
+        .spec_template
+        .params
+        .iter()
+        .chain(step.spec_template.headers.iter())
+        .chain(step.spec_template.path_variables.iter())
+    {
+        refs.extend(miyo_core::collect_var_refs(&kv.key));
+        refs.extend(miyo_core::collect_var_refs(&kv.value));
+    }
+    // Body 各变体的文本模板（与 render 的覆盖面对齐）。
+    match &step.spec_template.body {
+        miyo_core::model::BodySpec::None => {}
+        miyo_core::model::BodySpec::Json { raw } | miyo_core::model::BodySpec::Text { raw } => {
+            refs.extend(miyo_core::collect_var_refs(raw));
+        }
+        miyo_core::model::BodySpec::UrlEncoded { fields } => {
+            for f in fields {
+                refs.extend(miyo_core::collect_var_refs(&f.key));
+                refs.extend(miyo_core::collect_var_refs(&f.value));
+            }
+        }
+        miyo_core::model::BodySpec::Multipart { fields } => {
+            for f in fields {
+                refs.extend(miyo_core::collect_var_refs(&f.key));
+                refs.extend(miyo_core::collect_var_refs(&f.value));
+            }
+        }
+        miyo_core::model::BodySpec::GraphQL { spec } => {
+            refs.extend(miyo_core::collect_var_refs(&spec.query));
+            refs.extend(miyo_core::collect_var_refs(&spec.variables));
+        }
+        miyo_core::model::BodySpec::Binary { path } => {
+            refs.extend(miyo_core::collect_var_refs(path));
+        }
+        miyo_core::model::BodySpec::Grpc { spec } => {
+            refs.extend(miyo_core::collect_var_refs(&spec.service));
+            refs.extend(miyo_core::collect_var_refs(&spec.method));
+            refs.extend(miyo_core::collect_var_refs(&spec.message));
+        }
+    }
+    for a in &step.assertions {
+        if let Some(serde_json::Value::String(s)) = &a.expected {
+            refs.extend(miyo_core::collect_var_refs(s));
+        }
+    }
+    refs.sort();
+    refs.dedup();
+    refs
+}
+
+/// 运行前预检：逐步找「执行到该步时仍无来源」的变量引用（环境静态变量 /
+/// 前步提取都覆盖不到）。这些引用渲染时按字面量保留，不阻断执行——
+/// 报告给前端做非阻断提示。
+fn undefined_var_warnings(
+    steps: &[ScenarioStepInput],
+    base_vars: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let mut available: std::collections::HashSet<String> = base_vars.keys().cloned().collect();
+    for (idx, step) in steps.iter().enumerate() {
+        if !step.enabled {
+            continue;
+        }
+        let mut missing: Vec<String> = Vec::new();
+        for r in step_var_refs(step) {
+            if !available.contains(&r) && !missing.contains(&r) {
+                missing.push(r);
+            }
+        }
+        if !missing.is_empty() {
+            let list = missing
+                .iter()
+                .map(|m| format!("{{{{{m}}}}}"))
+                .collect::<Vec<_>>()
+                .join("、");
+            warnings.push(format!(
+                "第 {} 步（{}）：{list} 未定义，将按字面量发送",
+                idx + 1,
+                step.endpoint.name
+            ));
+        }
+        // 本步的提取产出对后续步可见（无论本步成败——预检只看静态来源）。
+        for e in &step.extract {
+            available.insert(e.name.clone());
+        }
+    }
+    warnings
 }
 
 /// 运行集成测试场景：严格按步骤顺序串行执行。
@@ -450,6 +635,14 @@ pub struct ScenarioRunResult {
 /// 每步执行前用「环境静态变量 + runtime 快照（提取值优先）」渲染该步的
 /// URL / 规格模板——这就是链路数据流的打通点：A 步 extract 出 `token`，
 /// B 步模板里的 `{{token}}` 即取到 A 的响应值。
+///
+/// 执行策略语义（六态状态落 `EndpointResult.step_status`）：
+/// - 禁用步骤 → skipped（不发请求）；
+/// - 引用了「应产自失败 / Blocked / Skipped 步骤」的缺失变量 → blocked
+///   （不发请求，不允许用空变量继续）；
+/// - 失败即停 / 取消后的剩余步骤 → skipped；
+/// - JSON Body 类型保留渲染（`render_spec_typed`：提取的数字进 Body 仍是数字）；
+/// - 每步渲染后校验 URL scheme 仅 http/https（对齐 execute_request）。
 pub async fn run_scenario(
     steps: Vec<ScenarioStepInput>,
     base_vars: &HashMap<String, String>,
@@ -457,25 +650,83 @@ pub async fn run_scenario(
     progress: Option<&(dyn Fn(ScenarioProgress<'_>) + Send + Sync)>,
 ) -> ScenarioRunResult {
     let total = steps.len();
+    let warnings = undefined_var_warnings(&steps, base_vars);
     // runtime 以环境静态变量为底，提取值按步覆盖（runtime 优先级更高）。
     let runtime = AsyncMutex::new(base_vars.clone());
+    // 提取变量的类型层（JSON Body 类型保留渲染用；每次运行独立——上下文隔离）。
+    let typed: AsyncMutex<HashMap<String, serde_json::Value>> = AsyncMutex::new(HashMap::new());
+    // 失败 / Blocked / Skipped 步骤的提取产出名集合：后续步骤若引用其中
+    // 之一起码此刻拿不到值，标记 Blocked（比失败即停更细粒度的依赖保护）。
+    let lost_vars: AsyncMutex<std::collections::HashSet<String>> =
+        AsyncMutex::new(std::collections::HashSet::new());
     let mut results = Vec::with_capacity(total);
     let mut vars_snapshots = Vec::with_capacity(total);
+    let mut cancelled = false;
+    let mut stopped_on_failure = false;
+
     for (idx, step) in steps.iter().enumerate() {
+        // ---- 禁用步骤：占位 skipped，不发送 ----
+        if !step.enabled {
+            vars_snapshots.push(runtime.lock().await.clone());
+            let r = skipped_result(step, idx, "步骤已禁用");
+            let done = results.len() + 1;
+            results.push(r);
+            if let Some(cb) = progress {
+                cb(ScenarioProgress {
+                    done,
+                    total,
+                    step: results.last(),
+                    url: None,
+                });
+            }
+            continue;
+        }
+
         if options.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
-            return ScenarioRunResult {
-                results,
-                cancelled: true,
-                stopped_on_failure: false,
-                variables: runtime.into_inner(),
-                vars_snapshots,
-            };
+            cancelled = true;
+            break;
         }
         let render_vars = runtime.lock().await.clone();
-        // 每步执行前的 runtime 快照（重跑失败步骤的初始变量来源）。
+        // 每步执行前的 runtime 快照（重跑失败步骤 / 从本步执行的初始变量来源）。
         vars_snapshots.push(render_vars.clone());
+
+        // ---- Blocked 判定：缺失变量产自失败 / Blocked / Skipped 步骤时不发送 ----
+        let lost = lost_vars.lock().await.clone();
+        let blocked: Vec<String> = step_var_refs(step)
+            .into_iter()
+            .filter(|r| !render_vars.contains_key(r) && lost.contains(r))
+            .collect();
+        if !blocked.is_empty() {
+            let list = blocked
+                .iter()
+                .map(|m| format!("{{{{{m}}}}}"))
+                .collect::<Vec<_>>()
+                .join("、");
+            let r = blocked_result(
+                step,
+                idx,
+                format!("依赖的变量 {list} 因前序步骤失败 / 跳过而缺失"),
+            );
+            for e in &step.extract {
+                lost_vars.lock().await.insert(e.name.clone());
+            }
+            let done = results.len() + 1;
+            results.push(r);
+            if let Some(cb) = progress {
+                cb(ScenarioProgress {
+                    done,
+                    total,
+                    step: results.last(),
+                    url: None,
+                });
+            }
+            continue;
+        }
+
+        // ---- 渲染（JSON Body 类型保留）+ scheme 校验 ----
+        let typed_snapshot = typed.lock().await.clone();
         let url = miyo_core::resolve_variables(&step.url_template, &render_vars);
-        let spec = miyo_core::render_spec(&step.spec_template, &render_vars);
+        let spec = miyo_core::render_spec_typed(&step.spec_template, &render_vars, &typed_snapshot);
         let config = TestSpec {
             pre_request: Vec::new(),
             extract: step.extract.clone(),
@@ -483,6 +734,42 @@ pub async fn run_scenario(
         };
         // 每步独立超时：接口自带 timeout_ms 优先，否则用场景级解析值兜底。
         let step_timeout = step.endpoint.request.timeout_ms.or(options.timeout_ms);
+
+        // scheme 白名单（对齐 execute_request：仅 http/https），防变量替换
+        // 把 scheme / host 换成任意协议。
+        let scheme_ok = {
+            let lower = url.to_ascii_lowercase();
+            lower.starts_with("http://") || lower.starts_with("https://")
+        };
+        if !scheme_ok {
+            let mut r = EndpointResult::failed_fast(
+                step.endpoint.id,
+                &step.endpoint,
+                Some(url.clone()),
+                format!("URL 仅支持 http/https 协议：{url}"),
+            );
+            r.step_index = Some(idx);
+            r.step_status = Some(step_status::FAILED.to_string());
+            for e in &step.extract {
+                lost_vars.lock().await.insert(e.name.clone());
+            }
+            let done = results.len() + 1;
+            results.push(r);
+            if let Some(cb) = progress {
+                cb(ScenarioProgress {
+                    done,
+                    total,
+                    step: results.last(),
+                    url: None,
+                });
+            }
+            if options.stop_on_failure {
+                stopped_on_failure = true;
+                break;
+            }
+            continue;
+        }
+
         // 进入本步：先报「已发出」（实际 URL 已确定），让前端在等待网络期间
         // 就能展示正在跑哪一步、打到哪个地址。
         if let Some(cb) = progress {
@@ -505,10 +792,39 @@ pub async fn run_scenario(
         .await;
         // 结果自描述：链路位次 + 渲染后实际 URL（前端 / CLI 免按位对齐猜测）。
         result.step_index = Some(idx);
+        result.step_status = Some(if result.cancelled {
+            step_status::CANCELLED.to_string()
+        } else if result.ok {
+            step_status::SUCCESS.to_string()
+        } else {
+            step_status::FAILED.to_string()
+        });
         let failed = !result.ok;
+        if failed {
+            for e in &step.extract {
+                lost_vars.lock().await.insert(e.name.clone());
+            }
+        } else {
+            // 成功步的 body 提取进类型层（供后续步骤 JSON Body 类型保留渲染；
+            // header 提取恒为字符串，不参与类型层）。
+            let body_value: Option<serde_json::Value> = result
+                .response
+                .as_ref()
+                .and_then(|r| serde_json::from_str(&r.body).ok());
+            if let Some(body) = body_value {
+                let mut t = typed.lock().await;
+                for e in &step.extract {
+                    if let Some(v) = crate::extract::extract_body_json_typed(Some(&body), &e.path) {
+                        if !matches!(v, serde_json::Value::String(_)) {
+                            t.insert(e.name.clone(), v);
+                        }
+                    }
+                }
+            }
+        }
+        let done = results.len() + 1;
         results.push(result);
         if let Some(cb) = progress {
-            let done = results.len();
             cb(ScenarioProgress {
                 done,
                 total,
@@ -519,30 +835,45 @@ pub async fn run_scenario(
         // 取消优先于失败即停：在途请求被中止的步骤 ok = false 但非真实失败，
         // 先判取消再判失败，避免「取消」被误报为「失败即停」。
         if options.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
-            return ScenarioRunResult {
-                results,
-                cancelled: true,
-                stopped_on_failure: false,
-                variables: runtime.into_inner(),
-                vars_snapshots,
-            };
+            cancelled = true;
+            break;
         }
         if failed && options.stop_on_failure {
-            return ScenarioRunResult {
-                results,
-                cancelled: false,
-                stopped_on_failure: true,
-                variables: runtime.into_inner(),
-                vars_snapshots,
-            };
+            stopped_on_failure = true;
+            break;
         }
     }
+
+    // ---- 早停补账：失败即停 / 取消后的剩余启用步骤落 skipped 行 ----
+    if cancelled || stopped_on_failure {
+        let reason = if cancelled {
+            "运行已取消"
+        } else {
+            "失败即停，未执行"
+        };
+        for (idx, step) in steps.iter().enumerate().skip(results.len()) {
+            vars_snapshots.push(runtime.lock().await.clone());
+            let r = skipped_result(step, idx, reason);
+            let done = results.len() + 1;
+            results.push(r);
+            if let Some(cb) = progress {
+                cb(ScenarioProgress {
+                    done,
+                    total,
+                    step: results.last(),
+                    url: None,
+                });
+            }
+        }
+    }
+
     ScenarioRunResult {
         results,
-        cancelled: false,
-        stopped_on_failure: false,
+        cancelled,
+        stopped_on_failure,
         variables: runtime.into_inner(),
         vars_snapshots,
+        warnings,
     }
 }
 

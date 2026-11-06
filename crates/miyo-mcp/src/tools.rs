@@ -822,8 +822,8 @@ mod tests {
         let created = &scenarios[0];
         assert_eq!(created.name, "收单全流程");
         assert_eq!(created.steps.len(), 2);
-        assert_eq!(created.steps[0].endpoint_id, first.id);
-        assert_eq!(created.steps[1].endpoint_id, second.id);
+        assert_eq!(created.steps[0].endpoint_id, Some(first.id));
+        assert_eq!(created.steps[1].endpoint_id, Some(second.id));
         assert!(created.steps.iter().all(|s| s.enabled));
         assert_eq!(created.script, None);
 
@@ -900,14 +900,17 @@ mod tests {
             project_id: project.id,
             name: "链路演示".into(),
             description: String::new(),
+            category: String::new(),
             sort_order: 0,
             steps: vec![ScenarioStep {
-                endpoint_id: ep.id,
+                endpoint_id: Some(ep.id),
                 enabled: true,
                 extract: serde_json::json!([
                     { "name": "userId", "from": "body", "path": "$.userId" }
                 ]),
                 assertions: serde_json::json!([]),
+                name: None,
+                request: None,
             }],
             script: None,
             created_at: chrono::Utc::now(),

@@ -18,8 +18,8 @@ pub async fn save_scenario_run(db: &SqlitePool, run: &ScenarioRun) -> Result<()>
         "INSERT OR REPLACE INTO scenario_runs
          (id, scenario_id, environment_id, finished_at, duration_ms,
           total_steps, ok_count, fail_count, skipped_count,
-          cancelled, stopped_on_failure, results_json, variables_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          cancelled, stopped_on_failure, results_json, variables_json, meta_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&row.id)
     .bind(&row.scenario_id)
@@ -34,6 +34,7 @@ pub async fn save_scenario_run(db: &SqlitePool, run: &ScenarioRun) -> Result<()>
     .bind(row.stopped_on_failure)
     .bind(&row.results_json)
     .bind(&row.variables_json)
+    .bind(&row.meta_json)
     .execute(db)
     .await?;
     Ok(())
@@ -48,7 +49,7 @@ pub async fn list_scenario_runs(
     let rows: Vec<ScenarioRunRow> = sqlx::query_as(
         "SELECT id, scenario_id, environment_id, finished_at, duration_ms,
                 total_steps, ok_count, fail_count, skipped_count,
-                cancelled, stopped_on_failure, results_json, variables_json
+                cancelled, stopped_on_failure, results_json, variables_json, meta_json
          FROM scenario_runs WHERE scenario_id = ? ORDER BY finished_at DESC LIMIT ?",
     )
     .bind(scenario_id.to_string())
@@ -63,7 +64,7 @@ pub async fn get_scenario_run(db: &SqlitePool, id: Uuid) -> Result<Option<Scenar
     let row: Option<ScenarioRunRow> = sqlx::query_as(
         "SELECT id, scenario_id, environment_id, finished_at, duration_ms,
                 total_steps, ok_count, fail_count, skipped_count,
-                cancelled, stopped_on_failure, results_json, variables_json
+                cancelled, stopped_on_failure, results_json, variables_json, meta_json
          FROM scenario_runs WHERE id = ?",
     )
     .bind(id.to_string())

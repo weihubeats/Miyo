@@ -240,6 +240,7 @@ pub(crate) struct ScenarioRunRow {
     pub(crate) stopped_on_failure: i64,
     pub(crate) results_json: String,
     pub(crate) variables_json: String,
+    pub(crate) meta_json: Option<String>,
 }
 
 impl ScenarioRunRow {
@@ -258,6 +259,7 @@ impl ScenarioRunRow {
             stopped_on_failure: model.stopped_on_failure as i64,
             results_json: model.results_json.clone(),
             variables_json: model.variables_json.clone(),
+            meta_json: model.meta_json.clone(),
         }
     }
 
@@ -276,6 +278,7 @@ impl ScenarioRunRow {
             stopped_on_failure: self.stopped_on_failure != 0,
             results_json: self.results_json,
             variables_json: self.variables_json,
+            meta_json: self.meta_json,
         })
     }
 }

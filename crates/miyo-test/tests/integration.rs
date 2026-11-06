@@ -234,6 +234,7 @@ async fn scenario_chain_flows_extracted_vars() {
     // A：登录 → 提取 token；B：URL 模板用 {{token}}，echo 原样返回供断言。
     let steps = vec![
         ScenarioStepInput {
+            enabled: true,
             endpoint: make_ep("登录", HttpMethod::POST, "/login", serde_json::Value::Null),
             url_template: format!("{base}/login"),
             spec_template: RequestSpec::default(),
@@ -251,6 +252,7 @@ async fn scenario_chain_flows_extracted_vars() {
             }],
         },
         ScenarioStepInput {
+            enabled: true,
             endpoint: make_ep("回显", HttpMethod::POST, "/echo", serde_json::Value::Null),
             url_template: format!("{base}/echo?env={{{{token}}}}"),
             spec_template: RequestSpec::default(),
@@ -321,6 +323,7 @@ async fn scenario_stops_on_failure() {
     // 第一步断言失败（期望 201 实际 200）+ 失败即停 → 第二步不执行。
     let steps = vec![
         ScenarioStepInput {
+            enabled: true,
             endpoint: make_ep("登录", HttpMethod::POST, "/login", serde_json::Value::Null),
             url_template: format!("{base}/login"),
             spec_template: RequestSpec::default(),
@@ -334,6 +337,7 @@ async fn scenario_stops_on_failure() {
             }],
         },
         ScenarioStepInput {
+            enabled: true,
             endpoint: make_ep("回显", HttpMethod::GET, "/echo", serde_json::Value::Null),
             url_template: format!("{base}/echo"),
             spec_template: RequestSpec::default(),
@@ -354,6 +358,435 @@ async fn scenario_stops_on_failure() {
     .await;
 
     assert!(result.stopped_on_failure);
-    assert_eq!(result.results.len(), 1, "失败即停：第二步不应执行");
+    assert_eq!(
+        result.results.len(),
+        2,
+        "失败即停：第二步落 skipped 行不执行"
+    );
     assert!(!result.results[0].ok);
+    assert_eq!(result.results[1].effective_status(), "skipped");
+    assert_eq!(result.results[1].url, None, "skipped 步不发送");
+}
+
+// ---------- 集成测试工作流（2026-11）：六态状态 / Blocked / 类型保留 / scheme ----------
+
+/// 电商三步服务：下单 → 预览（校验下单传来的参数）→ 支付（校验预览金额）。
+async fn spawn_shop_server() -> SocketAddr {
+    use axum::Json;
+    let app = Router::new()
+        .route(
+            "/shop/orders",
+            post(|| async {
+                Json(json!({
+                    "orderNo": "SO-1",
+                    "payToken": "pt-9",
+                    "amount": "398.00"
+                }))
+            }),
+        )
+        .route(
+            "/shop/pay-preview",
+            get(|Query(q): Query<HashMap<String, String>>| async move {
+                // 校验链路传参：orderNo / payToken 来自第 1 步。
+                let ok = q.get("orderNo").map(|v| v == "SO-1").unwrap_or(false)
+                    && q.get("payToken").map(|v| v == "pt-9").unwrap_or(false);
+                if ok {
+                    (
+                        StatusCode::OK,
+                        axum::Json(json!({"payableAmount": 388.2, "currency": "CNY"})),
+                    )
+                } else {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(json!({"error": "missing chain params"})),
+                    )
+                }
+            }),
+        )
+        .route(
+            "/shop/pay",
+            post(|body: String| async move {
+                // 校验 Body 里 amount 是数字（类型保留）且带链路参数。
+                let v: serde_json::Value =
+                    serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+                let amount_is_number =
+                    matches!(v.get("amount"), Some(serde_json::Value::Number(_)));
+                let has_token = v
+                    .get("payToken")
+                    .and_then(|t| t.as_str())
+                    .map(|t| t == "pt-9")
+                    .unwrap_or(false);
+                if amount_is_number && has_token {
+                    (
+                        StatusCode::OK,
+                        Json(json!({"status": "PAID", "tradeNo": "ALI-1"})),
+                    )
+                } else {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": "bad pay body"})),
+                    )
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    addr
+}
+
+fn extract(name: &str, path: &str) -> ExtractSpec {
+    ExtractSpec {
+        name: name.into(),
+        from: "body".into(),
+        path: path.into(),
+    }
+}
+
+fn assert_status(code: i64) -> AssertionSpec {
+    AssertionSpec {
+        name: None,
+        r#type: "status".into(),
+        path: None,
+        op: Some("eq".into()),
+        expected: Some(json!(code)),
+    }
+}
+
+/// 验收主链路：三步电商流程，全程无需手动传值，金额保持数字类型。
+#[tokio::test]
+async fn scenario_ecommerce_flow_with_typed_vars() {
+    let addr = spawn_shop_server().await;
+    let base = format!("http://{addr}");
+    let steps = vec![
+        ScenarioStepInput {
+            enabled: true,
+            endpoint: make_ep("创建订单", HttpMethod::POST, "/shop/orders", serde_json::Value::Null),
+            url_template: format!("{base}/shop/orders"),
+            spec_template: RequestSpec::default(),
+            extract: vec![extract("orderNo", "$.orderNo"), extract("payToken", "$.payToken")],
+            assertions: vec![assert_status(200)],
+        },
+        ScenarioStepInput {
+            enabled: true,
+            endpoint: make_ep("支付预览", HttpMethod::GET, "/shop/pay-preview", serde_json::Value::Null),
+            url_template: format!("{base}/shop/pay-preview?orderNo={{{{orderNo}}}}&payToken={{{{payToken}}}}"),
+            spec_template: RequestSpec::default(),
+            extract: vec![extract("payableAmount", "$.payableAmount")],
+            assertions: vec![assert_status(200)],
+        },
+        ScenarioStepInput {
+            enabled: true,
+            endpoint: make_ep("确认支付", HttpMethod::POST, "/shop/pay", serde_json::Value::Null),
+            url_template: format!("{base}/shop/pay"),
+            spec_template: RequestSpec {
+                body: miyo_core::model::BodySpec::Json {
+                    raw: r#"{"amount": "{{payableAmount}}", "orderNo": "{{orderNo}}", "payToken": "{{payToken}}"}"#
+                        .into(),
+                },
+                ..Default::default()
+            },
+            extract: vec![extract("tradeNo", "$.tradeNo")],
+            assertions: vec![
+                assert_status(200),
+                AssertionSpec {
+                    name: None,
+                    r#type: "jsonpath".into(),
+                    path: Some("$.status".into()),
+                    op: Some("eq".into()),
+                    expected: Some(json!("PAID")),
+                },
+            ],
+        },
+    ];
+    let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+
+    assert!(!result.cancelled);
+    assert!(!result.stopped_on_failure);
+    assert_eq!(result.results.len(), 3);
+    assert!(
+        result.results.iter().all(|r| r.ok),
+        "三步应全过：{:?}",
+        result.results
+    );
+    for r in &result.results {
+        assert_eq!(r.effective_status(), "success");
+    }
+    // 变量链路：orderNo / payToken / payableAmount / tradeNo 全部落池。
+    for (k, v) in [
+        ("orderNo", "SO-1"),
+        ("payToken", "pt-9"),
+        ("payableAmount", "388.2"),
+        ("tradeNo", "ALI-1"),
+    ] {
+        assert_eq!(
+            result.variables.get(k).map(String::as_str),
+            Some(v),
+            "变量 {k} 应落池"
+        );
+    }
+    // 第三步实际发出的 Body（RequestSnapshot 快照）：amount 是数字（类型保留），
+    // orderNo / payToken 已代入。
+    let body = result.results[2]
+        .response
+        .as_ref()
+        .expect("第 3 步应有响应")
+        .request
+        .as_ref()
+        .expect("应有请求快照")
+        .body
+        .clone();
+    let sent: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(sent["amount"].is_number(), "amount 应保持数字：{sent}");
+    assert_eq!(sent["orderNo"], json!("SO-1"));
+    assert_eq!(sent["payToken"], json!("pt-9"));
+    // 运行间隔离：fresh base_vars 不含上次残留（每次运行独立上下文由调用方保证，
+    // 这里断言 warnings 为空——链路变量都有来源）。
+    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+}
+
+/// Blocked：第 2 步失败后，第 3 步引用其产出变量 → 不发送、标记 blocked。
+#[tokio::test]
+async fn scenario_blocks_on_missing_upstream_var() {
+    let addr = spawn_shop_server().await;
+    let base = format!("http://{addr}");
+    let steps = vec![
+        ScenarioStepInput {
+            enabled: true,
+            endpoint: make_ep(
+                "创建订单",
+                HttpMethod::POST,
+                "/shop/orders",
+                serde_json::Value::Null,
+            ),
+            url_template: format!("{base}/shop/orders"),
+            spec_template: RequestSpec::default(),
+            extract: vec![extract("orderNo", "$.orderNo")],
+            assertions: vec![assert_status(200)],
+        },
+        ScenarioStepInput {
+            enabled: true,
+            endpoint: make_ep(
+                "支付预览",
+                HttpMethod::GET,
+                "/shop/pay-preview",
+                serde_json::Value::Null,
+            ),
+            // 缺 orderNo 参数 → 服务端 400 → 本步断言失败。
+            url_template: format!("{base}/shop/pay-preview?payToken=bad"),
+            spec_template: RequestSpec::default(),
+            extract: vec![extract("payableAmount", "$.payableAmount")],
+            assertions: vec![assert_status(200)],
+        },
+        ScenarioStepInput {
+            enabled: true,
+            endpoint: make_ep(
+                "确认支付",
+                HttpMethod::POST,
+                "/shop/pay",
+                serde_json::Value::Null,
+            ),
+            url_template: format!("{base}/shop/pay"),
+            spec_template: RequestSpec {
+                body: miyo_core::model::BodySpec::Json {
+                    raw: r#"{"amount": "{{payableAmount}}", "payToken": "{{payToken}}"}"#.into(),
+                },
+                ..Default::default()
+            },
+            extract: vec![],
+            assertions: vec![],
+        },
+    ];
+    // 失败继续：第 3 步依赖 payableAmount / payToken（第 2 步失败未产出）→
+    // Blocked 而非用空变量发送。payToken 虽然第 1 步产出过，但第 2 步也失败
+    // （其 extract 不含 payToken，不在丢失集合），仍由第 1 步成功提供。
+    let result = run_scenario(
+        steps,
+        &HashMap::new(),
+        &ScenarioOptions {
+            stop_on_failure: false,
+            ..Default::default()
+        },
+        None,
+    )
+    .await;
+
+    assert_eq!(result.results.len(), 3, "失败继续：三步都应有结果行");
+    assert_eq!(result.results[1].effective_status(), "failed");
+    let third = &result.results[2];
+    assert_eq!(third.effective_status(), "blocked", "第 3 步应被 Blocked");
+    assert!(third.blocked_reason.is_some());
+    assert!(third.url.is_none(), "Blocked 步不应发送请求");
+    assert!(
+        third
+            .blocked_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("payableAmount"),
+        "Blocked 原因应点名缺失变量：{:?}",
+        third.blocked_reason
+    );
+}
+
+/// 禁用步骤 → skipped 行；失败即停后剩余步骤 → skipped 行（不丢步骤）。
+#[tokio::test]
+async fn scenario_reports_disabled_and_early_stop_as_skipped() {
+    let addr = spawn_shop_server().await;
+    let base = format!("http://{addr}");
+    let steps = vec![
+        ScenarioStepInput {
+            enabled: false,
+            endpoint: make_ep(
+                "禁用步",
+                HttpMethod::GET,
+                "/shop/pay-preview",
+                serde_json::Value::Null,
+            ),
+            url_template: format!("{base}/shop/pay-preview"),
+            spec_template: RequestSpec::default(),
+            extract: vec![],
+            assertions: vec![],
+        },
+        ScenarioStepInput {
+            enabled: true,
+            endpoint: make_ep(
+                "失败步",
+                HttpMethod::POST,
+                "/shop/pay-preview",
+                serde_json::Value::Null,
+            ),
+            // GET 服务的路由只挂了 POST /shop/orders 与 /shop/pay —— 405 → 失败。
+            url_template: format!("{base}/shop/pay-preview"),
+            spec_template: RequestSpec::default(),
+            extract: vec![],
+            assertions: vec![assert_status(200)],
+        },
+        ScenarioStepInput {
+            enabled: true,
+            endpoint: make_ep(
+                "后续步",
+                HttpMethod::GET,
+                "/shop/pay-preview",
+                serde_json::Value::Null,
+            ),
+            url_template: format!("{base}/shop/pay-preview"),
+            spec_template: RequestSpec::default(),
+            extract: vec![],
+            assertions: vec![],
+        },
+    ];
+    let result = run_scenario(
+        steps,
+        &HashMap::new(),
+        &ScenarioOptions {
+            stop_on_failure: true,
+            ..Default::default()
+        },
+        None,
+    )
+    .await;
+
+    assert!(result.stopped_on_failure);
+    assert_eq!(result.results.len(), 3, "三步都应有结果行");
+    assert_eq!(result.results[0].effective_status(), "skipped");
+    assert_eq!(result.results[1].effective_status(), "failed");
+    assert_eq!(result.results[2].effective_status(), "skipped");
+    assert_eq!(result.results[0].url, None, "禁用步不发送");
+}
+
+/// scheme 白名单：变量替换出非 http(s) URL → 该步 failed_fast 不发送。
+#[tokio::test]
+async fn scenario_rejects_non_http_scheme() {
+    let _addr = spawn_shop_server().await;
+    let steps = vec![ScenarioStepInput {
+        enabled: true,
+        endpoint: make_ep("坏协议", HttpMethod::GET, "/x", serde_json::Value::Null),
+        url_template: "file:///etc/passwd".to_string(),
+        spec_template: RequestSpec::default(),
+        extract: vec![],
+        assertions: vec![],
+    }];
+    let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+    assert_eq!(result.results.len(), 1);
+    let r = &result.results[0];
+    assert_eq!(r.effective_status(), "failed");
+    assert!(r.request_error.as_deref().unwrap_or("").contains("http"));
+    assert!(r.response.is_none(), "scheme 非法不应发送");
+    assert!(r.url.is_some(), "失败行保留解析后 URL 供排查");
+}
+
+/// 未定义变量预检：warnings 点名步骤与变量；发送时字面量保留。
+#[tokio::test]
+async fn scenario_warns_undefined_vars() {
+    let addr = spawn_shop_server().await;
+    let base = format!("http://{addr}");
+    let steps = vec![ScenarioStepInput {
+        enabled: true,
+        endpoint: make_ep(
+            "引用缺失变量",
+            HttpMethod::GET,
+            "/shop/pay-preview",
+            serde_json::Value::Null,
+        ),
+        url_template: format!("{base}/shop/pay-preview?orderNo={{{{nope}}}}"),
+        spec_template: RequestSpec::default(),
+        extract: vec![],
+        assertions: vec![],
+    }];
+    let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+    assert_eq!(result.warnings.len(), 1, "{:?}", result.warnings);
+    assert!(result.warnings[0].contains("nope"));
+    // 字面量保留：实际 URL 仍带 {{nope}}。
+    let r = &result.results[0];
+    assert!(r.url.as_deref().unwrap_or("").contains("{{nope}}"));
+}
+
+/// 运行间变量隔离：同一批步骤跑两轮，第二轮的变量池不残留第一轮提取值。
+#[tokio::test]
+async fn scenario_runs_have_isolated_contexts() {
+    let addr = spawn_shop_server().await;
+    let base = format!("http://{addr}");
+    let mk_steps = || {
+        vec![ScenarioStepInput {
+            enabled: true,
+            endpoint: make_ep(
+                "创建订单",
+                HttpMethod::POST,
+                "/shop/orders",
+                serde_json::Value::Null,
+            ),
+            url_template: format!("{base}/shop/orders"),
+            spec_template: RequestSpec::default(),
+            extract: vec![extract("orderNo", "$.orderNo")],
+            assertions: vec![],
+        }]
+    };
+    let r1 = run_scenario(
+        mk_steps(),
+        &HashMap::new(),
+        &ScenarioOptions::default(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        r1.variables.get("orderNo").map(String::as_str),
+        Some("SO-1")
+    );
+    // 第二轮：全新 base_vars（等价新执行上下文），不应看到第一轮的 orderNo
+    //（除非本步重新提取——本步确实重新提取并覆盖，值为相同；
+    // 这里断言快照语义：第 1 步执行前快照只含 base_vars）。
+    let r2 = run_scenario(
+        mk_steps(),
+        &HashMap::new(),
+        &ScenarioOptions::default(),
+        None,
+    )
+    .await;
+    assert_eq!(r2.vars_snapshots[0], HashMap::new(), "新运行初始快照应为空");
+    assert_eq!(
+        r2.variables.get("orderNo").map(String::as_str),
+        Some("SO-1")
+    );
 }

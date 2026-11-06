@@ -206,19 +206,24 @@ impl ScenarioSummary {
     }
 }
 
-/// 场景步骤 + 引用接口的当前配置（AI 写脚本的完整上下文）。
+/// 场景步骤 + 生效请求配置（AI 写脚本的完整上下文）。
+///
+/// 引用式步骤 `endpointId` 有值、配置取自接口当前形态；内联步骤
+/// `endpointId` 为 `None`、配置取自步骤内联请求。
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScenarioStepDetail {
-    pub endpoint_id: uuid::Uuid,
+    pub endpoint_id: Option<uuid::Uuid>,
+    /// 步骤名（内联步骤用步骤名；引用步骤用接口名）。
+    pub step_name: Option<String>,
     pub endpoint_name: String,
     pub method: String,
-    /// 接口当前路径（含 {{var}} 占位，未做路径变量代入）。
+    /// 接口路径 / 内联 URL 模板（含 {{var}} 占位，未做路径变量代入）。
     pub path: String,
     pub enabled: bool,
     pub extract: serde_json::Value,
     pub assertions: serde_json::Value,
-    /// 接口当前请求规格（头 / Body / 认证形态），写脚本时照抄。
+    /// 生效请求规格（头 / Body / 认证形态），写脚本时照抄。
     pub request: RequestSpec,
 }
 
@@ -595,12 +600,7 @@ async fn create_scenario_handler(
     let steps: Vec<ScenarioStep> = body
         .endpoint_ids
         .iter()
-        .map(|id| ScenarioStep {
-            endpoint_id: *id,
-            enabled: true,
-            extract: serde_json::Value::Array(Vec::new()),
-            assertions: serde_json::Value::Array(Vec::new()),
-        })
+        .map(|id| ScenarioStep::referenced(*id))
         .collect();
     // sort_order 接在该项目现有场景之后，列表里排在末尾（与手动新建一致）。
     let sort_order = repo::list_scenarios(&state.db, project.id)
@@ -612,6 +612,7 @@ async fn create_scenario_handler(
         project_id: project.id,
         name: name.to_string(),
         description: body.description.unwrap_or_default(),
+        category: String::new(),
         sort_order,
         steps,
         script: None,
@@ -665,9 +666,16 @@ async fn get_scenario_handler(
     let mut steps = Vec::with_capacity(scenario.steps.len());
     let mut chain_variables: Vec<String> = Vec::new();
     for step in &scenario.steps {
-        // 引用式步骤：接口已删除时保留占位（AI 生成脚本可据此提示用户）。
-        let (endpoint_name, method, path, request) =
-            match repo::get_endpoint(&state.db, step.endpoint_id).await {
+        // 生效请求配置：内联步骤用步骤自带请求；引用式步骤接口已删除时保留
+        // 占位（AI 生成脚本可据此提示用户）。
+        let (endpoint_name, method, path, request) = match (&step.request, step.endpoint_id) {
+            (Some(inline), _) => (
+                step.display_name().unwrap_or("内联请求").to_string(),
+                inline.method.clone(),
+                inline.url.clone(),
+                inline.spec.clone(),
+            ),
+            (None, Some(endpoint_id)) => match repo::get_endpoint(&state.db, endpoint_id).await {
                 Ok(ep) => (ep.name, ep.method.to_string(), ep.path, ep.request),
                 Err(_) => (
                     "（接口已删除）".to_string(),
@@ -675,7 +683,14 @@ async fn get_scenario_handler(
                     String::new(),
                     RequestSpec::default(),
                 ),
-            };
+            },
+            (None, None) => (
+                step.display_name().unwrap_or("（无效步骤）").to_string(),
+                "GET".to_string(),
+                String::new(),
+                RequestSpec::default(),
+            ),
+        };
         if step.enabled {
             if let Some(rules) = step.extract.as_array() {
                 for rule in rules {
@@ -689,6 +704,7 @@ async fn get_scenario_handler(
         }
         steps.push(ScenarioStepDetail {
             endpoint_id: step.endpoint_id,
+            step_name: step.display_name().map(str::to_string),
             endpoint_name,
             method,
             path,
@@ -979,23 +995,66 @@ async fn run_scenario_handler(
         .await
         .map_err(api_error)?;
 
-    // 物化启用步骤（与 Tauri 命令 run_scenario 同口径：全局参数补缺 +
-    // TestSpec 解析；URL 模板由接口当前配置推导，保留 {{var}} 执行期渲染）。
+    // 物化步骤（与 Tauri 命令 run_scenario 同口径：全局参数补缺 +
+    // TestSpec 解析；URL 模板保留 {{var}} 执行期渲染）。内联步骤用步骤
+    // 自带请求合成运行端点；引用式步骤取接口当前配置。禁用步骤照传入
+    //（runner 落 skipped 行）。
     let mut steps = Vec::new();
     for (idx, step) in scenario.steps.iter().enumerate() {
-        if !step.enabled {
-            continue;
-        }
-        let ep = repo::get_endpoint(&state.db, step.endpoint_id)
-            .await
-            .map_err(|_| {
-                api_error(miyo_core::AppError::Validation(format!(
-                    "第 {} 步引用的接口不存在（{}）",
-                    idx + 1,
-                    step.endpoint_id
-                )))
-            })?;
-        let mut spec = ep.request.clone();
+        let (ep, url_template, spec) = match (&step.request, step.endpoint_id) {
+            (Some(inline), _) => {
+                let method = inline
+                    .method
+                    .parse::<miyo_core::model::HttpMethod>()
+                    .map_err(|_| {
+                        api_error(miyo_core::AppError::Validation(format!(
+                            "第 {} 步的 HTTP 方法无效（{}）",
+                            idx + 1,
+                            inline.method
+                        )))
+                    })?;
+                let name = step.display_name().unwrap_or("内联步骤").to_string();
+                let path = inline.url.clone();
+                (
+                    Endpoint {
+                        id: uuid::Uuid::new_v4(),
+                        project_id: scenario.project_id,
+                        folder_id: None,
+                        name,
+                        method,
+                        path: path.clone(),
+                        description: String::new(),
+                        status: miyo_core::model::EndpointStatus::Developing,
+                        sort_order: idx as i64,
+                        request: inline.spec.clone(),
+                        created_at: scenario.created_at,
+                        updated_at: scenario.updated_at,
+                    },
+                    path,
+                    inline.spec.clone(),
+                )
+            }
+            (None, Some(endpoint_id)) => {
+                let ep = repo::get_endpoint(&state.db, endpoint_id)
+                    .await
+                    .map_err(|_| {
+                        api_error(miyo_core::AppError::Validation(format!(
+                            "第 {} 步引用的接口不存在（{endpoint_id}）",
+                            idx + 1
+                        )))
+                    })?;
+                let url = url_template_for(&ep);
+                let spec = ep.request.clone();
+                (ep, url, spec)
+            }
+            (None, None) => {
+                return Err(api_error(miyo_core::AppError::Validation(format!(
+                    "第 {} 步既无接口引用也无内联请求",
+                    idx + 1
+                ))))
+            }
+        };
+        let mut spec = spec;
         miyo_core::apply_global_params(&mut spec, &global_params, &vars);
         let config = miyo_test::config::TestSpec::from_request_value(Some(&serde_json::json!({
             "extract": step.extract,
@@ -1008,14 +1067,15 @@ async fn run_scenario_handler(
             )))
         })?;
         steps.push(miyo_test::runner::ScenarioStepInput {
-            url_template: url_template_for(&ep),
+            url_template,
             endpoint: ep,
             spec_template: spec,
             extract: config.extract,
             assertions: config.assertions,
+            enabled: step.enabled,
         });
     }
-    if steps.is_empty() {
+    if steps.iter().all(|s| !s.enabled) {
         return Err(api_error(miyo_core::AppError::Validation(
             "场景没有启用中的步骤".into(),
         )));
@@ -1066,9 +1126,22 @@ async fn run_scenario_handler(
             error: r.request_error.clone(),
         });
     }
-    let passed = result.results.iter().filter(|r| r.ok).count();
-    let failed = result.results.len() - passed;
-    let skipped = enabled_steps - result.results.len();
+    // 计数按执行状态（results 含 skipped / blocked 行，不再用差值推算）。
+    let passed = result
+        .results
+        .iter()
+        .filter(|r| r.effective_status() == "success")
+        .count();
+    let failed = result
+        .results
+        .iter()
+        .filter(|r| r.effective_status() == "failed" || r.effective_status() == "cancelled")
+        .count();
+    let skipped = result
+        .results
+        .iter()
+        .filter(|r| r.effective_status() == "skipped" || r.effective_status() == "blocked")
+        .count();
 
     // 运行历史落库（与 Tauri 命令同库同表：剥正文、统计摘要、保留最近 N 条）。
     let mut history_results = result.results.clone();
@@ -1095,6 +1168,7 @@ async fn run_scenario_handler(
         stopped_on_failure: result.stopped_on_failure,
         results_json: serde_json::to_string(&history_results).unwrap_or_else(|_| "[]".into()),
         variables_json: serde_json::to_string(&result.variables).unwrap_or_else(|_| "{}".into()),
+        meta_json: None,
     };
     if let Err(e) = repo::save_scenario_run(&state.db, &record).await {
         tracing::warn!("[agent] run_scenario 历史落库失败：{e}");
@@ -1517,19 +1591,24 @@ mod tests {
             project_id: project.id,
             name: "下单支付链路".into(),
             description: String::new(),
+            category: String::new(),
             sort_order: 0,
             steps: vec![
                 miyo_core::model::ScenarioStep {
-                    endpoint_id: order.id,
+                    endpoint_id: Some(order.id),
                     enabled: true,
                     extract: serde_json::json!([{ "name": "orderId", "from": "body", "path": "$.orderId" }]),
                     assertions: serde_json::json!([{ "type": "status", "op": "eq", "expected": "200" }]),
+                    name: None,
+                    request: None,
                 },
                 miyo_core::model::ScenarioStep {
-                    endpoint_id: pay.id,
+                    endpoint_id: Some(pay.id),
                     enabled: true,
                     extract: serde_json::json!([]),
                     assertions: serde_json::json!([]),
+                    name: None,
+                    request: None,
                 },
             ],
             script: None,
@@ -1585,20 +1664,25 @@ mod tests {
             project_id: project.id,
             name: "停".into(),
             description: String::new(),
+            category: String::new(),
             sort_order: 0,
             steps: vec![
                 miyo_core::model::ScenarioStep {
-                    endpoint_id: a.id,
+                    endpoint_id: Some(a.id),
                     enabled: true,
                     extract: serde_json::json!([]),
                     // 断言 500 但上游返回 200 → 失败
                     assertions: serde_json::json!([{ "type": "status", "op": "eq", "expected": "500" }]),
+                    name: None,
+                    request: None,
                 },
                 miyo_core::model::ScenarioStep {
-                    endpoint_id: b.id,
+                    endpoint_id: Some(b.id),
                     enabled: true,
                     extract: serde_json::json!([]),
                     assertions: serde_json::json!([]),
+                    name: None,
+                    request: None,
                 },
             ],
             script: None,
@@ -1619,7 +1703,9 @@ mod tests {
         assert_eq!(result["stoppedOnFailure"], true);
         assert_eq!(result["failed"], 1);
         assert_eq!(result["skipped"], 1, "第二步应被跳过：{result}");
-        assert_eq!(result["steps"].as_array().unwrap().len(), 1);
+        // 失败步 + skipped 占位行（禁用 / 早停语义对齐 runner）。
+        assert_eq!(result["steps"].as_array().unwrap().len(), 2);
+        assert_eq!(result["steps"][1]["ok"], false, "skipped 行非成功态");
         assert!(
             !result["steps"][0]["assertionFailures"]
                 .as_array()
@@ -1679,6 +1765,7 @@ mod tests {
             project_id: project.id,
             name: "停用场景".into(),
             description: String::new(),
+            category: String::new(),
             sort_order: 0,
             steps: vec![],
             script: None,
@@ -1824,7 +1911,7 @@ mod tests {
         assert_eq!(body["stepCount"], 1);
         let saved = repo::get_scenario(&db, new_id).await.unwrap();
         assert_eq!(saved.steps.len(), 1);
-        assert_eq!(saved.steps[0].endpoint_id, ep.id);
+        assert_eq!(saved.steps[0].endpoint_id, Some(ep.id));
 
         // 空名 → 400（Validation）
         let res = client()
@@ -1899,12 +1986,15 @@ mod tests {
             project_id: project.id,
             name: "链路演示".into(),
             description: String::new(),
+            category: String::new(),
             sort_order: 0,
             steps: vec![ScenarioStep {
-                endpoint_id: ep.id,
+                endpoint_id: Some(ep.id),
                 enabled: true,
                 extract: json!([{ "name": "userId", "from": "body", "path": "$.userId" }]),
                 assertions: json!([]),
+                name: None,
+                request: None,
             }],
             script: None,
             created_at: chrono::Utc::now(),

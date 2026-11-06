@@ -317,10 +317,14 @@ pub fn restore_backup(file: &BackupFile) -> Restored {
         map.insert(s.id, new_id);
         let mut new_steps: Vec<miyo_core::model::ScenarioStep> = Vec::with_capacity(s.steps.len());
         for step in &s.steps {
-            new_steps.push(miyo_core::model::ScenarioStep {
-                endpoint_id: *map.get(&step.endpoint_id).unwrap_or(&Uuid::nil()),
-                ..step.clone()
-            });
+            // 引用式步骤随接口 id 映射表重映射（备份内含全部接口，正常必然命中；
+            // 手工编辑的残缺备份兜底 nil，与 mock_rules 的兜底口径一致）；
+            // 内联步骤（endpoint_id None）无引用，原样保留。
+            let mut mapped = step.clone();
+            if let Some(old_ep) = step.endpoint_id {
+                mapped.endpoint_id = Some(*map.get(&old_ep).unwrap_or(&Uuid::nil()));
+            }
+            new_steps.push(mapped);
         }
         scenarios.push(Scenario {
             id: new_id,
@@ -463,20 +467,25 @@ mod tests {
             project_id: project.id,
             name: "登录链路".into(),
             description: "登录 → 查详情".into(),
+            category: String::new(),
             sort_order: 0,
             steps: vec![
                 ScenarioStep {
-                    endpoint_id: ep.id,
+                    endpoint_id: Some(ep.id),
                     enabled: true,
                     extract: serde_json::json!([{"var": "token", "from": "body", "path": "$.token"}]),
                     assertions: serde_json::json!([{"type": "status", "op": "eq", "value": 200}]),
+                    name: None,
+                    request: None,
                 },
                 // 指向不存在接口的步骤：恢复时应兜底 nil 而非 panic / 丢失。
                 ScenarioStep {
-                    endpoint_id: Uuid::new_v4(),
+                    endpoint_id: Some(Uuid::new_v4()),
                     enabled: false,
                     extract: serde_json::json!([]),
                     assertions: serde_json::json!([]),
+                    name: None,
+                    request: None,
                 },
             ],
             script: Some("const steps = [];".into()),
@@ -671,8 +680,8 @@ mod tests {
         let sc = &restored.scenarios[0];
         assert_eq!(sc.project_id, restored.project.id);
         assert_ne!(sc.id, data.scenarios[0].id);
-        assert_eq!(sc.steps[0].endpoint_id, ep.id);
-        assert_eq!(sc.steps[1].endpoint_id, Uuid::nil());
+        assert_eq!(sc.steps[0].endpoint_id, Some(ep.id));
+        assert_eq!(sc.steps[1].endpoint_id, Some(Uuid::nil()));
         assert_eq!(sc.steps[0].extract, data.scenarios[0].steps[0].extract);
         assert_eq!(sc.script, data.scenarios[0].script);
         // 无交叉引用残留

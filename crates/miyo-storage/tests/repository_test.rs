@@ -1048,6 +1048,7 @@ fn scenario_run(scenario_id: Uuid, id: Uuid, offset_min: i64) -> miyo_core::mode
         stopped_on_failure: true,
         results_json: r#"[{"endpoint_id":"0b3f4a2e-6d1a-4c6e-9a6f-111111111111","endpoint_name":"登录","method":"POST","path":"/login","ok":false,"status":500,"duration_ms":60.0,"request_error":null,"outcomes":[]}]"#.into(),
         variables_json: r#"{"token":"abc"}"#.into(),
+        meta_json: None,
     }
 }
 
@@ -1061,6 +1062,7 @@ async fn scenario_run_history_roundtrip_and_prune() {
         project_id: project.id,
         name: "登录链路".into(),
         description: String::new(),
+        category: String::new(),
         sort_order: 0,
         steps: vec![],
         script: None,

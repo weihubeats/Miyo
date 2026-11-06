@@ -694,20 +694,64 @@ pub struct Team {
     pub updated_at: DateTime<Utc>,
 }
 
-/// 场景步骤：引用一个接口 + 步骤级提取 / 断言。
+/// 场景步骤的内联请求定义（步骤自持请求配置，不引用接口）。
+///
+/// 存 `steps_json` JSON 透传；`method` 用宽松字符串（未知方法运行时报错，
+/// 前端徽章兜底中性灰）；`url` 保留 `{{var}}` 模板（执行期二次渲染）；
+/// `spec` 与接口的 RequestSpec 同构（params / headers / body / auth / 超时）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScenarioInlineRequest {
+    pub method: String,
+    pub url: String,
+    #[serde(default)]
+    pub spec: RequestSpec,
+}
+
+/// 场景步骤：引用一个接口（`request = None`）或内联请求（`request = Some`）
+/// + 步骤级提取 / 断言。
 ///
 /// 引用式（而非接口快照）：URL / 头 / 体用接口当前配置，接口更新后场景
-/// 自动跟随；`extract` / `assertions` 与接口 `tests` 里的对应字段同构
-/// （miyo-test 的 ExtractSpec / AssertionSpec 数组），JSON 透传、运行时解析。
+/// 自动跟随；内联式（2026-11 集成测试工作流）：请求定义自持，导入导出 /
+/// 脱离接口集合独立编辑。`extract` / `assertions` 与接口 `tests` 里的对应
+/// 字段同构（miyo-test 的 ExtractSpec / AssertionSpec 数组），JSON 透传、
+/// 运行时解析。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScenarioStep {
-    pub endpoint_id: Uuid,
+    /// 引用式步骤的接口 id；内联步骤为 `None`。
+    #[serde(default)]
+    pub endpoint_id: Option<Uuid>,
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub extract: serde_json::Value,
     #[serde(default)]
     pub assertions: serde_json::Value,
+    /// 步骤名（内联步骤必填；引用步骤缺省用接口名展示）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// 内联请求定义；`None` = 引用式步骤（endpoint_id 必有）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<ScenarioInlineRequest>,
+}
+
+impl ScenarioStep {
+    /// 引用式步骤（接口 id + 提取 / 断言）。
+    pub fn referenced(endpoint_id: Uuid) -> Self {
+        ScenarioStep {
+            endpoint_id: Some(endpoint_id),
+            enabled: true,
+            extract: serde_json::Value::Null,
+            assertions: serde_json::Value::Null,
+            name: None,
+            request: None,
+        }
+    }
+
+    /// 步骤显示名：内联步骤用步骤名，引用步骤无覆盖名时返回 `None`
+    /// （展示层回退接口名）。
+    pub fn display_name(&self) -> Option<&str> {
+        self.name.as_deref().filter(|s| !s.trim().is_empty())
+    }
 }
 
 /// 集成测试场景：项目级接口链路。
@@ -721,6 +765,9 @@ pub struct Scenario {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// 分类标签（场景库过滤用；空 = 未分类）。
+    #[serde(default)]
+    pub category: String,
     #[serde(default)]
     pub sort_order: i64,
     #[serde(default)]
@@ -1068,8 +1115,12 @@ pub struct TestRun {
 /// 场景运行历史（scenario_runs 表）：run_scenario 每次完成落一行，
 /// 供结果面板回看与重开恢复；id 即前端生成的 run_id。
 ///
-/// `results_json` / `variables_json` 为 JSON 透传（与 IPC 形状一致），
-/// schema 演进无需迁移；结果里的 response 正文在落库前剥离（体积考量）。
+/// `results_json` / `variables_json` / `meta_json` 为 JSON 透传（与 IPC
+/// 形状一致），schema 演进无需迁移；响应正文保留（64KB 上限，超限标记
+/// `history_truncated`），敏感头 / 敏感变量落库前脱敏。
+/// `meta_json`（迁移 0024）：`{started_at, scenario（配置快照）,
+/// initial_vars（脱敏）, stop_on_failure, warnings}` —— 历史基于当时配置
+/// 快照回看 / 重跑；旧行 NULL 视为无快照。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScenarioRun {
     pub id: Uuid,
@@ -1087,6 +1138,9 @@ pub struct ScenarioRun {
     pub stopped_on_failure: bool,
     pub results_json: String,
     pub variables_json: String,
+    /// 运行元信息（迁移 0024；旧行为 NULL）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_json: Option<String>,
 }
 
 /// 请求历史。

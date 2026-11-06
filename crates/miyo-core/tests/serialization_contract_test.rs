@@ -250,6 +250,7 @@ fn ipc_models_serialize_snake_case_keys() {
             stopped_on_failure: true,
             results_json: "[]".into(),
             variables_json: "{}".into(),
+            meta_json: Some(r#"{"startedAt":"2026-11-01T00:00:00Z"}"#.into()),
         },
     );
 

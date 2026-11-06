@@ -224,6 +224,38 @@ fn lookup(name: &str, vars: &VariableMap, options: ResolveOptions) -> Option<Str
     None
 }
 
+/// 收集文本中引用的全部变量名（`{{name}}`，去重、保序、剔除内置变量）。
+///
+/// 与 [`resolve_variables`] 同一套扫描规则（空 token / 未闭合不算引用）；
+/// 场景执行前预检未定义变量、Blocked 判定（引用是否产自失败步骤）都靠它。
+pub fn collect_var_refs(input: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'{' && bytes[i + 1] == b'{' {
+            let mut close = i + 2;
+            while close + 1 < bytes.len() {
+                if bytes[close] == b'}' && bytes[close + 1] == b'}' {
+                    break;
+                }
+                close += 1;
+            }
+            if close + 1 >= bytes.len() {
+                break; // 未闭合：与 resolve 同口径，不算引用
+            }
+            let name = input[i + 2..close].trim();
+            if !name.is_empty() && !name.starts_with('$') && !out.iter().any(|v| v == name) {
+                out.push(name.to_string());
+            }
+            i = close + 2;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,5 +461,17 @@ mod tests {
             resolve_variables("{{a}} and {{unclosed", &v),
             "1 and {{unclosed"
         );
+    }
+
+    #[test]
+    fn collect_refs_dedup_ordered_no_builtin() {
+        let refs = collect_var_refs("{{base_url}}/u/{{id}}?t={{id}}&x={{$uuid}}&{{}}&{{open");
+        assert_eq!(refs, vec!["base_url".to_string(), "id".to_string()]);
+    }
+
+    #[test]
+    fn collect_refs_empty_input() {
+        assert!(collect_var_refs("").is_empty());
+        assert!(collect_var_refs("no vars here").is_empty());
     }
 }

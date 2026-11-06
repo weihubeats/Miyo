@@ -289,6 +289,7 @@ mod tests {
                     project_id: busy.id,
                     name: name.into(),
                     description: String::new(),
+                    category: String::new(),
                     sort_order: 0,
                     steps: Vec::new(),
                     script: None,

@@ -172,6 +172,70 @@ pub fn render_kv(items: &[KeyValue], vars: &VariableMap) -> Vec<KeyValue> {
         .collect()
 }
 
+/// 渲染请求规格（JSON Body 类型保留版，场景执行链路专用）。
+///
+/// 与 [`render_spec`] 同一口径，差别仅在 JSON Body：模板里整值恰为
+/// `{{name}}` 的字段，若 `typed` 中有该变量的非字符串 JSON 值（提取时
+/// 保留的数字 / 布尔 / 数组 / 对象），整体替换为该类型值——上一步提取的
+/// 数字进下一步 Body 仍是数字，不被字符串化。其余位置（URL / 头 / 表单）
+/// 与混合插值（`"prefix-{{x}}"`）一律字符串解析；模板非法 JSON 时整体
+/// 回退 [`render_spec`] 行为。
+pub fn render_spec_typed(
+    spec: &RequestSpec,
+    vars: &VariableMap,
+    typed: &std::collections::HashMap<String, serde_json::Value>,
+) -> RequestSpec {
+    let mut out = render_spec(spec, vars);
+    if typed.is_empty() {
+        return out;
+    }
+    if let BodySpec::Json { raw } = &spec.body {
+        if let Ok(template) = serde_json::from_str::<serde_json::Value>(raw) {
+            out.body = BodySpec::Json {
+                raw: render_json_value(&template, vars, typed).to_string(),
+            };
+        }
+    }
+    out
+}
+
+/// 递归渲染 JSON 值树：整值占位走 typed 替换，其余字符串走变量解析。
+fn render_json_value(
+    v: &serde_json::Value,
+    vars: &VariableMap,
+    typed: &std::collections::HashMap<String, serde_json::Value>,
+) -> serde_json::Value {
+    match v {
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.len() > 4 && trimmed.starts_with("{{") && trimmed.ends_with("}}") {
+                let key = &trimmed[2..trimmed.len() - 2];
+                if let Some(t) = typed.get(key.trim()) {
+                    return t.clone();
+                }
+            }
+            serde_json::Value::String(crate::resolve_variables(s, vars))
+        }
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .iter()
+                .map(|x| render_json_value(x, vars, typed))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(k, x)| {
+                    (
+                        crate::resolve_variables(k, vars),
+                        render_json_value(x, vars, typed),
+                    )
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 /// 全局参数注入：将启用的全局参数并入请求规格（query → params，header → headers）。
 ///
 /// 规则：请求自身已存在的同名键优先（全局参数只做补缺，不覆盖显式配置）。
@@ -263,6 +327,49 @@ mod tests {
         let rendered = render_spec(&spec, &vars);
         match rendered.body {
             BodySpec::Binary { path } => assert_eq!(path, "/data/pkg.Svc.bin"),
+            other => panic!("意外 body：{other:?}"),
+        }
+    }
+
+    #[test]
+    fn typed_render_preserves_json_types_in_body() {
+        let vars = HashMap::new(); // 数值来自提取层（typed），字符串表为空
+        let mut typed = HashMap::new();
+        typed.insert("amount".to_string(), serde_json::json!(388.2));
+        typed.insert("flag".to_string(), serde_json::json!(true));
+        let spec = RequestSpec {
+            body: BodySpec::Json {
+                raw: r#"{"amount": "{{amount}}", "ok": "{{flag}}", "note": "合计-{{amount}}", "missing": "{{nope}}"}"#.into(),
+            },
+            ..Default::default()
+        };
+        let rendered = render_spec_typed(&spec, &vars, &typed);
+        match rendered.body {
+            BodySpec::Json { raw } => {
+                let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+                assert_eq!(v["amount"], serde_json::json!(388.2)); // 数字，不是字符串
+                assert_eq!(v["ok"], serde_json::json!(true));
+                assert_eq!(v["note"], serde_json::json!("合计-{{amount}}")); // 混合插值：字符串表为空，原样保留
+                assert_eq!(v["missing"], serde_json::json!("{{nope}}"));
+            }
+            other => panic!("意外 body：{other:?}"),
+        }
+    }
+
+    #[test]
+    fn typed_render_falls_back_on_invalid_json() {
+        let mut typed = HashMap::new();
+        typed.insert("x".to_string(), serde_json::json!(1));
+        let spec = RequestSpec {
+            body: BodySpec::Json {
+                raw: "{not json {{x}}".into(),
+            },
+            ..Default::default()
+        };
+        let rendered = render_spec_typed(&spec, &HashMap::new(), &typed);
+        match rendered.body {
+            // 非法 JSON：退回字符串解析口径（未定义变量原样保留）。
+            BodySpec::Json { raw } => assert_eq!(raw, "{not json {{x}}"),
             other => panic!("意外 body：{other:?}"),
         }
     }
