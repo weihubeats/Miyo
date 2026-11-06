@@ -11,9 +11,11 @@ import ProjectList from './ProjectList.vue'
 import { useLocaleStore } from '../stores/locale'
 import type { Project, ProjectStat, RecentActivity } from '../types/miyoApi'
 
+const routerMock = vi.hoisted(() => ({ push: vi.fn() }))
+
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {} }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => routerMock,
 }))
 
 function makeProject(id: string, name: string): Project {
@@ -122,6 +124,38 @@ describe('ProjectList：加载与渲染', () => {
     wrapper.unmount()
   })
 
+  /**
+   * 返回首页不闪：从实时调试回来时组件会重新挂载，但数据仍在内存里。
+   * 此时必须先渲染已有卡片，不能回到骨架屏（旧行为是 loading → .sk-grid）。
+   */
+  it('已有快照再挂载：直接渲染卡片，不出现骨架屏', async () => {
+    // 生产里 pinia 是应用级单例，路由切换不重建；这里显式复用同一个实例
+    const sharedPinia = createPinia()
+    setActivePinia(sharedPinia)
+
+    const first = mountList()
+    await flushPromises()
+    await nextTick()
+    expect(first.find('.card-grid').exists()).toBe(true)
+    first.unmount()
+
+    // 模拟返回：数据就绪后再挂载一次，且这次 IPC 迟迟不返回
+    setActivePinia(sharedPinia)
+    apiMock.getProjects.mockImplementationOnce(() => new Promise(() => {}))
+    apiMock.listProjectStats.mockImplementationOnce(() => new Promise(() => {}))
+    const again = mountList()
+    await nextTick()
+    expect(again.find('.sk-grid').exists()).toBe(false)
+    expect(projectNames(again)).toContain('支付网关')
+    again.unmount()
+
+    // 收尾：本用例排队的 Once 实现若未消费，会污染后续用例（clearAllMocks 不清实现）
+    apiMock.getProjects.mockReset()
+    apiMock.getProjects.mockImplementation(async () => backend.projects.map((p) => ({ ...p })))
+    apiMock.listProjectStats.mockReset()
+    apiMock.listProjectStats.mockResolvedValue([])
+  })
+
   it('搜索过滤项目；无命中展示空态文案', async () => {
     const wrapper = mountList()
     await flushPromises()
@@ -205,6 +239,25 @@ describe('ProjectList：仪表板第五轮精修', () => {
     await flushPromises()
     const values = wrapper.findAll('.hero-value').map((v) => v.text())
     expect(values).toEqual(['2', '5', '1', '12'])
+    wrapper.unmount()
+  })
+
+  /**
+   * 四个统计都是跨项目汇总，首页没有「按维度看明细」的落点：
+   * 做成可点击只会把用户带进无关项目（旧实现点接口/场景/请求都跳最近项目）。
+   */
+  it('统计数字不可点击：不是按钮，点击不触发任何导航', async () => {
+    const pushSpy = routerMock.push
+    pushSpy.mockClear()
+    const wrapper = mountList()
+    await flushPromises()
+    const stats = wrapper.findAll('.hero-stat')
+    expect(stats).toHaveLength(4)
+    for (const stat of stats) {
+      expect(stat.element.tagName).not.toBe('BUTTON')
+      await stat.trigger('click')
+    }
+    expect(pushSpy).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -323,6 +376,182 @@ describe('ProjectList：仪表板第五轮精修', () => {
     await flushPromises()
     expect(wrapper.findAll('.tl-item')).toHaveLength(0)
     expect(wrapper.text()).toContain('暂无活动')
+    wrapper.unmount()
+  })
+})
+
+describe('ProjectList：仪表板第六轮精修', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    useLocaleStore().setMode('zh')
+    localStorage.clear()
+    backend.projects.length = 0
+    backend.setActive(null)
+    backend.projects.push(makeProject('p-1', '支付网关'), makeProject('p-2', '用户中心'))
+    vi.clearAllMocks()
+    apiMock.listProjectStats.mockResolvedValue([])
+    apiMock.listRecentActivities.mockResolvedValue([])
+  })
+
+  it('统计未加载：数字显示占位「—」而不是误导的 0', async () => {
+    // 统计 IPC 一直挂起：首屏处于「未就绪」
+    apiMock.listProjectStats.mockImplementation(() => new Promise(() => {}))
+    const wrapper = mountList()
+    await flushPromises()
+    expect(wrapper.findAll('.hero-value').map((v) => v.text())).toEqual(['2', '—', '—', '—'])
+    wrapper.unmount()
+  })
+
+  it('统计加载失败：同样不冒充 0，给出重试入口', async () => {
+    apiMock.listProjectStats.mockRejectedValue(new Error('db down'))
+    const wrapper = mountList()
+    await flushPromises()
+    expect(wrapper.findAll('.hero-value').map((v) => v.text())).toEqual(['2', '—', '—', '—'])
+    expect(wrapper.find('.stats-retry').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('请求数成功/失败拆分进统计提示（口径与总数一致）', async () => {
+    apiMock.listProjectStats.mockResolvedValue([
+      {
+        project_id: 'p-1',
+        endpoint_count: 1,
+        scenario_count: 0,
+        request_count: 10,
+        ok_count: 7,
+        fail_count: 3,
+        latest_method: null,
+        latest_path: null,
+      },
+    ])
+    const wrapper = mountList()
+    await flushPromises()
+    const requestStat = wrapper.findAll('.hero-stat')[3]!
+    expect(requestStat.find('.hero-value').text()).toBe('10')
+    expect(requestStat.attributes('title')).toContain('成功 7')
+    expect(requestStat.attributes('title')).toContain('失败 3')
+    wrapper.unmount()
+  })
+
+  it('活动加载失败：文案是「加载失败」而非「暂无活动」，可重试', async () => {
+    apiMock.listRecentActivities.mockRejectedValueOnce(new Error('boom'))
+    const wrapper = mountList()
+    await flushPromises()
+    expect(wrapper.text()).toContain('活动记录加载失败')
+    expect(wrapper.text()).not.toContain('暂无活动')
+    await wrapper.find('.stats-retry').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无活动')
+    wrapper.unmount()
+  })
+
+  it('活动行两行结构：第二行是去掉域名的路径', async () => {
+    apiMock.listRecentActivities.mockResolvedValue([
+      {
+        id: 'a-1',
+        project_id: 'p-1',
+        project_name: '支付网关',
+        endpoint_id: 'ep-9',
+        endpoint_name: '查询订单',
+        method: 'GET',
+        url: 'https://api.example.com/orders/42?full=1',
+        status: 200,
+        duration_ms: 5,
+        created_at: '2026-01-01T00:00:00.000Z',
+      },
+    ])
+    const wrapper = mountList()
+    await flushPromises()
+    const item = wrapper.find('.tl-item')
+    expect(item.find('.tl-name').text()).toBe('支付网关')
+    expect(item.find('.tl-epname').text()).toBe('查询订单')
+    expect(item.find('.tl-url').text()).toBe('/orders/42?full=1')
+    // 点击进入归属项目（switchProject 走 store：http mock 下直接返回不抛错）
+    await item.trigger('click')
+    await flushPromises()
+    wrapper.unmount()
+  })
+
+  it('⌘K 聚焦搜索框；Esc 清空', async () => {
+    const wrapper = mountList()
+    await flushPromises()
+    const input = wrapper.find('.toolbar-filter-input')
+    expect(wrapper.find('.toolbar-kbd').exists()).toBe(true)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))
+    await nextTick()
+    expect(document.activeElement).toBe(input.element)
+    await input.setValue('支付')
+    expect(wrapper.find('.toolbar-kbd').exists()).toBe(false)
+    await input.trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect((input.element as HTMLInputElement).value).toBe('')
+    wrapper.unmount()
+  })
+
+  it('已折叠分组在搜索命中时临时展开（偏好不被改写）', async () => {
+    localStorage.setItem(
+      'miyo.dash.collapsedTeams',
+      JSON.stringify({ '00000000-0000-0000-0000-000000000001': true }),
+    )
+    const wrapper = mountList()
+    await flushPromises()
+    // 无搜索：按偏好保持折叠
+    expect(wrapper.find('.team-grid').exists()).toBe(false)
+    await wrapper.find('.toolbar-filter-input').setValue('支付')
+    await nextTick()
+    // 搜索命中落在折叠组里：临时展开，能看到卡片
+    expect(wrapper.findAll('.proj-title').map((n) => n.text())).toEqual(['支付网关'])
+    expect(localStorage.getItem('miyo.dash.collapsedTeams')).toBe(
+      JSON.stringify({ '00000000-0000-0000-0000-000000000001': true }),
+    )
+    wrapper.unmount()
+  })
+
+  it('空列表：只渲染空态，不叠加 Dropzone', async () => {
+    backend.projects.length = 0
+    const wrapper = mountList()
+    await flushPromises()
+    expect(wrapper.find('.dash-empty').exists()).toBe(true)
+    expect(wrapper.find('.add-card').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('删除项目后首页计数与活动同步移除该项目', async () => {
+    apiMock.listProjectStats.mockResolvedValue([
+      {
+        project_id: 'p-1',
+        endpoint_count: 3,
+        scenario_count: 1,
+        request_count: 2,
+        ok_count: 2,
+        fail_count: 0,
+        latest_method: null,
+        latest_path: null,
+      },
+    ])
+    apiMock.listRecentActivities.mockResolvedValue([
+      {
+        id: 'a-1',
+        project_id: 'p-1',
+        project_name: '支付网关',
+        endpoint_id: null,
+        endpoint_name: null,
+        method: 'GET',
+        url: 'https://x.test/a',
+        status: 200,
+        duration_ms: 1,
+        created_at: '2026-01-01T00:00:00.000Z',
+      },
+    ])
+    const wrapper = mountList()
+    await flushPromises()
+    expect(wrapper.findAll('.hero-value').map((v) => v.text())).toEqual(['2', '3', '1', '2'])
+    expect(wrapper.findAll('.tl-item')).toHaveLength(1)
+    const vm = wrapper.vm as unknown as { onDeleted: (id: string) => Promise<void> }
+    await vm.onDeleted('p-1')
+    await flushPromises()
+    expect(wrapper.findAll('.hero-value').map((v) => v.text())).toEqual(['1', '0', '0', '0'])
+    expect(wrapper.findAll('.tl-item')).toHaveLength(0)
     wrapper.unmount()
   })
 })

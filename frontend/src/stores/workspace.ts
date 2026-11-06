@@ -2273,11 +2273,20 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const historyQueryKey = ref('')
 
   /**
+   * 首页「最近活动」点开的那条记录：可能不在本次分页窗口内，单独钉在
+   * 历史列表顶部（见 loadHistories 的 keepPinned），保证用户点进来能看到它。
+   */
+  const pinnedHistory = ref<RequestHistory | null>(null)
+
+  /**
    * 拉取历史。后端无 offset：按「增量 limit」分页——首次 50 条，
    * loadMoreHistories 每次 +50 重拉（项目保留上限 500 条，见后端 HISTORY_RETENTION_PER_PROJECT）。
    * 查询条件（项目 / 仅当前接口）变化时自动把窗口重置回首屏，调用方无需传参。
+   *
+   * `keepPinned`：首页「最近活动」恢复某条记录后，历史里可能还没有它
+   * （超出本次分页窗口），保留下来而不是被一次刷新挤掉。
    */
-  async function loadHistories(): Promise<void> {
+  async function loadHistories(opts?: { keepPinned?: boolean }): Promise<void> {
     if (!project.value) return
     const endpointId = historyOnlyCurrent.value ? activeEndpoint.value?.id ?? null : null
     const key = `${project.value.id}|${endpointId ?? ''}`
@@ -2287,7 +2296,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
     try {
       const list = (await api.listRequestHistories(project.value.id, historyLimit.value, endpointId)) ?? []
-      histories.value = list
+      const pinned =
+        opts?.keepPinned && pinnedHistory.value
+          ? list.find((h) => h.id === pinnedHistory.value!.id) ?? pinnedHistory.value
+          : null
+      histories.value = pinned
+        ? [pinned, ...list.filter((h) => h.id !== pinned.id)]
+        : list
       historyHasMore.value = list.length >= historyLimit.value
       historyLoadFailed.value = false
     } catch (err) {
@@ -2458,6 +2473,31 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (opts?.send) autoSendEndpointId.value = id
   }
 
+  /**
+   * 首页「最近活动」点开某条记录：在当前项目内找到它并恢复到编辑器。
+   *
+   * 活动行只有摘要（id / 接口 / 方法 / URL），恢复需要 `request_summary_json`，
+   * 因此按 id 在「本项目最近一页历史」里找；万一不在窗口内（活动取的是全局
+   * 6 条，本项目窗口 50 条，正常都覆盖），只定位到接口不强行造空记录。
+   * 找到后把该条钉在历史列表顶部，避免随后的一次刷新把它挤掉。
+   */
+  async function openHistoryRecord(historyId: string): Promise<boolean> {
+    if (!project.value) return false
+    let record = histories.value.find((h) => h.id === historyId) ?? null
+    if (!record) {
+      try {
+        const list = (await api.listRequestHistories(project.value.id, HISTORY_PAGE_SIZE)) ?? []
+        record = list.find((h) => h.id === historyId) ?? null
+      } catch {
+        record = null
+      }
+    }
+    if (!record) return false
+    pinnedHistory.value = record
+    restoreFromHistory(record)
+    return true
+  }
+
   return {
     project,
     folders,
@@ -2568,12 +2608,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     cancelAllTestCases,
     histories,
     historyOnlyCurrent,
+    pinnedHistory,
     historyHasMore,
     loadHistories,
     loadMoreHistories,
     clearHistories,
     deleteHistory,
     restoreFromHistory,
+    openHistoryRecord,
     autoSendEndpointId,
   }
 })

@@ -20,7 +20,16 @@ export interface AggregatedProjectStats {
   counts: Record<string, number>
   scenarioCounts: Record<string, number>
   requestCounts: Record<string, number>
+  /** 成功请求（2xx/3xx，或后端标记成功的历史行）。 */
+  okCounts: Record<string, number>
+  /** 失败请求（4xx/5xx 或请求级错误）。 */
+  failCounts: Record<string, number>
   latest: Record<string, LatestEndpoint | null>
+}
+
+/** 有限数值兜底（成功/失败计数缺失时取 0）。 */
+function safeOrZero(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0
 }
 
 /** 数值字段兜底：缺失/畸形一律按 0，不产出 NaN。 */
@@ -33,18 +42,22 @@ export function aggregateProjectStats(stats: ProjectStat[] | null | undefined): 
   const counts: Record<string, number> = {}
   const scenarioCounts: Record<string, number> = {}
   const requestCounts: Record<string, number> = {}
+  const okCounts: Record<string, number> = {}
+  const failCounts: Record<string, number> = {}
   const latest: Record<string, LatestEndpoint | null> = {}
   for (const s of stats ?? []) {
     if (typeof s?.project_id !== 'string' || typeof s.endpoint_count !== 'number') continue
     counts[s.project_id] = s.endpoint_count
     scenarioCounts[s.project_id] = safeCount(s.scenario_count)
     requestCounts[s.project_id] = safeCount(s.request_count)
+    okCounts[s.project_id] = safeOrZero(s.ok_count)
+    failCounts[s.project_id] = safeOrZero(s.fail_count)
     latest[s.project_id] =
       typeof s.latest_method === 'string' && typeof s.latest_path === 'string'
         ? { method: s.latest_method as HttpMethod, path: s.latest_path }
         : null
   }
-  return { counts, scenarioCounts, requestCounts, latest }
+  return { counts, scenarioCounts, requestCounts, okCounts, failCounts, latest }
 }
 
 /** 计数字典求和（无有效条目时为 0，不会出现 NaN）。 */

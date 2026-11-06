@@ -41,7 +41,16 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="proj-card" :data-project-id="project.id" @click="emit('open')">
+  <div
+    class="proj-card"
+    :data-project-id="project.id"
+    role="button"
+    tabindex="0"
+    :aria-label="project.name"
+    @click="emit('open')"
+    @keydown.enter.prevent="emit('open')"
+    @keydown.space.prevent="emit('open')"
+  >
     <span v-if="draggable" class="dnd-handle" :title="t('pcard.dragHint')" @click.stop>
       <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true">
         <circle cx="2" cy="2" r="1.3" />
@@ -101,9 +110,12 @@ const emit = defineEmits<{
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 统一内距 + 四行内容各自固定高度：同一行卡片高度天然对齐 */
   padding: 14px 16px;
   /* 网格子项：允许收缩到轨道宽，长内容走 ellipsis 而不是撑爆网格 */
   min-width: 0;
+  /* 卡片撑满轨道高度：不同行内距不同时也不出现高低不齐 */
+  height: 100%;
   border-radius: var(--radius-xl);
   /* 表面/描边/投影走 --projcard-*（深色微光半透底；浅色档在 style.css = 纯白卡） */
   border: 1px solid var(--projcard-border);
@@ -113,11 +125,29 @@ const emit = defineEmits<{
   transition:
     border-color var(--dur) var(--ease),
     background var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease);
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 }
+/* hover：轻微上浮 + 描边提亮（3px 位移、只加深一档阴影；不做发光） */
 .proj-card:hover {
   border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   background: var(--projcard-hover-bg);
+  box-shadow: var(--projcard-hover-shadow);
+  transform: translateY(-2px);
+}
+/* 键盘可达：焦点环（全局 :focus-visible 零特异性规则之上，显式给卡片） */
+.proj-card:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.proj-card:active {
+  transform: translateY(0);
+}
+/* 拖拽中不参与上浮（SortableJS 独占位移控制） */
+.proj-card.sortable-chosen,
+.proj-card.sortable-ghost {
+  transform: none;
 }
 
 /* ---- 第 1 行：图标 + 名称 + 状态 ---- */
@@ -131,8 +161,8 @@ const emit = defineEmits<{
 }
 
 .proj-avatar {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -143,13 +173,14 @@ const emit = defineEmits<{
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 2px 8px rgba(0, 0, 0, 0.3);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 700;
   letter-spacing: 0.02em;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   user-select: none;
 }
 
+/* 名称：单行截断；不用 min-width:0 之外的技巧，省略号由 overflow 保证 */
 .proj-title {
   flex: 1;
   min-width: 0;
@@ -187,14 +218,16 @@ const emit = defineEmits<{
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
+  /* 固定两行高（2 × 1.5em）：一行描述 / 空描述也占满，卡片底边对齐 */
+  height: 36px;
   color: var(--text-2);
-  /* 两行截断；min-height 保留两行空间，空描述也不塌陷 */
+  /* 两行截断 */
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow: hidden;
-  min-height: 36px;
+  word-break: break-word;
 }
 /* 空描述：更淡的占位文案 */
 .proj-desc.empty {
@@ -206,7 +239,8 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   gap: 7px;
-  /* 防换行 + 兜底裁剪：窄卡片下交给 ellipsis 而不是溢出卡片 */
+  /* 单行：窄卡片下整组走 ellipsis，而不是换行把卡片撑高 */
+  height: 18px;
   white-space: nowrap;
   min-width: 0;
   overflow: hidden;
@@ -222,6 +256,15 @@ const emit = defineEmits<{
   gap: 4px;
   white-space: nowrap;
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 更新时间在最右：空间不足时先牺牲它，API / 场景数保持可读 */
+.metric:last-child {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .metric-sep {
@@ -233,6 +276,9 @@ const emit = defineEmits<{
 .proj-foot {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  height: 16px;
+  margin-top: auto;
 }
 
 .proj-open-hint {

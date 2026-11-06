@@ -68,7 +68,14 @@ describe('aggregateProjectStats', () => {
   })
 
   it('null / undefined 入参安全返回空结果', () => {
-    const empty = { counts: {}, scenarioCounts: {}, requestCounts: {}, latest: {} }
+    const empty = {
+      counts: {},
+      scenarioCounts: {},
+      requestCounts: {},
+      okCounts: {},
+      failCounts: {},
+      latest: {},
+    }
     expect(aggregateProjectStats(null)).toEqual(empty)
     expect(aggregateProjectStats(undefined)).toEqual(empty)
   })

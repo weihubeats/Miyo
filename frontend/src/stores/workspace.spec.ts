@@ -594,7 +594,8 @@ describe('请求历史：增量分页与失败提示', () => {
     backend.envsByProject.clear()
     backend.setActive(null)
     backend.projects.push(makeProject('p-a', '项目A'), makeProject('p-b', '项目B'))
-    backend.endpointsByProject.set('p-a', [])
+    // ep-1：openHistoryRecord 用例需要「历史记录归属接口存在」的真实路径
+    backend.endpointsByProject.set('p-a', [makeEndpoint('ep-1', 'p-a', 'users')])
     backend.endpointsByProject.set('p-b', [])
     backend.envsByProject.set('p-a', [])
     backend.envsByProject.set('p-b', [])
@@ -667,6 +668,56 @@ describe('请求历史：增量分页与失败提示', () => {
     backend.setHistoryImpl(() => Promise.reject(new Error('down again')))
     await store.loadHistories()
     expect(toastMock.error).toHaveBeenCalledTimes(2)
+  })
+
+  /**
+   * 首页「最近活动」点开某条记录：按 id 找回摘要并回填编辑器，
+   * 同时把该条钉进历史列表——随后的一次刷新不能把它挤掉。
+   */
+  it('openHistoryRecord：按 id 恢复请求到编辑器，并在刷新后仍钉在历史顶部', async () => {
+    const store = useWorkspaceStore()
+    backend.setActive('p-a')
+    await store.init()
+    const record = {
+      id: 'h-recent',
+      project_id: 'p-a',
+      endpoint_id: 'ep-1',
+      method: 'GET',
+      url: 'https://api.example.com/users?page=2',
+      status: 200,
+      duration_ms: 12,
+      request_summary_json: JSON.stringify({
+        method: 'GET',
+        url: 'https://api.example.com/users?page=2',
+        spec: { headers: [{ key: 'X-Trace', value: '1', enabled: true, description: '' }] },
+      }),
+      response_summary_json: '{}',
+      created_at: new Date().toISOString(),
+    }
+    // 首页活动取的是全局最近 6 条：这条不在本项目的首屏窗口里
+    backend.historyRows.push({ id: 'h-other' } as never)
+    backend.setHistoryImpl(async () => [record] as never)
+
+    const ok = await store.openHistoryRecord('h-recent')
+    expect(ok).toBe(true)
+    expect(store.activeTabId).toBe('ep-1')
+    expect(store.draftOf('ep-1')?.path).toBe('/users')
+    expect(store.draftOf('ep-1')?.request.headers[0]?.key).toBe('X-Trace')
+
+    // 之后的历史刷新：钉住的记录排在最前，且不重复
+    backend.setHistoryImpl(async () => [{ id: 'h-other' } as never])
+    await store.loadHistories({ keepPinned: true })
+    expect(store.histories.map((h) => h.id)).toEqual(['h-recent', 'h-other'])
+  })
+
+  it('openHistoryRecord：记录已被清理时返回 false，不造空草稿', async () => {
+    const store = useWorkspaceStore()
+    backend.setActive('p-a')
+    await store.init()
+    backend.setHistoryImpl(async () => [])
+    const ok = await store.openHistoryRecord('h-gone')
+    expect(ok).toBe(false)
+    expect(store.openTabs).toHaveLength(0)
   })
 })
 

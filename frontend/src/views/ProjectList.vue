@@ -42,12 +42,18 @@ import ProjectRenameModal from '../components/projectlist/ProjectRenameModal.vue
 import ProjectDeleteModal from '../components/projectlist/ProjectDeleteModal.vue'
 import ScratchRequestModal from '../components/projectlist/ScratchRequestModal.vue'
 import { timeAgo } from '../components/projectlist/projectMeta'
-import { aggregateProjectStats, sumCounts, totalEndpointCount } from '../utils/projectStats'
+import {
+  aggregateProjectStats,
+  sumCounts,
+  totalEndpointCount,
+  type AggregatedProjectStats,
+} from '../utils/projectStats'
 import { methodBadgeTone } from '../utils/methodTone'
 import { formatDurationShort } from '../utils/format'
 import { useWindowDrag } from '../composables/useWindowDrag'
+import { useDashboardStore, emptyProjectStats } from '../stores/dashboard'
 import logo from '../assets/miyo-logo.svg'
-import type { Project, RecentActivity, Team } from '../types/miyoApi'
+import type { Project, ProjectStat, RecentActivity, Team } from '../types/miyoApi'
 
 const api = useMiyoApi()
 const toast = useToast()
@@ -56,12 +62,22 @@ const workspace = useWorkspaceStore()
 const locale = useLocaleStore()
 const t = locale.t
 
-const projects = ref<Project[]>([])
-const teams = ref<Team[]>([])
-const counts = ref<Record<string, number>>({})
-/** 每项目场景 / 请求历史总数（list_project_stats 单条 IPC 带出）。 */
-const scenarioCounts = ref<Record<string, number>>({})
-const requestCounts = ref<Record<string, number>>({})
+/**
+ * 项目 / 团队 / 统计：初值取 pinia 里的首页快照，返回首页时直接复用上次内容
+ * （`<script setup>` 里的 ref 随挂载重建，跨路由切换必须靠这层缓存）。
+ */
+const dashboard = useDashboardStore()
+const projects = ref<Project[]>([...(dashboard.projects ?? [])])
+const teams = ref<Team[]>([...(dashboard.teams ?? [])])
+
+/** 首页全部计数（接口 / 场景 / 请求 / 成功失败）都出自这一个聚合结果。 */
+const stats = ref<AggregatedProjectStats>(dashboard.stats ?? emptyProjectStats())
+/** 模板与排序用的计数视图（场景 / 请求数由总览 computed 直接读 stats）。 */
+const counts = computed(() => stats.value.counts)
+const scenarioCounts = computed(() => stats.value.scenarioCounts)
+
+/** 统计是否仍未落定（首次加载 / 失败后未重试成功）：用于区分「真 0」与「未加载」。 */
+const statsReady = ref(dashboard.stats !== null)
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 const search = ref('')
@@ -69,11 +85,25 @@ const search = ref('')
 // ---------- 摘要统计 ----------
 const totalProjects = computed(() => projects.value.length)
 
-const totalApis = computed(() => totalEndpointCount(counts.value))
+const totalApis = computed(() => totalEndpointCount(stats.value.counts))
 
-const totalScenarios = computed(() => sumCounts(scenarioCounts.value))
+const totalScenarios = computed(() => sumCounts(stats.value.scenarioCounts))
 
-const totalRequests = computed(() => sumCounts(requestCounts.value))
+/** 请求总数（接口全量：含失败，与最近活动的记录来源同一张 request_histories 表）。 */
+const totalRequests = computed(() => sumCounts(stats.value.requestCounts))
+
+/** 请求明细：2xx/3xx 成功、4xx/5xx 与网络错误失败（两者相加等于总数）。 */
+const requestBreakdown = computed(() => {
+  const ok = sumCounts(stats.value.okCounts)
+  const fail = sumCounts(stats.value.failCounts)
+  return { ok, fail }
+})
+
+/** 计数展示：未就绪时给占位而不是误导性的 0（项目数来自项目列表，与统计 IPC 无关）。 */
+function statText(n: number, fromStats = true): string {
+  if (fromStats && !statsReady.value) return '—'
+  return String(n)
+}
 
 /** 按时段问候（Hero 欢迎语，整句键）。 */
 const greeting = computed(() => {
@@ -85,38 +115,22 @@ const greeting = computed(() => {
   return t('projectlist.greetEvening')
 })
 
-/** 最近更新的项目（「打开最近项目」类统计跳转的落点）。 */
-const latestProject = computed(() => {
-  let latest: Project | null = null
-  for (const p of projects.value) {
-    if (!latest || p.updated_at > latest.updated_at) latest = p
-  }
-  return latest
-})
-
-/** 统计点击 1：项目数 → 滚动到项目分组区（复用拖拽容器的 ref）。 */
-function scrollToProjects(): void {
-  groupsEl.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-
-/** 统计点击 2：接口 / 场景 / 请求数 → 打开最近活跃项目的工作区。 */
-async function openLatestProject(): Promise<void> {
-  const target = latestProject.value
-  if (!target) return
-  await enter(target)
-}
-
 // ---------- 最近活动（真实请求历史，list_recent_activities 单条 IPC） ----------
 const activities = ref<RecentActivity[]>([])
+/** 三态：loading（加载中）/ error（失败可重试）/ ready（已拿到结果，可能为空）。 */
+const activitiesState = ref<'loading' | 'error' | 'ready'>('loading')
 
+/** 最多展示 4 条：摘要卡高度固定，多出的记录留给历史页。 */
 const recentActivities = computed(() => activities.value.slice(0, 4))
 
 async function loadActivities(): Promise<void> {
+  activitiesState.value = 'loading'
   try {
     activities.value = await api.listRecentActivities(6)
+    activitiesState.value = 'ready'
   } catch {
-    // 静默降级为空态（不打断首页；历史不可用不该阻塞项目列表）
-    activities.value = []
+    // 失败保留旧数据（首屏则为空）并给出重试入口，不把「加载失败」说成「没有记录」
+    activitiesState.value = 'error'
   }
 }
 
@@ -139,10 +153,32 @@ function statusCls(status: number | null): string {
   return 'st-err'
 }
 
-/** 点击活动 → 进入归属项目（项目已被删除时忽略）。 */
+/**
+ * 活动行第二行的路径展示：只保留 pathname + query（去掉协议与域名）。
+ * 域名对「哪条请求」没有区分度，反而把真正有用的 path 挤到省略号里；
+ * 解析失败（非标准 URL）时原样返回。
+ */
+function activityPath(a: RecentActivity): string {
+  try {
+    const u = new URL(a.url)
+    return `${u.pathname}${u.search}`
+  } catch {
+    return a.url
+  }
+}
+
+/**
+ * 点击活动 → 进入归属项目并恢复该次请求（工作区按 `history` 把记录回填到
+ * 编辑器，接口不存在时退化为只定位到 `focus` 接口）。
+ * 项目已被删除时给出提示，而不是静默无反应。
+ */
 async function enterActivity(a: RecentActivity): Promise<void> {
   const target = projects.value.find((p) => p.id === a.project_id)
-  if (target) await enter(target)
+  if (!target) {
+    toast.warning(t('projectlist.activityProjectGone'), { message: a.project_name })
+    return
+  }
+  await enter(target, { endpointId: a.endpoint_id ?? undefined, historyId: a.id })
 }
 
 // ---------- 视图偏好（localStorage 持久化：视图模式 / 排序 / 分组折叠） ----------
@@ -277,16 +313,42 @@ const grouped = computed<TeamGroup[]>(() => {
   return search.value.trim() ? groups.filter((g) => g.projects.length) : groups
 })
 
+/**
+ * 搜索命中落在已折叠的分组里：该组临时展开，否则「匹配 1/2」却一片空白
+ * 像丢了数据。折叠偏好不被改写，原文是用户手动的选择。
+ */
+const searchActive = computed(() => search.value.trim() !== '')
+
+function isGroupCollapsed(teamId: string): boolean {
+  if (!isCollapsed(teamId)) return false
+  if (!searchActive.value) return true
+  return !grouped.value.some((g) => g.team.id === teamId && g.projects.length)
+}
+
 /** 是否有生效中的筛选/排序（工具栏显示「清空筛选」与匹配计数）。 */
 const hasActiveFilters = computed(
   () => search.value.trim() !== '' || teamFilter.value !== TEAM_ALL || sortBy.value !== 'manual',
 )
 
-function clearFilters(): void {
+function closeFilters(): void {
   search.value = ''
   teamFilter.value = TEAM_ALL
   sortBy.value = 'manual'
 }
+
+// ---------- 搜索快捷键（⌘K / Ctrl+K 聚焦；Esc 清空） ----------
+const searchEl = ref<HTMLInputElement | null>(null)
+
+function onGlobalKeydown(e: KeyboardEvent): void {
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'k') return
+  // 只在仪表板内生效：其它输入框（弹窗/编辑器）里的 ⌘K 交给组件自己处理
+  e.preventDefault()
+  searchEl.value?.focus()
+  searchEl.value?.select()
+}
+
+onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 
 /** 结果统计：无筛选时给全量概览，筛选中给匹配/总数。 */
 const resultSummary = computed(() => {
@@ -415,15 +477,14 @@ async function loadCounts(): Promise<void> {
   // 单条统计 IPC（后端聚合），替代逐项目拉全量接口的 N+1 加载；
   // 字段校验与聚合在 aggregateProjectStats（snake_case 契约，畸形条目跳过）
   try {
-    const stats = await api.listProjectStats()
-    const { counts: nextCounts, scenarioCounts: nextScenarios, requestCounts: nextRequests } =
-      aggregateProjectStats(stats)
-    counts.value = nextCounts
-    scenarioCounts.value = nextScenarios
-    requestCounts.value = nextRequests
+    const agg = aggregateProjectStats(await api.listProjectStats())
+    stats.value = agg
+    dashboard.setStats(agg)
+    statsReady.value = true
     statsError.value = false
   } catch {
-    // 失败保留旧值不清零（静默归零会让用户误以为数据丢失），并给出重试入口
+    // 失败保留旧值不清零（静默归零会让用户误以为数据丢失），并给出重试入口；
+    // 首次失败时统计未就绪，数字显示「—」而不是 0
     statsError.value = true
   }
 }
@@ -431,17 +492,40 @@ async function loadCounts(): Promise<void> {
 /** 统计加载失败标记（内联重试，避免静默归零误导「数据丢了」）。 */
 const statsError = ref(false)
 
+/**
+ * 是否已有可用数据：从实时调试等页面返回时组件会重新挂载，
+ * 若内存里仍是上一次的完整快照，直接复用并静默刷新——
+ * 否则会先渲染骨架屏再切回卡片，视觉上「闪一下」。
+ */
+const hasSnapshot = computed(() => projects.value.length > 0 || statsReady.value)
+
+/**
+ * 自动同步快照（拖拽排序 / 删除 / 重命名 / 新建都会改 `projects`，
+ * 逐个改动点手写提交容易漏；deep 监听一次开销很小）。
+ */
+watch(
+  projects,
+  (v) => dashboard.setProjects([...v]),
+  { deep: true, flush: 'sync' },
+)
+watch(
+  teams,
+  (v) => dashboard.setTeams([...v]),
+  { deep: true, flush: 'sync' },
+)
+
 async function load(): Promise<void> {
   if (loading.value) return
   loading.value = true
   loadError.value = null
   try {
     projects.value = await api.getProjects()
-    counts.value = {}
-    scenarioCounts.value = {}
-    requestCounts.value = {}
+    // 项目列表重载后统计同样重取（旧计数可能属于已删项目）
     // 团队加载失败不阻塞首页（分组退化为默认团队兜底组）
-    api.listTeams().then((list) => (teams.value = list)).catch(() => {})
+    api
+      .listTeams()
+      .then((list) => (teams.value = list))
+      .catch(() => {})
     await loadCounts()
     void loadActivities()
   } catch (e) {
@@ -452,7 +536,30 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  // 有快照：内容原地保留，只做静默刷新（不进入 loading 骨架态）
+  if (!hasSnapshot.value) void load()
+  else void refreshSilently()
+})
+
+/**
+ * 静默刷新（返回首页时用）：内容原地保留，失败也不弹错、不清空，
+ * 用户看到的是上一次的快照，等数据回来原地更新。
+ */
+async function refreshSilently(): Promise<void> {
+  try {
+    const list = await api.getProjects()
+    if (Array.isArray(list)) projects.value = list
+    api
+      .listTeams()
+      .then((l) => (teams.value = l))
+      .catch(() => {})
+    await loadCounts()
+    void loadActivities()
+  } catch {
+    // 静默：保留快照，下一次进入或手动重试再拉
+  }
+}
 
 // ---------- 新建 ----------
 const showCreate = ref(false)
@@ -484,20 +591,75 @@ async function onTeamsChanged(): Promise<void> {
 
 function onCreated(project: Project): void {
   projects.value.push(project)
-  counts.value[project.id] = 0
+  patchStat(project.id, { endpoint_count: 0, scenario_count: 0, request_count: 0 })
   // 弹窗里可能行内新建了团队：刷新团队列表让新组立即出现
   api.listTeams().then((list) => (teams.value = list)).catch(() => {})
 }
 
+/**
+ * 本地增量更新某个项目的统计（新建/导入/复制/删除时不必重跑整条 IPC）。
+ * 用「合并进 stats 原始形状」而不是直接改 counts，保证四组计数
+ * （接口 / 场景 / 请求 / 成功失败）始终来自同一份快照。
+ */
+function patchStat(projectId: string, patch: Partial<ProjectStat>): void {
+  const cur = stats.value
+  stats.value = {
+    ...cur,
+    counts: { ...cur.counts, [projectId]: patch.endpoint_count ?? cur.counts[projectId] ?? 0 },
+    scenarioCounts: {
+      ...cur.scenarioCounts,
+      [projectId]: patch.scenario_count ?? cur.scenarioCounts[projectId] ?? 0,
+    },
+    requestCounts: {
+      ...cur.requestCounts,
+      [projectId]: patch.request_count ?? cur.requestCounts[projectId] ?? 0,
+    },
+    okCounts: { ...cur.okCounts, [projectId]: patch.ok_count ?? cur.okCounts[projectId] ?? 0 },
+    failCounts: { ...cur.failCounts, [projectId]: patch.fail_count ?? cur.failCounts[projectId] ?? 0 },
+    latest: { ...cur.latest, [projectId]: cur.latest[projectId] ?? null },
+  }
+}
+
+/** 从本地统计里剔除项目（删除项目后首页计数立即对齐）。 */
+function dropStat(projectId: string): void {
+  const cur = stats.value
+  const without = <T>(m: Record<string, T>): Record<string, T> => {
+    const { [projectId]: _gone, ...rest } = m
+    return rest
+  }
+  stats.value = {
+    counts: without(cur.counts),
+    scenarioCounts: without(cur.scenarioCounts),
+    requestCounts: without(cur.requestCounts),
+    okCounts: without(cur.okCounts),
+    failCounts: without(cur.failCounts),
+    latest: without(cur.latest),
+  }
+}
+
 // ---------- 进入工作区 ----------
-async function enter(project: Project): Promise<void> {
+/** 正在进入中的项目 id：双击 / 连点卡片时只发一次切换，其余忽略。 */
+const enteringId = ref<string | null>(null)
+
+/** 点击卡片 / 活动 → 工作区；带定位参数时交给工作区消费（见 WorkspaceView）。 */
+async function enter(
+  project: Project,
+  focus?: { endpointId?: string; historyId?: string },
+): Promise<void> {
+  if (enteringId.value) return
+  enteringId.value = project.id
   try {
     // 走 store 切换：当前项目 UI 态入快照，目标项目加入顶栏标签
     // （成功不弹 toast：跳转到工作区本身已是明确反馈）
     await workspace.switchProject(project.id)
-    router.push('/workspace')
+    const query: Record<string, string> = {}
+    if (focus?.endpointId) query.focus = focus.endpointId
+    if (focus?.historyId) query.history = focus.historyId
+    await router.push({ path: '/workspace', query })
   } catch (e) {
     toast.error(t('projectlist.enterFail'), { message: e instanceof Error ? e.message : String(e), duration: 6000 })
+  } finally {
+    enteringId.value = null
   }
 }
 
@@ -510,7 +672,7 @@ const droppedText = ref('')
 /** 仪表板导入成功（新项目已创建并激活）：加入本地列表。 */
 function onImported(project: Project): void {
   projects.value.push(project)
-  counts.value[project.id] = 0
+  patchStat(project.id, { endpoint_count: 0, scenario_count: 0, request_count: 0 })
 }
 
 /** 设置页备份恢复成功：新项目已落库，重取列表让它在首页立即可见（无需重启）。 */
@@ -528,6 +690,8 @@ function onRestored(projectId: string): void {
 // 路径：监听 webview 拖拽事件，命中 Dropzone 区域时读取文件内容走导入弹窗。
 const dropEl = ref<HTMLElement | null>(null)
 const dropActive = ref(false)
+/** 已放手并在读取文件：Dropzone 显示「正在导入」而不是闪回普通态。 */
+const dropBusy = ref(false)
 let unlistenDrop: UnlistenFn | null = null
 
 function inDropZone(px: number, py: number): boolean {
@@ -545,11 +709,14 @@ async function importDroppedFile(path?: string): Promise<void> {
     toast.error(t('projectlist.dropImportFail'), { message: t('projectlist.dropNoPath') })
     return
   }
+  dropBusy.value = true
   try {
     droppedText.value = await api.readTextFile(path)
     showImport.value = true
   } catch (e) {
     toast.error(t('projectlist.readFileFail'), { message: e instanceof Error ? e.message : String(e), duration: 5000 })
+  } finally {
+    dropBusy.value = false
   }
 }
 
@@ -620,7 +787,7 @@ async function duplicate(p: Project): Promise<void> {
       updated_at: now,
     })
     projects.value.push(copy)
-    counts.value[copy.id] = 0
+    patchStat(copy.id, { endpoint_count: 0, scenario_count: 0, request_count: 0 })
     toast.success(t('projectlist.duplicated'), { message: copy.name })
   } catch (e) {
     toast.error(t('projectlist.duplicateFail'), { message: e instanceof Error ? e.message : String(e), duration: 6000 })
@@ -636,7 +803,9 @@ function openDelete(p: Project): void {
 
 async function onDeleted(id: string): Promise<void> {
   projects.value = projects.value.filter((p) => p.id !== id)
-  delete counts.value[id]
+  dropStat(id)
+  // 活动里指向已删项目的行同步移除，避免留下点进去「项目已不存在」的死行
+  activities.value = activities.value.filter((a) => a.project_id !== id)
   if (api.activeProject.value?.id === id) {
     await api.setActiveProject(null).catch(() => undefined)
   }
@@ -705,46 +874,34 @@ useWindowDrag(topBarEl)
                     </button>
                   </p>
                 </div>
+                <!--
+                  四个数字都是跨项目汇总，首页没有「按维度看明细」的对应物，
+                  故一律不可点击（做成按钮只会把用户带进无关项目）。
+                  title 保留为悬停说明，解释数字口径。
+                -->
                 <div class="hero-stats">
-                  <button
-                    class="hero-stat"
-                    type="button"
-                    :title="t('projectlist.statProjectsHint')"
-                    @click="scrollToProjects"
-                  >
-                    <span class="hero-value num">{{ totalProjects }}</span>
+                  <div class="hero-stat" :title="t('projectlist.statProjectsHint')">
+                    <span class="hero-value num">{{ statText(totalProjects, false) }}</span>
                     <span class="hero-label"><Icon name="folder" :size="12" /> {{ t('projectlist.totalProjects') }}</span>
-                  </button>
+                  </div>
                   <span class="hero-divider" aria-hidden="true"></span>
-                  <button
-                    class="hero-stat"
-                    type="button"
-                    :title="t('projectlist.statOpenHint')"
-                    @click="openLatestProject"
-                  >
-                    <span class="hero-value num">{{ totalApis }}</span>
+                  <div class="hero-stat" :title="t('projectlist.statApisHint')">
+                    <span class="hero-value num">{{ statText(totalApis) }}</span>
                     <span class="hero-label"><Icon name="plug" :size="12" /> {{ t('projectlist.totalApis') }}</span>
-                  </button>
+                  </div>
                   <span class="hero-divider" aria-hidden="true"></span>
-                  <button
-                    class="hero-stat"
-                    type="button"
-                    :title="t('projectlist.statOpenHint')"
-                    @click="openLatestProject"
-                  >
-                    <span class="hero-value num">{{ totalScenarios }}</span>
+                  <div class="hero-stat" :title="t('projectlist.statScenariosHint')">
+                    <span class="hero-value num">{{ statText(totalScenarios) }}</span>
                     <span class="hero-label"><Icon name="play" :size="12" /> {{ t('projectlist.totalScenarios') }}</span>
-                  </button>
+                  </div>
                   <span class="hero-divider" aria-hidden="true"></span>
-                  <button
+                  <div
                     class="hero-stat"
-                    type="button"
-                    :title="t('projectlist.statOpenHint')"
-                    @click="openLatestProject"
+                    :title="t('projectlist.statRequestsHint', { ok: requestBreakdown.ok, fail: requestBreakdown.fail })"
                   >
-                    <span class="hero-value num">{{ totalRequests }}</span>
+                    <span class="hero-value num">{{ statText(totalRequests) }}</span>
                     <span class="hero-label"><Icon name="zap" :size="12" /> {{ t('projectlist.totalRequests') }}</span>
-                  </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -753,8 +910,22 @@ useWindowDrag(topBarEl)
             <div class="stat-card">
               <span class="stat-icon tint-violet"><Icon name="history" :size="16" /></span>
               <div class="stat-body">
-                <span class="stat-label">{{ t('projectlist.recentActivity') }}</span>
-                <div v-if="recentActivities.length" class="timeline">
+                <div class="stat-head">
+                  <span class="stat-label">{{ t('projectlist.recentActivity') }}</span>
+                  <button
+                    v-if="activitiesState === 'error'"
+                    class="stats-retry"
+                    type="button"
+                    @click="loadActivities"
+                  >
+                    <Icon name="refresh" :size="11" /> {{ t('projectlist.activityRetry') }}
+                  </button>
+                </div>
+                <!-- 三态：加载中给骨架，失败给重试，成功后才谈「暂无活动」 -->
+                <div v-if="activitiesState === 'loading'" class="tl-skeleton" aria-busy="true">
+                  <Skeleton v-for="i in 3" :key="i" width="100%" height="30px" radius="8px" />
+                </div>
+                <div v-else-if="recentActivities.length" class="timeline">
                   <button
                     v-for="a in recentActivities"
                     :key="a.id"
@@ -765,6 +936,7 @@ useWindowDrag(topBarEl)
                   >
                     <span class="tl-badge" :class="methodBadgeTone(actTone(a))">{{ actBadgeText(a) }}</span>
                     <span class="tl-main">
+                      <!-- 第 1 行：项目名（左）+ 状态 / 耗时 / 时间（右） -->
                       <span class="tl-line">
                         <span class="tl-name">{{ a.project_name }}</span>
                         <span class="tl-meta">
@@ -773,25 +945,32 @@ useWindowDrag(topBarEl)
                           <span class="tl-time">{{ timeAgo(a.created_at) }}</span>
                         </span>
                       </span>
-                      <span class="tl-path mono">{{ a.endpoint_name ?? a.url }}</span>
+                      <!-- 第 2 行：接口名 + 路径（路径去掉域名只留 pathname） -->
+                      <span class="tl-path mono">
+                        <span v-if="a.endpoint_name" class="tl-epname">{{ a.endpoint_name }}</span>
+                        <span class="tl-url">{{ activityPath(a) }}</span>
+                      </span>
                     </span>
                   </button>
                 </div>
+                <span v-else-if="activitiesState === 'error'" class="stat-sub">
+                  {{ t('projectlist.activityLoadFail') }}
+                </span>
                 <span v-else class="stat-sub">{{ t('projectlist.noActivity') }}</span>
               </div>
             </div>
 
-            <!-- 卡片 3：快速开始（紧凑 2×2 操作入口） -->
+            <!-- 卡片 3：快速开始（紧凑 2×2 操作入口，四按钮同尺寸同对齐） -->
             <div class="stat-card">
               <span class="stat-icon tint-amber"><Icon name="zap" :size="16" /></span>
               <div class="stat-body">
                 <span class="stat-label">{{ t('projectlist.quickStart') }}</span>
                 <div class="quick-grid">
                   <button class="quick-btn primary" type="button" :title="t('projectlist.scratchHint')" @click="showScratch = true">
-                    <Icon name="send" :size="12" /> {{ t('projectlist.quickRequest') }}
+                    <Icon name="send" :size="13" /> {{ t('projectlist.quickRequest') }}
                   </button>
                   <button class="quick-btn ghost" type="button" :title="t('projectlist.newProject')" @click="showCreate = true">
-                    <Icon name="plus" :size="12" /> {{ t('projectlist.createProject') }}
+                    <Icon name="plus" :size="13" /> {{ t('projectlist.createProject') }}
                   </button>
                   <button
                     class="quick-btn ghost"
@@ -799,10 +978,10 @@ useWindowDrag(topBarEl)
                     :title="t('projectlist.importHint')"
                     @click="droppedText = ''; showImport = true"
                   >
-                    <Icon name="download" :size="12" /> {{ t('projectlist.importProject') }}
+                    <Icon name="download" :size="13" /> {{ t('projectlist.importProject') }}
                   </button>
                   <button class="quick-btn ghost" type="button" :title="t('pnav.realtimeHint')" @click="router.push('/realtime')">
-                    <Icon name="globe" :size="12" /> {{ t('pnav.realtime') }}
+                    <Icon name="globe" :size="13" /> {{ t('pnav.realtime') }}
                   </button>
                 </div>
               </div>
@@ -814,9 +993,11 @@ useWindowDrag(topBarEl)
               <div class="toolbar-filter">
                 <Icon name="search" :size="14" />
                 <input
+                  ref="searchEl"
                   v-model="search"
                   class="toolbar-filter-input"
                   :placeholder="t('projectlist.filterPh')"
+                  :aria-label="t('projectlist.filterPh')"
                   spellcheck="false"
                   @keydown.esc="search = ''"
                 />
@@ -829,6 +1010,7 @@ useWindowDrag(topBarEl)
                 >
                   <Icon name="x" :size="12" />
                 </button>
+                <kbd v-else class="toolbar-kbd" aria-hidden="true">⌘K</kbd>
               </div>
               <CustomSelect
                 v-model="teamFilter"
@@ -869,7 +1051,7 @@ useWindowDrag(topBarEl)
                   <Icon name="list" :size="14" />
                 </button>
               </div>
-              <button v-if="hasActiveFilters" class="clear-btn" type="button" @click="clearFilters">
+              <button v-if="hasActiveFilters" class="clear-btn" type="button" @click="closeFilters">
                 <Icon name="x" :size="12" /> {{ t('projectlist.clearFilters') }}
               </button>
               <button class="team-mgr-btn" type="button" @click="showTeamMgr = true">
@@ -886,15 +1068,15 @@ useWindowDrag(topBarEl)
               v-for="g in grouped"
               :key="g.team.id"
               class="team-group"
-              :class="{ collapsed: isCollapsed(g.team.id) }"
+              :class="{ collapsed: isGroupCollapsed(g.team.id) }"
             >
               <header class="team-divider">
                 <div class="team-divider-left">
                   <button
                     class="team-collapse"
                     type="button"
-                    :title="isCollapsed(g.team.id) ? t('projectlist.expandGroup') : t('projectlist.collapseGroup')"
-                    :aria-expanded="!isCollapsed(g.team.id)"
+                    :title="isGroupCollapsed(g.team.id) ? t('projectlist.expandGroup') : t('projectlist.collapseGroup')"
+                    :aria-expanded="!isGroupCollapsed(g.team.id)"
                     @click="toggleTeam(g.team.id)"
                   >
                     <Icon name="chevron-down" :size="13" />
@@ -928,7 +1110,7 @@ useWindowDrag(topBarEl)
               </header>
               <!-- 网格模式：卡片拖拽（仅手动排序） -->
               <div
-                v-if="viewMode === 'grid' && !isCollapsed(g.team.id)"
+                v-if="viewMode === 'grid' && !isGroupCollapsed(g.team.id)"
                 class="card-grid team-grid"
                 :data-team-id="g.team.id"
               >
@@ -950,7 +1132,7 @@ useWindowDrag(topBarEl)
               </div>
               <!-- 列表模式：紧凑行（名称 / API 数 / 场景数 / 更新时间 / 状态） -->
               <div
-                v-else-if="viewMode === 'list' && !isCollapsed(g.team.id)"
+                v-else-if="viewMode === 'list' && !isGroupCollapsed(g.team.id)"
                 class="team-list"
                 :data-team-id="g.team.id"
               >
@@ -969,7 +1151,7 @@ useWindowDrag(topBarEl)
                   @delete="openDelete(p)"
                 />
               </div>
-              <p v-if="!g.projects.length && !isCollapsed(g.team.id)" class="team-empty">
+              <p v-if="!g.projects.length && !isGroupCollapsed(g.team.id)" class="team-empty">
                 {{ t('projectlist.teamNoProjects') }}
               </p>
             </section>
@@ -986,15 +1168,16 @@ useWindowDrag(topBarEl)
             </div>
           </div>
 
-          <!-- 底部 Dropzone：拖入文档直接导入；点击任意处 / 选择文件按钮同样打开导入 -->
+          <!-- Dropzone（有项目时才出现）与空态互斥：空列表下不给两条并排空盒 -->
           <div
-            v-if="!loading"
+            v-if="!loading && filtered.length"
             ref="dropEl"
             class="add-card"
-            :class="{ 'drop-active': dropActive }"
+            :class="{ 'drop-active': dropActive, busy: dropBusy }"
             role="button"
             tabindex="0"
             :aria-label="t('projectlist.dropzoneAria')"
+            :aria-busy="dropBusy"
             @click="droppedText = ''; showImport = true"
             @keydown.enter="droppedText = ''; showImport = true"
           >
@@ -1002,13 +1185,12 @@ useWindowDrag(topBarEl)
               <Icon :name="dropActive ? 'download' : 'folder-plus'" :size="20" />
             </span>
             <p class="add-text">
-              <template v-if="dropActive">{{ t('projectlist.dropActiveHint') }}</template>
-              <template v-else>
-                {{ t('projectlist.dropHint') }}
-              </template>
+              <template v-if="dropBusy">{{ t('projectlist.dropReading') }}</template>
+              <template v-else-if="dropActive">{{ t('projectlist.dropActiveHint') }}</template>
+              <template v-else>{{ t('projectlist.dropHint') }}</template>
             </p>
             <button
-              v-if="!dropActive"
+              v-if="!dropActive && !dropBusy"
               class="miyo-btn miyo-btn-sm"
               type="button"
               @click.stop="droppedText = ''; showImport = true"
@@ -1164,17 +1346,36 @@ useWindowDrag(topBarEl)
   display: flex;
 }
 
-/* 统一左右内边距；纵向节奏由 flex gap 统一控制（不允许横向滚动） */
+/* 统一左右内边距；纵向节奏由 flex gap 统一控制（不允许横向滚动）。
+   窄窗口收紧内边距，把宽度让给卡片（卡片列数由 --card-min 与容器宽度算出）。 */
 .dash-main {
+  --dash-pad: 28px;
+  --card-min: 290px;
   flex: 1;
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 24px 28px 32px;
+  padding: 24px var(--dash-pad) 32px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   scroll-behavior: smooth;
+}
+@media (max-width: 1280px) {
+  .dash-main {
+    --dash-pad: 22px;
+  }
+}
+@media (max-width: 1024px) {
+  .dash-main {
+    --dash-pad: 16px;
+  }
+}
+@media (max-width: 720px) {
+  .dash-main {
+    --dash-pad: 12px;
+    --card-min: 240px;
+  }
 }
 
 /* ---------- 摘要卡片（≥1560px 三列；以下两列 + 快速开始通栏） ----------
@@ -1276,7 +1477,7 @@ useWindowDrag(topBarEl)
   margin-top: 12px;
 }
 
-/* 统计为按钮：整块可点击（项目数 → 滚动到项目区；其余 → 最近项目工作区） */
+/* 统计为纯展示：跨项目汇总数没有对应明细页，不可点击（不做按钮，避免误认为入口） */
 .hero-stat {
   flex: 1;
   min-width: 0;
@@ -1286,17 +1487,6 @@ useWindowDrag(topBarEl)
   align-items: center;
   gap: 3px;
   padding: 2px 4px;
-  border: none;
-  background: none;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: background var(--dur) var(--ease);
-}
-.hero-stat:hover {
-  background: var(--bg-hover);
-}
-.hero-stat:hover .hero-value {
-  color: var(--accent);
 }
 
 .hero-divider {
@@ -1314,7 +1504,6 @@ useWindowDrag(topBarEl)
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
   color: var(--text-1);
-  transition: color var(--dur) var(--ease);
 }
 
 .hero-label {
@@ -1338,6 +1527,15 @@ useWindowDrag(topBarEl)
   color: var(--text-3);
 }
 
+/* 卡片标题行：标题左，状态/重试右 */
+.stat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 16px;
+}
+
 .stat-sub {
   font-size: var(--fs-xs);
   color: var(--text-3);
@@ -1348,6 +1546,14 @@ useWindowDrag(topBarEl)
   display: flex;
   flex-direction: column;
   margin-top: 6px;
+}
+
+/* 加载中：与行同高的骨架条，避免卡片高度跳变 */
+.tl-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .tl-item {
@@ -1451,13 +1657,39 @@ useWindowDrag(topBarEl)
   flex-shrink: 0;
 }
 
+/* 第 2 行：接口名（弱化）+ 路径（等宽），超长走省略号 */
 .tl-path {
-  font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: var(--fs-xxs);
   color: var(--text-3);
+  line-height: 1.4;
+}
+
+.tl-epname {
+  flex-shrink: 0;
+  max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-2);
+}
+
+/* 分隔点在接口名与路径之间；接口名缺失时路径前不出现孤立的「·」 */
+.tl-epname + .tl-url::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--border-strong);
+}
+
+.tl-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
 }
 
 /* ---- 快速开始：紧凑 2×2 操作入口 ---- */
@@ -1552,6 +1784,17 @@ useWindowDrag(topBarEl)
     0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent),
     0 8px 30px rgba(9, 12, 22, 0.45);
   transform: translateY(-1px);
+}
+
+/* 读取文件中：保留描边提示，点击暂不生效（避免重复打开导入弹窗） */
+.add-card.busy {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  cursor: progress;
+}
+.add-card.busy .add-icon,
+.add-card.busy .add-text {
+  color: var(--accent);
 }
 
 .add-icon {
@@ -1691,6 +1934,23 @@ useWindowDrag(topBarEl)
   background: var(--bg-hover);
 }
 
+/* ⌘K 提示：输入框空时占位显示快捷键，聚焦时隐藏避免抢注意力 */
+.toolbar-kbd {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.toolbar-filter:focus-within .toolbar-kbd {
+  display: none;
+}
+
 .stats-retry {
   display: inline-flex;
   align-items: center;
@@ -1807,13 +2067,13 @@ useWindowDrag(topBarEl)
 }
 
 /* ---------- 项目卡片网格（卡片自身样式见 ProjectCard） ---------- */
-/* auto-fill + minmax(340px,1fr)：按容器宽度自适应列数（1920→4 列、
-   1440/1280→3 列、1024→2 列，贴近「桌面优先三列」）；
-   轨道下限用固定值而非 auto，避免卡片内 nowrap 长描述把轨道
-   撑出容器（曾导致横向滚动条、卡片被切出屏幕）。 */
+/* auto-fill + minmax(var(--card-min), 1fr)：列数按**内容区实际宽度**决定
+   （--dash-pad 随窗口收紧，见 .dash-main）：宽屏 4 列、普通桌面 3 列、
+   中等窗口 2 列、小屏 1 列。轨道下限用变量而非 auto，避免卡片内 nowrap
+   长内容把轨道撑出容器（曾导致横向滚动条、卡片被切出屏幕）。 */
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min, 290px), 1fr));
   gap: 16px;
 }
 
@@ -1944,7 +2204,7 @@ useWindowDrag(topBarEl)
 /* ---------- 加载骨架（与卡片网格同列型） ---------- */
 .sk-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min, 290px), 1fr));
   gap: 16px;
 }
 .sk-card {

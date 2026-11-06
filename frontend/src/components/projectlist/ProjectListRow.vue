@@ -34,7 +34,16 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="proj-row" :data-project-id="project.id" @click="emit('open')">
+  <div
+    class="proj-row"
+    :data-project-id="project.id"
+    role="button"
+    tabindex="0"
+    :aria-label="project.name"
+    @click="emit('open')"
+    @keydown.enter.prevent="emit('open')"
+    @keydown.space.prevent="emit('open')"
+  >
     <span class="row-avatar" :style="avatarStyle(project.name)">{{ initials(project.name) }}</span>
     <div class="row-name-wrap">
       <span class="row-name" v-tooltip-overflow="project.name">{{ project.name }}</span>
@@ -85,6 +94,11 @@ const emit = defineEmits<{
 .proj-row:hover {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   background: var(--projcard-hover-bg);
+}
+.proj-row:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 .row-avatar {

@@ -175,6 +175,27 @@ async function toggleMock(): Promise<void> {
   }
 }
 
+/**
+ * 首页入口带来的定位参数（数据就绪后消费一次，然后清掉 query）：
+ * - `focus`：最近活动 → 打开该接口；
+ * - `history`：最近活动 → 把那条请求恢复到编辑器（优先级高于 focus）。
+ * 接口/记录已被删除时静默忽略，只停在项目里。
+ */
+async function consumeFocusQuery(): Promise<void> {
+  const focus = route.query.focus
+  const history = route.query.history
+  const focusId = typeof focus === 'string' ? focus : null
+  const historyId = typeof history === 'string' ? history : null
+  if (!focusId && !historyId) return
+  await router.replace({ path: '/workspace', query: {} })
+  if (historyId) {
+    const restored = await store.openHistoryRecord(historyId)
+    if (restored) return
+  }
+  const target = focusId ? store.endpoints.find((e) => e.id === focusId) : null
+  if (target) store.openEndpoint(target)
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -187,6 +208,7 @@ async function load(): Promise<void> {
     } else {
       await store.refresh()
     }
+    void consumeFocusQuery()
   } catch {
     // loadError 已在 store 内写入，界面展示重试
   } finally {

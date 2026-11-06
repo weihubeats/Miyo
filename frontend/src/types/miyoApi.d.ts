@@ -549,6 +549,10 @@ export interface ProjectStat {
   endpoint_count: number
   scenario_count: number
   request_count: number
+  /** 请求总数的成功拆分（2xx/3xx；旧后端缺失按 0）。 */
+  ok_count?: number
+  /** 请求总数的失败拆分（4xx/5xx / 网络错误；旧后端缺失按 0）。 */
+  fail_count?: number
   latest_method: string | null
   latest_path: string | null
 }
@@ -558,6 +562,8 @@ export interface RecentActivity {
   id: string
   project_id: string
   project_name: string
+  /** 归属接口（快捷请求等无接口的记录为空；旧后端缺失）。 */
+  endpoint_id?: string | null
   endpoint_name: string | null
   method: string
   url: string
