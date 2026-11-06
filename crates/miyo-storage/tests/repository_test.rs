@@ -929,8 +929,17 @@ async fn list_recent_activities_joins_names_and_limits() {
     // 联查字段：项目名 / 接口名 / 无接口归属时 endpoint_name=NULL
     assert_eq!(rows[0].project_name, "项目A");
     assert_eq!(rows[0].endpoint_name.as_deref(), Some("查询订单"));
+    // 接口 id 随行返回：首页点击活动据此定位到该接口
+    assert_eq!(
+        rows[0].endpoint_id.as_deref(),
+        Some(ep_a.to_string().as_str())
+    );
     let scratch = rows.iter().find(|r| r.endpoint_name.is_none()).unwrap();
     assert_eq!(scratch.project_name, "项目B");
+    assert_eq!(
+        scratch.endpoint_id, None,
+        "无归属接口的历史行 endpoint_id 为 NULL"
+    );
 
     let limited = repo::list_recent_activities(&db, 1).await.unwrap();
     assert_eq!(limited.len(), 1);

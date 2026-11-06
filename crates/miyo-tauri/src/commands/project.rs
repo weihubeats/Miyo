@@ -25,6 +25,12 @@ pub async fn get_projects(state: State<'_, AppState>) -> CommandResult<Vec<Proje
 pub struct ProjectStat {
     pub project_id: Uuid,
     pub endpoint_count: i64,
+    /// 场景 / 请求历史总数（首页欢迎卡与项目卡片共用同一口径）。
+    pub scenario_count: i64,
+    pub request_count: i64,
+    /// 请求总数的成功 / 失败拆分（ok + fail == request_count）。
+    pub ok_count: i64,
+    pub fail_count: i64,
     pub latest_method: Option<String>,
     pub latest_path: Option<String>,
 }
@@ -37,6 +43,10 @@ pub async fn list_project_stats(state: State<'_, AppState>) -> CommandResult<Vec
         .map(|s| ProjectStat {
             project_id: Uuid::parse_str(&s.project_id).unwrap_or_else(|_| Uuid::nil()),
             endpoint_count: s.endpoint_count,
+            scenario_count: s.scenario_count,
+            request_count: s.request_count,
+            ok_count: s.ok_count,
+            fail_count: s.fail_count,
             latest_method: s.latest_method,
             latest_path: s.latest_path,
         })
@@ -116,6 +126,10 @@ mod tests {
         let stat = ProjectStat {
             project_id: Uuid::new_v4(),
             endpoint_count: 7,
+            scenario_count: 2,
+            request_count: 9,
+            ok_count: 8,
+            fail_count: 1,
             latest_method: Some("GET".into()),
             latest_path: Some("/pets".into()),
         };
@@ -123,11 +137,17 @@ mod tests {
         for key in [
             "project_id",
             "endpoint_count",
+            "scenario_count",
+            "request_count",
+            "ok_count",
+            "fail_count",
             "latest_method",
             "latest_path",
         ] {
             assert!(json.get(key).is_some(), "缺少字段 {key}");
         }
         assert!(json.get("projectId").is_none(), "不得输出 camelCase 字段");
+        // 成功 + 失败 = 请求总数：首页统计与明细同源
+        assert_eq!(stat.ok_count + stat.fail_count, stat.request_count);
     }
 }

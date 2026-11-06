@@ -170,6 +170,8 @@ pub struct RecentActivityRow {
     pub id: String,
     pub project_id: String,
     pub project_name: String,
+    /// 归属接口 id（快捷请求等无接口的记录为 None）。
+    pub endpoint_id: Option<String>,
     pub endpoint_name: Option<String>,
     pub method: String,
     pub url: String,
@@ -181,8 +183,8 @@ pub struct RecentActivityRow {
 /// 全局最近请求活动（时间倒序，limit 由调用方钳制）。
 pub async fn list_recent_activities(db: &SqlitePool, limit: i64) -> Result<Vec<RecentActivityRow>> {
     let rows: Vec<RecentActivityRow> = sqlx::query_as(
-        "SELECT h.id, h.project_id, p.name AS project_name, e.name AS endpoint_name,
-                h.method, h.url, h.status, h.duration_ms, h.created_at
+        "SELECT h.id, h.project_id, p.name AS project_name, h.endpoint_id,
+                e.name AS endpoint_name, h.method, h.url, h.status, h.duration_ms, h.created_at
          FROM request_histories h
          JOIN projects p ON p.id = h.project_id
          LEFT JOIN endpoints e ON e.id = h.endpoint_id

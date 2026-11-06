@@ -55,6 +55,8 @@ pub struct RecentActivity {
     pub id: Uuid,
     pub project_id: Uuid,
     pub project_name: String,
+    /// 归属接口（快捷请求等无接口的历史行为 None）：前端据此定位到该接口。
+    pub endpoint_id: Option<Uuid>,
     pub endpoint_name: Option<String>,
     pub method: String,
     pub url: String,
@@ -77,6 +79,10 @@ pub async fn list_recent_activities(
             id: Uuid::parse_str(&r.id).unwrap_or_else(|_| Uuid::nil()),
             project_id: Uuid::parse_str(&r.project_id).unwrap_or_else(|_| Uuid::nil()),
             project_name: r.project_name,
+            endpoint_id: r
+                .endpoint_id
+                .as_deref()
+                .and_then(|id| Uuid::parse_str(id).ok()),
             endpoint_name: r.endpoint_name,
             method: r.method,
             url: r.url,

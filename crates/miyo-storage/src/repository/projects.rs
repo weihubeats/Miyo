@@ -64,12 +64,18 @@ pub async fn list_projects<'e>(
 /// 接口含完整请求体时后者会把全部 body 传回前端，项目一多启动即卡。
 /// scenario_count / request_count 同理：场景与请求历史的总数用相关子查询
 /// 一并带出，供首页欢迎卡与项目卡片展示（零迁移，纯查询扩展）。
+///
+/// ok_count / fail_count 是 request_count 的拆分（2xx/3xx 成功，其余及
+/// 无状态码的网络错误算失败），两者之和等于 request_count——首页请求数
+/// 与成功/失败明细同源，不会出现「总数 0 却有失败记录」。
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ProjectEndpointStat {
     pub project_id: String,
     pub endpoint_count: i64,
     pub scenario_count: i64,
     pub request_count: i64,
+    pub ok_count: i64,
+    pub fail_count: i64,
     pub latest_method: Option<String>,
     pub latest_path: Option<String>,
 }
@@ -82,6 +88,12 @@ pub async fn list_endpoint_stats(db: &SqlitePool) -> Result<Vec<ProjectEndpointS
                 (SELECT COUNT(*) FROM scenarios s WHERE s.project_id = p.id) AS scenario_count,
                 (SELECT COUNT(*) FROM request_histories rh WHERE rh.project_id = p.id)
                     AS request_count,
+                (SELECT COUNT(*) FROM request_histories rh
+                  WHERE rh.project_id = p.id AND rh.status IS NOT NULL AND rh.status < 400)
+                    AS ok_count,
+                (SELECT COUNT(*) FROM request_histories rh
+                  WHERE rh.project_id = p.id AND (rh.status IS NULL OR rh.status >= 400))
+                    AS fail_count,
                 (SELECT e.method FROM endpoints e WHERE e.project_id = p.id
                   ORDER BY e.updated_at DESC LIMIT 1) AS latest_method,
                 (SELECT e.path FROM endpoints e WHERE e.project_id = p.id
@@ -315,6 +327,8 @@ mod tests {
         assert_eq!(empty_stat.endpoint_count, 0);
         assert_eq!(empty_stat.scenario_count, 0);
         assert_eq!(empty_stat.request_count, 0);
+        assert_eq!(empty_stat.ok_count, 0);
+        assert_eq!(empty_stat.fail_count, 0);
         assert!(empty_stat.latest_method.is_none());
         assert!(empty_stat.latest_path.is_none());
 
@@ -325,6 +339,13 @@ mod tests {
         assert_eq!(busy_stat.endpoint_count, 2);
         assert_eq!(busy_stat.scenario_count, 2);
         assert_eq!(busy_stat.request_count, 1);
+        // 成功/失败是 request_count 的拆分：200 → ok，两者相加等于总数
+        assert_eq!(busy_stat.ok_count, 1);
+        assert_eq!(busy_stat.fail_count, 0);
+        assert_eq!(
+            busy_stat.ok_count + busy_stat.fail_count,
+            busy_stat.request_count
+        );
         assert_eq!(busy_stat.latest_method.as_deref(), Some("POST"));
         assert_eq!(busy_stat.latest_path.as_deref(), Some("/latest"));
     }
