@@ -60,6 +60,7 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-list-request-histories`
 - `allow-clear-request-histories`
 - `allow-delete-request-history`
+- `allow-list-recent-activities`
 - `allow-mock-start`
 - `allow-mock-stop`
 - `allow-mock-status`
@@ -1811,6 +1812,32 @@ Enables the list_project_stats command without any pre-configured scope.
 <td>
 
 Denies the list_project_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-list-recent-activities`
+
+</td>
+<td>
+
+Enables the list_recent_activities command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-recent-activities`
+
+</td>
+<td>
+
+Denies the list_recent_activities command without any pre-configured scope.
 
 </td>
 </tr>

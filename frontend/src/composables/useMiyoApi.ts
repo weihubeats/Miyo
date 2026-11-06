@@ -56,6 +56,7 @@ import type {
   OAuth2Token,
   Project,
   ProjectStat,
+  RecentActivity,
   McpToolStatus,
   ProxyTestResult,
   TlsSettings,
@@ -187,6 +188,13 @@ export function useMiyoApi() {
 
   /** 项目仪表板统计：单条 IPC 返回全部项目的接口数 + 最近更新接口（替代 N+1）。 */
   const listProjectStats = () => run(() => call<ProjectStat[]>('list_project_stats'))
+
+  /**
+   * 仪表板最近活动：单条 IPC 返回全局跨项目最近请求（含项目名/接口名联查，
+   * 替代逐项目 list_request_histories 的 N+1）。失败由调用方降级处理。
+   */
+  const listRecentActivities = (limit?: number) =>
+    quiet<RecentActivity[]>('list_recent_activities', { limit })
 
   /** 读取本地文本文件（拖拽导入：Tauri 拖放只给路径，内容用此命令读取）。 */
   const readTextFile = (path: string) => run(() => call<string>('read_text_file', { path }))
@@ -775,6 +783,7 @@ export function useMiyoApi() {
     getScenarioRun,
     codegenRender,
     listRequestHistories,
+    listRecentActivities,
     clearRequestHistories,
     deleteRequestHistory,
     mockStart,

@@ -547,8 +547,23 @@ export interface SyncPullResult {
 export interface ProjectStat {
   project_id: string
   endpoint_count: number
+  scenario_count: number
+  request_count: number
   latest_method: string | null
   latest_path: string | null
+}
+
+/** 仪表板最近活动（Rust `RecentActivity`，list_recent_activities 命令，snake_case 契约）。 */
+export interface RecentActivity {
+  id: string
+  project_id: string
+  project_name: string
+  endpoint_name: string | null
+  method: string
+  url: string
+  status: number | null
+  duration_ms: number | null
+  created_at: string
 }
 
 /** 文件夹（Rust `Folder`）。 */

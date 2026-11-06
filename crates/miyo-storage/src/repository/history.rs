@@ -159,3 +159,38 @@ pub async fn delete_request_history(db: &SqlitePool, id: Uuid) -> Result<()> {
         .await?;
     Ok(())
 }
+
+/// 仪表板最近活动行：全局最近请求（跨项目）联查项目名 / 接口名。
+///
+/// 一条 SQL 替代「逐项目 list_request_histories 再在前端拼装」的 N+1；
+/// project 走 JOIN（无主项目的历史行对仪表板无意义，联不上即丢弃），
+/// endpoint 走 LEFT JOIN（快捷请求等无归属接口的记录仍展示）。
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RecentActivityRow {
+    pub id: String,
+    pub project_id: String,
+    pub project_name: String,
+    pub endpoint_name: Option<String>,
+    pub method: String,
+    pub url: String,
+    pub status: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub created_at: String,
+}
+
+/// 全局最近请求活动（时间倒序，limit 由调用方钳制）。
+pub async fn list_recent_activities(db: &SqlitePool, limit: i64) -> Result<Vec<RecentActivityRow>> {
+    let rows: Vec<RecentActivityRow> = sqlx::query_as(
+        "SELECT h.id, h.project_id, p.name AS project_name, e.name AS endpoint_name,
+                h.method, h.url, h.status, h.duration_ms, h.created_at
+         FROM request_histories h
+         JOIN projects p ON p.id = h.project_id
+         LEFT JOIN endpoints e ON e.id = h.endpoint_id
+         ORDER BY h.created_at DESC
+         LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}

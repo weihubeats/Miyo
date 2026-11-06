@@ -28,6 +28,7 @@ export const METHOD_BADGE_TONE: Record<string, string> = {
   put: 'bg-method-put/15 text-method-put',
   delete: 'bg-method-delete/15 text-method-delete',
   patch: 'bg-method-patch/15 text-method-patch',
+  graphql: 'bg-method-patch/15 text-method-patch',
   grpc: 'bg-method-grpc/15 text-method-grpc',
   head: 'bg-method-neutral/15 text-method-neutral',
   options: 'bg-method-neutral/15 text-method-neutral',

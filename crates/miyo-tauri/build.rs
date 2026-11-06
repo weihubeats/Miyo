@@ -56,6 +56,7 @@ const COMMANDS: &[&str] = &[
     "list_request_histories",
     "delete_request_history",
     "clear_request_histories",
+    "list_recent_activities",
     "mock_start",
     "mock_stop",
     "mock_status",

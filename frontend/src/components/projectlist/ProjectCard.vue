@@ -1,10 +1,14 @@
 <script setup lang="ts">
 /**
- * ProjectCard：项目卡片。
+ * ProjectCard：项目卡片（网格模式）。
  *
- * - 彩色渐变头像 / 状态标签（Active/Draft）/ API 数与时间指标；
- * - 更多菜单（重命名 / 复制 / 删除，菜单开合状态由父级统一管理）；
- * - hover 显示 Open 箭头，点击整卡进入项目。
+ * 四行信息层级（统一卡片高度）：
+ * 1. 图标 + 名称 + 当前状态（打开中 pill）；
+ * 2. 描述（最多两行，空描述占位同样占两行保齐）；
+ * 3. 指标行：API 数 · 场景数 · 更新时间；
+ * 4. 进入项目提示（hover 提亮）。
+ * 更多操作（⋯）独立悬浮右上角，click.stop 不触发卡片跳转；
+ * hover 轻微提亮边框，删除走父级 ProjectDeleteModal 二次确认。
  */
 import Icon from '../ui/Icon.vue'
 import IconButton from '../ui/IconButton.vue'
@@ -18,6 +22,8 @@ const t = locale.t
 defineProps<{
   project: Project
   count: number
+  /** 场景数（list_project_stats 后发字段，缺省按 0） */
+  scenarioCount: number
   active: boolean
   /** 当前展开更多菜单的卡片 id（父级持有，保证同时只开一个） */
   menuOpen: boolean
@@ -46,28 +52,28 @@ const emit = defineEmits<{
         <circle cx="8" cy="12" r="1.3" />
       </svg>
     </span>
-    <span class="proj-avatar" :style="avatarStyle(project.name)">{{ initials(project.name) }}</span>
-    <div class="proj-main">
-      <div class="proj-title-row">
-        <span class="proj-title" v-tooltip-overflow="project.name">{{ project.name }}</span>
-        <span v-if="active" class="proj-status active">
-          <span class="status-dot" aria-hidden="true"></span>
-          {{ t('pcard.statusActive') }}
-        </span>
-      </div>
-      <p class="proj-desc" :class="{ empty: !project.description }">
-        {{ project.description || t('pcard.noDesc') }}
-      </p>
-      <div class="proj-footer">
-        <div class="proj-metrics">
-          <span class="metric"><Icon name="plug" :size="12" />{{ t('pcard.apiCount', { n: count }) }}</span>
-          <span class="metric-sep">·</span>
-          <span class="metric"><Icon name="clock" :size="12" />{{ t('pcard.updatedAgo', { v: timeAgo(project.updated_at) }) }}</span>
-        </div>
-        <span class="proj-open">
-          {{ t('pcard.open') }} <Icon name="arrow-up-right" :size="12" />
-        </span>
-      </div>
+    <div class="proj-head">
+      <span class="proj-avatar" :style="avatarStyle(project.name)">{{ initials(project.name) }}</span>
+      <span class="proj-title" v-tooltip-overflow="project.name">{{ project.name }}</span>
+      <span v-if="active" class="proj-status active">
+        <span class="status-dot" aria-hidden="true"></span>
+        {{ t('pcard.statusActive') }}
+      </span>
+    </div>
+    <p class="proj-desc" :class="{ empty: !project.description }">
+      {{ project.description || t('pcard.noDesc') }}
+    </p>
+    <div class="proj-metrics">
+      <span class="metric"><Icon name="plug" :size="12" />{{ t('pcard.apiCount', { n: count }) }}</span>
+      <span class="metric-sep">·</span>
+      <span class="metric"><Icon name="play" :size="11" />{{ t('pcard.scenarioCount', { n: scenarioCount }) }}</span>
+      <span class="metric-sep">·</span>
+      <span class="metric"><Icon name="clock" :size="12" />{{ t('pcard.updatedAgo', { v: timeAgo(project.updated_at) }) }}</span>
+    </div>
+    <div class="proj-foot">
+      <span class="proj-open-hint">
+        {{ t('pcard.open') }} <Icon name="arrow-up-right" :size="12" />
+      </span>
     </div>
     <div class="proj-side" data-no-drag>
       <div class="proj-more" @click.stop>
@@ -89,13 +95,14 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-/* ---------- 项目卡片 ---------- */
+/* ---------- 项目卡片：四行结构，统一高度 ---------- */
 .proj-card {
   position: relative;
   display: flex;
-  gap: 14px;
-  padding: 16px;
-  /* 网格子项：允许收缩到轨道宽，长描述走 ellipsis 而不是撑爆网格 */
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  /* 网格子项：允许收缩到轨道宽，长内容走 ellipsis 而不是撑爆网格 */
   min-width: 0;
   border-radius: var(--radius-xl);
   /* 表面/描边/投影走 --projcard-*（深色微光半透底；浅色档在 style.css = 纯白卡） */
@@ -106,34 +113,140 @@ const emit = defineEmits<{
   transition:
     border-color var(--dur) var(--ease),
     background var(--dur) var(--ease),
-    transform var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease);
 }
 .proj-card:hover {
   border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   background: var(--projcard-hover-bg);
-  transform: translateY(-2px);
-  box-shadow: var(--projcard-hover-shadow);
+}
+
+/* ---- 第 1 行：图标 + 名称 + 状态 ---- */
+.proj-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  /* 右上角 ⋯ 菜单的安全距离 */
+  padding-right: 30px;
 }
 
 .proj-avatar {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   border: 1px solid rgba(255, 255, 255, 0.12);
   /* 内高光 + 投影：玻璃方块质感，替代纯平色块 */
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 2px 8px rgba(0, 0, 0, 0.3);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.02em;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   user-select: none;
+}
+
+.proj-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 状态 Pill：小圆点 + 弱化文字（打开中 = 绿点） */
+.proj-status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xxs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--success-tint);
+  color: var(--success);
+}
+.proj-status .status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 4px currentColor;
+}
+
+/* ---- 第 2 行：描述（固定两行高，齐卡片高度） ---- */
+.proj-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+  /* 两行截断；min-height 保留两行空间，空描述也不塌陷 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  min-height: 36px;
+}
+/* 空描述：更淡的占位文案 */
+.proj-desc.empty {
+  color: var(--text-3);
+}
+
+/* ---- 第 3 行：指标（API · 场景 · 更新时间） ---- */
+.proj-metrics {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  /* 防换行 + 兜底裁剪：窄卡片下交给 ellipsis 而不是溢出卡片 */
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xxs);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.metric-sep {
+  color: var(--border-strong);
+  flex-shrink: 0;
+}
+
+/* ---- 第 4 行：进入项目提示（常驻占位保高度，hover 提亮） ---- */
+.proj-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.proj-open-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  font-size: var(--fs-xxs);
+  font-weight: 600;
+  color: var(--text-3);
+  transition: color var(--dur) var(--ease);
+}
+.proj-card:hover .proj-open-hint {
+  color: var(--accent);
 }
 
 /* 拖拽手柄：左上角 6 点，hover 浮现，仅手柄可拖 */
@@ -155,6 +268,7 @@ const emit = defineEmits<{
     color var(--dur) var(--ease),
     background var(--dur) var(--ease);
   user-select: none;
+  z-index: 1;
 }
 .proj-card:hover .dnd-handle {
   opacity: 1;
@@ -167,146 +281,11 @@ const emit = defineEmits<{
   cursor: grabbing;
 }
 
-.proj-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.proj-title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  /* 给右侧 ⋯ 菜单留出安全距离 */
-  padding-right: 6px;
-}
-
-.proj-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 状态 Pill：小圆点 + 弱化文字（Active 绿点 / Draft 中性灰点） */
-.proj-status {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--fs-xxs);
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--bg-hover);
-  color: var(--text-2);
-}
-.proj-status .status-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 4px currentColor;
-}
-.proj-status.active {
-  background: var(--success-tint);
-  color: var(--success);
-}
-
-.proj-desc {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 空描述：更淡的占位文案 */
-.proj-desc.empty {
-  color: var(--text-3);
-}
-
-/* 底栏：分隔线 + 指标行（修复文案重叠：显式行高与间距）+ hover「进入项目 →」 */
-.proj-footer {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-
-.proj-metrics {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  /* 防换行：窄卡片下 API 数/更新时间保持单行，交给 ellipsis 截断而不是乱折行 */
-  white-space: nowrap;
-  /* 防换行 + 兜底裁剪：指标行拿回完整宽度后正常不再截断，
-     极窄卡片（长计数 + 绝对日期）下仍在此裁掉而非溢出卡片 */
-  min-width: 0;
-  overflow: hidden;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xxs);
-  line-height: 1.5;
-  color: var(--text-3);
-}
-
-.metric {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  white-space: nowrap;
-}
-
-.metric-sep {
-  color: var(--border-strong);
-}
-
-/* ---------- 卡片右侧：更多菜单 ---------- */
+/* ---------- 卡片右上角：更多菜单 ---------- */
 .proj-side {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  flex-shrink: 0;
-}
-
-/* 进入项目 →：hover 浮现为底栏右侧悬浮 chip。
-   绝对定位不占流宽——此前 inline-flow 常驻占位（flex-shrink:0 保宽度），
-   窄卡下指标行被挤到硬裁成「2026-08-1」半截字；改覆盖层后指标行拿回
-   完整宽度。半透明浮底压住潜在重叠的指标文字，双主题走 --bg-elevated。 */
-.proj-open {
   position: absolute;
-  right: 0;
-  top: 50%;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  white-space: nowrap;
-  padding: 3px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-  font-size: var(--fs-xxs);
-  font-weight: 600;
-  color: var(--accent);
-  opacity: 0;
-  transform: translateY(-50%) translateX(-4px);
-  transition:
-    opacity var(--dur) var(--ease),
-    transform var(--dur) var(--ease);
-  pointer-events: none;
-  user-select: none;
-}
-.proj-card:hover .proj-open {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
+  top: 10px;
+  right: 10px;
 }
 
 .proj-more {

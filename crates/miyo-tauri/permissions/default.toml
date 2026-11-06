@@ -61,6 +61,7 @@ permissions = [
     "allow-list-request-histories",
     "allow-clear-request-histories",
     "allow-delete-request-history",
+    "allow-list-recent-activities",
     "allow-mock-start",
     "allow-mock-stop",
     "allow-mock-status",

@@ -178,11 +178,21 @@ function onClose(projectId: string): void {
   background: var(--bg-hover);
   color: var(--text-1);
 }
+/* 当前项目：accent 淡底 + 描边 + 左侧圆点，与其他已打开标签明确区分 */
 .proj-tab.active {
-  background: var(--bg-elevated);
-  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
   color: var(--text-1);
   font-weight: 600;
+}
+.proj-tab.active::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 4px var(--accent);
 }
 
 .pt-name {

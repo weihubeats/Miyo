@@ -62,10 +62,14 @@ pub async fn list_projects<'e>(
 ///
 /// 单条 SQL（窗口函数）替代「逐项目 list_endpoints 拉全量再在前端聚合」，
 /// 接口含完整请求体时后者会把全部 body 传回前端，项目一多启动即卡。
+/// scenario_count / request_count 同理：场景与请求历史的总数用相关子查询
+/// 一并带出，供首页欢迎卡与项目卡片展示（零迁移，纯查询扩展）。
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ProjectEndpointStat {
     pub project_id: String,
     pub endpoint_count: i64,
+    pub scenario_count: i64,
+    pub request_count: i64,
     pub latest_method: Option<String>,
     pub latest_path: Option<String>,
 }
@@ -75,6 +79,9 @@ pub async fn list_endpoint_stats(db: &SqlitePool) -> Result<Vec<ProjectEndpointS
     let stats: Vec<ProjectEndpointStat> = sqlx::query_as(
         "SELECT p.id AS project_id,
                 (SELECT COUNT(*) FROM endpoints e WHERE e.project_id = p.id) AS endpoint_count,
+                (SELECT COUNT(*) FROM scenarios s WHERE s.project_id = p.id) AS scenario_count,
+                (SELECT COUNT(*) FROM request_histories rh WHERE rh.project_id = p.id)
+                    AS request_count,
                 (SELECT e.method FROM endpoints e WHERE e.project_id = p.id
                   ORDER BY e.updated_at DESC LIMIT 1) AS latest_method,
                 (SELECT e.path FROM endpoints e WHERE e.project_id = p.id
@@ -218,7 +225,11 @@ mod tests {
     use super::*;
     use crate::db::memory_pool;
     use crate::repository::endpoints::save_endpoint;
-    use miyo_core::model::{Endpoint, EndpointStatus, HttpMethod, RequestSpec};
+    use crate::repository::history::save_request_history;
+    use crate::repository::scenarios::save_scenario;
+    use miyo_core::model::{
+        Endpoint, EndpointStatus, HttpMethod, RequestHistory, RequestSpec, Scenario,
+    };
 
     fn endpoint_for(project_id: Uuid, name: &str, method: HttpMethod, path: &str) -> Endpoint {
         Endpoint {
@@ -238,6 +249,7 @@ mod tests {
     }
 
     /// 仪表板统计：零接口项目 count=0/latest=NULL；多接口项目取最近更新的一条。
+    /// 场景数 / 请求历史数一并带出（欢迎卡与项目卡片的数据源）。
     #[tokio::test]
     async fn list_endpoint_stats_counts_and_latest() {
         let db = memory_pool().await.expect("建库");
@@ -256,6 +268,43 @@ mod tests {
         let newer = endpoint_for(busy.id, "新接口", HttpMethod::POST, "/latest");
         save_endpoint(&db, &newer).await.unwrap();
 
+        // 活跃项目补 2 个场景 + 1 条请求历史；空项目保持全零
+        for name in ["下单链路", "支付链路"] {
+            save_scenario(
+                &db,
+                &Scenario {
+                    id: Uuid::new_v4(),
+                    project_id: busy.id,
+                    name: name.into(),
+                    description: String::new(),
+                    sort_order: 0,
+                    steps: Vec::new(),
+                    script: None,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        save_request_history(
+            &db,
+            &RequestHistory {
+                id: Uuid::new_v4(),
+                project_id: busy.id,
+                endpoint_id: Some(newer.id),
+                method: "POST".into(),
+                url: "https://api.example.com/latest".into(),
+                status: Some(200),
+                duration_ms: Some(12),
+                request_summary_json: "{}".into(),
+                response_summary_json: "{}".into(),
+                created_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .unwrap();
+
         let stats = list_endpoint_stats(&db).await.unwrap();
         assert_eq!(stats.len(), 2);
 
@@ -264,6 +313,8 @@ mod tests {
             .find(|s| s.project_id == empty.id.to_string())
             .unwrap();
         assert_eq!(empty_stat.endpoint_count, 0);
+        assert_eq!(empty_stat.scenario_count, 0);
+        assert_eq!(empty_stat.request_count, 0);
         assert!(empty_stat.latest_method.is_none());
         assert!(empty_stat.latest_path.is_none());
 
@@ -272,6 +323,8 @@ mod tests {
             .find(|s| s.project_id == busy.id.to_string())
             .unwrap();
         assert_eq!(busy_stat.endpoint_count, 2);
+        assert_eq!(busy_stat.scenario_count, 2);
+        assert_eq!(busy_stat.request_count, 1);
         assert_eq!(busy_stat.latest_method.as_deref(), Some("POST"));
         assert_eq!(busy_stat.latest_path.as_deref(), Some("/latest"));
     }

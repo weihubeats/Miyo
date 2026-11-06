@@ -209,6 +209,7 @@ pub mod plugin {
                 commands::list_request_histories,
                 commands::delete_request_history,
                 commands::clear_request_histories,
+                commands::list_recent_activities,
                 commands::mock_start,
                 commands::mock_stop,
                 commands::mock_status,

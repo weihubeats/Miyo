@@ -252,6 +252,8 @@ async fn environment_crud() {
         remote_value: "abc".into(),
         local_value: String::new(),
         enabled: true,
+        local_override: None,
+        sensitive: None,
         description: None,
     });
     repo::update_environment(&db, &updated).await.unwrap();
@@ -893,6 +895,46 @@ async fn clear_request_histories_filters_by_endpoint() {
         .unwrap();
     assert_eq!(removed, 2, "无 endpoint 条件清空整个项目");
     assert_eq!(history_count(&db, project, None).await, 0);
+}
+
+/// 仪表板最近活动：跨项目时间倒序 + 项目名/接口名联查 + limit 钳制。
+#[tokio::test]
+async fn list_recent_activities_joins_names_and_limits() {
+    let db = pool().await;
+    let pa = repo::create_project(&db, "项目A", "").await.unwrap();
+    let pb = repo::create_project(&db, "项目B", "").await.unwrap();
+    let ep_a = repo::create_endpoint(&db, pa.id, None, "查询订单")
+        .await
+        .unwrap();
+    let pa = pa.id;
+    let pb = pb.id;
+    let ep_a = ep_a.id;
+
+    repo::save_request_history(&db, &history_row(pa, Some(ep_a), 1))
+        .await
+        .unwrap();
+    // 保证 created_at 严格递增（RFC3339 精度依赖时钟推进）
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    repo::save_request_history(&db, &history_row(pb, None, 2))
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let latest = history_row(pa, Some(ep_a), 3);
+    repo::save_request_history(&db, &latest).await.unwrap();
+
+    let rows = repo::list_recent_activities(&db, 20).await.unwrap();
+    assert_eq!(rows.len(), 3, "跨项目全部返回");
+    // 时间倒序：最新在前
+    assert_eq!(rows[0].url, latest.url);
+    // 联查字段：项目名 / 接口名 / 无接口归属时 endpoint_name=NULL
+    assert_eq!(rows[0].project_name, "项目A");
+    assert_eq!(rows[0].endpoint_name.as_deref(), Some("查询订单"));
+    let scratch = rows.iter().find(|r| r.endpoint_name.is_none()).unwrap();
+    assert_eq!(scratch.project_name, "项目B");
+
+    let limited = repo::list_recent_activities(&db, 1).await.unwrap();
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].url, latest.url, "limit 取最新一条");
 }
 
 /// 多项目交替写入时各自的保留上限都生效：裁剪节流按项目计数

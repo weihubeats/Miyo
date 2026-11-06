@@ -2,31 +2,34 @@
 /**
  * DashboardNav：仪表板左侧导航。
  *
- * - 仅保留已实现入口：仪表板（主页面）；
- * - 设置入口在顶栏右上角（齿轮按钮），导航不再重复；
- * - 集合、API 文档等未实现模块暂不展示。
+ * - 仅保留已实现的全局入口：仪表板（本页）、实时调试（/realtime 独立路由视图，
+ *   此前只能从工作区工具抽屉进入）；
+ * - 项目内模块（接口树 / 场景 / 历史 / 文档）随项目走工作区，不在导航重复；
+ * - 设置入口在顶栏右上角（齿轮按钮）、团队管理在工具栏，导航不再重复。
  * 注意：此前「仪表板 / API 项目」曾是两个同路由入口（navActive 恒双真，
  * 两个紫 pill 同时高亮），已合并为单一入口。
  */
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Icon from '../ui/Icon.vue'
 import { useLocaleStore } from '../../stores/locale'
 
 const router = useRouter()
+const route = useRoute()
 const locale = useLocaleStore()
 const t = locale.t
 
 const NAV_ITEMS = [
   { key: 'dashboard', labelKey: 'pnav.dashboard', icon: 'gauge' as const, route: '/projects' },
+  { key: 'realtime', labelKey: 'pnav.realtime', icon: 'globe' as const, route: '/realtime' },
 ]
 
-/** 导航仅在仪表板页挂载，唯一入口恒为激活态。 */
-function navActive(): boolean {
-  return true
+/** 激活态跟随当前路由（实时调试视图打开时高亮对应入口）。 */
+function navActive(item: (typeof NAV_ITEMS)[number]): boolean {
+  return route.path === item.route
 }
 
 function onNav(item: (typeof NAV_ITEMS)[number]): void {
-  router.push(item.route)
+  if (!navActive(item)) router.push(item.route)
 }
 </script>
 
@@ -36,7 +39,7 @@ function onNav(item: (typeof NAV_ITEMS)[number]): void {
       v-for="item in NAV_ITEMS"
       :key="item.key"
       class="nav-item"
-      :class="{ active: navActive() }"
+      :class="{ active: navActive(item) }"
       type="button"
       @click="onNav(item)"
     >
@@ -48,7 +51,8 @@ function onNav(item: (typeof NAV_ITEMS)[number]): void {
 
 <style scoped>
 .dash-nav {
-  width: 200px;
+  /* 两个入口的极简导航：收窄给内容区让位 */
+  width: 176px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -101,5 +105,4 @@ function onNav(item: (typeof NAV_ITEMS)[number]): void {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 </style>
