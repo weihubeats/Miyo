@@ -43,6 +43,18 @@ async function detectWindow(): Promise<void> {
   }
 }
 
+/**
+ * 返回来源页：实时调试可从工作区工具抽屉进入，也可从仪表板左侧导航进入，
+ * 因此不能写死回 `/workspace`（从仪表板进来会被弹到某个项目里）。
+ * - 会话内有可回退历史 → `router.back()`，原路返回调用方页面；
+ * - 直接深链打开（浅历史，回退会离开应用）→ 回仪表板兜底。
+ * `history.state.back` 是 vue-router 写入的历史标识：顶层页面为 null。
+ */
+function goBack(): void {
+  if (window.history.state?.back) router.back()
+  else void router.push('/projects')
+}
+
 async function popout(): Promise<void> {
   try {
     // Tauri v2：带 URL 的新窗口经 WebviewWindow 创建。
@@ -358,9 +370,10 @@ onUnmounted(() => {
         v-if="isMainWindow"
         class="miyo-btn miyo-btn-sm"
         type="button"
-        @click="router.push('/workspace')"
+        :title="t('realtime.backHint')"
+        @click="goBack"
       >
-        ← {{ t('realtime.backToWorkspace') }}
+        ← {{ t('realtime.back') }}
       </button>
       <button
         v-if="isMainWindow"

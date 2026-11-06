@@ -5,7 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+const routerMock = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn() }))
+
+vi.mock('vue-router', () => ({ useRouter: () => routerMock }))
 
 import RealtimeView from './RealtimeView.vue'
 import { useLocaleStore } from '../stores/locale'
@@ -14,6 +16,8 @@ beforeEach(() => {
   setActivePinia(createPinia())
   // 文案断言锁定中文（jsdom 默认语言为英文，跟随系统会解析出英文）
   useLocaleStore().setMode('zh')
+  routerMock.push.mockClear()
+  routerMock.back.mockClear()
 })
 
 function mountView() {
@@ -70,6 +74,31 @@ describe('RealtimeView', () => {
       // .rt-log 的 offsetParent 链上必须是 .rt-pane（flex 纵向），否则 flex:1 失效
       expect(log.parentElement?.classList.contains('rt-pane')).toBe(true)
     }
+    wrapper.unmount()
+  })
+
+  /**
+   * 返回按钮必须原路返回：实时调试可从仪表板左侧导航进入，
+   * 旧实现写死 push('/workspace')，从主页进来会被弹到某个项目里。
+   */
+  it('返回按钮：有来路时走 router.back()，回到进入前的页面', async () => {
+    window.history.replaceState({ back: '/projects' }, '')
+    const wrapper = mountView()
+    const back = wrapper.findAll('button').find((b) => b.text().includes('返回'))
+    expect(back).toBeTruthy()
+    await back!.trigger('click')
+    expect(routerMock.back).toHaveBeenCalledTimes(1)
+    expect(routerMock.push).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('返回按钮：深链直开（无来路）时兜底回仪表板，不离开应用', async () => {
+    window.history.replaceState({ back: null }, '')
+    const wrapper = mountView()
+    const back = wrapper.findAll('button').find((b) => b.text().includes('返回'))
+    await back!.trigger('click')
+    expect(routerMock.back).not.toHaveBeenCalled()
+    expect(routerMock.push).toHaveBeenCalledWith('/projects')
     wrapper.unmount()
   })
 })
