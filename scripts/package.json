@@ -10,6 +10,6 @@
   "homepage": "https://weihubeats.github.io/Miyo/",
   "type": "module",
   "dependencies": {
-    "marked": "^18.1.1"
+    "marked": "^18.1.2"
   }
 }
