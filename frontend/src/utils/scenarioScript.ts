@@ -46,6 +46,14 @@ export interface ScriptStep {
   bodyVariables?: string
   /** binary 文件路径（生成读取文件的注释行）。缺省 ''。 */
   bodyPath?: string
+  /** 执行条件（脚本中生成 if 守卫注释；引擎才是执行真源）。 */
+  condition?: { source?: string; name?: string; op: string; value?: unknown } | null
+  /** 循环（脚本中生成说明注释）。 */
+  loop?: { mode: string; count?: number | null; max_loops?: number | null; interval_ms?: number | null } | null
+  /** 执行前等待毫秒（生成真实 sleep）。 */
+  waitMs?: number | null
+  /** 与相邻步骤并行（脚本按顺序执行，生成说明注释）。 */
+  parallel?: boolean
   bodyKind: 'json' | 'text' | 'urlencoded' | 'multipart' | 'graphql' | 'binary' | 'grpc' | 'none' | 'other'
   extract: ScenarioExtractRule[]
   assertions: ScenarioAssertionRule[]
@@ -271,9 +279,34 @@ export function generateScenarioScript(
   out.push('}')
   out.push('')
 
+  const anyWait = steps.some((s) => (s.waitMs ?? 0) > 0)
+  if (anyWait) {
+    out.push('const sleep = (ms) => new Promise((r) => setTimeout(r, ms));')
+    out.push('')
+  }
   steps.forEach((s, i) => {
     const n = i + 1
     out.push(`// ---- 步骤 ${n}：${s.name}  ${s.method} ${urlTemplateToJs(s.url)} ----`)
+    // 执行控制说明（引擎语义的脚本侧提示；条件/循环需人工脚本化）。
+    if (s.condition) {
+      const target = s.condition.source === 'prevStatus' ? '上一步状态码' : `变量 ${s.condition.name ?? ''}`
+      out.push(
+        `// 注意：该步骤带执行条件（${target} ${s.condition.op} ${String(s.condition.value ?? '')}）——不满足时桌面端跳过此步，脚本中请自行实现守卫逻辑。`,
+      )
+    }
+    if (s.loop) {
+      out.push(
+        s.loop.mode === 'count'
+          ? `// 注意：该步骤循环执行 ${s.loop.count ?? 1} 轮——脚本中可用 for 循环包裹（每轮重新提取）。`
+          : `// 注意：该步骤条件轮询（每轮后求值继续，最多 ${s.loop.max_loops ?? 10} 轮，间隔 ${s.loop.interval_ms ?? 0}ms）——脚本中可用 while 循环实现。`,
+      )
+    }
+    if (s.parallel) {
+      out.push(`// 注意：该步骤在桌面端与相邻步骤并行执行——本脚本按顺序执行。`)
+    }
+    if ((s.waitMs ?? 0) > 0) {
+      out.push(`await sleep(${s.waitMs}); // 执行前等待`)
+    }
     out.push(`let t${n} = Date.now();`)
     out.push(`let url${n} = ${urlTemplateToJs(s.url)};`)
     // 启用中的查询参数：与发送路径 append_query 同序追加（已有 ? 用 & 续）。

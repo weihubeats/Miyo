@@ -248,4 +248,50 @@ describe('导出脚本与真实请求的一致性（对齐 miyo-http 发送路�
     expect(isSensitiveVarName('region')).toBe(false)
     expect(isSensitiveVarName('base_url')).toBe(false)
   })
-})
+
+
+describe('generateScenarioScript 执行控制', () => {
+  const base = {
+    name: '步',
+    method: 'GET',
+    url: '{{base_url}}/x',
+    headers: [],
+    body: null,
+    bodyKind: 'none' as const,
+    extract: [],
+    assertions: [],
+  }
+
+  it('waitMs 生成真实 sleep 调用', () => {
+    const code = generateScenarioScript('t', [{ ...base, waitMs: 500 }], {
+      base: 'http://x',
+      stopOnFailure: false,
+    })
+    expect(code).toContain('const sleep = (ms)')
+    expect(code).toContain('await sleep(500); // 执行前等待')
+  })
+
+  it('条件 / while 循环 / 并行生成说明注释', () => {
+    const code = generateScenarioScript(
+      't',
+      [
+        { ...base, condition: { source: 'var', name: 'paid', op: 'eq', value: 'true' } },
+        { ...base, loop: { mode: 'while', max_loops: 5, interval_ms: 300 } },
+        { ...base, parallel: true },
+      ],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(code).toContain('执行条件（变量 paid eq true）')
+    expect(code).toContain('条件轮询（每轮后求值继续，最多 5 轮，间隔 300ms）')
+    expect(code).toContain('并行执行')
+  })
+
+  it('count 循环提示固定轮数', () => {
+    const code = generateScenarioScript(
+      't',
+      [{ ...base, loop: { mode: 'count', count: 4 } }],
+      { base: 'http://x', stopOnFailure: false },
+    )
+    expect(code).toContain('循环执行 4 轮')
+  })
+})})

@@ -292,6 +292,11 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
             <span class="se-rmethod" :class="methodBadgeTone(r.method)">{{ r.method }}</span>
             <span class="se-rname">{{ i + 1 }}. {{ r.endpoint_name }}</span>
           </button>
+          <span
+            v-if="(r.loop_runs ?? 1) > 1"
+            class="se-chip assert"
+            :title="t('integration.loopRunsBadge', { n: r.loop_runs ?? 1 })"
+          >×{{ r.loop_runs }}</span>
           <span v-if="r.status != null" class="se-rstatus">{{ r.status }}</span>
           <span v-if="r.duration_ms != null" class="se-rtime">{{ formatDurationShort(r.duration_ms) }}</span>
           <span class="se-rtime se-rtime-assert" :title="t('scenario.assertPassedHint')">

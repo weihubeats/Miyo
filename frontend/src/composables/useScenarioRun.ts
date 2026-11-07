@@ -25,6 +25,8 @@ import type {
   ScenarioRunResult,
   ScenarioRunSummary,
   ScenarioStepResult,
+  StepCondition,
+  StepLoop,
 } from '../types/miyoApi'
 import { formatDateTime } from '../utils/dateTime'
 import type { MenuItem } from '../components/ui/Menu.vue'
@@ -57,6 +59,11 @@ export interface BuiltRunStep {
   enabled: boolean
   extract: { name: string; path: string }[]
   assertions: { type: string; path: string | null; op: string; expected: unknown }[]
+  /** 执行控制：条件 / 循环 / 等待 / 并行（透传给引擎）。 */
+  condition?: StepCondition | null
+  loop?: StepLoop | null
+  wait_ms?: number | null
+  parallel?: boolean
 }
 
 export interface UseScenarioRunOptions {
@@ -108,8 +115,9 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
   /** 运行中按位累积的已完成步结果：后端每步结束即回传，前端立刻可见
    *  （不必等整轮跑完）；运行结束后由 runScenario 的返回整体覆盖。 */
   const liveResults = ref<(ScenarioStepResult | undefined)[]>([])
-  /** 运行中「已进入但未结束」的步：位次 + 渲染后实际发出的 URL。 */
-  const inFlight = ref<{ pos: number; url: string } | null>(null)
+  /** 运行中「已进入但未结束」的步：位次 → 渲染后实际发出的 URL。
+   *  并行批内多步同时在途（Map 语义），串行时至多一项。 */
+  const inFlight = ref<Map<number, string>>(new Map())
 
   /** 接收进度事件（由宿主组件转发 `miyo:scenario-progress`）。 */
   function applyProgressEvent(p: ScenarioProgressEvent): void {
@@ -122,10 +130,16 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
       const next = [...liveResults.value]
       next[at] = p.result
       liveResults.value = next
-      if (inFlight.value?.pos === at) inFlight.value = null
+      if (inFlight.value.has(at)) {
+        const m = new Map(inFlight.value)
+        m.delete(at)
+        inFlight.value = m
+      }
       return
     }
-    inFlight.value = { pos: p.done, url: p.url ?? '' }
+    const m = new Map(inFlight.value)
+    m.set(p.done, p.url ?? '')
+    inFlight.value = m
   }
 
   /** 运行中的结果行：已完成步 + 在途步占位（步骤一进入就有行，不必等整轮）。 */
@@ -145,11 +159,14 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
         rows.push({ result: r, pos, url: r.url ?? null })
         continue
       }
-      // 尚未结束：仅在途步占位（后续步骤保持徽章「待执行」）。
-      if (inFlight.value?.pos === pos) {
-        rows.push({ result: null, pos, url: inFlight.value.url || null })
+      // 尚未结束：在途步占位「执行中」；并行批内的后续步也可能在途，
+      // 未到的保持徽章「待执行」。
+      if (inFlight.value.has(pos)) {
+        rows.push({ result: null, pos, url: inFlight.value.get(pos) || null })
+      } else if (!inFlight.value.size) {
+        // 无任何在途（串行等待下一步进入）：保持旧行为，到此为止。
+        break
       }
-      break
     }
     return rows
   })
@@ -188,7 +205,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     if (running.value) {
       const live = liveResults.value[pos]
       if (live) return toneOf(live)
-      return inFlight.value?.pos === pos ? 'run' : 'wait'
+      return inFlight.value.has(pos) ? 'run' : 'wait'
     }
     if (!runResult.value) return null
     const r = resultByStepIndex.value.get(i)
@@ -327,7 +344,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     runMeta.value = null
     varsSnapshots.value = []
     liveResults.value = []
-    inFlight.value = null
+    inFlight.value = new Map()
     progress.value = { done: 0, total: built.length }
     reportOpen.value = true
     running.value = true
@@ -392,7 +409,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
       runErrorToast(err)
     } finally {
       running.value = false
-      inFlight.value = null
+      inFlight.value = new Map()
     }
   }
 
@@ -449,7 +466,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
       runErrorToast(err)
     } finally {
       running.value = false
-      inFlight.value = null
+      inFlight.value = new Map()
     }
   }
 
@@ -525,7 +542,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     // 重跑的结果按原位次回填，实时事件位次是「重跑子集内」的位次，两者不同位序，
     // 故重跑不做逐步实时渲染，整轮回填后一次展示（避免错位）。
     liveResults.value = []
-    inFlight.value = null
+    inFlight.value = new Map()
     progress.value = { done: 0, total: built.length }
     reportOpen.value = true
     running.value = true
@@ -617,7 +634,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
       runErrorToast(err)
     } finally {
       running.value = false
-      inFlight.value = null
+      inFlight.value = new Map()
     }
   }
 

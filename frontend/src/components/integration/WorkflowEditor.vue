@@ -54,6 +54,8 @@ import type {
   ScenarioAssertionRule,
   ScenarioExtractRule,
   ScenarioStep,
+  StepCondition,
+  StepLoop,
 } from '../../types/miyoApi'
 
 const props = defineProps<{ scenarioId: string }>()
@@ -92,6 +94,14 @@ interface EditorStep {
   inline: { method: string; url: string; spec: import('../../types/miyoApi').RequestSpec }
   extract: EditorExtract[]
   assertions: EditorAssertion[]
+  /** 执行条件（None = 无条件）。 */
+  condition: StepCondition | null
+  /** 循环（None = 单次）。 */
+  loop: StepLoop | null
+  /** 执行前等待毫秒。 */
+  waitMs: number | null
+  /** 与相邻 parallel 步骤成批并发。 */
+  parallel: boolean
 }
 
 function emptyInline(): EditorStep['inline'] {
@@ -142,6 +152,10 @@ const draftSnapshot = (): string =>
       inline: s.kind === 'inline' ? s.inline : null,
       extract: s.extract,
       assertions: s.assertions,
+      condition: s.condition,
+      loop: s.loop,
+      waitMs: s.waitMs,
+      parallel: s.parallel,
     })),
     script: scriptDraft.value,
   })
@@ -197,6 +211,10 @@ function stepToEditor(s: ScenarioStep): EditorStep {
     inline: inlineReq,
     extract: parseExtract(s.extract),
     assertions: parseAssertions(s.assertions),
+    condition: (s.condition as StepCondition | null | undefined) ?? null,
+    loop: (s.loop as StepLoop | null | undefined) ?? null,
+    waitMs: s.wait_ms ?? null,
+    parallel: s.parallel ?? false,
   }
 }
 
@@ -243,11 +261,15 @@ function toScenario(): Scenario {
         op: r.op || null,
         expected: coerceExpected(r.expected),
       })),
-    name: s.kind === 'inline' ? s.name.trim() || null : s.name.trim() || null,
+    name: s.name.trim() || null,
     request:
       s.kind === 'inline'
         ? { method: s.inline.method, url: s.inline.url, spec: s.inline.spec }
         : null,
+    condition: s.condition,
+    loop: s.loop,
+    wait_ms: s.waitMs,
+    parallel: s.parallel,
   }))
   return {
     id: base?.id ?? crypto.randomUUID(),
@@ -312,6 +334,10 @@ function addInlineStep(): void {
     inline: emptyInline(),
     extract: [],
     assertions: [{ name: '', type: 'status', path: '', op: 'eq', expected: '200' }],
+    condition: null,
+    loop: null,
+    waitMs: null,
+    parallel: false,
   })
   selectStep(steps.value[steps.value.length - 1]!)
 }
@@ -326,6 +352,10 @@ function addRefStep(ep: Endpoint): void {
     inline: emptyInline(),
     extract: [],
     assertions: [],
+    condition: null,
+    loop: null,
+    waitMs: null,
+    parallel: false,
   })
   selectStep(steps.value[steps.value.length - 1]!)
 }
@@ -362,11 +392,82 @@ function selectStep(s: EditorStep | null): void {
 
 const detailTabs: TabItem[] = [
   { key: 'request', label: t('integration.tabRequest') },
+  { key: 'control', label: t('integration.tabControl') },
   { key: 'extract', label: t('integration.tabExtract') },
   { key: 'assert', label: t('integration.tabAssert') },
   { key: 'vars', label: t('integration.tabVars') },
 ]
 const detailTab = ref('request')
+
+// ---------- 执行控制（条件 / 循环 / 等待 / 并行）编辑桥 ----------
+/** 条件 op 集（与断言算子同集）。 */
+function condOpOptions(c?: StepCondition) {
+  const ops = [
+    'eq', 'neq', 'contains', 'not_contains', 'gt', 'gte', 'lt', 'lte',
+    'exists', 'not_exists', 'matches', 'not_matches', 'empty', 'not_empty',
+  ]
+  const cur = c?.op ?? 'eq'
+  return ops.map((o) => ({ value: o, label: t(`integration.assertOp.${o}`), header: o === cur ? undefined : undefined }))
+}
+/** exists/empty 族不需要期望值。 */
+function condNeedsValue(c?: StepCondition): boolean {
+  return !['exists', 'not_exists', 'empty', 'not_empty'].includes(c?.op ?? 'eq')
+}
+/** 切条件源：prevStatus 无变量名。 */
+function onCondSourceChange(c: StepCondition, source: string): void {
+  c.source = source === 'prevStatus' ? 'prevStatus' : 'var'
+  if (c.source === 'prevStatus') c.name = ''
+  else if (!c.name) c.name = ''
+}
+/** 切循环模式：count 需轮数；while 需继续条件。 */
+function onLoopModeChange(l: StepLoop, mode: string): void {
+  l.mode = mode === 'while' ? 'while' : 'count'
+  if (l.mode === 'count' && !l.count) l.count = 3
+  if (l.mode === 'while') {
+    if (!l.while_condition) l.while_condition = { source: 'var', name: '', op: 'exists', value: null }
+    if (!l.max_loops) l.max_loops = 10
+  }
+}
+/** number|null ⇄ 输入框文本桥（空串 = 清除）。 */
+function numBridge(get: () => number | null, set: (v: number | null) => void) {
+  return computed({
+    get: () => (get() == null ? '' : String(get())),
+    set: (v: string) => {
+      const n = Number.parseInt(v, 10)
+      set(Number.isFinite(n) && n > 0 ? n : null)
+    },
+  })
+}
+const condValueText = computed({
+  get: () => (selectedStep.value?.condition?.value == null ? '' : String(selectedStep.value.condition.value)),
+  set: (v: string) => {
+    const c = selectedStep.value?.condition
+    if (c) c.value = coerceExpected(v)
+  },
+})
+const loopCountText = numBridge(
+  () => selectedStep.value?.loop?.count ?? null,
+  (v) => { if (selectedStep.value?.loop) selectedStep.value.loop.count = v },
+)
+const loopMaxText = numBridge(
+  () => selectedStep.value?.loop?.max_loops ?? null,
+  (v) => { if (selectedStep.value?.loop) selectedStep.value.loop.max_loops = v },
+)
+const loopIntervalText = numBridge(
+  () => selectedStep.value?.loop?.interval_ms ?? null,
+  (v) => { if (selectedStep.value?.loop) selectedStep.value.loop.interval_ms = v },
+)
+const loopCondValueText = computed({
+  get: () => (selectedStep.value?.loop?.while_condition?.value == null ? '' : String(selectedStep.value.loop!.while_condition!.value)),
+  set: (v: string) => {
+    const c = selectedStep.value?.loop?.while_condition
+    if (c) c.value = coerceExpected(v)
+  },
+})
+const waitMsText = numBridge(
+  () => selectedStep.value?.waitMs ?? null,
+  (v) => { if (selectedStep.value) selectedStep.value.waitMs = v },
+)
 
 // ---------- 提取 / 断言行编辑（原地改数组） ----------
 const selExtract = computed(() => selectedStep.value?.extract ?? [])
@@ -442,6 +543,21 @@ function stepPath(s: EditorStep): string {
 
 function stepTitle(s: EditorStep): string {
   return s.name.trim() || (s.kind === 'ref' ? (endpointOf(s)?.name ?? '') : '') || t('integration.stepUntitled', { n: steps.value.indexOf(s) + 1 })
+}
+
+/** 循环徽章：while 显示「≤上限」，count 显示固定轮数。 */
+function loopBadgeCount(l: StepLoop): number {
+  return l.mode === 'count' ? (l.count ?? 1) : (l.max_loops ?? 10)
+}
+function loopBadgeTitle(l: StepLoop): string {
+  return l.mode === 'count'
+    ? t('integration.loopCountTitle', { n: l.count ?? 1 })
+    : t('integration.loopWhileTitle', { n: l.max_loops ?? 10 })
+}
+function conditionBadgeTitle(c: StepCondition): string {
+  const target = c.source === 'prevStatus' ? t('integration.condSourcePrevStatus') : `{{${c.name ?? ''}}}`
+  const v = c.value == null ? '' : String(c.value)
+  return `${target} ${c.op} ${v}`.trim()
 }
 
 /** 写操作方法（副作用提示）。 */
@@ -526,6 +642,10 @@ function buildOneRunStep(s: EditorStep): BuiltRunStep | null {
           op: r.op || 'eq',
           expected: coerceExpected(r.expected),
         })),
+      condition: s.condition,
+      loop: s.loop,
+      wait_ms: s.waitMs,
+      parallel: s.parallel,
     }
   }
   const ep = endpointOf(s)
@@ -544,6 +664,10 @@ function buildOneRunStep(s: EditorStep): BuiltRunStep | null {
         op: r.op || 'eq',
         expected: coerceExpected(r.expected),
       })),
+    condition: s.condition,
+    loop: s.loop,
+    wait_ms: s.waitMs,
+    parallel: s.parallel,
   }
 }
 
@@ -704,6 +828,10 @@ function toScriptSteps(): ScriptStep[] {
         bodyVariables: body.mode === 'graphql' ? body.spec.variables : '',
         bodyPath: body.mode === 'binary' ? body.path : '',
         bodyKind: kind === 'none' ? 'none' : (kind as ScriptStep['bodyKind']),
+        condition: s.condition,
+        loop: s.loop,
+        waitMs: s.waitMs,
+        parallel: s.parallel,
         extract: s.extract as ScenarioExtractRule[],
         assertions: s.assertions as unknown as ScenarioAssertionRule[],
       }
@@ -745,6 +873,10 @@ function toScriptSteps(): ScriptStep[] {
       bodyVariables: body.mode === 'graphql' ? body.spec.variables : '',
       bodyPath: body.mode === 'binary' ? body.path : '',
       bodyKind: body.mode === 'none' ? 'none' : (body.mode as ScriptStep['bodyKind']),
+      condition: s.condition,
+      loop: s.loop,
+      waitMs: s.waitMs,
+      parallel: s.parallel,
       extract: s.extract as ScenarioExtractRule[],
       assertions: s.assertions as unknown as ScenarioAssertionRule[],
     }
@@ -844,6 +976,10 @@ function applyScriptToSteps(): void {
         name: p.name,
         inline: inlineStep,
         extract: p.extract.map((e) => ({ name: e.name, from: e.from, path: e.path })),
+        condition: null,
+        loop: null,
+        waitMs: null,
+        parallel: false,
         assertions: p.assertions.map((a) => ({
           name: a.name ?? '',
           type: a.type ?? 'status',
@@ -1086,6 +1222,18 @@ function runStepMethod(pos: number): string {
               :class="`tone-${run.stepTone(i)}`"
             >{{ t(run.STEP_TONE_TEXT[run.stepTone(i) as NonNullable<ReturnType<typeof run.stepTone>>]) }}</span>
             <span class="wf-step-badges">
+              <span v-if="s.loop" class="wf-badge wf-badge-accent" :title="loopBadgeTitle(s.loop)">
+                {{ t('integration.loopBadge', { n: loopBadgeCount(s.loop) }) }}
+              </span>
+              <span v-if="s.condition" class="wf-badge" :title="conditionBadgeTitle(s.condition)">
+                {{ t('integration.conditionBadge') }}
+              </span>
+              <span v-if="s.parallel" class="wf-badge" :title="t('integration.parallelBadge')">
+                {{ t('integration.parallelBadge') }}
+              </span>
+              <span v-if="(s.waitMs ?? 0) > 0" class="wf-badge" :title="t('integration.waitBadge', { n: s.waitMs ?? 0 })">
+                {{ t('integration.waitBadge', { n: s.waitMs ?? 0 }) }}
+              </span>
               <span v-if="s.extract.length" class="wf-badge">{{ t('scenario.stepExtractBadge', { n: s.extract.length }) }}</span>
               <span v-if="s.assertions.length" class="wf-badge">{{ t('scenario.stepAssertBadge', { n: s.assertions.length }) }}</span>
             </span>
@@ -1171,6 +1319,182 @@ function runStepMethod(pos: number): string {
               :step-key="selectedStep.key"
               @goto-endpoint="gotoEndpoint(selectedStep)"
             />
+            <div v-show="detailTab === 'control'" class="wf-rules wf-control">
+              <!-- 执行条件 -->
+              <div class="wf-ctrl-block">
+                <div class="wf-ctrl-head">
+                  <span class="wf-ctrl-title">{{ t('integration.condTitle') }}</span>
+                  <button
+                    v-if="!selectedStep.condition"
+                    class="miyo-btn miyo-btn-sm"
+                    type="button"
+                    @click="selectedStep.condition = { source: 'var', name: '', op: 'exists', value: null }"
+                  >
+                    <Icon name="plus" :size="12" /> {{ t('integration.condAdd') }}
+                  </button>
+                  <IconButton
+                    v-else
+                    name="trash"
+                    :size="13"
+                    :title="t('common.delete')"
+                    @click="selectedStep.condition = null"
+                  />
+                </div>
+                <p class="wf-ctrl-hint">{{ t('integration.condHint') }}</p>
+                <div v-if="selectedStep.condition" class="wf-rule-row">
+                  <CustomSelect
+                    class="wf-ctrl-src"
+                    :model-value="String(selectedStep.condition.source ?? 'var')"
+                    :options="[
+                      { value: 'var', label: t('integration.condSourceVar') },
+                      { value: 'prevStatus', label: t('integration.condSourcePrevStatus') },
+                    ]"
+                    size="sm"
+                    :pop-min-width="140"
+                    @update:model-value="(v) => onCondSourceChange(selectedStep!.condition!, String(v ?? 'var'))"
+                  />
+                  <input
+                    v-if="(selectedStep.condition.source ?? 'var') === 'var'"
+                    v-model="selectedStep.condition.name"
+                    class="miyo-input wf-rule-name"
+                    type="text"
+                    spellcheck="false"
+                    :placeholder="t('integration.condNamePh')"
+                  />
+                  <CustomSelect
+                    class="wf-rule-op"
+                    :model-value="String(selectedStep.condition.op ?? 'eq')"
+                    :options="condOpOptions(selectedStep.condition)"
+                    size="sm"
+                    :pop-min-width="130"
+                    @update:model-value="(v) => (selectedStep!.condition!.op = String(v ?? 'eq'))"
+                  />
+                  <input
+                    v-if="condNeedsValue(selectedStep.condition)"
+                    v-model="condValueText"
+                    class="miyo-input wf-rule-expected"
+                    type="text"
+                    spellcheck="false"
+                    :placeholder="t('integration.assertExpectedPh')"
+                  />
+                </div>
+              </div>
+
+              <!-- 循环 -->
+              <div class="wf-ctrl-block">
+                <div class="wf-ctrl-head">
+                  <span class="wf-ctrl-title">{{ t('integration.loopTitle') }}</span>
+                  <button
+                    v-if="!selectedStep.loop"
+                    class="miyo-btn miyo-btn-sm"
+                    type="button"
+                    @click="selectedStep.loop = { mode: 'count', count: 3 }"
+                  >
+                    <Icon name="plus" :size="12" /> {{ t('integration.loopAdd') }}
+                  </button>
+                  <IconButton
+                    v-else
+                    name="trash"
+                    :size="13"
+                    :title="t('common.delete')"
+                    @click="selectedStep.loop = null"
+                  />
+                </div>
+                <p class="wf-ctrl-hint">{{ t('integration.loopHint') }}</p>
+                <template v-if="selectedStep.loop">
+                  <div class="wf-rule-row">
+                    <CustomSelect
+                      class="wf-ctrl-src"
+                      :model-value="String(selectedStep.loop.mode)"
+                      :options="[
+                        { value: 'count', label: t('integration.loopModeCount') },
+                        { value: 'while', label: t('integration.loopModeWhile') },
+                      ]"
+                      size="sm"
+                      :pop-min-width="130"
+                      @update:model-value="(v) => onLoopModeChange(selectedStep!.loop!, String(v ?? 'count'))"
+                    />
+                    <template v-if="selectedStep.loop.mode === 'count'">
+                      <input
+                        v-model="loopCountText"
+                        class="miyo-input wf-ctrl-num"
+                        type="text"
+                        inputmode="numeric"
+                        spellcheck="false"
+                        :placeholder="t('integration.loopCountPh')"
+                      />
+                    </template>
+                    <template v-else>
+                      <input
+                        v-model="loopMaxText"
+                        class="miyo-input wf-ctrl-num"
+                        type="text"
+                        inputmode="numeric"
+                        spellcheck="false"
+                        :placeholder="t('integration.loopMaxPh')"
+                      />
+                    </template>
+                    <input
+                      v-model="loopIntervalText"
+                      class="miyo-input wf-ctrl-num"
+                      type="text"
+                      inputmode="numeric"
+                      spellcheck="false"
+                      :placeholder="t('integration.loopIntervalPh')"
+                    />
+                  </div>
+                  <div v-if="selectedStep.loop.mode === 'while'" class="wf-rule-row wf-loop-cond">
+                    <span class="wf-ctrl-inline-label">{{ t('integration.loopWhileCond') }}</span>
+                    <input
+                      v-model="selectedStep.loop.while_condition!.name"
+                      class="miyo-input wf-rule-name"
+                      type="text"
+                      spellcheck="false"
+                      :placeholder="t('integration.condNamePh')"
+                    />
+                    <CustomSelect
+                      class="wf-rule-op"
+                      :model-value="String(selectedStep.loop.while_condition?.op ?? 'eq')"
+                      :options="condOpOptions(selectedStep.loop.while_condition ?? undefined)"
+                      size="sm"
+                      :pop-min-width="130"
+                      @update:model-value="(v) => { if (selectedStep!.loop!.while_condition) selectedStep!.loop!.while_condition.op = String(v ?? 'eq') }"
+                    />
+                    <input
+                      v-if="condNeedsValue(selectedStep.loop.while_condition ?? undefined)"
+                      v-model="loopCondValueText"
+                      class="miyo-input wf-rule-expected"
+                      type="text"
+                      spellcheck="false"
+                      :placeholder="t('integration.assertExpectedPh')"
+                    />
+                  </div>
+                </template>
+              </div>
+
+              <!-- 等待与并行 -->
+              <div class="wf-ctrl-block">
+                <div class="wf-ctrl-head">
+                  <span class="wf-ctrl-title">{{ t('integration.waitTitle') }}</span>
+                </div>
+                <div class="wf-rule-row">
+                  <input
+                    v-model="waitMsText"
+                    class="miyo-input wf-ctrl-num"
+                    type="text"
+                    inputmode="numeric"
+                    spellcheck="false"
+                    :placeholder="t('integration.waitPh')"
+                  />
+                  <label class="wf-ctrl-check">
+                    <input v-model="selectedStep.parallel" type="checkbox" />
+                    <span>{{ t('integration.parallelCheck') }}</span>
+                  </label>
+                </div>
+                <p class="wf-ctrl-hint">{{ t('integration.waitHint') }}</p>
+                <p class="wf-ctrl-hint">{{ t('integration.parallelHint') }}</p>
+              </div>
+            </div>
             <div v-show="detailTab === 'extract'" class="wf-rules">
               <div class="wf-rules-head">
                 <span class="wf-rules-hint">{{ t('integration.extractEmpty') }}</span>
@@ -1517,6 +1841,72 @@ function runStepMethod(pos: number): string {
   background: var(--bg-hover);
   color: var(--text-3);
   font-family: var(--font-mono);
+}
+
+.wf-badge-accent {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+/* 执行控制面板 */
+.wf-control {
+  gap: 14px;
+}
+
+.wf-ctrl-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wf-ctrl-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wf-ctrl-title {
+  flex: 1;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.wf-ctrl-hint {
+  margin: 0;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.wf-ctrl-src {
+  flex: none;
+  width: 128px;
+}
+
+.wf-ctrl-num {
+  width: 110px;
+  flex: none;
+}
+
+.wf-ctrl-inline-label {
+  flex: none;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+}
+
+.wf-loop-cond {
+  padding-left: 2px;
+}
+
+.wf-ctrl-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-1);
+  cursor: pointer;
+  margin-left: auto;
 }
 
 .wf-step-actions {

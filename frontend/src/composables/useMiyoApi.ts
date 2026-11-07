@@ -67,6 +67,8 @@ import type {
   ResponseExample,
   Scenario,
   ScenarioLibraryItem,
+  StepCondition,
+  StepLoop,
   ScenarioRunResult,
   ScenarioRunSummary,
   ScenarioRunDetail,
@@ -394,6 +396,10 @@ export function useMiyoApi() {
       enabled: boolean
       extract: unknown
       assertions: unknown
+      condition?: StepCondition | null
+      loop?: StepLoop | null
+      wait_ms?: number | null
+      parallel?: boolean
     }[]
     environmentId?: string | null
     stopOnFailure: boolean

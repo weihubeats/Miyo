@@ -337,7 +337,32 @@ export interface ScenarioInlineRequest {
   spec: RequestSpec
 }
 
-/** 场景步骤：引用接口（endpoint_id 有值）或内联请求（request 有值）+ 步骤级提取 / 断言。 */
+/** 步骤执行条件（不满足 → 整步 skipped 不发送）。 */
+export interface StepCondition {
+  /** 'var'（缺省）= 运行时变量；'prevStatus' = 最近已执行步骤的状态码。 */
+  source?: 'var' | 'prevStatus'
+  /** source=var 时的变量名。 */
+  name?: string
+  /** 与断言算子同集（eq/neq/contains/…/exists/empty）。 */
+  op: string
+  value?: unknown
+}
+
+/** 步骤循环（轮询 / 重复执行）。 */
+export interface StepLoop {
+  mode: 'count' | 'while'
+  /** count 模式轮数（1..=1000）。 */
+  count?: number | null
+  /** while 模式的继续条件（每轮结束后求值，true 继续）。 */
+  while_condition?: StepCondition | null
+  /** while 轮数上限（1..=100，缺省 10；达上限仍成立判失败）。 */
+  max_loops?: number | null
+  /** 轮间隔毫秒（≤60000）。 */
+  interval_ms?: number | null
+}
+
+/** 场景步骤：引用接口（endpoint_id 有值）或内联请求（request 有值）+ 步骤级提取 / 断言
+ *  + 执行控制（条件 / 循环 / 等待 / 并行）。 */
 export interface ScenarioStep {
   /** 引用式步骤的接口 id；内联步骤为 null。 */
   endpoint_id: string | null
@@ -350,6 +375,14 @@ export interface ScenarioStep {
   name?: string | null
   /** 内联请求定义；缺省 = 引用式步骤。 */
   request?: ScenarioInlineRequest | null
+  /** 执行条件（不满足 → skipped 不发送）。 */
+  condition?: StepCondition | null
+  /** 循环配置。 */
+  loop?: StepLoop | null
+  /** 执行前等待毫秒（≤60000）。 */
+  wait_ms?: number | null
+  /** 与相邻 parallel 步骤成批并发（≥2 连续标记才成批）。 */
+  parallel?: boolean
 }
 
 /** 集成测试场景（Rust `Scenario`）：项目级接口链路。 */
@@ -451,6 +484,8 @@ export interface ScenarioStepResult {
   step_status?: string | null
   /** Blocked 原因（缺哪个变量、产自哪步）；仅 blocked 状态有值。 */
   blocked_reason?: string | null
+  /** 循环步骤的已执行轮数（>1 时展示 ×N；非循环 / 单次缺省）。 */
+  loop_runs?: number | null
 }
 
 /** 步骤执行状态（六态；结果行与徽章共用）。 */

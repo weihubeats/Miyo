@@ -190,7 +190,9 @@ pub async fn run_scenario(
             .as_ref()
             .map(|v| serde_json::from_value::<miyo_test::config::StepLoop>(v.clone()))
             .transpose()
-            .map_err(|e| CommandError::validation(format!("第 {} 步的循环配置无效：{e}", idx + 1)))?;
+            .map_err(|e| {
+                CommandError::validation(format!("第 {} 步的循环配置无效：{e}", idx + 1))
+            })?;
         steps.push(ScenarioStepInput {
             endpoint: step.endpoint,
             url_template: step.url,
@@ -200,7 +202,9 @@ pub async fn run_scenario(
             enabled: step.enabled,
             condition,
             r#loop,
-            wait_ms: step.wait_ms.map(|w| w.min(miyo_test::config::StepLoop::MAX_INTERVAL_MS)),
+            wait_ms: step
+                .wait_ms
+                .map(|w| w.min(miyo_test::config::StepLoop::MAX_INTERVAL_MS)),
             parallel: step.parallel,
         });
     }
