@@ -1189,6 +1189,290 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     };
     repo::save_scenario(db, &shop_scenario).await?;
 
+    // ---- 集成测试补充场景（2026-11）：覆盖鉴权传递 / 条件分支 / while 轮询 / 内联请求 ----
+
+    // ---- 用户服务（Mock 驱动，需启动 Mock 服务后跑 127.0.0.1:4010）----
+    // 场景 A：鉴权链路 —— 登录提取 token，下一步经 Bearer {{token}} 认证。
+    let now = Utc::now();
+    let auth_scenario = Scenario {
+        id: Uuid::new_v4(),
+        project_id: users.id,
+        name: "用户鉴权链路：登录 → 携带 Token 查当前用户".into(),
+        description: "第 1 步登录提取 token；第 2 步的接口认证即 Bearer {{token}}——\
+                      演示认证凭据在链路中的自动传递。启动 Mock 服务后可直接运行。"
+            .into(),
+        category: "鉴权".into(),
+        sort_order: 0,
+        steps: vec![
+            ScenarioStep {
+                endpoint_id: Some(login.id),
+                extract: serde_json::json!([
+                    { "name": "token", "from": "body", "path": "$.token" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 },
+                    { "type": "jsonpath", "path": "$.expires_in", "op": "exists" }
+                ]),
+                ..Default::default()
+            },
+            ScenarioStep {
+                endpoint_id: Some(me.id),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 },
+                    { "type": "jsonpath", "path": "$.role", "op": "eq", "expected": "admin" }
+                ]),
+                ..Default::default()
+            },
+        ],
+        script: None,
+        created_at: now,
+        updated_at: now,
+    };
+    repo::save_scenario(db, &auth_scenario).await?;
+
+    // 场景 B：条件分支演示 —— 上一步提取的 role 决定删除步骤是否执行。
+    let now = Utc::now();
+    let condition_scenario = Scenario {
+        id: Uuid::new_v4(),
+        project_id: users.id,
+        name: "管理员操作链路：角色校验 → 删除用户（条件执行）".into(),
+        description: "第 2 步提取 role；第 3 步配置执行条件 role eq admin——\
+                      满足才执行删除（不满足标记「已跳过」）。演示按响应内容做分支控制。"
+            .into(),
+        category: "条件演示".into(),
+        sort_order: 1,
+        steps: vec![
+            ScenarioStep {
+                endpoint_id: Some(login.id),
+                extract: serde_json::json!([
+                    { "name": "token", "from": "body", "path": "$.token" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 }
+                ]),
+                ..Default::default()
+            },
+            ScenarioStep {
+                endpoint_id: Some(me.id),
+                extract: serde_json::json!([
+                    { "name": "role", "from": "body", "path": "$.role" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "jsonpath", "path": "$.role", "op": "exists" }
+                ]),
+                ..Default::default()
+            },
+            ScenarioStep {
+                endpoint_id: Some(delete_user.id),
+                condition: Some(serde_json::json!({
+                    "source": "var", "name": "role", "op": "eq", "value": "admin"
+                })),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 204 }
+                ]),
+                ..Default::default()
+            },
+        ],
+        script: None,
+        created_at: now,
+        updated_at: now,
+    };
+    repo::save_scenario(db, &condition_scenario).await?;
+
+    // ---- 开放演示（默认激活项目；公网 JSONPlaceholder，开箱即跑）----
+    // 场景 C：内联请求演示 —— 步骤自持请求定义，不依赖接口集合。
+    let now = Utc::now();
+    let inline_scenario = Scenario {
+        id: Uuid::new_v4(),
+        project_id: open_demo.id,
+        name: "内联请求链路：查询文章 → 查作者（免接口集合）".into(),
+        description: "两步均为内联请求（请求定义存在场景里，不引用接口）：\
+                      第 1 步查文章提取 userId；第 2 步用 {{userId}} 查作者并校验。\
+                      演示「临时接口也能直接编排成链路」。"
+            .into(),
+        category: "内联演示".into(),
+        sort_order: 1,
+        steps: vec![
+            ScenarioStep {
+                name: Some("查询文章".into()),
+                request: Some(miyo_core::model::ScenarioInlineRequest {
+                    method: "GET".into(),
+                    url: "https://jsonplaceholder.typicode.com/posts/1".into(),
+                    spec: RequestSpec::default(),
+                }),
+                extract: serde_json::json!([
+                    { "name": "userId", "from": "body", "path": "$.userId" },
+                    { "name": "postTitle", "from": "body", "path": "$.title" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 },
+                    { "type": "jsonpath", "path": "$.id", "op": "eq", "expected": 1 }
+                ]),
+                ..Default::default()
+            },
+            ScenarioStep {
+                name: Some("查询作者".into()),
+                request: Some(miyo_core::model::ScenarioInlineRequest {
+                    method: "GET".into(),
+                    url: "https://jsonplaceholder.typicode.com/users/{{userId}}".into(),
+                    spec: RequestSpec::default(),
+                }),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 },
+                    { "type": "jsonpath", "path": "$.id", "op": "eq", "expected": "{{userId}}" }
+                ]),
+                ..Default::default()
+            },
+        ],
+        script: None,
+        created_at: now,
+        updated_at: now,
+    };
+    repo::save_scenario(db, &inline_scenario).await?;
+
+    // ---- 电商项目：while 轮询 + 条件查询（需 2 条新 Mock 规则支撑）----
+    let order_status_rule = mock_rule(
+        &shop_project,
+        None,
+        "电商·订单状态查询",
+        HttpMethod::GET,
+        "/shop/orders/{orderNo}",
+        200,
+        r#"{"orderNo": "{{params.orderNo}}", "status": "PAID", "payableAmount": "388.20", "currency": "CNY"}"#,
+        0,
+    );
+    repo::save_mock_rule(db, &order_status_rule).await?;
+    let invoice_rule = mock_rule(
+        &shop_project,
+        None,
+        "电商·发票查询",
+        HttpMethod::GET,
+        "/shop/invoices/{orderNo}",
+        200,
+        r#"{"orderNo": "{{params.orderNo}}", "invoiceNo": "INV-2026-001", "amount": "388.20", "title": "小奏技术有限公司"}"#,
+        0,
+    );
+    repo::save_mock_rule(db, &invoice_rule).await?;
+
+    // 场景 D：while 轮询演示 —— 支付后轮询订单状态直到 PAID。
+    let now = Utc::now();
+    let poll_scenario = Scenario {
+        id: Uuid::new_v4(),
+        project_id: shop_project.id,
+        name: "订单状态轮询：下单 → 支付 → 轮询直到 PAID（while 演示）".into(),
+        description: "第 3 步配置 while 循环：每轮后检查 payStatus neq PAID，\
+                      成立则继续轮询（间隔 300ms，最多 5 轮）。演示轮询等待类业务。"
+            .into(),
+        category: "循环演示".into(),
+        sort_order: 1,
+        steps: vec![
+            ScenarioStep {
+                endpoint_id: Some(create_order.id),
+                extract: serde_json::json!([
+                    { "name": "orderNo", "from": "body", "path": "$.orderNo" },
+                    { "name": "payToken", "from": "body", "path": "$.payToken" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 201 }
+                ]),
+                ..Default::default()
+            },
+            ScenarioStep {
+                endpoint_id: Some(pay_order.id),
+                extract: serde_json::json!([
+                    { "name": "tradeNo", "from": "body", "path": "$.tradeNo" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "jsonpath", "path": "$.status", "op": "eq", "expected": "PAID" }
+                ]),
+                ..Default::default()
+            },
+            ScenarioStep {
+                name: Some("轮询订单状态".into()),
+                request: Some(miyo_core::model::ScenarioInlineRequest {
+                    method: "GET".into(),
+                    url: "{{base_url}}/shop/orders/{{orderNo}}".into(),
+                    spec: RequestSpec::default(),
+                }),
+                r#loop: Some(serde_json::json!({
+                    "mode": "while",
+                    "while_condition": {
+                        "source": "var", "name": "payStatus", "op": "neq", "value": "PAID"
+                    },
+                    "max_loops": 5,
+                    "interval_ms": 300
+                })),
+                extract: serde_json::json!([
+                    { "name": "payStatus", "from": "body", "path": "$.status" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 },
+                    { "type": "jsonpath", "path": "$.status", "op": "eq", "expected": "PAID" }
+                ]),
+                ..Default::default()
+            },
+        ],
+        script: None,
+        created_at: now,
+        updated_at: now,
+    };
+    repo::save_scenario(db, &poll_scenario).await?;
+
+    // 场景 E：条件查询演示 —— 预览金额超过阈值才查发票。
+    let now = Utc::now();
+    let invoice_scenario = Scenario {
+        id: Uuid::new_v4(),
+        project_id: shop_project.id,
+        name: "发票按需查询：预览金额 > 100 才查发票（条件演示）".into(),
+        description: "第 2 步提取实付金额 payableAmount；第 3 步条件 payableAmount gt 100——\
+                      演示用上一步数值做业务分支（金额是数字，条件按数值比较）。"
+            .into(),
+        category: "条件演示".into(),
+        sort_order: 2,
+        steps: vec![
+            ScenarioStep {
+                endpoint_id: Some(create_order.id),
+                extract: serde_json::json!([
+                    { "name": "orderNo", "from": "body", "path": "$.orderNo" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 201 }
+                ]),
+                ..Default::default()
+            },
+            ScenarioStep {
+                endpoint_id: Some(preview_pay.id),
+                extract: serde_json::json!([
+                    { "name": "payableAmount", "from": "body", "path": "$.payableAmount" }
+                ]),
+                assertions: serde_json::json!([
+                    { "type": "jsonpath", "path": "$.payableAmount", "op": "exists" }
+                ]),
+                ..Default::default()
+            },
+            ScenarioStep {
+                name: Some("查询发票".into()),
+                request: Some(miyo_core::model::ScenarioInlineRequest {
+                    method: "GET".into(),
+                    url: "{{base_url}}/shop/invoices/{{orderNo}}".into(),
+                    spec: RequestSpec::default(),
+                }),
+                condition: Some(serde_json::json!({
+                    "source": "var", "name": "payableAmount", "op": "gt", "value": 100
+                })),
+                assertions: serde_json::json!([
+                    { "type": "status", "op": "eq", "expected": 200 },
+                    { "type": "jsonpath", "path": "$.invoiceNo", "op": "exists" }
+                ]),
+                ..Default::default()
+            },
+        ],
+        script: None,
+        created_at: now,
+        updated_at: now,
+    };
+    repo::save_scenario(db, &invoice_scenario).await?;
+
     // 响应示例：文档页素材（与 Mock 规则同形状）
     for example in [
         response_example(

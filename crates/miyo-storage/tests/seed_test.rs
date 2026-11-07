@@ -130,10 +130,18 @@ async fn seeds_full_fixture_set() {
         2,
         "gRPC 演示端点（unary + 服务端流）应存在"
     );
-    // 集成场景：链路演示（3 步，引用真实公网接口）
+    // 集成场景：链路演示（3 步引用式）+ 内联请求演示（2 步内联，免接口集合）
     let scenarios = repo::list_scenarios(&db, open_demo.id).await.unwrap();
-    assert_eq!(scenarios.len(), 1, "开放演示应含 1 条链路演示场景");
-    assert_eq!(scenarios[0].steps.len(), 3);
+    assert_eq!(scenarios.len(), 2, "开放演示应含 2 条链路演示场景");
+    let inline = scenarios
+        .iter()
+        .find(|s| s.name.starts_with("内联请求链路"))
+        .expect("内联请求演示场景存在");
+    assert_eq!(inline.steps.len(), 2);
+    assert!(
+        inline.steps.iter().all(|st| st.request.is_some()),
+        "内联场景每步应自持请求定义"
+    );
 
     // 开放演示含 3 条测试用例（文章分页 / 发布周报 / 不存在文章负向）+ 1 条请求用例
     let mut open_case_total = 0usize;
@@ -352,7 +360,11 @@ async fn seeds_full_fixture_set() {
     );
 
     let shop_rules = repo::list_mock_rules(&db, shop.id).await.unwrap();
-    assert_eq!(shop_rules.len(), 3, "下单 / 预览 / 支付各一条 Mock 规则");
+    assert_eq!(
+        shop_rules.len(),
+        5,
+        "下单 / 预览 / 支付 / 订单状态 / 发票各一条 Mock 规则"
+    );
     assert!(
         shop_rules
             .iter()
@@ -377,6 +389,57 @@ async fn seeds_full_fixture_set() {
             .contains("payableAmount"),
         "第 2 步应提取 payableAmount 供支付步骤使用"
     );
+    // 新增：while 轮询场景 + 发票条件场景
+    assert_eq!(shop_scenarios.len(), 3, "电商项目应有 3 条场景");
+    let poll = shop_scenarios
+        .iter()
+        .find(|s| s.name.contains("轮询"))
+        .expect("订单状态轮询场景存在");
+    let poll_loop = poll.steps[2].r#loop.as_ref().expect("第 3 步应有循环配置");
+    assert_eq!(poll_loop["mode"], "while");
+    assert!(poll.steps[2].condition.is_none(), "轮询步用循环不用条件");
+    let invoice = shop_scenarios
+        .iter()
+        .find(|s| s.name.contains("发票"))
+        .expect("发票条件场景存在");
+    let invoice_cond = invoice.steps[2]
+        .condition
+        .as_ref()
+        .expect("第 3 步应有条件");
+    assert_eq!(invoice_cond["op"], "gt");
+    assert!(invoice.steps[2].request.is_some(), "发票步为内联请求");
+}
+
+#[tokio::test]
+async fn seed_users_auth_and_condition_scenarios() {
+    let db = memory_pool().await.unwrap();
+    seed_dev_data(&db).await.unwrap();
+    let projects = repo::list_projects(&db).await.unwrap();
+    let users = projects
+        .iter()
+        .find(|p| p.name == "小奏技术 · 用户服务")
+        .expect("用户服务项目存在");
+    let scenarios = repo::list_scenarios(&db, users.id).await.unwrap();
+    assert_eq!(scenarios.len(), 2, "用户服务应有 2 条集成场景");
+    // 鉴权链路：第 2 步引用「当前用户」接口（Bearer {{token}} 由第 1 步提取）。
+    let auth = scenarios
+        .iter()
+        .find(|s| s.name.contains("鉴权"))
+        .expect("鉴权链路场景存在");
+    assert_eq!(auth.steps.len(), 2);
+    let token_extract = serde_json::to_string(&auth.steps[0].extract).unwrap();
+    assert!(token_extract.contains("token"), "第 1 步应提取 token");
+    // 条件演示：第 3 步 condition role eq admin。
+    let condition = scenarios
+        .iter()
+        .find(|s| s.name.contains("角色校验"))
+        .expect("角色校验场景存在");
+    let cond = condition.steps[2]
+        .condition
+        .as_ref()
+        .expect("第 3 步应有条件");
+    assert_eq!(cond["name"], "role");
+    assert_eq!(cond["value"], "admin");
 }
 
 /// 幂等性：同一内存库重复 seed（模拟手动重复调用）不应报错。
