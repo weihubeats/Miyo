@@ -18,10 +18,12 @@ import { useMiyoApi } from '../../composables/useMiyoApi'
 import { useToast } from '../../composables/useToast'
 import { buildScenarioExport, parseScenarioImport } from '../../utils/scenarioIO'
 import { formatDateTime } from '../../utils/dateTime'
+import CustomSelect from '../ui/CustomSelect.vue'
 import EmptyState from '../ui/EmptyState.vue'
 import Icon from '../ui/Icon.vue'
 import IconButton from '../ui/IconButton.vue'
 import Popconfirm from '../ui/Popconfirm.vue'
+import { formatDurationShort } from '../../utils/format'
 import type { Scenario, ScenarioRunSummary, ScenarioStep } from '../../types/miyoApi'
 
 const t = useLocaleStore().t
@@ -30,9 +32,11 @@ const workspace = useWorkspaceStore()
 const api = useMiyoApi()
 const toast = useToast()
 
-// ---------- 搜索 + 分类过滤 ----------
+// ---------- 搜索 + 分类过滤 + 排序 ----------
 const search = ref('')
 const categoryFilter = ref<string | null>(null)
+/** 排序：默认（编排序）| 名称 | 最近执行时间倒序。 */
+const sortBy = ref<'default' | 'name' | 'recent'>('default')
 
 /** 全部分类（去重、保序）。 */
 const categories = computed(() => {
@@ -48,7 +52,7 @@ const hasCategory = computed(() => store.libraryItems.some((s) => s.category.tri
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  return store.libraryItems.filter((s) => {
+  const list = store.libraryItems.filter((s) => {
     if (categoryFilter.value === '' && s.category.trim()) return false
     if (categoryFilter.value && s.category.trim() !== categoryFilter.value) return false
     if (!q) return true
@@ -56,6 +60,17 @@ const filtered = computed(() => {
       s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
     )
   })
+  if (sortBy.value === 'name') {
+    return [...list].sort((a, b) => a.name.localeCompare(b.name))
+  }
+  if (sortBy.value === 'recent') {
+    return [...list].sort((a, b) => {
+      const ta = a.last_run ? Date.parse(a.last_run.finished_at) : 0
+      const tb = b.last_run ? Date.parse(b.last_run.finished_at) : 0
+      return tb - ta
+    })
+  }
+  return list
 })
 
 // ---------- 最近执行状态 ----------
@@ -207,6 +222,18 @@ async function onImport(): Promise<void> {
         </button>
       </div>
       <IconButton name="upload" :size="14" :title="t('integration.libImport')" @click="onImport" />
+      <CustomSelect
+        class="lib-sort"
+        :model-value="String(sortBy)"
+        :options="[
+          { value: 'default', label: t('integration.libSortDefault') },
+          { value: 'name', label: t('integration.libSortName') },
+          { value: 'recent', label: t('integration.libSortRecent') },
+        ]"
+        size="sm"
+        :pop-min-width="130"
+        @update:model-value="(v) => (sortBy = String(v ?? 'default') as 'default' | 'name' | 'recent')"
+      />
       <button class="miyo-btn miyo-btn-sm miyo-btn-primary" type="button" @click="onCreate">
         <Icon name="plus" :size="13" /> {{ t('integration.libNew') }}
       </button>
@@ -258,10 +285,22 @@ async function onImport(): Promise<void> {
           <span v-if="s.category" class="lib-cat-tag" :title="s.category">{{ s.category }}</span>
         </div>
         <span class="lib-meta">{{ t('integration.libSteps', { n: s.steps.length }) }}</span>
+        <span v-if="s.last_run" class="lib-meta num" :title="runSummaryText(s.last_run)">
+          <span :class="{ 'lib-fail': s.last_run.fail_count > 0 }">✓{{ s.last_run.ok_count }}</span>
+          <span v-if="s.last_run.fail_count > 0" class="lib-fail"> ✗{{ s.last_run.fail_count }}</span>
+          · {{ formatDurationShort(s.last_run.duration_ms ?? 0) }}
+        </span>
         <span class="lib-meta lib-time" :title="runSummaryText(s.last_run)">
           {{ s.last_run ? formatDateTime(s.last_run.finished_at) : t('integration.libLastRunNone') }}
         </span>
         <span class="lib-actions">
+          <IconButton
+            name="history"
+            :size="13"
+            :title="t('integration.libHistory')"
+            :disabled="!s.last_run"
+            @click.stop="s.last_run && store.openScenarioRun(s.id, s.last_run.id)"
+          />
           <IconButton name="play" :size="13" :title="t('integration.run')" @click.stop="store.openScenario(s.id)" />
           <IconButton name="copy" :size="13" :title="t('integration.duplicate')" @click.stop="onDuplicate(s)" />
           <IconButton name="download" :size="13" :title="t('integration.export')" @click.stop="onExport(s)" />
@@ -491,6 +530,15 @@ async function onImport(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lib-sort {
+  flex: none;
+  width: 130px;
+}
+
+.lib-fail {
+  color: var(--danger);
 }
 
 .lib-actions {

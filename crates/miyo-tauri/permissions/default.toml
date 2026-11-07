@@ -54,6 +54,8 @@ permissions = [
     "allow-cancel-scenario-run",
     "allow-list-scenario-runs",
     "allow-list-scenario-summaries",
+    "allow-delete-scenario-run",
+    "allow-clear-scenario-runs",
     "allow-get-scenario-run",
     "allow-codegen-render",
     "allow-cookie-list",

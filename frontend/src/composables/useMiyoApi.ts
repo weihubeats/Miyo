@@ -421,6 +421,14 @@ export function useMiyoApi() {
   const getScenarioRun = (id: string) =>
     run(() => call<ScenarioRunDetail | null>('get_scenario_run', { id }))
 
+  /** 删除单条运行历史（历史清理）。 */
+  const deleteScenarioRun = (runId: string) =>
+    run(() => call<boolean>('delete_scenario_run', { runId }))
+
+  /** 清空场景的全部运行历史（返回删除条数）。 */
+  const clearScenarioRuns = (scenarioId: string) =>
+    run(() => call<number>('clear_scenario_runs', { scenarioId }))
+
   // ---------- 代码生成 ----------
   const codegenRender = (args: {
     lang: CodeLang
@@ -793,6 +801,8 @@ export function useMiyoApi() {
     cancelScenarioRun,
     listScenarioRuns,
     getScenarioRun,
+    deleteScenarioRun,
+    clearScenarioRuns,
     codegenRender,
     listRequestHistories,
     listRecentActivities,

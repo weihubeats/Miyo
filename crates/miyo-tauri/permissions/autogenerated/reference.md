@@ -53,6 +53,8 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-cancel-scenario-run`
 - `allow-list-scenario-runs`
 - `allow-list-scenario-summaries`
+- `allow-delete-scenario-run`
+- `allow-clear-scenario-runs`
 - `allow-get-scenario-run`
 - `allow-codegen-render`
 - `allow-cookie-list`
@@ -409,6 +411,32 @@ Enables the clear_request_histories command without any pre-configured scope.
 <td>
 
 Denies the clear_request_histories command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-clear-scenario-runs`
+
+</td>
+<td>
+
+Enables the clear_scenario_runs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-clear-scenario-runs`
+
+</td>
+<td>
+
+Denies the clear_scenario_runs command without any pre-configured scope.
 
 </td>
 </tr>
@@ -773,6 +801,32 @@ Enables the delete_scenario command without any pre-configured scope.
 <td>
 
 Denies the delete_scenario command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-delete-scenario-run`
+
+</td>
+<td>
+
+Enables the delete_scenario_run command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-delete-scenario-run`
+
+</td>
+<td>
+
+Denies the delete_scenario_run command without any pre-configured scope.
 
 </td>
 </tr>

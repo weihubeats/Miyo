@@ -86,9 +86,24 @@ export const useIntegrationStore = defineStore('integration', () => {
   // ---------- 编辑目标 ----------
   /** 当前编辑的场景 id（null = 列表页）。 */
   const activeScenarioId = ref<string | null>(null)
+  /** 待直达的运行历史 id（列表「执行历史」入口 → 编辑器打开结果视图）。 */
+  const pendingRunId = ref<string | null>(null)
 
   function openScenario(id: string): void {
     activeScenarioId.value = id
+  }
+
+  /** 从列表直达某次运行的结果视图。 */
+  function openScenarioRun(id: string, runId: string): void {
+    pendingRunId.value = runId
+    activeScenarioId.value = id
+  }
+
+  /** 取走待直达 runId（编辑器消费一次）。 */
+  function takePendingRun(): string | null {
+    const v = pendingRunId.value
+    pendingRunId.value = null
+    return v
   }
 
   function backToLibrary(): void {
@@ -108,6 +123,9 @@ export const useIntegrationStore = defineStore('integration', () => {
     libraryLoaded,
     libraryLoading,
     activeScenarioId,
+    pendingRunId,
+    openScenarioRun,
+    takePendingRun,
     ensureProjectContext,
     setProject,
     loadLibrary,

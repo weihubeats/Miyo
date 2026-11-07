@@ -73,6 +73,24 @@ pub async fn get_scenario_run(db: &SqlitePool, id: Uuid) -> Result<Option<Scenar
     row.map(|r| r.into_model()).transpose()
 }
 
+/// 删除单条运行历史（历史清理；记录存在返回 true）。
+pub async fn delete_scenario_run(db: &SqlitePool, run_id: Uuid) -> Result<bool> {
+    let result = sqlx::query("DELETE FROM scenario_runs WHERE id = ?")
+        .bind(run_id.to_string())
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// 清空场景的全部运行历史（保留场景本身），返回删除条数。
+pub async fn delete_scenario_runs_all(db: &SqlitePool, scenario_id: Uuid) -> Result<u64> {
+    let result = sqlx::query("DELETE FROM scenario_runs WHERE scenario_id = ?")
+        .bind(scenario_id.to_string())
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 /// 修剪历史：仅保留最近 `keep` 条。
 pub async fn prune_scenario_runs(db: &SqlitePool, scenario_id: Uuid, keep: i64) -> Result<()> {
     sqlx::query(

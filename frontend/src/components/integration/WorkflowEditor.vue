@@ -47,6 +47,7 @@ import JsonCodeMirror from '../JsonCodeMirror.vue'
 import ScenarioRunReport from '../scenario/ScenarioRunReport.vue'
 import ScenarioVarsPanel from '../scenario/ScenarioVarsPanel.vue'
 import StepRequestEditor from './StepRequestEditor.vue'
+import RunResultView from './RunResultView.vue'
 import RunCompareModal from './RunCompareModal.vue'
 import type {
   Endpoint,
@@ -750,6 +751,19 @@ onMounted(async () => {
   await load()
   void run.loadHistory()
   void run.restoreLatestRun(props.scenarioId)
+  // 列表「执行历史」直达：加载指定运行并进入结果视图。
+  const pending = store.takePendingRun()
+  if (pending) {
+    try {
+      const detail = await api.getScenarioRun(pending)
+      if (detail && scenario.value?.id === props.scenarioId) {
+        run.applyHistoryDetail(detail)
+        viewMode.value = 'result'
+      }
+    } catch {
+      // 历史可能已被清理：保持编辑态
+    }
+  }
 })
 onBeforeUnmount(() => {
   unlisten?.()
@@ -789,11 +803,32 @@ onMounted(() => {
 })
 
 // ---------- 脚本视图 ----------
-const viewMode = ref<'manual' | 'script'>('manual')
-const VIEW_OPTIONS: SegmentOption[] = [
-  { value: 'manual', label: t('integration.viewManual') },
-  { value: 'script', label: t('integration.viewScript') },
-]
+const viewMode = ref<'manual' | 'script' | 'result'>('manual')
+const VIEW_OPTIONS = computed<SegmentOption[]>(() => {
+  const base: SegmentOption[] = [
+    { value: 'manual', label: t('integration.viewManual') },
+    { value: 'script', label: t('integration.viewScript') },
+  ]
+  // 有运行结果时才出现「执行结果」视图（运行完成自动切换 / 历史直达）。
+  if (run.runResult.value || run.runIsHistory.value) {
+    base.push({ value: 'result', label: t('integration.viewResult') })
+  }
+  return base
+})
+
+/** 运行完成自动进入结果视图（实时进度仍在 Dock；结果视图是完整复盘）。 */
+watch(
+  () => run.running.value,
+  (now, was) => {
+    if (was && !now && run.runResult.value) viewMode.value = 'result'
+  },
+)
+
+/** 历史菜单选中 → 打开该次运行的结果视图。 */
+async function onHistorySelect(item: MenuItem): Promise<void> {
+  await run.onHistorySelect(item)
+  if (run.runIsHistory.value) viewMode.value = 'result'
+}
 
 function toScriptSteps(): ScriptStep[] {
   return steps.value.map((s) => {
@@ -1002,6 +1037,22 @@ function applyScriptToSteps(): void {
   }
 }
 
+/** 导出执行结果 Markdown 报告（目录选择 + 写文件）。 */
+async function exportRunReport(markdown: string): Promise<void> {
+  try {
+    const dir = await openDialog({ directory: true, title: t('integration.resultExport') })
+    if (!dir || Array.isArray(dir)) return
+    const base = (name.value.trim() || t('integration.newName')).replace(/[\\/:*?"<>|\s]+/g, '_') || 'run'
+    const path = await join(dir, `${base}-report.md`)
+    await api.writeTextFile(path, markdown)
+    toast.success(t('integration.resultExported'), { message: path })
+  } catch (err) {
+    toast.error(t('integration.exportFail'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
 async function exportScript(): Promise<void> {
   try {
     const dir = await openDialog({ directory: true, title: t('scenario.scriptExportTitle') })
@@ -1029,6 +1080,12 @@ async function copyScript(): Promise<void> {
 // ---------- 历史 / 比较 / 运行菜单 ----------
 const compareOpen = ref(false)
 
+/** Dock 历史菜单入口：上下文标记为 history，选中项走 run.onHistorySelect。 */
+function onHistoryMenu(e: MouseEvent): void {
+  menuContext.value = 'history'
+  run.openHistoryMenu(e)
+}
+
 /** 步骤卡行内菜单：从此步执行 / 仅执行此步。 */
 function openStepMenu(e: MouseEvent, s: EditorStep): void {
   menuContext.value = 'step'
@@ -1044,10 +1101,15 @@ function openStepMenu(e: MouseEvent, s: EditorStep): void {
 }
 
 const pendingMenuStep = ref<{ step: EditorStep; idx: number } | null>(null)
-/** 当前打开的菜单：'step' = 步骤行内菜单；'add-endpoint' = 从接口添加。 */
-const menuContext = ref<'step' | 'add-endpoint'>('step')
+/** 当前打开的菜单：'step' = 步骤行内；'add-endpoint' = 从接口添加；'history' = 运行历史。 */
+const menuContext = ref<'step' | 'add-endpoint' | 'history'>('step')
 
 function onMenuSelect(item: MenuItem): void {
+  if (menuContext.value === 'history') {
+    // 运行历史项（key = runId）：回读详情并进入结果视图。
+    void onHistorySelect(item)
+    return
+  }
   if (menuContext.value === 'add-endpoint') {
     const ep = workspace.endpoints.find((e) => e.id === item.key)
     if (ep) addRefStep(ep)
@@ -1151,6 +1213,21 @@ function runStepMethod(pos: number): string {
       </button>
     </header>
 
+    <!-- ===== 执行结果视图（独立模式；数据为落库快照） ===== -->
+    <RunResultView
+      v-if="viewMode === 'result' && run.runResult.value"
+      :scenario-name="name.trim() || t('integration.newName')"
+      :run-id="run.runId.value"
+      :running="run.running.value"
+      :started-at="run.currentRunStartedAt.value"
+      :finished-at="run.currentRunAt.value"
+      :result="run.runResult.value"
+      :var-chain="varChain"
+      @back="viewMode = 'manual'"
+      @rerun="onRunClick"
+      @export="exportRunReport"
+    />
+
     <!-- ===== 脚本视图 ===== -->
     <div v-if="viewMode === 'script'" class="wf-script">
       <div class="wf-script-actions">
@@ -1175,7 +1252,7 @@ function runStepMethod(pos: number): string {
     </div>
 
     <!-- ===== 编排视图 ===== -->
-    <div v-else class="wf-main">
+    <div v-else-if="viewMode === 'manual'" class="wf-main">
       <section class="wf-flow">
         <div class="wf-flow-head">
           <span class="wf-flow-title">{{ t('integration.libTitle') }}</span>
@@ -1296,7 +1373,7 @@ function runStepMethod(pos: number): string {
           @locate="locateStep"
           @rerun="run.rerunFailed"
           @rerun-history="run.rerunFromHistory"
-          @history="run.openHistoryMenu($event)"
+          @history="onHistoryMenu"
           @toggle-row="run.toggleRespRow"
         />
       </section>

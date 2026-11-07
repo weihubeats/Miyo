@@ -539,6 +539,23 @@ async fn persist_scenario_run(
     Ok(())
 }
 
+/// 删除单条运行历史。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn delete_scenario_run(state: State<'_, AppState>, run_id: String) -> CommandResult<bool> {
+    let uuid = Uuid::parse_str(&run_id)
+        .map_err(|_| CommandError::validation(format!("运行历史 id 无效：{run_id}")))?;
+    Ok(repo::delete_scenario_run(&state.db, uuid).await?)
+}
+
+/// 清空场景的全部运行历史（返回删除条数）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn clear_scenario_runs(
+    state: State<'_, AppState>,
+    scenario_id: Uuid,
+) -> CommandResult<u64> {
+    Ok(repo::delete_scenario_runs_all(&state.db, scenario_id).await?)
+}
+
 /// 列出场景最近的运行历史（新→旧，默认 20 条）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn list_scenario_runs(

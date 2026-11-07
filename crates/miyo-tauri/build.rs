@@ -50,6 +50,8 @@ const COMMANDS: &[&str] = &[
     "list_scenario_runs",
     "get_scenario_run",
     "list_scenario_summaries",
+    "delete_scenario_run",
+    "clear_scenario_runs",
     "codegen_render",
     "cookie_list",
     "cookie_clear",
