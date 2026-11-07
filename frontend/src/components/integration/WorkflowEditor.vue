@@ -29,6 +29,7 @@ import {
   type ScenarioProgressEvent,
 } from '../../composables/useScenarioRun'
 import { computeVarChain, type VarScanStep } from '../../utils/scenarioVars'
+import { applyStepOverrides, applyUrlOverride } from '../../utils/stepOverrides'
 import { envColorClass, mergedVariableMap } from '../../utils/environment'
 import { applyPathVars } from '../../utils/pathVariables'
 import { methodBadgeTone } from '../../utils/methodTone'
@@ -57,6 +58,7 @@ import type {
   ScenarioStep,
   StepCondition,
   StepLoop,
+  StepOverrides,
 } from '../../types/miyoApi'
 
 const props = defineProps<{ scenarioId: string }>()
@@ -103,6 +105,8 @@ interface EditorStep {
   waitMs: number | null
   /** 与相邻 parallel 步骤成批并发。 */
   parallel: boolean
+  /** 引用式步骤的请求参数覆盖（None = 沿用接口配置）。 */
+  overrides: StepOverrides | null
 }
 
 function emptyInline(): EditorStep['inline'] {
@@ -157,6 +161,7 @@ const draftSnapshot = (): string =>
       loop: s.loop,
       waitMs: s.waitMs,
       parallel: s.parallel,
+      overrides: s.overrides,
     })),
     script: scriptDraft.value,
   })
@@ -216,6 +221,7 @@ function stepToEditor(s: ScenarioStep): EditorStep {
     loop: (s.loop as StepLoop | null | undefined) ?? null,
     waitMs: s.wait_ms ?? null,
     parallel: s.parallel ?? false,
+    overrides: (s.overrides as StepOverrides | null | undefined) ?? null,
   }
 }
 
@@ -271,6 +277,8 @@ function toScenario(): Scenario {
     loop: s.loop,
     wait_ms: s.waitMs,
     parallel: s.parallel,
+    overrides:
+      s.kind === 'ref' && s.overrides && Object.keys(s.overrides).length > 0 ? s.overrides : null,
   }))
   return {
     id: base?.id ?? crypto.randomUUID(),
@@ -339,6 +347,7 @@ function addInlineStep(): void {
     loop: null,
     waitMs: null,
     parallel: false,
+    overrides: null,
   })
   selectStep(steps.value[steps.value.length - 1]!)
 }
@@ -357,6 +366,7 @@ function addRefStep(ep: Endpoint): void {
     loop: null,
     waitMs: null,
     parallel: false,
+    overrides: null,
   })
   selectStep(steps.value[steps.value.length - 1]!)
 }
@@ -368,6 +378,25 @@ function duplicateStep(s: EditorStep): void {
   copy.key = newStepKey()
   steps.value.splice(idx + 1, 0, copy)
   selectStep(copy)
+}
+
+/** 引用式步骤的覆盖对象惰性创建（KV 表需要可写目标；空对象落盘前归 null）。 */
+function ensureOverrides(s: EditorStep): StepOverrides {
+  if (!s.overrides) s.overrides = {}
+  return s.overrides
+}
+
+/** 引用式 → 内联：复制接口当前配置为步骤私有请求（此后与接口解耦）。 */
+function convertToInline(s: EditorStep): void {
+  const ep = endpointOf(s)
+  if (!ep) return
+  const spec: import('../../types/miyoApi').RequestSpec = JSON.parse(JSON.stringify(ep.request))
+  s.inline = { method: ep.method, url: urlTemplateFor(ep), spec }
+  s.kind = 'inline'
+  s.endpointId = null
+  s.overrides = null
+  if (!s.name.trim()) s.name = ep.name
+  selectStep(s)
 }
 
 function removeStep(s: EditorStep): void {
@@ -651,10 +680,20 @@ function buildOneRunStep(s: EditorStep): BuiltRunStep | null {
   }
   const ep = endpointOf(s)
   if (!ep) return null
+  // 引用式：克隆接口配置并应用步骤级参数覆盖（未覆盖项沿用接口）。
+  const spec: import('../../types/miyoApi').RequestSpec = JSON.parse(JSON.stringify(ep.request))
+  try {
+    applyStepOverrides(spec, s.overrides)
+  } catch (err) {
+    toast.error(t('integration.overridesInvalid'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
   return {
     index: steps.value.indexOf(s),
-    endpoint: ep,
-    url: urlTemplateFor(ep),
+    endpoint: { ...ep, request: spec },
+    url: applyUrlOverride(urlTemplateFor(ep), s.overrides),
     enabled: true,
     extract: s.extract.filter((r) => r.name.trim() && r.path.trim()),
     assertions: s.assertions
@@ -1015,6 +1054,7 @@ function applyScriptToSteps(): void {
         loop: null,
         waitMs: null,
         parallel: false,
+        overrides: null,
         assertions: p.assertions.map((a) => ({
           name: a.name ?? '',
           type: a.type ?? 'status',
@@ -1094,8 +1134,12 @@ function openStepMenu(e: MouseEvent, s: EditorStep): void {
     { key: 'run-from', label: t('integration.runFromStep'), icon: 'play' as const },
     { key: 'run-only', label: t('integration.runSingleStep'), icon: 'send' as const },
     { key: 'dup', label: t('integration.stepDuplicate'), icon: 'copy' as const },
-    { key: 'del', label: t('integration.stepDelete'), icon: 'trash' as const, danger: true },
   ]
+  // 引用式步骤可转内联（复制接口当前配置为步骤私有请求）。
+  if (s.kind === 'ref' && endpointOf(s)) {
+    items.push({ key: 'to-inline', label: t('integration.toInline'), icon: 'pencil' as const })
+  }
+  items.push({ key: 'del', label: t('integration.stepDelete'), icon: 'trash' as const, danger: true })
   menuRef.value?.openAt(e.currentTarget as HTMLElement, items)
   pendingMenuStep.value = { step: s, idx }
 }
@@ -1119,6 +1163,7 @@ function onMenuSelect(item: MenuItem): void {
   pendingMenuStep.value = null
   if (!target) return
   if (item.key === 'dup') duplicateStep(target.step)
+  else if (item.key === 'to-inline') convertToInline(target.step)
   else if (item.key === 'del') removeStep(target.step)
   else if (item.key === 'run-from') void run.runFrom(target.idx, false)
   else if (item.key === 'run-only') void run.runFrom(target.idx, true)
@@ -1394,6 +1439,7 @@ function runStepMethod(pos: number): string {
               :inline="selectedStep.kind === 'inline' ? selectedStep.inline : null"
               :endpoint="selectedEndpoint"
               :step-key="selectedStep.key"
+              :overrides="selectedStep.kind === 'ref' ? ensureOverrides(selectedStep) : null"
               @goto-endpoint="gotoEndpoint(selectedStep)"
             />
             <div v-show="detailTab === 'control'" class="wf-rules wf-control">

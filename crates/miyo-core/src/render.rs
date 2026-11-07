@@ -374,3 +374,124 @@ mod tests {
         }
     }
 }
+
+/// 引用式步骤的请求参数覆盖（引擎与前端物化共用语义）。
+///
+/// `overrides` 为部分覆盖对象（JSON），键与语义：
+/// - `url`：整体替换该步的 URL 模板（由调用方处理——本函数只改 spec）；
+/// - `params` / `headers` / `path_variables`：按 key 合并——同名键替换值与
+///   启用态（header 键大小写不敏感），新键追加；
+/// - `body`：整体替换 BodySpec。
+///
+/// 未覆盖的项保持接口原配置；非法 JSON 形状返回错误（保存期 / 物化期拦截）。
+pub fn apply_step_overrides(
+    spec: &mut RequestSpec,
+    overrides: &serde_json::Value,
+) -> Result<(), String> {
+    let Some(obj) = overrides.as_object() else {
+        return Err("overrides 必须是对象".into());
+    };
+
+    // ---- KV 合并（params / headers / path_variables）----
+    const KV_FIELDS: [&str; 3] = ["params", "headers", "path_variables"];
+    for field in KV_FIELDS {
+        let Some(rows) = obj.get(field).and_then(|v| v.as_array()) else {
+            continue;
+        };
+        // 先归一为 KeyValue
+        let mut incoming: Vec<KeyValue> = Vec::with_capacity(rows.len());
+        for (i, r) in rows.iter().enumerate() {
+            let key = r
+                .get("key")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("overrides.{field}[{i}] 缺少 key"))?;
+            let value = r.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            let mut kv = KeyValue::new(key, value);
+            if let Some(en) = r.get("enabled").and_then(|v| v.as_bool()) {
+                kv.enabled = en;
+            }
+            incoming.push(kv);
+        }
+        let target = match field {
+            "params" => &mut spec.params,
+            "headers" => &mut spec.headers,
+            _ => &mut spec.path_variables,
+        };
+        for kv in incoming {
+            let same_key = |existing: &KeyValue| -> bool {
+                if field == "headers" {
+                    existing.key.eq_ignore_ascii_case(&kv.key)
+                } else {
+                    existing.key == kv.key
+                }
+            };
+            match target.iter_mut().find(|e| same_key(e)) {
+                Some(existing) => {
+                    existing.value = kv.value.clone();
+                    existing.enabled = kv.enabled;
+                }
+                None => target.push(kv),
+            }
+        }
+    }
+
+    // ---- Body 整体替换 ----
+    if let Some(body) = obj.get("body") {
+        if !body.is_null() {
+            let parsed: BodySpec = serde_json::from_value(body.clone())
+                .map_err(|e| format!("overrides.body 无效：{e}"))?;
+            spec.body = parsed;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod override_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn overrides_merge_by_key_and_replace_body() {
+        let mut spec = RequestSpec {
+            params: vec![KeyValue::new("page", "1"), KeyValue::new("limit", "10")],
+            headers: vec![KeyValue::new("content-type", "application/json")],
+            body: BodySpec::Text { raw: "old".into() },
+            ..Default::default()
+        };
+        apply_step_overrides(
+            &mut spec,
+            &json!({
+                "params": [{"key": "page", "value": "7"}, {"key": "q", "value": "{{q}}"}],
+                "headers": [{"key": "Content-Type", "value": "text/plain"}],
+                "body": {"mode": "json", "raw": "{\"id\": 1}"}
+            }),
+        )
+        .unwrap();
+        // 同 key 替换、新 key 追加
+        assert_eq!(spec.params[0].value, "7");
+        assert_eq!(spec.params[1].value, "10");
+        assert_eq!(spec.params[2].key, "q");
+        // header 大小写不敏感替换
+        assert_eq!(spec.headers[0].value, "text/plain");
+        // body 整体替换
+        assert_eq!(
+            spec.body,
+            BodySpec::Json {
+                raw: "{\"id\": 1}".into()
+            }
+        );
+    }
+
+    #[test]
+    fn overrides_reject_bad_shapes() {
+        let mut spec = RequestSpec::default();
+        // 非对象
+        assert!(apply_step_overrides(&mut spec, &json!(1)).is_err());
+        // params 行缺 key
+        assert!(apply_step_overrides(&mut spec, &json!({"params": [{"value": "x"}]})).is_err());
+        // body 非法
+        assert!(apply_step_overrides(&mut spec, &json!({"body": {"mode": 1}})).is_err());
+    }
+}

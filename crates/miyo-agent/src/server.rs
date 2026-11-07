@@ -1247,7 +1247,7 @@ async fn execute_scenario(
     //（runner 落 skipped 行）。
     let mut steps = Vec::new();
     for (idx, step) in scenario.steps.iter().enumerate() {
-        let (ep, url_template, spec) = match (&step.request, step.endpoint_id) {
+        let (ep, mut url_template, spec) = match (&step.request, step.endpoint_id) {
             (Some(inline), _) => {
                 let method = inline
                     .method
@@ -1314,6 +1314,15 @@ async fn execute_scenario(
             ["POST", "PUT", "PATCH", "DELETE"].contains(&m.to_uppercase().as_str())
         };
         let mut spec = spec;
+        // 引用式步骤的请求参数覆盖（url 覆盖单独替换 url_template）。
+        if let Some(ov) = &step.overrides {
+            if let Some(u) = ov.get("url").and_then(|v| v.as_str()) {
+                url_template = u.to_string();
+            }
+            miyo_core::apply_step_overrides(&mut spec, ov).map_err(|e| {
+                miyo_core::AppError::Validation(format!("第 {} 步的参数覆盖无效：{e}", idx + 1))
+            })?;
+        }
         if req.auto_idempotency && is_write {
             let has_key = spec
                 .headers
@@ -1936,6 +1945,7 @@ pub(crate) fn normalize_step_json(v: &serde_json::Value) -> Result<ScenarioStep,
         r#loop: r#loop.map(|l| serde_json::to_value(l).unwrap_or(serde_json::Value::Null)),
         wait_ms,
         parallel,
+        overrides: get("overrides").cloned().filter(|v| v.is_object()),
     })
 }
 

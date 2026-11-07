@@ -744,6 +744,10 @@ pub struct ScenarioStep {
     /// 与相邻的 parallel 步骤成批并发执行（批内共享变量池，提取按完成序合并）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub parallel: bool,
+    /// 引用式步骤的请求参数覆盖（JSON 透传，键：url / params / headers /
+    /// path_variables / body）——未覆盖的项沿用接口当前配置。内联步骤忽略。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<serde_json::Value>,
 }
 
 impl Default for ScenarioStep {
@@ -759,6 +763,7 @@ impl Default for ScenarioStep {
             r#loop: None,
             wait_ms: None,
             parallel: false,
+            overrides: None,
         }
     }
 }

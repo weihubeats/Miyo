@@ -39,6 +39,7 @@ const DATA_TOKENS = /'?(全部|正向|负向|边界值|安全性|其他)'?/g
 /** 每文件的白名单行（正则），用于无法归入数据值语义的特例。 */
 const FILE_ALLOWLIST: Record<string, RegExp[]> = {
   'src/utils/environment.ts': [CJK], // 正则匹配用户输入的环境名，非展示文案
+  'src/utils/stepOverrides.ts': [CJK], // 参数覆盖校验：错误值为 i18n 键码，非展示文案
   'src/components/SettingsDialog.vue': [/'简体中文'/], // 语言自称
   'src/utils/clipboard.ts': [/console\.error/], // 开发者日志，非 UI 文案
   // 场景脚本生成器：产物是独立可运行的 JS（无法走 t()），中文为生成物文案

@@ -383,6 +383,19 @@ export interface ScenarioStep {
   wait_ms?: number | null
   /** 与相邻 parallel 步骤成批并发（≥2 连续标记才成批）。 */
   parallel?: boolean
+  /** 引用式步骤的请求参数覆盖（键：url/params/headers/path_variables/body；
+   *  未覆盖项沿用接口当前配置；按 key 合并，body 整体替换）。 */
+  overrides?: StepOverrides | null
+}
+
+/** 引用式步骤的请求参数覆盖。 */
+export interface StepOverrides {
+  /** 替换该步 URL 模板。 */
+  url?: string
+  params?: Partial<KeyValue>[]
+  headers?: Partial<KeyValue>[]
+  path_variables?: Partial<KeyValue>[]
+  body?: BodySpec
 }
 
 /** 集成测试场景（Rust `Scenario`）：项目级接口链路。 */

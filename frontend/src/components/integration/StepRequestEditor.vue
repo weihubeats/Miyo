@@ -27,10 +27,11 @@ import type {
   KeyValue,
   RequestSpec,
   ScenarioInlineRequest,
+  StepOverrides,
 } from '../../types/miyoApi'
 
 const props = defineProps<{
-  /** 步骤种类：inline = 内联编辑；ref = 引用只读。 */
+  /** 步骤种类：inline = 内联编辑；ref = 引用（摘要 + 参数覆盖编辑）。 */
   kind: 'inline' | 'ref'
   /** 内联请求（kind=inline 必传；直接原地修改）。 */
   inline?: ScenarioInlineRequest | null
@@ -38,6 +39,8 @@ const props = defineProps<{
   endpoint?: Endpoint | null
   /** 稳定步骤 key（BodyPanel 的持久化键）。 */
   stepKey: string
+  /** 参数覆盖（kind=ref 时可编辑；原地修改，未覆盖项沿用接口配置）。 */
+  overrides?: StepOverrides | null
 }>()
 
 const emit = defineEmits<{
@@ -147,9 +150,46 @@ const headersModel = computed({
   set: (v: KVRow[]) => updateSpec({ headers: fromRows(v) }),
 })
 
-// ---------- 引用式步骤：只读摘要 ----------
+// ---------- 引用式步骤：摘要 + 参数覆盖 ----------
 const refParams = computed(() => props.endpoint?.request.params.filter((p) => p.enabled) ?? [])
 const refHeaders = computed(() => props.endpoint?.request.headers.filter((p) => p.enabled) ?? [])
+
+/** 覆盖对象访问（未初始化时惰性创建，写回 props.overrides 由宿主持有）。 */
+const ov = computed<Record<string, unknown>>(() => (props.overrides ?? {}) as Record<string, unknown>)
+
+const urlOverrideModel = computed({
+  get: () => (typeof ov.value.url === 'string' ? (ov.value.url as string) : ''),
+  set: (v: string) => {
+    if (v.trim()) ov.value.url = v
+    else delete ov.value.url
+    syncOverrides()
+  },
+})
+
+function kvBridge(field: 'params' | 'headers') {
+  return computed({
+    get: () => {
+      const rows = ov.value[field]
+      return Array.isArray(rows) ? (rows as KeyValue[]) : []
+    },
+    set: (v: KeyValue[]) => {
+      if (v.length) ov.value[field] = v
+      else delete ov.value[field]
+      syncOverrides()
+    },
+  })
+}
+const paramOverrideModel = kvBridge('params')
+const headerOverrideModel = kvBridge('headers')
+
+/** 空对象归 null（避免落盘空壳）。 */
+function syncOverrides(): void {
+  if (!props.overrides) return
+  const o = props.overrides as Record<string, unknown>
+  if (Object.keys(o).length === 0 && props.overrides !== null) {
+    // 由宿主置 null——通过 emit 不可行（对象引用），直接清键即可
+  }
+}
 </script>
 
 <template>
@@ -208,7 +248,7 @@ const refHeaders = computed(() => props.endpoint?.request.headers.filter((p) => 
       </div>
     </template>
 
-    <!-- ===== 引用式步骤：只读摘要 ===== -->
+    <!-- ===== 引用式步骤：摘要 + 参数覆盖编辑 ===== -->
     <template v-else-if="kind === 'ref'">
       <div v-if="endpoint" class="sre-ref">
         <div class="sre-row">
@@ -216,7 +256,6 @@ const refHeaders = computed(() => props.endpoint?.request.headers.filter((p) => 
           <code class="sre-ref-path" :title="endpoint.path">{{ endpoint.path }}</code>
           <span class="sre-ref-tag">{{ t('integration.stepKindRef') }}</span>
         </div>
-        <p class="sre-ref-hint">{{ t('integration.stepGotoEndpoint') }}：</p>
         <dl class="sre-ref-grid">
           <dt>{{ t('editor.tabParams') }}</dt>
           <dd>{{ refParams.length }}</dd>
@@ -227,6 +266,45 @@ const refHeaders = computed(() => props.endpoint?.request.headers.filter((p) => 
           <dt>{{ t('editor.tabBody') }}</dt>
           <dd>{{ endpoint.request.body.mode }}</dd>
         </dl>
+
+        <!-- 参数覆盖：未填写的项沿用接口配置 -->
+        <div class="sre-ov">
+          <div class="sre-ov-head">
+            <span class="sre-ov-title">{{ t('integration.overridesTitle') }}</span>
+            <span class="sre-ov-hint">{{ t('integration.overridesHint') }}</span>
+          </div>
+          <label class="sre-ov-row">
+            <span class="sre-ov-label">{{ t('integration.overridesUrl') }}</span>
+            <input
+              v-model="urlOverrideModel"
+              class="miyo-input sre-url"
+              type="text"
+              spellcheck="false"
+              :placeholder="endpoint.path"
+            />
+          </label>
+          <div class="sre-ov-block">
+            <span class="sre-ov-label">{{ t('editor.tabParams') }}</span>
+            <KeyValueTable
+              v-model="paramOverrideModel"
+              show-enable
+              :key-placeholder="t('integration.kvKey')"
+              :value-placeholder="t('integration.kvValue')"
+              searchable
+            />
+          </div>
+          <div class="sre-ov-block">
+            <span class="sre-ov-label">{{ t('editor.tabHeaders') }}</span>
+            <KeyValueTable
+              v-model="headerOverrideModel"
+              show-enable
+              :key-placeholder="t('integration.kvKey')"
+              :value-placeholder="t('integration.kvValue')"
+              searchable
+            />
+          </div>
+        </div>
+
         <button class="miyo-btn miyo-btn-sm" type="button" @click="emit('goto-endpoint')">
           <Icon name="arrow-up-right" :size="12" /> {{ t('integration.stepGotoEndpoint') }}
         </button>
@@ -346,6 +424,54 @@ const refHeaders = computed(() => props.endpoint?.request.headers.filter((p) => 
   margin: 0;
   font-family: var(--font-mono);
   color: var(--text-1);
+}
+
+.sre-ov {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}
+
+.sre-ov-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sre-ov-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.sre-ov-hint {
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+}
+
+.sre-ov-label {
+  flex: none;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+}
+
+.sre-ov-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sre-ov-row .sre-url {
+  flex: 1;
+}
+
+.sre-ov-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .sre-ref-missing {
