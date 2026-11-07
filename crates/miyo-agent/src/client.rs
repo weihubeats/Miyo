@@ -13,8 +13,10 @@ use reqwest::Client;
 use uuid::Uuid;
 
 use crate::server::{
-    CreateScenarioResult, ExecuteEndpointResult, ImportCurlResult, McpToolState, RunScenarioResult,
-    SaveScenarioScriptResult, ScenarioDetail, ScenarioSummary, MAX_PORT_TRIES,
+    CreateScenarioResult, DeleteScenarioResult, EnvironmentDetail, EnvironmentSummary,
+    ExecuteEndpointResult, ImportCurlResult, McpToolState, RunScenarioResult,
+    SaveScenarioScriptResult, ScenarioDetail, ScenarioSummary, StepMutationResult,
+    UpdateScenarioResult, MAX_PORT_TRIES,
 };
 
 /// 默认起始端口（与服务端一致）。
@@ -179,6 +181,74 @@ impl ControlClient {
         decode(res).await
     }
 
+    /// 运行场景（原始 JSON 返回——wait=false 时响应形状不同）。
+    pub async fn run_scenario_raw(
+        &self,
+        scenario_id: Uuid,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, AppError> {
+        let res = self
+            .http
+            .post(format!("{}/agent/scenarios/{scenario_id}/run", self.base))
+            .timeout(EXEC_HTTP_TIMEOUT)
+            .header("Authorization", self.auth())
+            .json(&args)
+            .send()
+            .await
+            .map_err(AppError::from_reqwest)?;
+        decode(res).await
+    }
+
+    /// 接口列表（筛选/分页参数直传 query）。
+    pub async fn list_endpoints_filtered(
+        &self,
+        project_id: Uuid,
+        query: &str,
+    ) -> Result<Vec<Endpoint>, AppError> {
+        let suffix = if query.is_empty() {
+            String::new()
+        } else {
+            format!("?{query}")
+        };
+        self.get_json(&format!("/agent/endpoints/{project_id}{suffix}"))
+            .await
+    }
+
+    /// 校验场景（结构化问题清单）。
+    pub async fn validate_scenario(
+        &self,
+        scenario_id: Uuid,
+        environment_id: Option<Uuid>,
+    ) -> Result<serde_json::Value, AppError> {
+        let suffix = match environment_id {
+            Some(id) => format!("?environmentId={id}"),
+            None => String::new(),
+        };
+        self.get_json(&format!("/agent/scenarios/{scenario_id}/validate{suffix}"))
+            .await
+    }
+
+    /// 运行结果（内存 / DB 双源；running 时返回 {runId, status}）。
+    pub async fn get_run_result(&self, run_id: Uuid) -> Result<serde_json::Value, AppError> {
+        self.get_json(&format!("/agent/runs/{run_id}")).await
+    }
+
+    /// 单步完整详情（请求快照 + 64KB 内响应正文 + 提取 + 断言）。
+    pub async fn get_run_step(
+        &self,
+        run_id: Uuid,
+        index: usize,
+    ) -> Result<serde_json::Value, AppError> {
+        self.get_json(&format!("/agent/runs/{run_id}/steps/{index}"))
+            .await
+    }
+
+    /// 失败原因分析（启发式）。
+    pub async fn analyze_run(&self, run_id: Uuid) -> Result<serde_json::Value, AppError> {
+        self.get_json(&format!("/agent/runs/{run_id}/analysis"))
+            .await
+    }
+
     /// 场景列表（projectId 缺省时：唯一项目自动选中，多项目报错列候选）。
     pub async fn list_scenarios(
         &self,
@@ -202,7 +272,7 @@ impl ControlClient {
         self.get_json("/agent/tools").await
     }
 
-    /// 新建场景（可带初始步骤，按 endpointIds 顺序）；返回新场景 id。
+    /// 新建场景：endpointIds 顺序引用，或 steps 完整定义（引擎或 AI 方言）。
     pub async fn create_scenario(
         &self,
         name: &str,
@@ -220,6 +290,116 @@ impl ControlClient {
                 .collect::<Vec<_>>(),
         });
         self.post_json("/agent/scenarios", body).await
+    }
+
+    /// 新建场景（完整步骤：提取 / 断言 / 条件 / 循环，JSON 直传）。
+    pub async fn create_scenario_full(
+        &self,
+        name: &str,
+        project_id: Option<Uuid>,
+        description: Option<&str>,
+        category: Option<&str>,
+        steps: &[serde_json::Value],
+    ) -> Result<CreateScenarioResult, AppError> {
+        let body = serde_json::json!({
+            "name": name,
+            "projectId": project_id,
+            "description": description,
+            "category": category,
+            "steps": steps,
+        });
+        self.post_json("/agent/scenarios", body).await
+    }
+
+    /// 项目环境列表。
+    pub async fn list_environments(
+        &self,
+        project_id: Option<Uuid>,
+    ) -> Result<Vec<EnvironmentSummary>, AppError> {
+        let path = match project_id {
+            Some(id) => format!("/agent/environments?projectId={id}"),
+            None => "/agent/environments".to_string(),
+        };
+        self.get_json(&path).await
+    }
+
+    /// 环境详情（敏感变量已脱敏）。
+    pub async fn get_environment(
+        &self,
+        environment_id: Uuid,
+    ) -> Result<EnvironmentDetail, AppError> {
+        self.get_json(&format!("/agent/environments/{environment_id}"))
+            .await
+    }
+
+    /// 更新场景（字段缺省保留；steps 提供即整体替换）。
+    pub async fn update_scenario(
+        &self,
+        scenario_id: Uuid,
+        body: serde_json::Value,
+    ) -> Result<UpdateScenarioResult, AppError> {
+        self.put_json(&format!("/agent/scenarios/{scenario_id}"), body)
+            .await
+    }
+
+    /// 删除场景（响应含被删运行历史条数）。
+    pub async fn delete_scenario(
+        &self,
+        scenario_id: Uuid,
+    ) -> Result<DeleteScenarioResult, AppError> {
+        let res = self
+            .http
+            .delete(format!("{}/agent/scenarios/{scenario_id}", self.base))
+            .header("Authorization", self.auth())
+            .send()
+            .await
+            .map_err(AppError::from_reqwest)?;
+        decode(res).await
+    }
+
+    /// 追加步骤（index 缺省 = 末尾）。
+    pub async fn add_scenario_step(
+        &self,
+        scenario_id: Uuid,
+        step: serde_json::Value,
+        index: Option<usize>,
+    ) -> Result<StepMutationResult, AppError> {
+        let body = serde_json::json!({ "step": step, "index": index });
+        self.post_json(&format!("/agent/scenarios/{scenario_id}/steps"), body)
+            .await
+    }
+
+    /// 替换位次上的步骤。
+    pub async fn update_scenario_step(
+        &self,
+        scenario_id: Uuid,
+        index: usize,
+        step: serde_json::Value,
+    ) -> Result<StepMutationResult, AppError> {
+        self.put_json(
+            &format!("/agent/scenarios/{scenario_id}/steps/{index}"),
+            step,
+        )
+        .await
+    }
+
+    /// 删除位次上的步骤。
+    pub async fn delete_scenario_step(
+        &self,
+        scenario_id: Uuid,
+        index: usize,
+    ) -> Result<StepMutationResult, AppError> {
+        let res = self
+            .http
+            .delete(format!(
+                "{}/agent/scenarios/{scenario_id}/steps/{index}",
+                self.base
+            ))
+            .header("Authorization", self.auth())
+            .send()
+            .await
+            .map_err(AppError::from_reqwest)?;
+        decode(res).await
     }
 
     /// 写入 / 清除场景自定义脚本（null 或空串 = 清除，回到实时生成）。

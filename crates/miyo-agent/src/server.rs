@@ -9,8 +9,9 @@ use axum::extract::{Path as AxumPath, Query, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
+use jsonpath_rust::JsonPath;
 use miyo_core::model::{BodySpec, Endpoint, Project, RequestSpec, Scenario, ScenarioStep};
 use miyo_storage::repository as repo;
 use sqlx::SqlitePool;
@@ -109,6 +110,16 @@ pub struct AgentState {
     pub db: SqlitePool,
     token: Arc<String>,
     events: broadcast::Sender<AgentEvent>,
+    /// 异步场景运行的内存注册表（run_id → 句柄）：wait=false 的运行在后台
+    /// 执行，get_run_result 据此轮询；运行结束落 scenario_runs 后查询走 DB。
+    pub runs: Arc<std::sync::Mutex<std::collections::HashMap<String, RunHandle>>>,
+}
+
+/// 一次异步运行的状态句柄（标准锁：持有期间不 await）。
+#[derive(Clone)]
+pub struct RunHandle {
+    pub status: Arc<std::sync::Mutex<&'static str>>,
+    pub result: Arc<std::sync::Mutex<Option<serde_json::Value>>>,
 }
 
 impl AgentState {
@@ -118,6 +129,7 @@ impl AgentState {
             db,
             token: Arc::new(token.into()),
             events,
+            runs: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -259,9 +271,15 @@ pub struct CreateScenarioRequest {
     pub project_id: Option<uuid::Uuid>,
     #[serde(default)]
     pub description: Option<String>,
+    /// 分类标签（可选）。
+    #[serde(default)]
+    pub category: Option<String>,
     /// 按顺序作为步骤的接口 UUID 列表（可空 = 先建空场景再逐步加）。
     #[serde(default)]
     pub endpoint_ids: Vec<uuid::Uuid>,
+    /// 完整步骤列表（引擎或 AI 方言；提供时优先于 endpointIds）。
+    #[serde(default)]
+    pub steps: Option<Vec<serde_json::Value>>,
 }
 
 /// POST `/agent/scenarios` 响应体。
@@ -299,6 +317,52 @@ pub struct SaveScenarioScriptResult {
 const EXEC_BODY_LIMIT: usize = 64 * 1024;
 /// run_scenario 每步正文预览上限（多步叠加，比单请求更紧）。
 const STEP_BODY_LIMIT: usize = 4 * 1024;
+
+/// 历史中每步响应正文的保留上限（与 Tauri 命令层同口径）。
+const HISTORY_BODY_BYTES: usize = 64 * 1024;
+
+/// 变量池脱敏：键名命中敏感词根的值替换为占位符（历史落库不带明文凭据）。
+fn redact_vars(
+    vars: &std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, String> {
+    vars.iter()
+        .map(|(k, v)| {
+            if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
+                (k.clone(), miyo_sync::redact::PLACEHOLDER.to_string())
+            } else {
+                (k.clone(), v.clone())
+            }
+        })
+        .collect()
+}
+
+/// 请求快照脱敏（headers / cookies / url query）。
+fn redact_snapshot(snapshot: &mut miyo_http::client::RequestSnapshot) {
+    let mask = |(k, v): &(String, String)| -> (String, String) {
+        if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
+            (k.clone(), miyo_sync::redact::PLACEHOLDER.to_string())
+        } else {
+            (k.clone(), v.clone())
+        }
+    };
+    snapshot.headers = snapshot.headers.iter().map(&mask).collect();
+    snapshot.cookies = snapshot.cookies.iter().map(&mask).collect();
+    let url = &snapshot.url;
+    if let Some((base, query)) = url.split_once('?') {
+        let redacted: Vec<String> = query
+            .split('&')
+            .map(|pair| {
+                let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
+                    format!("{k}={}", miyo_sync::redact::PLACEHOLDER)
+                } else {
+                    pair.to_string()
+                }
+            })
+            .collect();
+        snapshot.url = format!("{base}?{}", redacted.join("&"));
+    }
+}
 
 /// POST `/agent/endpoints/{id}/execute` 请求体。全部字段可选——缺省即按
 /// 接口当前配置原样发送（`{{var}}` 由变量池渲染）。
@@ -357,6 +421,13 @@ pub struct RunScenarioRequest {
     /// 初始变量注入（优先级最高）。
     #[serde(default)]
     pub variables: Option<std::collections::HashMap<String, String>>,
+    /// false = 异步执行：立即返回 runId，用 GET /agent/runs/{id} 轮询
+    ///（长场景避免 MCP 请求超时）；缺省 true 同步等完整结果。
+    #[serde(default = "default_true")]
+    pub wait: bool,
+    /// 运行标识（缺省生成 UUID；落库 id 与之相同——查询口径统一）。
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -390,6 +461,9 @@ pub struct ScenarioStepRunResult {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunScenarioResult {
+    /// 运行标识（落库 id 与之相同；get_run_result / get_step_result 按它查询）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     pub scenario_id: uuid::Uuid,
     pub scenario_name: String,
     pub passed: usize,
@@ -523,15 +597,53 @@ async fn list_projects_handler(State(state): State<AgentState>) -> ApiResult<Vec
         .map_err(api_error)
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct EndpointListQuery {
+    /// 名称子串过滤（大小写不敏感）。
+    #[serde(default)]
+    pub name: Option<String>,
+    /// HTTP 方法过滤（GET / POST / …，大小写不敏感）。
+    #[serde(default)]
+    pub method: Option<String>,
+    /// 分组（文件夹）UUID 过滤。
+    #[serde(rename = "folderId", default)]
+    pub folder_id: Option<uuid::Uuid>,
+    /// 分页：偏移与条数（缺省全量，兼容旧调用）。
+    #[serde(default)]
+    pub offset: Option<usize>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 async fn list_endpoints_handler(
     State(state): State<AgentState>,
     AxumPath(project_id): AxumPath<uuid::Uuid>,
+    Query(q): Query<EndpointListQuery>,
 ) -> ApiResult<Vec<Endpoint>> {
     ensure_tool_enabled(&state, "list_endpoints").await?;
-    repo::list_endpoints(&state.db, project_id)
+    let mut endpoints = repo::list_endpoints(&state.db, project_id)
         .await
-        .map(Json)
-        .map_err(api_error)
+        .map_err(api_error)?;
+    // 筛选在内存完成（项目接口量级为几十到几百，SQLite 全量拉取后过滤足够）。
+    if let Some(name) = &q.name {
+        let needle = name.to_lowercase();
+        endpoints.retain(|e| {
+            e.name.to_lowercase().contains(&needle) || e.path.to_lowercase().contains(&needle)
+        });
+    }
+    if let Some(m) = &q.method {
+        let m = m.to_uppercase();
+        endpoints.retain(|e| e.method.to_string() == m);
+    }
+    if let Some(fid) = q.folder_id {
+        endpoints.retain(|e| e.folder_id == Some(fid));
+    }
+    let offset = q.offset.unwrap_or(0).min(endpoints.len());
+    endpoints = endpoints.split_off(offset);
+    if let Some(limit) = q.limit {
+        endpoints.truncate(limit.max(1));
+    }
+    Ok(Json(endpoints))
 }
 
 // ---------- 场景（脚本协作）Handlers ----------
@@ -597,11 +709,38 @@ async fn create_scenario_handler(
         }
     }
     let now = chrono::Utc::now();
-    let steps: Vec<ScenarioStep> = body
-        .endpoint_ids
-        .iter()
-        .map(|id| ScenarioStep::referenced(*id))
-        .collect();
+    // 步骤来源：steps（完整定义，AI 方言或引擎形状）优先；否则 endpointIds 顺序引用。
+    let steps: Vec<ScenarioStep> = match &body.steps {
+        Some(raw_steps) => {
+            let mut out = Vec::with_capacity(raw_steps.len());
+            for (i, raw) in raw_steps.iter().enumerate() {
+                let step = normalize_step_json(raw).map_err(|e| {
+                    api_error(miyo_core::AppError::Validation(format!(
+                        "第 {} 步无效：{e}",
+                        i + 1
+                    )))
+                })?;
+                if let Some(ep_id) = step.endpoint_id {
+                    match repo::get_endpoint(&state.db, ep_id).await {
+                        Ok(ep) if ep.project_id == project.id => {}
+                        _ => {
+                            return Err(api_error(miyo_core::AppError::Validation(format!(
+                                "第 {} 步引用的接口 {ep_id} 不存在或不属于本项目",
+                                i + 1
+                            ))))
+                        }
+                    }
+                }
+                out.push(step);
+            }
+            out
+        }
+        None => body
+            .endpoint_ids
+            .iter()
+            .map(|id| ScenarioStep::referenced(*id))
+            .collect(),
+    };
     // sort_order 接在该项目现有场景之后，列表里排在末尾（与手动新建一致）。
     let sort_order = repo::list_scenarios(&state.db, project.id)
         .await
@@ -612,7 +751,7 @@ async fn create_scenario_handler(
         project_id: project.id,
         name: name.to_string(),
         description: body.description.unwrap_or_default(),
-        category: String::new(),
+        category: body.category.unwrap_or_default(),
         sort_order,
         steps,
         script: None,
@@ -979,21 +1118,78 @@ async fn run_scenario_handler(
     State(state): State<AgentState>,
     AxumPath(id): AxumPath<uuid::Uuid>,
     body: Option<Json<RunScenarioRequest>>,
-) -> ApiResult<RunScenarioResult> {
+) -> ApiResult<serde_json::Value> {
     ensure_tool_enabled(&state, "run_scenario").await?;
     let req = body.map(|Json(v)| v).unwrap_or_default();
-    let scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+    let run_id = req
+        .run_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // ---- 异步模式：立即返回 runId，后台执行（长场景避免 MCP 超时）----
+    if !req.wait {
+        // 前置校验场景存在（fail fast，不建出注定失败的运行）。
+        let _scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+        let handle = RunHandle {
+            status: Arc::new(std::sync::Mutex::new("running")),
+            result: Arc::new(std::sync::Mutex::new(None)),
+        };
+        state
+            .runs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(run_id.clone(), handle.clone());
+        let state_c = state.clone();
+        let run_id_c = run_id.clone();
+        tokio::spawn(async move {
+            let outcome = execute_scenario(&state_c, id, req, &run_id_c).await;
+            let mut st = handle.status.lock().unwrap_or_else(|p| p.into_inner());
+            match outcome {
+                Ok(result) => {
+                    *st = "completed";
+                    *handle.result.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some(serde_json::to_value(result).unwrap_or(serde_json::Value::Null));
+                }
+                Err(e) => {
+                    *st = "failed";
+                    *handle.result.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some(serde_json::json!({ "error": e.user_message() }));
+                }
+            }
+        });
+        return Ok(Json(serde_json::json!({
+            "runId": run_id,
+            "scenarioId": id,
+            "status": "running",
+            "hint": "用 GET /agent/runs/{runId}（MCP: get_run_result）轮询结果",
+        })));
+    }
+
+    let result = execute_scenario(&state, id, req, &run_id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(
+        serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+/// 执行场景（同步核心）：物化步骤 → 串行运行（条件/循环/并行按配置）→
+/// 落运行历史（响应正文 64KB 截断保留，run_id 即历史行 id）。
+async fn execute_scenario(
+    state: &AgentState,
+    scenario_id: uuid::Uuid,
+    req: RunScenarioRequest,
+    run_id: &str,
+) -> Result<RunScenarioResult, miyo_core::AppError> {
+    let scenario = repo::get_scenario(&state.db, scenario_id).await?;
     let vars = merged_variables(
         &state.db,
         scenario.project_id,
         req.environment_id,
         req.variables.clone(),
     )
-    .await
-    .map_err(api_error)?;
-    let global_params = repo::get_global_params(&state.db)
-        .await
-        .map_err(api_error)?;
+    .await?;
+    let global_params = repo::get_global_params(&state.db).await?;
 
     // 物化步骤（与 Tauri 命令 run_scenario 同口径：全局参数补缺 +
     // TestSpec 解析；URL 模板保留 {{var}} 执行期渲染）。内联步骤用步骤
@@ -1007,11 +1203,11 @@ async fn run_scenario_handler(
                     .method
                     .parse::<miyo_core::model::HttpMethod>()
                     .map_err(|_| {
-                        api_error(miyo_core::AppError::Validation(format!(
+                        miyo_core::AppError::Validation(format!(
                             "第 {} 步的 HTTP 方法无效（{}）",
                             idx + 1,
                             inline.method
-                        )))
+                        ))
                     })?;
                 let name = step.display_name().unwrap_or("内联步骤").to_string();
                 let path = inline.url.clone();
@@ -1038,20 +1234,20 @@ async fn run_scenario_handler(
                 let ep = repo::get_endpoint(&state.db, endpoint_id)
                     .await
                     .map_err(|_| {
-                        api_error(miyo_core::AppError::Validation(format!(
+                        miyo_core::AppError::Validation(format!(
                             "第 {} 步引用的接口不存在（{endpoint_id}）",
                             idx + 1
-                        )))
+                        ))
                     })?;
                 let url = url_template_for(&ep);
                 let spec = ep.request.clone();
                 (ep, url, spec)
             }
             (None, None) => {
-                return Err(api_error(miyo_core::AppError::Validation(format!(
+                return Err(miyo_core::AppError::Validation(format!(
                     "第 {} 步既无接口引用也无内联请求",
                     idx + 1
-                ))))
+                )))
             }
         };
         let mut spec = spec;
@@ -1061,11 +1257,25 @@ async fn run_scenario_handler(
             "assertions": step.assertions,
         })))
         .map_err(|e| {
-            api_error(miyo_core::AppError::Validation(format!(
-                "第 {} 步的提取/断言配置无效：{e}",
-                idx + 1
-            )))
+            miyo_core::AppError::Validation(format!("第 {} 步的提取/断言配置无效：{e}", idx + 1))
         })?;
+        // 执行控制透传（条件 / 循环 / 等待 / 并行；配置无效 → 校验错误）。
+        let condition = step
+            .condition
+            .as_ref()
+            .map(|v| serde_json::from_value::<miyo_test::config::StepCondition>(v.clone()))
+            .transpose()
+            .map_err(|e| {
+                miyo_core::AppError::Validation(format!("第 {} 步的执行条件无效：{e}", idx + 1))
+            })?;
+        let r#loop = step
+            .r#loop
+            .as_ref()
+            .map(|v| serde_json::from_value::<miyo_test::config::StepLoop>(v.clone()))
+            .transpose()
+            .map_err(|e| {
+                miyo_core::AppError::Validation(format!("第 {} 步的循环配置无效：{e}", idx + 1))
+            })?;
         steps.push(miyo_test::runner::ScenarioStepInput {
             url_template,
             endpoint: ep,
@@ -1073,16 +1283,18 @@ async fn run_scenario_handler(
             extract: config.extract,
             assertions: config.assertions,
             enabled: step.enabled,
-            condition: None,
-            r#loop: None,
-            wait_ms: None,
-            parallel: false,
+            condition,
+            r#loop,
+            wait_ms: step
+                .wait_ms
+                .map(|w| w.min(miyo_test::config::StepLoop::MAX_INTERVAL_MS)),
+            parallel: step.parallel,
         });
     }
     if steps.iter().all(|s| !s.enabled) {
-        return Err(api_error(miyo_core::AppError::Validation(
+        return Err(miyo_core::AppError::Validation(
             "场景没有启用中的步骤".into(),
-        )));
+        ));
     }
 
     let timeout_ms = steps[0]
@@ -1147,13 +1359,22 @@ async fn run_scenario_handler(
         .filter(|r| r.effective_status() == "skipped" || r.effective_status() == "blocked")
         .count();
 
-    // 运行历史落库（与 Tauri 命令同库同表：剥正文、统计摘要、保留最近 N 条）。
+    // 运行历史落库（与 Tauri 命令同库同表：正文 64KB 截断保留可回看，
+    // 敏感头 / 变量池脱敏，保留最近 N 条）。
     let mut history_results = result.results.clone();
     for r in &mut history_results {
-        r.response = None;
+        if let Some(resp) = r.response.as_mut() {
+            if resp.body.len() > HISTORY_BODY_BYTES {
+                resp.body = truncate_utf8(&resp.body, HISTORY_BODY_BYTES).0;
+                resp.history_truncated = true;
+            }
+            if let Some(snapshot) = resp.request.as_mut() {
+                redact_snapshot(snapshot);
+            }
+        }
     }
     let record = miyo_core::model::ScenarioRun {
-        id: uuid::Uuid::new_v4(),
+        id: uuid::Uuid::parse_str(run_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
         scenario_id: scenario.id,
         environment_id: req.environment_id,
         finished_at: chrono::Utc::now(),
@@ -1171,7 +1392,8 @@ async fn run_scenario_handler(
         cancelled: result.cancelled,
         stopped_on_failure: result.stopped_on_failure,
         results_json: serde_json::to_string(&history_results).unwrap_or_else(|_| "[]".into()),
-        variables_json: serde_json::to_string(&result.variables).unwrap_or_else(|_| "{}".into()),
+        variables_json: serde_json::to_string(&redact_vars(&result.variables))
+            .unwrap_or_else(|_| "{}".into()),
         meta_json: None,
     };
     if let Err(e) = repo::save_scenario_run(&state.db, &record).await {
@@ -1187,7 +1409,8 @@ async fn run_scenario_handler(
         enabled_steps
     );
 
-    Ok(Json(RunScenarioResult {
+    Ok(RunScenarioResult {
+        run_id: Some(run_id.to_string()),
         scenario_id: scenario.id,
         scenario_name: scenario.name,
         passed,
@@ -1197,7 +1420,7 @@ async fn run_scenario_handler(
         stopped_on_failure: result.stopped_on_failure,
         variables: result.variables,
         steps: step_results,
-    }))
+    })
 }
 
 /// 解析目标项目：显式 id 校验存在性；缺省时按「唯一项目自动选中 /
@@ -1317,6 +1540,8 @@ pub fn build_router(state: AgentState) -> Router {
         .route("/agent/health", get(health))
         .route("/agent/projects", get(list_projects_handler))
         .route("/agent/endpoints/{project_id}", get(list_endpoints_handler))
+        .route("/agent/environments", get(list_environments_handler))
+        .route("/agent/environments/{id}", get(get_environment_handler))
         .route("/agent/endpoints/{id}/detail", get(get_endpoint_handler))
         .route(
             "/agent/endpoints/{id}/execute",
@@ -1329,6 +1554,27 @@ pub fn build_router(state: AgentState) -> Router {
             get(list_scenarios_handler).post(create_scenario_handler),
         )
         .route("/agent/scenarios/{id}", get(get_scenario_handler))
+        .route("/agent/scenarios/{id}", put(update_scenario_handler))
+        .route("/agent/scenarios/{id}", delete(delete_scenario_handler))
+        .route(
+            "/agent/scenarios/{id}/steps",
+            post(add_scenario_step_handler),
+        )
+        .route(
+            "/agent/scenarios/{id}/steps/{index}",
+            put(update_scenario_step_handler),
+        )
+        .route(
+            "/agent/scenarios/{id}/validate",
+            get(validate_scenario_handler),
+        )
+        .route("/agent/runs/{id}", get(get_run_result_handler))
+        .route("/agent/runs/{id}/steps/{index}", get(get_run_step_handler))
+        .route("/agent/runs/{id}/analysis", get(analyze_run_handler))
+        .route(
+            "/agent/scenarios/{id}/steps/{index}",
+            delete(delete_scenario_step_handler),
+        )
         .route(
             "/agent/scenarios/{id}/script",
             put(save_scenario_script_handler),
@@ -1402,9 +1648,1364 @@ pub async fn start_at(
     )))
 }
 
+// ---------- MCP 集成测试升级（2026-11）：步骤归一化 + 环境 + 场景管理 ----------
+
+/// 步骤 JSON 归一化：接受两种方言，产出引擎形状的 [`ScenarioStep`]。
+///
+/// 方言 A（引擎 / 前端 `steps_json` 原生形状）：
+/// `{"endpointId" | "request": {"method","url","spec"}, "extract": [{"name","from","path"}],
+///   "assertions": [{"type","path","op","expected"}], "condition"/"loop"/"waitMs"/"parallel"}`
+///
+/// 方言 B（AI 友好形状，自动翻译）：
+/// `{"extractors": [{"name","source":"response.body"|"response.header","expression","type","required"}],
+///   "assertions": [{"source":"response.status"|"response.body"|"response.header","expression","operator","expected"}]}`
+/// operator 映射：equals→eq、notEquals→neq、contains、notContains→not_contains、
+/// greaterThan→gt、greaterThanOrEquals→gte、lessThan→lt、lessThanOrEquals→lte、
+/// exists、notExists→not_exists、matches（正则）。
+pub(crate) fn normalize_step_json(v: &serde_json::Value) -> Result<ScenarioStep, String> {
+    if !v.is_object() {
+        return Err("步骤必须是对象".into());
+    }
+    let get = |k: &str| v.get(k);
+
+    // ---- 名称 / 启用 ----
+    let name = get("name").and_then(|x| x.as_str()).map(str::to_string);
+    let enabled = get("enabled").and_then(|x| x.as_bool()).unwrap_or(true);
+
+    // ---- 提取：extract（引擎形状）或 extractors（AI 方言）；缺省 = 空数组
+    //（引擎 TestSpec 要求序列形状，Null 会在运行期解析失败）----
+    let extract = if let Some(arr) = get("extract").and_then(|x| x.as_array()) {
+        // 引擎形状透传
+        serde_json::Value::Array(arr.clone())
+    } else if let Some(arr) = get("extractors").and_then(|x| x.as_array()) {
+        let mut out = Vec::new();
+        for e in arr {
+            let name = e
+                .get("name")
+                .and_then(|x| x.as_str())
+                .ok_or("extractor 缺少 name")?
+                .to_string();
+            let source = e
+                .get("source")
+                .and_then(|x| x.as_str())
+                .unwrap_or("response.body");
+            let expression = e
+                .get("expression")
+                .and_then(|x| x.as_str())
+                .ok_or("extractor 缺少 expression")?
+                .to_string();
+            let from = match source {
+                "response.body" => "body",
+                "response.header" | "response.headers" => "header",
+                "response.status" => {
+                    return Err(format!(
+                        "extractor「{name}」source=response.status 不支持提取——请改用断言（source=response.status）"
+                    ))
+                }
+                other => return Err(format!("extractor source 不支持：{other}")),
+            };
+            let mut item = serde_json::json!({"name": name, "from": from, "path": expression});
+            if e.get("required").and_then(|x| x.as_bool()).unwrap_or(false) {
+                // required 透传为标记（校验与运行预检读取）。
+                item["required"] = serde_json::Value::Bool(true);
+            }
+            out.push(item);
+        }
+        serde_json::Value::Array(out)
+    } else {
+        serde_json::Value::Array(Vec::new())
+    };
+
+    // ---- 断言：引擎形状或 AI 方言 ----
+    let assertions = if let Some(arr) = get("assertions").and_then(|x| x.as_array()) {
+        // 引擎形状：元素含 "type" 字段；AI 方言：元素含 "source"/"operator"。
+        let mut out = Vec::new();
+        for a in arr {
+            let is_engine = a.get("type").is_some();
+            if is_engine {
+                out.push(a.clone());
+                continue;
+            }
+            let source = a
+                .get("source")
+                .and_then(|x| x.as_str())
+                .unwrap_or("response.status");
+            let operator = a
+                .get("operator")
+                .and_then(|x| x.as_str())
+                .unwrap_or("equals");
+            let op = match operator {
+                "equals" | "eq" => "eq",
+                "notEquals" | "neq" => "neq",
+                "contains" => "contains",
+                "notContains" => "not_contains",
+                "greaterThan" => "gt",
+                "greaterThanOrEquals" => "gte",
+                "lessThan" => "lt",
+                "lessThanOrEquals" => "lte",
+                "exists" => "exists",
+                "notExists" => "not_exists",
+                "matches" | "regex" => "matches",
+                "empty" => "empty",
+                "notEmpty" => "not_empty",
+                other => return Err(format!("断言 operator 不支持：{other}")),
+            };
+            let (r#type, path) = match source {
+                "response.status" => ("status", None),
+                "response.body" => (
+                    "jsonpath",
+                    Some(
+                        a.get("expression")
+                            .and_then(|x| x.as_str())
+                            .ok_or("断言 source=response.body 需要 expression（JSONPath）")?,
+                    ),
+                ),
+                "response.header" | "response.headers" => (
+                    "header",
+                    Some(
+                        a.get("expression")
+                            .and_then(|x| x.as_str())
+                            .ok_or("断言 source=response.header 需要 expression（Header 名）")?,
+                    ),
+                ),
+                "performance" | "response.time" => ("response_time_ms", None),
+                other => return Err(format!("断言 source 不支持：{other}")),
+            };
+            let mut item = serde_json::json!({"type": r#type, "op": op});
+            if let Some(p) = path {
+                item["path"] = serde_json::Value::String(p.to_string());
+            }
+            if let Some(exp) = a.get("expected") {
+                if !exp.is_null() {
+                    item["expected"] = exp.clone();
+                }
+            }
+            if let Some(nm) = a.get("name").and_then(|x| x.as_str()) {
+                if !nm.is_empty() {
+                    item["name"] = serde_json::Value::String(nm.to_string());
+                }
+            }
+            out.push(item);
+        }
+        serde_json::Value::Array(out)
+    } else {
+        serde_json::Value::Array(Vec::new())
+    };
+
+    // ---- 内联请求 / 接口引用 ----
+    let request = match get("request") {
+        Some(r) if !r.is_null() => {
+            let method = r
+                .get("method")
+                .and_then(|x| x.as_str())
+                .unwrap_or("GET")
+                .to_uppercase();
+            let url = r
+                .get("url")
+                .and_then(|x| x.as_str())
+                .ok_or("内联请求缺少 url")?
+                .to_string();
+            let spec = r
+                .get("spec")
+                .cloned()
+                .map(serde_json::from_value::<RequestSpec>)
+                .transpose()
+                .map_err(|e| format!("内联请求 spec 无效：{e}"))?
+                .unwrap_or_default();
+            Some(miyo_core::model::ScenarioInlineRequest { method, url, spec })
+        }
+        _ => None,
+    };
+    let endpoint_id = match get("endpointId").or_else(|| get("endpoint_id")) {
+        Some(x) if !x.is_null() => Some(
+            x.as_str()
+                .ok_or("endpointId 必须是 UUID 字符串")?
+                .parse::<uuid::Uuid>()
+                .map_err(|_| "endpointId 不是合法 UUID")?,
+        ),
+        _ => None,
+    };
+    if request.is_none() && endpoint_id.is_none() {
+        return Err("步骤既无 request（内联请求）也无 endpointId（接口引用）".into());
+    }
+
+    // ---- 执行控制（条件 / 循环 / 等待 / 并行）----
+    let condition = match get("condition") {
+        Some(c) if !c.is_null() => Some(
+            serde_json::from_value::<miyo_test::config::StepCondition>(c.clone())
+                .map_err(|e| format!("condition 无效：{e}"))?,
+        ),
+        _ => None,
+    };
+    let r#loop = match get("loop").or_else(|| get("repeat")) {
+        Some(l) if !l.is_null() => Some(
+            serde_json::from_value::<miyo_test::config::StepLoop>(l.clone())
+                .map_err(|e| format!("loop 无效：{e}"))?,
+        ),
+        _ => None,
+    };
+    let wait_ms = get("waitMs")
+        .or_else(|| get("wait_ms"))
+        .and_then(|x| x.as_u64())
+        .map(|w| w.min(miyo_test::config::StepLoop::MAX_INTERVAL_MS));
+    let parallel = get("parallel").and_then(|x| x.as_bool()).unwrap_or(false);
+
+    Ok(ScenarioStep {
+        endpoint_id,
+        enabled,
+        extract,
+        assertions,
+        name,
+        request,
+        condition: condition.map(|c| serde_json::to_value(c).unwrap_or(serde_json::Value::Null)),
+        r#loop: r#loop.map(|l| serde_json::to_value(l).unwrap_or(serde_json::Value::Null)),
+        wait_ms,
+        parallel,
+    })
+}
+
+/// 环境摘要（列表用；不含变量明细）。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct EnvironmentSummary {
+    pub id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub name: String,
+    #[serde(rename = "baseUrl")]
+    pub base_url: String,
+    pub variable_count: usize,
+}
+
+/// 环境详情（敏感变量值脱敏——Token / 密钥不进入 MCP 返回）。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct EnvironmentDetail {
+    pub id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub name: String,
+    #[serde(rename = "baseUrl")]
+    pub base_url: String,
+    pub variables: Vec<EnvironmentVarLite>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct EnvironmentVarLite {
+    pub key: String,
+    /// 生效值（敏感变量为占位符）。
+    pub value: String,
+    pub sensitive: bool,
+    pub enabled: bool,
+    pub description: String,
+}
+
+async fn environment_detail(env: miyo_core::model::Environment) -> EnvironmentDetail {
+    let variables = env
+        .variables
+        .iter()
+        .filter(|v| v.enabled)
+        .map(|v| {
+            let sensitive = v.sensitive.unwrap_or(false);
+            let value = if sensitive {
+                miyo_sync::redact::PLACEHOLDER.to_string()
+            } else {
+                v.effective_value().to_string()
+            };
+            EnvironmentVarLite {
+                key: v.key.clone(),
+                value,
+                sensitive,
+                enabled: v.enabled,
+                description: v.description.clone().unwrap_or_default(),
+            }
+        })
+        .collect();
+    EnvironmentDetail {
+        id: env.id,
+        project_id: env.project_id,
+        name: env.name,
+        base_url: env.base_url,
+        variables,
+    }
+}
+
+/// GET `/agent/environments?projectId=`：项目环境列表。
+async fn list_environments_handler(
+    State(state): State<AgentState>,
+    Query(q): Query<EnvQuery>,
+) -> ApiResult<Vec<EnvironmentSummary>> {
+    ensure_tool_enabled(&state, "list_environments").await?;
+    let project = resolve_project_read(&state.db, q.project_id)
+        .await
+        .map_err(api_error)?;
+    let envs = repo::list_environments(&state.db, project.id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(
+        envs.into_iter()
+            .map(|e| EnvironmentSummary {
+                id: e.id,
+                project_id: e.project_id,
+                name: e.name,
+                base_url: e.base_url,
+                variable_count: e.variables.iter().filter(|v| v.enabled).count(),
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct EnvQuery {
+    #[serde(rename = "projectId", default)]
+    pub project_id: Option<uuid::Uuid>,
+}
+
+/// GET `/agent/environments/{id}`：环境详情（敏感值脱敏）。
+async fn get_environment_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<EnvironmentDetail> {
+    ensure_tool_enabled(&state, "get_environment").await?;
+    let env = repo::get_environment(&state.db, id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(environment_detail(env).await))
+}
+
+/// PUT `/agent/scenarios/{id}`：更新场景基本配置与步骤（整体覆盖语义，
+/// 字段缺省保留原值；steps 提供时整体替换）。
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateScenarioRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    /// 步骤数组（引擎或 AI 方言，normalize_step_json 归一）；提供即整体替换。
+    #[serde(default)]
+    pub steps: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateScenarioResult {
+    pub scenario_id: uuid::Uuid,
+    pub step_count: usize,
+}
+
+async fn update_scenario_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    Json(body): Json<UpdateScenarioRequest>,
+) -> ApiResult<UpdateScenarioResult> {
+    ensure_tool_enabled(&state, "update_scenario").await?;
+    let mut scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+    if let Some(n) = &body.name {
+        let n = n.trim();
+        if n.is_empty() {
+            return Err(api_error(miyo_core::AppError::Validation(
+                "场景名不能为空".into(),
+            )));
+        }
+        scenario.name = n.to_string();
+    }
+    if let Some(d) = &body.description {
+        scenario.description = d.clone();
+    }
+    if let Some(c) = &body.category {
+        scenario.category = c.trim().to_string();
+    }
+    if let Some(steps) = &body.steps {
+        let mut out = Vec::with_capacity(steps.len());
+        for (i, raw) in steps.iter().enumerate() {
+            let step = normalize_step_json(raw).map_err(|e| {
+                api_error(miyo_core::AppError::Validation(format!(
+                    "第 {} 步无效：{e}",
+                    i + 1
+                )))
+            })?;
+            // 引用式步骤校验归属。
+            if let Some(ep_id) = step.endpoint_id {
+                match repo::get_endpoint(&state.db, ep_id).await {
+                    Ok(ep) if ep.project_id == scenario.project_id => {}
+                    _ => {
+                        return Err(api_error(miyo_core::AppError::Validation(format!(
+                            "第 {} 步引用的接口 {ep_id} 不存在或不属于本项目",
+                            i + 1
+                        ))))
+                    }
+                }
+            }
+            out.push(step);
+        }
+        scenario.steps = out;
+    }
+    scenario.updated_at = chrono::Utc::now();
+    repo::save_scenario(&state.db, &scenario)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(UpdateScenarioResult {
+        scenario_id: id,
+        step_count: scenario.steps.len(),
+    }))
+}
+
+/// DELETE `/agent/scenarios/{id}`：删除场景（运行历史随 FK 一并清理，
+/// 响应中带被删历史条数供确认）。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteScenarioResult {
+    pub scenario_id: uuid::Uuid,
+    pub deleted_runs: i64,
+}
+
+async fn delete_scenario_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<DeleteScenarioResult> {
+    ensure_tool_enabled(&state, "delete_scenario").await?;
+    // 先取历史条数（删除后不可再查）。
+    let runs = repo::list_scenario_runs(&state.db, id, 10_000)
+        .await
+        .map_err(api_error)?;
+    let deleted_runs = runs.len() as i64;
+    repo::delete_scenario(&state.db, id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(DeleteScenarioResult {
+        scenario_id: id,
+        deleted_runs,
+    }))
+}
+
+/// POST `/agent/scenarios/{id}/steps`：追加步骤（index 缺省 = 末尾）。
+#[derive(Debug, serde::Deserialize)]
+pub struct AddStepRequest {
+    /// 步骤定义（引擎或 AI 方言）。
+    pub step: serde_json::Value,
+    /// 插入位次（0-based；缺省 = 末尾）。
+    #[serde(default)]
+    pub index: Option<usize>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepMutationResult {
+    pub scenario_id: uuid::Uuid,
+    /// 操作后步骤总数。
+    pub step_count: usize,
+    /// 操作位次（0-based）。
+    pub index: usize,
+}
+
+async fn add_scenario_step_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    Json(body): Json<AddStepRequest>,
+) -> ApiResult<StepMutationResult> {
+    ensure_tool_enabled(&state, "add_scenario_step").await?;
+    let mut scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+    let step = normalize_step_json(&body.step)
+        .map_err(|e| api_error(miyo_core::AppError::Validation(format!("步骤无效：{e}"))))?;
+    if let Some(ep_id) = step.endpoint_id {
+        match repo::get_endpoint(&state.db, ep_id).await {
+            Ok(ep) if ep.project_id == scenario.project_id => {}
+            _ => {
+                return Err(api_error(miyo_core::AppError::Validation(format!(
+                    "引用的接口 {ep_id} 不存在或不属于本项目"
+                ))))
+            }
+        }
+    }
+    let index = body
+        .index
+        .unwrap_or(scenario.steps.len())
+        .min(scenario.steps.len());
+    scenario.steps.insert(index, step);
+    scenario.updated_at = chrono::Utc::now();
+    repo::save_scenario(&state.db, &scenario)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(StepMutationResult {
+        scenario_id: id,
+        step_count: scenario.steps.len(),
+        index,
+    }))
+}
+
+async fn update_scenario_step_handler(
+    State(state): State<AgentState>,
+    AxumPath((id, index)): AxumPath<(uuid::Uuid, usize)>,
+    Json(body): Json<serde_json::Value>,
+) -> ApiResult<StepMutationResult> {
+    ensure_tool_enabled(&state, "update_scenario_step").await?;
+    let mut scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+    if index >= scenario.steps.len() {
+        return Err(api_error(miyo_core::AppError::NotFound(format!(
+            "步骤位次 {index} 越界（共 {} 步）",
+            scenario.steps.len()
+        ))));
+    }
+    let step = normalize_step_json(&body)
+        .map_err(|e| api_error(miyo_core::AppError::Validation(format!("步骤无效：{e}"))))?;
+    if let Some(ep_id) = step.endpoint_id {
+        match repo::get_endpoint(&state.db, ep_id).await {
+            Ok(ep) if ep.project_id == scenario.project_id => {}
+            _ => {
+                return Err(api_error(miyo_core::AppError::Validation(format!(
+                    "引用的接口 {ep_id} 不存在或不属于本项目"
+                ))))
+            }
+        }
+    }
+    scenario.steps[index] = step;
+    scenario.updated_at = chrono::Utc::now();
+    repo::save_scenario(&state.db, &scenario)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(StepMutationResult {
+        scenario_id: id,
+        step_count: scenario.steps.len(),
+        index,
+    }))
+}
+
+async fn delete_scenario_step_handler(
+    State(state): State<AgentState>,
+    AxumPath((id, index)): AxumPath<(uuid::Uuid, usize)>,
+) -> ApiResult<StepMutationResult> {
+    ensure_tool_enabled(&state, "delete_scenario_step").await?;
+    let mut scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+    if index >= scenario.steps.len() {
+        return Err(api_error(miyo_core::AppError::NotFound(format!(
+            "步骤位次 {index} 越界（共 {} 步）",
+            scenario.steps.len()
+        ))));
+    }
+    scenario.steps.remove(index);
+    scenario.updated_at = chrono::Utc::now();
+    repo::save_scenario(&state.db, &scenario)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(StepMutationResult {
+        scenario_id: id,
+        step_count: scenario.steps.len(),
+        index,
+    }))
+}
+
+// ---------- MCP 集成测试升级：校验 / 运行结果 / 失败分析 ----------
+
+/// 校验问题项（可多条一次性返回）。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateIssue {
+    /// 稳定错误码（VARIABLE_NOT_FOUND / VARIABLE_USED_BEFORE_DEFINED /
+    /// STEP_INVALID_URL / STEP_INVALID_ASSERT / STEP_INVALID_CONDITION /
+    /// STEP_INVALID_LOOP / ENDPOINT_NOT_FOUND…）。
+    pub code: String,
+    pub message: String,
+    /// 关联步骤位次（0-based；场景级问题为 None）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_index: Option<usize>,
+}
+
+/// 校验报告。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateReport {
+    pub valid: bool,
+    pub errors: Vec<ValidateIssue>,
+    pub warnings: Vec<ValidateIssue>,
+    /// 写操作步骤（POST/PUT/PATCH/DELETE）——副作用提示。
+    pub side_effect_steps: Vec<String>,
+    /// 有副作用时的幂等键建议文本。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idempotency_hint: Option<String>,
+}
+
+/// GET `/agent/scenarios/{id}/validate?environmentId=`：运行前校验。
+///
+/// 检查：项目 / 环境存在性、步骤配置完整性（内联 URL / 方法 / 断言 /
+/// 条件 / 循环）、变量引用分析（缺失 / 先引用后定义）、写操作清单。
+async fn validate_scenario_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    Query(q): Query<EnvQuery>,
+) -> ApiResult<ValidateReport> {
+    ensure_tool_enabled(&state, "validate_scenario").await?;
+    let scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+    let project = repo::get_project(&state.db, scenario.project_id)
+        .await
+        .map_err(api_error)?;
+
+    let mut errors: Vec<ValidateIssue> = Vec::new();
+    let mut warnings: Vec<ValidateIssue> = Vec::new();
+
+    // ---- 环境变量池（合并口径：环境 > 项目；base_url 注入）----
+    let env = match q.project_id_env() {
+        Some(env_id) => match repo::get_environment(&state.db, env_id).await {
+            Ok(e) if e.project_id == scenario.project_id => Some(e),
+            Ok(_) => {
+                errors.push(ValidateIssue {
+                    code: "ENVIRONMENT_NOT_FOUND".into(),
+                    message: format!("环境 {env_id} 不属于本项目"),
+                    step_index: None,
+                });
+                None
+            }
+            Err(_) => {
+                errors.push(ValidateIssue {
+                    code: "ENVIRONMENT_NOT_FOUND".into(),
+                    message: format!("环境（{env_id}）不存在"),
+                    step_index: None,
+                });
+                None
+            }
+        },
+        None => None,
+    };
+    let mut available: std::collections::HashSet<String> =
+        project.variables.keys().cloned().collect();
+    if let Some(e) = &env {
+        for v in e.variables.iter().filter(|v| v.enabled) {
+            available.insert(v.key.clone());
+        }
+        if !e.base_url.trim().is_empty() {
+            available.insert("base_url".into());
+        }
+    } else if !project.variables.contains_key("base_url") {
+        // 无环境时 base_url 可能来自全局变量；不在则引用会字面量发送。
+    }
+
+    // ---- 逐步检查 ----
+    let mut produced_later: Vec<std::collections::HashSet<String>> =
+        vec![Default::default(); scenario.steps.len() + 1];
+    for (i, s) in scenario.steps.iter().enumerate() {
+        if !s.enabled {
+            continue;
+        }
+        if let Some(rules) = s.extract.as_array() {
+            for r in rules {
+                if let Some(n) = r.get("name").and_then(|v| v.as_str()) {
+                    if !n.trim().is_empty() {
+                        // 记录「第 i 步产出」——先引用后定义判定用。
+                        produced_later[i].insert(n.trim().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    for (i, s) in scenario.steps.iter().enumerate() {
+        if !s.enabled {
+            continue;
+        }
+        // ---- 步骤配置完整性 ----
+        if let Some(inline) = &s.request {
+            if inline.url.trim().is_empty() {
+                errors.push(ValidateIssue {
+                    code: "STEP_INVALID_URL".into(),
+                    message: "内联请求 URL 为空".into(),
+                    step_index: Some(i),
+                });
+            } else {
+                let lower = inline.url.to_lowercase();
+                let scheme_ok = lower.starts_with("http://")
+                    || lower.starts_with("https://")
+                    || lower.starts_with("{{");
+                if !scheme_ok {
+                    errors.push(ValidateIssue {
+                        code: "STEP_INVALID_URL".into(),
+                        message: format!(
+                            "URL 需以 http(s):// 或 {{base_url}} 开头（当前：{}）",
+                            inline.url
+                        ),
+                        step_index: Some(i),
+                    });
+                }
+            }
+            if let Err(e) = inline.method.parse::<miyo_core::model::HttpMethod>() {
+                errors.push(ValidateIssue {
+                    code: "STEP_INVALID_METHOD".into(),
+                    message: format!("HTTP 方法无效：{e}"),
+                    step_index: Some(i),
+                });
+            }
+        }
+        // 提取规则：body 提取的 JSONPath 可解析性。
+        if let Some(rules) = s.extract.as_array() {
+            for r in rules {
+                let from = r.get("from").and_then(|v| v.as_str()).unwrap_or("body");
+                let path = r.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                if path.trim().is_empty() {
+                    errors.push(ValidateIssue {
+                        code: "STEP_INVALID_EXTRACT".into(),
+                        message: "提取规则 path 为空".into(),
+                        step_index: Some(i),
+                    });
+                    continue;
+                }
+                if from == "body" {
+                    // 可解析性检查：JSONPath 语法错误在运行期表现为「无匹配」，
+                    // 校验期提前拦截（合法但无匹配是正常业务情形，不报错）。
+                    // 非法路径在 query 时返回 Err（合法但无匹配返回 Ok(空)）。
+                    if serde_json::json!({}).query(path).is_err() {
+                        errors.push(ValidateIssue {
+                            code: "STEP_INVALID_EXTRACT".into(),
+                            message: format!("JSONPath「{path}」无效"),
+                            step_index: Some(i),
+                        });
+                    }
+                }
+            }
+        }
+        // 断言：类型 / 算子 / JSONPath。
+        if let Some(rules) = s.assertions.as_array() {
+            for a in rules {
+                let r#type = a.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                let op = a.get("op").and_then(|v| v.as_str()).unwrap_or("eq");
+                const TYPES: &[&str] = &[
+                    "status",
+                    "header",
+                    "body",
+                    "jsonpath",
+                    "response_time_ms",
+                    "graphql_errors",
+                    "length",
+                ];
+                if !TYPES.contains(&r#type) {
+                    errors.push(ValidateIssue {
+                        code: "STEP_INVALID_ASSERT".into(),
+                        message: format!("断言类型不支持：{type}"),
+                        step_index: Some(i),
+                    });
+                    continue;
+                }
+                if matches!(r#type, "jsonpath" | "header" | "length")
+                    && a.get("path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .is_empty()
+                {
+                    errors.push(ValidateIssue {
+                        code: "STEP_INVALID_ASSERT".into(),
+                        message: format!("断言类型 {type} 需要 path"),
+                        step_index: Some(i),
+                    });
+                    continue;
+                }
+                if r#type == "jsonpath" {
+                    let p = a.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                    if serde_json::json!({}).query(p).is_err() {
+                        errors.push(ValidateIssue {
+                            code: "STEP_INVALID_ASSERT".into(),
+                            message: format!("断言 JSONPath「{p}」无效"),
+                            step_index: Some(i),
+                        });
+                    }
+                }
+                let _ = op;
+            }
+        }
+        // 条件 / 循环合法性。
+        if let Some(c) = &s.condition {
+            let parsed = serde_json::from_value::<miyo_test::config::StepCondition>(c.clone());
+            match parsed {
+                Ok(c) if c.is_valid() => {}
+                _ => errors.push(ValidateIssue {
+                    code: "STEP_INVALID_CONDITION".into(),
+                    message: "执行条件配置无效（source/name/op 组合不合法）".into(),
+                    step_index: Some(i),
+                }),
+            }
+        }
+        if let Some(l) = &s.r#loop {
+            let parsed = serde_json::from_value::<miyo_test::config::StepLoop>(l.clone());
+            match parsed {
+                Ok(l) if l.is_valid() => {}
+                _ => errors.push(ValidateIssue {
+                    code: "STEP_INVALID_LOOP".into(),
+                    message: "循环配置无效（mode/count/while_condition 组合不合法）".into(),
+                    step_index: Some(i),
+                }),
+            }
+        }
+        // ---- 变量引用分析 ----
+        let mut refs: Vec<String> = Vec::new();
+        match (&s.request, s.endpoint_id) {
+            (Some(inline), _) => {
+                refs.extend(miyo_core::collect_var_refs(&inline.url));
+                for kv in inline
+                    .spec
+                    .params
+                    .iter()
+                    .chain(inline.spec.headers.iter())
+                    .chain(inline.spec.path_variables.iter())
+                {
+                    refs.extend(miyo_core::collect_var_refs(&kv.value));
+                }
+                match &inline.spec.body {
+                    miyo_core::model::BodySpec::Json { raw }
+                    | miyo_core::model::BodySpec::Text { raw } => {
+                        refs.extend(miyo_core::collect_var_refs(raw));
+                    }
+                    miyo_core::model::BodySpec::UrlEncoded { fields } => {
+                        for f in fields {
+                            refs.extend(miyo_core::collect_var_refs(&f.value));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            (None, Some(ep_id)) => {
+                if let Ok(ep) = repo::get_endpoint(&state.db, ep_id).await {
+                    refs.extend(miyo_core::collect_var_refs(&ep.path));
+                    for kv in ep
+                        .request
+                        .params
+                        .iter()
+                        .chain(ep.request.headers.iter())
+                        .chain(ep.request.path_variables.iter())
+                    {
+                        refs.extend(miyo_core::collect_var_refs(&kv.value));
+                    }
+                } else {
+                    errors.push(ValidateIssue {
+                        code: "ENDPOINT_NOT_FOUND".into(),
+                        message: format!("引用的接口（{ep_id}）不存在"),
+                        step_index: Some(i),
+                    });
+                }
+            }
+            (None, None) => {}
+        }
+        for a in s.assertions.as_array().into_iter().flatten() {
+            if let Some(v) = a.get("expected").and_then(|v| v.as_str()) {
+                refs.extend(miyo_core::collect_var_refs(v));
+            }
+        }
+        if let Some(c) = &s.condition {
+            if c.get("source").and_then(|v| v.as_str()) != Some("prevStatus") {
+                if let Some(n) = c.get("name").and_then(|v| v.as_str()) {
+                    refs.push(n.to_string());
+                }
+            }
+        }
+        refs.sort();
+        refs.dedup();
+
+        // 可用集合：静态变量 + 本步之前的提取产出。
+        let mut avail_now = available.clone();
+        for earlier in produced_later.iter().take(i) {
+            avail_now.extend(earlier.iter().cloned());
+        }
+        for r in refs {
+            if avail_now.contains(&r) || r == "base_url" {
+                continue;
+            }
+            if produced_later
+                .iter()
+                .skip(i + 1)
+                .any(|set| set.contains(&r))
+            {
+                errors.push(ValidateIssue {
+                    code: "VARIABLE_USED_BEFORE_DEFINED".into(),
+                    message: format!("变量 {{{{{r}}}}} 由后续步骤才提取——执行到本步时它还不存在",),
+                    step_index: Some(i),
+                });
+            } else {
+                warnings.push(ValidateIssue {
+                    code: "VARIABLE_NOT_FOUND".into(),
+                    message: format!(
+                        "变量 {{{{{r}}}}} 未在任何步骤提取、也不在环境/项目变量中——将按字面量发送"
+                    ),
+                    step_index: Some(i),
+                });
+            }
+        }
+    }
+
+    // ---- 写操作清单（副作用提示）----
+    let write_methods = ["POST", "PUT", "PATCH", "DELETE"];
+    let mut side_effect_steps: Vec<String> = Vec::new();
+    for (i, s) in scenario.steps.iter().enumerate() {
+        if !s.enabled {
+            continue;
+        }
+        let method = match &s.request {
+            Some(inline) => inline.method.clone(),
+            None => match s.endpoint_id {
+                Some(ep_id) => repo::get_endpoint(&state.db, ep_id)
+                    .await
+                    .map(|ep| ep.method.to_string())
+                    .unwrap_or_default(),
+                None => String::new(),
+            },
+        };
+        if write_methods.contains(&method.to_uppercase().as_str()) {
+            let name = s.display_name().unwrap_or("（未命名）");
+            side_effect_steps.push(format!("第 {} 步 {method} {name}", i + 1));
+        }
+    }
+    let idempotency_hint = if side_effect_steps.is_empty() {
+        None
+    } else {
+        Some(
+            "场景包含写操作：重复执行可能重复下单/支付。建议为写操作步骤配置幂等键（如 Idempotency-Key 请求头），并在执行前与用户确认目标环境。"
+                .to_string(),
+        )
+    };
+
+    Ok(Json(ValidateReport {
+        valid: errors.is_empty(),
+        errors,
+        warnings,
+        side_effect_steps,
+        idempotency_hint,
+    }))
+}
+
+impl EnvQuery {
+    fn project_id_env(&self) -> Option<uuid::Uuid> {
+        self.project_id
+    }
+}
+
+// ---------- 运行结果查询 ----------
+
+/// GET `/agent/runs/{id}`：运行状态与摘要（内存注册表优先，落库后走 DB）。
+///
+/// completed 响应 = RunScenarioResult 同形状（runId/scenarioId/汇总/每步摘要，
+/// 正文只带 4KB 预览）；running 响应 = {runId, status}。
+async fn get_run_result_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<serde_json::Value> {
+    ensure_tool_enabled(&state, "get_run_result").await?;
+    // 内存：在途运行。
+    {
+        let runs = state.runs.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(h) = runs.get(&id.to_string()) {
+            let status = *h.status.lock().unwrap_or_else(|p| p.into_inner());
+            if status == "running" {
+                return Ok(Json(
+                    serde_json::json!({ "runId": id.to_string(), "status": "running" }),
+                ));
+            }
+            if let Some(mut v) = h.result.lock().unwrap_or_else(|p| p.into_inner()).clone() {
+                // 统一 status 字段（同步响应形状无 status——轮询方以此判定终态）。
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("status".into(), serde_json::json!(status));
+                }
+                return Ok(Json(v));
+            }
+        }
+    }
+    // DB：已完成（重启后仍可查）。
+    let Some(run) = repo::get_scenario_run(&state.db, id)
+        .await
+        .map_err(api_error)?
+    else {
+        return Err(api_error(miyo_core::AppError::NotFound(format!(
+            "运行（{id}）不存在或尚未开始"
+        ))));
+    };
+    let results: Vec<miyo_test::runner::EndpointResult> = serde_json::from_str(&run.results_json)
+        .unwrap_or_else(|e| {
+            tracing::warn!("[get_run_result] results_json 解析失败：{e}");
+            Vec::new()
+        });
+    let variables: std::collections::HashMap<String, String> =
+        serde_json::from_str(&run.variables_json).unwrap_or_default();
+    let step_summaries: Vec<serde_json::Value> = results
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "index": r.step_index.unwrap_or_default(),
+                "name": r.endpoint_name,
+                "method": r.method,
+                "url": r.url,
+                "status": r.status,
+                "stepStatus": r.effective_status(),
+                "durationMs": r.duration_ms,
+                "ok": r.ok,
+                "assertionFailures": r.outcomes.iter().filter(|o| !o.passed).count(),
+                "assertionsTotal": r.outcomes.len(),
+                "extracted": r.extracted,
+                "error": r.request_error,
+                "blockedReason": r.blocked_reason,
+                "loopRuns": r.loop_runs,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "runId": run.id.to_string(),
+        "status": if run.cancelled { "cancelled" } else { "completed" },
+        "scenarioId": run.scenario_id,
+        "durationMs": run.duration_ms,
+        "totalSteps": run.total_steps,
+        "passed": run.ok_count,
+        "failed": run.fail_count,
+        "skipped": run.skipped_count,
+        "cancelled": run.cancelled,
+        "stoppedOnFailure": run.stopped_on_failure,
+        "variables": variables,
+        "steps": step_summaries,
+    })))
+}
+
+/// GET `/agent/runs/{id}/steps/{index}`：单步完整详情（请求快照 + 64KB 内
+/// 响应正文 + 提取 + 逐条断言）。
+async fn get_run_step_handler(
+    State(state): State<AgentState>,
+    AxumPath((id, index)): AxumPath<(uuid::Uuid, usize)>,
+) -> ApiResult<serde_json::Value> {
+    ensure_tool_enabled(&state, "get_step_result").await?;
+    let Some(run) = repo::get_scenario_run(&state.db, id)
+        .await
+        .map_err(api_error)?
+    else {
+        return Err(api_error(miyo_core::AppError::NotFound(format!(
+            "运行（{id}）不存在"
+        ))));
+    };
+    let results: Vec<miyo_test::runner::EndpointResult> =
+        serde_json::from_str(&run.results_json).unwrap_or_default();
+    let Some(r) = results.get(index) else {
+        return Err(api_error(miyo_core::AppError::NotFound(format!(
+            "步骤位次 {index} 越界（该运行共 {} 步结果）",
+            results.len()
+        ))));
+    };
+    let outcomes: Vec<serde_json::Value> = r
+        .outcomes
+        .iter()
+        .map(|o| {
+            serde_json::json!({
+                "description": o.description,
+                "passed": o.passed,
+                "reason": o.reason,
+                "expected": o.expected,
+                "actual": o.actual,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "runId": run.id.to_string(),
+        "index": index,
+        "name": r.endpoint_name,
+        "method": r.method,
+        "ok": r.ok,
+        "stepStatus": r.effective_status(),
+        "status": r.status,
+        "durationMs": r.duration_ms,
+        "loopRuns": r.loop_runs,
+        "error": r.request_error,
+        "blockedReason": r.blocked_reason,
+        "request": r.response.as_ref().and_then(|resp| resp.request.clone()),
+        "response": r.response.as_ref().map(|resp| serde_json::json!({
+            "status": resp.status,
+            "headers": resp.headers,
+            "body": resp.body,
+            "contentType": resp.content_type,
+            "durationMs": resp.duration_ms,
+            "sizeBytes": resp.size_bytes,
+            "truncated": resp.truncated,
+            "historyTruncated": resp.history_truncated,
+        })),
+        "extracted": r.extracted,
+        "assertions": outcomes,
+    })))
+}
+
+/// GET `/agent/runs/{id}/analysis`：失败原因分析（启发式规则，标注为推测）。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedStepAnalysis {
+    pub index: usize,
+    pub name: String,
+    pub method: String,
+    /// 错误类型（REQUEST_ERROR / ASSERTION_FAILED / DEPENDENCY_BLOCKED /
+    /// RUN_CANCELLED / LOOP_TIMEOUT…）。
+    pub error_type: String,
+    pub error: Option<String>,
+    pub status: Option<u16>,
+    /// 可能原因（推测，非确定结论）。
+    pub possible_causes: Vec<String>,
+    /// 建议处理方式。
+    pub suggestions: Vec<String>,
+    /// 失败断言明细。
+    pub assertion_failures: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailureAnalysis {
+    pub run_id: uuid::Uuid,
+    pub ok: bool,
+    pub total_steps: i64,
+    pub passed: i64,
+    pub failed: i64,
+    pub skipped: i64,
+    pub cancelled: bool,
+    pub stopped_on_failure: bool,
+    pub failed_steps: Vec<FailedStepAnalysis>,
+    /// 提示：分析为规则推测，修复前请用 get_step_result 核对原始响应。
+    pub disclaimer: String,
+}
+
+async fn analyze_run_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<FailureAnalysis> {
+    ensure_tool_enabled(&state, "analyze_run_failure").await?;
+    let Some(run) = repo::get_scenario_run(&state.db, id)
+        .await
+        .map_err(api_error)?
+    else {
+        return Err(api_error(miyo_core::AppError::NotFound(format!(
+            "运行（{id}）不存在"
+        ))));
+    };
+    let results: Vec<miyo_test::runner::EndpointResult> =
+        serde_json::from_str(&run.results_json).unwrap_or_default();
+
+    let mut failed_steps = Vec::new();
+    for r in &results {
+        let status = r.effective_status();
+        if matches!(status, "success") {
+            continue;
+        }
+        #[allow(unused_assignments)]
+        let mut error_type = String::new();
+        let mut causes: Vec<String> = Vec::new();
+        let mut suggestions: Vec<String> = Vec::new();
+        let mut error = r.request_error.clone();
+
+        match status {
+            "blocked" => {
+                error_type = "DEPENDENCY_BLOCKED".into();
+                causes.push(
+                    r.blocked_reason
+                        .clone()
+                        .unwrap_or_else(|| "前序步骤失败，本步依赖的变量未产出".into()),
+                );
+                suggestions.push("先修复失败的前序步骤，再整体重跑（或用从该步重跑能力）".into());
+            }
+            "cancelled" => {
+                error_type = "RUN_CANCELLED".into();
+                causes.push("运行被用户或系统取消".into());
+                suggestions.push("如需继续请重新运行场景".into());
+            }
+            _ if r
+                .request_error
+                .as_deref()
+                .is_some_and(|e| e.contains("循环条件")) =>
+            {
+                error_type = "LOOP_TIMEOUT".into();
+                causes.push("循环条件在最大轮数内未满足（轮询超时）".into());
+                suggestions
+                    .push("检查轮询目标服务的状态变更速度；适当调大 maxLoops / intervalMs".into());
+            }
+            _ if r
+                .request_error
+                .as_deref()
+                .is_some_and(|e| e.contains("http/https")) =>
+            {
+                error_type = "URL_SCHEME_INVALID".into();
+                causes
+                    .push("URL 协议非法（仅允许 http/https）——可能因变量替换产生了意外地址".into());
+                suggestions.push("检查 base_url 与 URL 模板的变量替换结果".into());
+            }
+            _ if r.request_error.is_some() => {
+                error_type = "REQUEST_ERROR".into();
+                let msg = r.request_error.clone().unwrap_or_default();
+                causes.push(format!("请求未成功发送或连接失败：{msg}"));
+                causes.push("目标服务不可达 / 域名或端口错误 / 环境选择错误".into());
+                suggestions
+                    .push("用 send_endpoint 单独探测该接口；确认环境的 Base URL 是否正确".into());
+            }
+            _ => {
+                error_type = "ASSERTION_FAILED".into();
+                let st = r.status.unwrap_or(0);
+                match st {
+                    401 | 403 => {
+                        causes.push("认证失败：Token 缺失 / 过期 / 未被变量替换".into());
+                        suggestions
+                            .push("检查认证配置与 {{token}} 类变量是否来自前序登录步骤".into());
+                    }
+                    404 | 405 => {
+                        causes.push("路径或方法不存在：URL 拼接 / 环境指向错误".into());
+                        suggestions.push("核对实际请求 URL 与接口定义；确认环境 Base URL".into());
+                    }
+                    500..=599 => {
+                        causes.push("服务端错误：可能由请求参数（变量值）不合法引发".into());
+                        suggestions.push("检查请求 Body / Query 中变量替换后的实际值".into());
+                    }
+                    _ => {}
+                }
+                error = Some(format!(
+                    "HTTP {st}：{} 条断言未通过",
+                    r.outcomes.iter().filter(|o| !o.passed).count()
+                ));
+                suggestions
+                    .push("对比断言的预期值与实际值；确认上游返回结构是否与提取假设一致".into());
+            }
+        }
+        // 变量残留检查：URL / 提取值中含未解析 {{ }} → 变量未定义。
+        if let Some(url) = &r.url {
+            if url.contains("{{") {
+                causes.push("请求 URL 仍含 {{占位}}——变量未定义或前序提取失败".into());
+                suggestions
+                    .push("运行前用 validate_scenario 做变量分析；补齐提取规则或环境变量".into());
+            }
+        }
+        let assertion_failures: Vec<serde_json::Value> = r
+            .outcomes
+            .iter()
+            .filter(|o| !o.passed)
+            .map(|o| {
+                serde_json::json!({
+                    "description": o.description,
+                    "expected": o.expected,
+                    "actual": o.actual,
+                    "reason": o.reason,
+                })
+            })
+            .collect();
+        failed_steps.push(FailedStepAnalysis {
+            index: r.step_index.unwrap_or_default(),
+            name: r.endpoint_name.clone(),
+            method: r.method.clone(),
+            error_type,
+            error,
+            status: r.status,
+            possible_causes: causes,
+            suggestions,
+            assertion_failures,
+        });
+    }
+
+    Ok(Json(FailureAnalysis {
+        run_id: run.id,
+        ok: run.fail_count == 0 && !run.cancelled,
+        total_steps: run.total_steps,
+        passed: run.ok_count,
+        failed: run.fail_count,
+        skipped: run.skipped_count,
+        cancelled: run.cancelled,
+        stopped_on_failure: run.stopped_on_failure,
+        failed_steps,
+        disclaimer:
+            "以上原因为规则推测，非确定结论；修复前请用 get_step_result 核对原始请求与响应。".into(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_result_roundtrip_with_response() {
+        let r = miyo_test::runner::EndpointResult {
+            endpoint_id: uuid::Uuid::new_v4(),
+            endpoint_name: "登录".into(),
+            method: "POST".into(),
+            path: "/login".into(),
+            ok: true,
+            status: Some(200),
+            duration_ms: Some(12.0),
+            request_error: None,
+            outcomes: vec![],
+            extracted: Default::default(),
+            url: Some("http://x".into()),
+            step_index: Some(0),
+            cancelled: false,
+            response: Some(miyo_test::runner::StepResponse {
+                status: 200,
+                headers: vec![],
+                body: "{\"ok\":true}".into(),
+                content_type: "application/json".into(),
+                duration_ms: 12.0,
+                size_bytes: 9,
+                truncated: false,
+                body_omitted: false,
+                history_truncated: true,
+                request: Some(miyo_http::client::RequestSnapshot {
+                    method: "POST".into(),
+                    url: "http://x".into(),
+                    url_template: None,
+                    headers: vec![],
+                    cookies: vec![],
+                    body: String::new(),
+                    body_omitted: false,
+                }),
+            }),
+            step_status: Some("success".into()),
+            blocked_reason: None,
+            loop_runs: Some(2),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: miyo_test::runner::EndpointResult =
+            serde_json::from_str(&json).unwrap_or_else(|e| panic!("回读失败：{e}｜{json}"));
+        assert_eq!(back.endpoint_name, "登录");
+        assert_eq!(back.loop_runs, Some(2));
+    }
+
+    #[test]
+    fn normalize_step_ai_dialect() {
+        // AI 方言：extractors + source/operator 断言 → 引擎形状。
+        let raw = serde_json::json!({
+            "name": "创建订单",
+            "request": {"method": "POST", "url": "{{base_url}}/shop/orders", "spec": {}},
+            "extractors": [
+                {"name": "orderNo", "source": "response.body", "expression": "$.data.orderNo", "type": "jsonpath", "required": true},
+                {"name": "sign", "source": "response.header", "expression": "x-sign"}
+            ],
+            "assertions": [
+                {"source": "response.status", "operator": "equals", "expected": 200},
+                {"source": "response.body", "expression": "$.data.status", "operator": "equals", "expected": "SUCCESS"},
+                {"source": "response.body", "expression": "$.data.amount", "operator": "greaterThan", "expected": 0},
+                {"source": "response.header", "expression": "x-req-id", "operator": "exists"},
+                {"source": "performance", "operator": "lessThan", "expected": 2000}
+            ]
+        });
+        let step = normalize_step_json(&raw).expect("归一化");
+        assert_eq!(step.request.as_ref().unwrap().method, "POST");
+        // 提取：body/header 两源。
+        assert_eq!(step.extract.as_array().unwrap().len(), 2);
+        assert_eq!(step.extract[0]["from"], "body");
+        assert_eq!(step.extract[0]["path"], "$.data.orderNo");
+        assert_eq!(step.extract[1]["from"], "header");
+        // 断言：status/jsonpath×2/header/response_time_ms 五条。
+        let arr = step.assertions.as_array().unwrap();
+        assert_eq!(arr.len(), 5);
+        assert_eq!(arr[0]["type"], "status");
+        assert_eq!(arr[0]["op"], "eq");
+        assert_eq!(arr[1]["type"], "jsonpath");
+        assert_eq!(arr[2]["op"], "gt");
+        assert_eq!(arr[3]["type"], "header");
+        assert_eq!(arr[4]["type"], "response_time_ms");
+        assert_eq!(arr[4]["op"], "lt");
+    }
+
+    #[test]
+    fn normalize_step_rejects_bad_shapes() {
+        // 缺 request 与 endpointId。
+        assert!(normalize_step_json(&serde_json::json!({"name": "x"})).is_err());
+        // 不支持的 extractor source。
+        assert!(normalize_step_json(&serde_json::json!({
+            "endpointId": uuid::Uuid::new_v4(),
+            "extractors": [{"name": "a", "source": "response.status", "expression": "$"}]
+        }))
+        .is_err());
+        // 不支持的 operator。
+        assert!(normalize_step_json(&serde_json::json!({
+            "endpointId": uuid::Uuid::new_v4(),
+            "assertions": [{"source": "response.status", "operator": "powerEquals", "expected": 1}]
+        }))
+        .is_err());
+    }
+
     use crate::token::load_or_create_token;
 
     async fn spawn_test_server() -> (String, String, SqlitePool, AgentState) {

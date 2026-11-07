@@ -11,6 +11,8 @@ homepage = "https://weihubeats.github.io/Miyo/"
 miyo-core = { path = "../miyo-core" }
 miyo-storage = { path = "../miyo-storage" }
 miyo-test = { path = "../miyo-test" }
+miyo-sync = { path = "../miyo-sync" }
+jsonpath-rust = "1.0"
 miyo-http = { path = "../miyo-http" }
 axum = { workspace = true }
 serde = { workspace = true }
