@@ -770,8 +770,7 @@ mod tests {
                 enabled: true,
                 extract: serde_json::json!([]),
                 assertions: serde_json::json!([]),
-                name: None,
-                request: None,
+                ..Default::default()
             }],
             script: Some("fetch(url, {headers:{authorization: 'Bearer ' + REAL_TOKEN}})".into()),
             created_at: chrono::Utc::now(),

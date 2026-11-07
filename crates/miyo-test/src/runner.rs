@@ -101,6 +101,9 @@ pub struct EndpointResult {
     /// Blocked 原因（缺哪个变量、应产自哪一步）；仅 blocked 状态有值。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<String>,
+    /// 循环步骤的已执行轮数（>1 时前端展示「×N」；非循环 / 单次为 None）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_runs: Option<u32>,
 }
 
 /// 场景步骤执行状态常量（`EndpointResult.step_status`）。
@@ -136,6 +139,7 @@ impl EndpointResult {
             response: None,
             step_status: None,
             blocked_reason: None,
+            loop_runs: None,
         }
     }
 
@@ -224,6 +228,7 @@ async fn run_one(
                 response: None,
                 step_status: None,
                 blocked_reason: None,
+                loop_runs: None,
             },
             None,
         );
@@ -323,6 +328,7 @@ async fn run_one_core(
             response: Some(StepResponse::from_resp(&resp)),
             step_status: None,
             blocked_reason: None,
+            loop_runs: None,
         },
         Some(resp),
     )
@@ -441,6 +447,8 @@ pub async fn run_collection(
 ///
 /// `enabled = false` 的禁用步骤同样进入 runner：产出 skipped 结果行
 /// （不发送请求），结果面板得以完整呈现「为什么这一步没跑」。
+/// `condition` / `loop` / `wait_ms` / `parallel` 为阶段三执行控制
+///（条件跳过 / 轮询循环 / 限速等待 / 相邻并行批）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ScenarioStepInput {
     pub endpoint: Endpoint,
@@ -449,6 +457,18 @@ pub struct ScenarioStepInput {
     pub extract: Vec<crate::config::ExtractSpec>,
     pub assertions: Vec<crate::config::AssertionSpec>,
     pub enabled: bool,
+    /// 执行条件（不满足 → skipped，不发送；None = 无条件）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<crate::config::StepCondition>,
+    /// 循环配置（count / while；None = 单次）。
+    #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]
+    pub r#loop: Option<crate::config::StepLoop>,
+    /// 执行前等待毫秒（0..=60_000）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
+    /// 与相邻 parallel 步骤成批并发（≥2 连续标记才成批）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub parallel: bool,
 }
 
 /// 场景进度快照（回调参数）。
@@ -456,9 +476,11 @@ pub struct ScenarioStepInput {
 /// 进度分两半：`done` 是本步之前的已完成步数，`step` 是本步（进入时不含结果，
 /// 结束 / 失败 / 取消时带上该步结果）——前端据此在等待网络期间就渲染
 /// 「第 N 步 · 执行中 · 已发出请求」，而不是只看到一根 0%→100% 的进度条。
+/// 并行批内多步同时在途：`done` 语义退化为「该步位次」（前端按 step_index
+/// 映射结果行，不依赖 done 的单调性）。
 #[derive(Debug, Clone)]
 pub struct ScenarioProgress<'a> {
-    /// 已完成步数（0-based 位次）。
+    /// 已完成步数（0-based 位次）；并行批的进入事件为该步位次。
     pub done: usize,
     pub total: usize,
     /// 本步结果：进入本步时为 `None`，本步结束后为 `Some`。
@@ -497,6 +519,35 @@ pub struct ScenarioRunResult {
     pub warnings: Vec<String>,
 }
 
+/// 一次运行共享的可变执行状态（runtime / 类型层 / 丢失变量 / 最近状态码）。
+/// 每次运行独立构造——执行上下文隔离；并行批内多任务共享同一份（提取按
+/// 完成序合并）。
+struct SharedRunState {
+    runtime: AsyncMutex<HashMap<String, String>>,
+    typed: AsyncMutex<HashMap<String, serde_json::Value>>,
+    lost: AsyncMutex<std::collections::HashSet<String>>,
+    last_status: AsyncMutex<Option<u16>>,
+}
+
+/// 单步结果行 + 并行批任务与主循环间的事件。
+enum BatchMsg {
+    /// 已进入发送阶段（渲染后 URL 确定；进度面板显示「执行中」）。
+    Enter { pos: usize, url: String },
+    /// 该步执行完毕。
+    Done {
+        pos: usize,
+        result: Box<EndpointResult>,
+    },
+}
+
+/// 步骤循环的执行信息（结果行聚合展示「×N」）。
+fn with_loop_runs(mut r: EndpointResult, rounds: u32) -> EndpointResult {
+    if rounds > 1 {
+        r.loop_runs = Some(rounds);
+    }
+    r
+}
+
 /// 禁用步骤的占位结果行（skipped；不发送请求）。
 fn skipped_result(step: &ScenarioStepInput, idx: usize, reason: &str) -> EndpointResult {
     EndpointResult {
@@ -516,6 +567,7 @@ fn skipped_result(step: &ScenarioStepInput, idx: usize, reason: &str) -> Endpoin
         response: None,
         step_status: Some(step_status::SKIPPED.to_string()),
         blocked_reason: None,
+        loop_runs: None,
     }
 }
 
@@ -538,6 +590,65 @@ fn blocked_result(step: &ScenarioStepInput, idx: usize, reason: String) -> Endpo
         response: None,
         step_status: Some(step_status::BLOCKED.to_string()),
         blocked_reason: Some(reason),
+        loop_runs: None,
+    }
+}
+
+/// 条件的可读化文本（skipped 原因 / 预检提示用）。
+fn condition_text(c: &crate::config::StepCondition) -> String {
+    let target = match c.source.as_str() {
+        "prevStatus" => "上一步状态码".to_string(),
+        _ => format!("变量 {{{{{}}}}}", c.name.trim()),
+    };
+    let expected = c
+        .value
+        .as_ref()
+        .map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        })
+        .unwrap_or_default();
+    let op = c.op.as_str();
+    match c.op.as_str() {
+        "exists" | "not_exists" | "empty" | "not_empty" => format!("{target} {op}"),
+        _ => format!("{target} {op} {expected}"),
+    }
+}
+
+/// 求值执行条件：`source = var` 对运行时变量（缺变量按 not_exists 语义），
+/// `source = prevStatus` 对最近一个已执行步骤的状态码。复用断言的值级比较。
+fn eval_condition(
+    c: &crate::config::StepCondition,
+    vars: &HashMap<String, String>,
+    prev_status: Option<u16>,
+) -> bool {
+    let actual: Option<serde_json::Value> = match c.source.as_str() {
+        "prevStatus" => prev_status.map(|s| serde_json::Value::Number(s.into())),
+        _ => vars
+            .get(c.name.trim())
+            .map(|v| serde_json::Value::String(v.clone())),
+    };
+    let expected = c.value.clone().unwrap_or(serde_json::Value::Null);
+    crate::assert::compare_values(&c.op, actual, &expected).is_ok()
+}
+
+/// 可取消的睡眠：返回 false = 等待期间被取消。
+async fn sleep_cancellable(ms: u64, cancel: Option<&tokio_util::sync::CancellationToken>) -> bool {
+    if ms == 0 {
+        return true;
+    }
+    let dur = std::time::Duration::from_millis(ms);
+    match cancel {
+        Some(c) => {
+            tokio::select! {
+                _ = tokio::time::sleep(dur) => true,
+                _ = c.cancelled() => false,
+            }
+        }
+        None => {
+            tokio::time::sleep(dur).await;
+            true
+        }
     }
 }
 
@@ -585,6 +696,12 @@ fn step_var_refs(step: &ScenarioStepInput) -> Vec<String> {
             refs.extend(miyo_core::collect_var_refs(&spec.message));
         }
     }
+    // 循环条件也参与引用（Blocked 判定 / 预检覆盖）。
+    if let Some(l) = &step.r#loop {
+        if let Some(wc) = &l.while_condition {
+            refs.extend(miyo_core::collect_var_refs(&wc.name));
+        }
+    }
     for a in &step.assertions {
         if let Some(serde_json::Value::String(s)) = &a.expected {
             refs.extend(miyo_core::collect_var_refs(s));
@@ -610,6 +727,20 @@ fn undefined_var_warnings(
         }
         let mut missing: Vec<String> = Vec::new();
         for r in step_var_refs(step) {
+            // 条件引用的变量允许「不存在」语义（exists / not_exists），
+            // 其余仍按未定义告警。
+            let is_cond_var = step
+                .condition
+                .as_ref()
+                .is_some_and(|c| c.source == "var" && c.name.trim() == r)
+                || step.r#loop.as_ref().is_some_and(|l| {
+                    l.while_condition
+                        .as_ref()
+                        .is_some_and(|c| c.source == "var" && c.name.trim() == r)
+                });
+            if is_cond_var {
+                continue;
+            }
             if !available.contains(&r) && !missing.contains(&r) {
                 missing.push(r);
             }
@@ -634,7 +765,288 @@ fn undefined_var_warnings(
     warnings
 }
 
-/// 运行集成测试场景：严格按步骤顺序串行执行。
+/// 单轮发送（渲染 → scheme 校验 → 发送 / 断言 / 提取 → 簿记）。
+///
+/// 每轮用最新的 runtime / 类型层快照渲染——while 轮询里上一轮提取的值
+/// 当轮即可参与条件求值与下一轮渲染。
+#[allow(clippy::too_many_arguments)]
+async fn send_round(
+    step: &ScenarioStepInput,
+    pos: usize,
+    shared: &SharedRunState,
+    options: &ScenarioOptions,
+    emit_enter: Option<&(dyn Fn(String) + Send + Sync)>,
+) -> EndpointResult {
+    let render_vars = shared.runtime.lock().await.clone();
+    let typed_snapshot = shared.typed.lock().await.clone();
+    let url = miyo_core::resolve_variables(&step.url_template, &render_vars);
+    let spec = miyo_core::render_spec_typed(&step.spec_template, &render_vars, &typed_snapshot);
+    let config = TestSpec {
+        pre_request: Vec::new(),
+        extract: step.extract.clone(),
+        assertions: step.assertions.clone(),
+    };
+    // scheme 白名单（对齐 execute_request：仅 http/https），防变量替换
+    // 把 scheme / host 换成任意协议。
+    let scheme_ok = {
+        let lower = url.to_ascii_lowercase();
+        lower.starts_with("http://") || lower.starts_with("https://")
+    };
+    if !scheme_ok {
+        let mut r = EndpointResult::failed_fast(
+            step.endpoint.id,
+            &step.endpoint,
+            Some(url.clone()),
+            format!("URL 仅支持 http/https 协议：{url}"),
+        );
+        r.step_index = Some(pos);
+        r.step_status = Some(step_status::FAILED.to_string());
+        let mut lost = shared.lost.lock().await;
+        for e in &step.extract {
+            lost.insert(e.name.clone());
+        }
+        return r;
+    }
+    // 进入本步：先报「已发出」（实际 URL 已确定），让前端在等待网络期间
+    // 就能展示正在跑哪一步、打到哪个地址。循环只在首轮报（避免刷屏）。
+    if let Some(cb) = emit_enter {
+        cb(url.clone());
+    }
+    let step_timeout = step.endpoint.request.timeout_ms.or(options.timeout_ms);
+    let (mut result, _) = run_one_core(
+        &step.endpoint,
+        &url,
+        &spec,
+        config,
+        &shared.runtime,
+        step_timeout,
+        options.cancel.as_ref(),
+    )
+    .await;
+    result.step_index = Some(pos);
+    result.step_status = Some(if result.cancelled {
+        step_status::CANCELLED.to_string()
+    } else if result.ok {
+        step_status::SUCCESS.to_string()
+    } else {
+        step_status::FAILED.to_string()
+    });
+    // 簿记：最近状态码（prevStatus 条件源）+ 失败步提取名进丢失集合 +
+    // 成功步 body 提取进类型层。
+    if let Some(st) = result.status {
+        *shared.last_status.lock().await = Some(st);
+    }
+    if !result.ok {
+        let mut lost = shared.lost.lock().await;
+        for e in &step.extract {
+            lost.insert(e.name.clone());
+        }
+    } else {
+        let body_value: Option<serde_json::Value> = result
+            .response
+            .as_ref()
+            .and_then(|r| serde_json::from_str(&r.body).ok());
+        if let Some(body) = body_value {
+            let mut t = shared.typed.lock().await;
+            for e in &step.extract {
+                if let Some(v) = crate::extract::extract_body_json_typed(Some(&body), &e.path) {
+                    if !matches!(v, serde_json::Value::String(_)) {
+                        t.insert(e.name.clone(), v);
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
+/// 单步执行管线：Blocked 判定 → 执行条件 → 等待 → 循环（或单次）发送。
+///
+/// 结果自描述（step_index / step_status / loop_runs）；失败步的提取名、
+/// 成功步的类型值、最近状态码的簿记都在此收口——串行与并行批共用。
+async fn execute_step(
+    step: &ScenarioStepInput,
+    pos: usize,
+    shared: &SharedRunState,
+    options: &ScenarioOptions,
+    emit_enter: &(dyn Fn(String) + Send + Sync),
+) -> EndpointResult {
+    // ---- Blocked 判定：缺失变量产自失败 / Blocked / Skipped 步骤时不发送 ----
+    let render_vars = shared.runtime.lock().await.clone();
+    let lost = shared.lost.lock().await.clone();
+    let prev_status = *shared.last_status.lock().await;
+    let blocked: Vec<String> = step_var_refs(step)
+        .into_iter()
+        .filter(|r| !render_vars.contains_key(r) && lost.contains(r))
+        .collect();
+    if !blocked.is_empty() {
+        let list = blocked
+            .iter()
+            .map(|m| format!("{{{{{m}}}}}"))
+            .collect::<Vec<_>>()
+            .join("、");
+        let mut lostg = shared.lost.lock().await;
+        for e in &step.extract {
+            lostg.insert(e.name.clone());
+        }
+        return blocked_result(
+            step,
+            pos,
+            format!("依赖的变量 {list} 因前序步骤失败 / 跳过而缺失"),
+        );
+    }
+
+    // ---- 执行条件：不满足 → skipped（不发请求；不算失败，不触发失败即停）----
+    if let Some(cond) = &step.condition {
+        if !cond.is_valid() {
+            let mut r = EndpointResult::failed_fast(
+                step.endpoint.id,
+                &step.endpoint,
+                None,
+                "执行条件配置无效（source / name / op 组合不合法）",
+            );
+            r.step_index = Some(pos);
+            r.step_status = Some(step_status::FAILED.to_string());
+            let mut lostg = shared.lost.lock().await;
+            for e in &step.extract {
+                lostg.insert(e.name.clone());
+            }
+            return r;
+        }
+        if !eval_condition(cond, &render_vars, prev_status) {
+            let mut lostg = shared.lost.lock().await;
+            for e in &step.extract {
+                lostg.insert(e.name.clone());
+            }
+            return skipped_result(step, pos, &format!("条件不满足：{}", condition_text(cond)));
+        }
+    }
+
+    // 步骤墙钟起点：耗时含执行前等待与轮间隔（限速是步骤的真实成本）。
+    let wall = std::time::Instant::now();
+    // ---- 执行前等待（限速 / 等待上游就绪；可取消）----
+    if let Some(w) = step.wait_ms {
+        if !sleep_cancellable(
+            w.min(crate::config::StepLoop::MAX_INTERVAL_MS),
+            options.cancel.as_ref(),
+        )
+        .await
+        {
+            let mut r = EndpointResult::failed_fast(
+                step.endpoint.id,
+                &step.endpoint,
+                None,
+                "等待期间运行被取消",
+            );
+            r.step_index = Some(pos);
+            r.cancelled = true;
+            r.step_status = Some(step_status::CANCELLED.to_string());
+            return r;
+        }
+    }
+
+    // ---- 循环（count / while）或单次发送 ----
+    let loop_cfg = step.r#loop.clone().filter(|l| l.is_valid());
+    if let Some(bad) = &step.r#loop {
+        if loop_cfg.is_none() {
+            let mut r = EndpointResult::failed_fast(
+                step.endpoint.id,
+                &step.endpoint,
+                None,
+                "循环配置无效（mode / count / while_condition 组合不合法）",
+            );
+            r.step_index = Some(pos);
+            r.step_status = Some(step_status::FAILED.to_string());
+            let mut lostg = shared.lost.lock().await;
+            for e in &step.extract {
+                lostg.insert(e.name.clone());
+            }
+            return r;
+        }
+        let _ = bad;
+    }
+
+    let mut rounds: u32 = 0;
+    let mut last: Option<EndpointResult> = None;
+    let mut while_unmet = false;
+    let cancel_fired = |o: &ScenarioOptions| o.cancel.as_ref().is_some_and(|c| c.is_cancelled());
+
+    loop {
+        if cancel_fired(options) {
+            break;
+        }
+        if rounds > 0 {
+            if let Some(l) = &loop_cfg {
+                if l.interval() > 0
+                    && !sleep_cancellable(l.interval(), options.cancel.as_ref()).await
+                {
+                    break;
+                }
+            }
+        }
+        let r = send_round(step, pos, shared, options, Some(emit_enter)).await;
+        rounds += 1;
+        let round_failed = !r.ok && !r.cancelled;
+        let round_cancelled = r.cancelled;
+        last = Some(r);
+        if round_cancelled || round_failed {
+            break;
+        }
+        match &loop_cfg {
+            // count 模式：跑满即止。
+            Some(l) if l.mode == "count" => {
+                if rounds >= l.rounds_cap() {
+                    break;
+                }
+            }
+            // while 模式：每轮结束后求值，false 退出；达上限仍 true 判失败。
+            Some(l) => {
+                if rounds >= l.rounds_cap() {
+                    if let Some(wc) = &l.while_condition {
+                        let vars_now = shared.runtime.lock().await.clone();
+                        let st_now = *shared.last_status.lock().await;
+                        if eval_condition(wc, &vars_now, st_now) {
+                            while_unmet = true;
+                        }
+                    }
+                    break;
+                }
+                if let Some(wc) = &l.while_condition {
+                    let vars_now = shared.runtime.lock().await.clone();
+                    let st_now = *shared.last_status.lock().await;
+                    if !eval_condition(wc, &vars_now, st_now) {
+                        break;
+                    }
+                }
+            }
+            None => break,
+        }
+    }
+
+    let mut result = last.unwrap_or_else(|| {
+        // 首轮前就被取消（等待 / 取消竞态）：取消行。
+        let mut r =
+            EndpointResult::failed_fast(step.endpoint.id, &step.endpoint, None, "运行已取消");
+        r.step_index = Some(pos);
+        r.cancelled = true;
+        r.step_status = Some(step_status::CANCELLED.to_string());
+        r
+    });
+    result.duration_ms = Some(wall.elapsed().as_secs_f64() * 1000.0);
+    result = with_loop_runs(result, rounds);
+    if while_unmet {
+        result.ok = false;
+        result.status = None;
+        result.step_status = Some(step_status::FAILED.to_string());
+        result.request_error = Some(format!("循环条件在 {rounds} 轮后仍未满足"));
+    }
+    result
+}
+
+/// 并发上限：单批并行步数（写操作场景默认谨慎，压测另有专用通道）。
+const PARALLEL_BATCH_CAP: usize = 8;
+
+/// 运行集成测试场景：按步骤顺序执行；相邻 parallel 步骤成批并发。
 ///
 /// 每步执行前用「环境静态变量 + runtime 快照（提取值优先）」渲染该步的
 /// URL / 规格模板——这就是链路数据流的打通点：A 步 extract 出 `token`，
@@ -642,8 +1054,10 @@ fn undefined_var_warnings(
 ///
 /// 执行策略语义（六态状态落 `EndpointResult.step_status`）：
 /// - 禁用步骤 → skipped（不发请求）；
+/// - 执行条件不满足 → skipped（不算失败，不触发失败即停）；
 /// - 引用了「应产自失败 / Blocked / Skipped 步骤」的缺失变量 → blocked
 ///   （不发请求，不允许用空变量继续）；
+/// - 循环：任一轮失败即整步 failed；while 达上限条件仍成立 → failed；
 /// - 失败即停 / 取消后的剩余步骤 → skipped；
 /// - JSON Body 类型保留渲染（`render_spec_typed`：提取的数字进 Body 仍是数字）；
 /// - 每步渲染后校验 URL scheme 仅 http/https（对齐 execute_request）。
@@ -656,25 +1070,22 @@ pub async fn run_scenario(
     let total = steps.len();
     let warnings = undefined_var_warnings(&steps, base_vars);
     // runtime 以环境静态变量为底，提取值按步覆盖（runtime 优先级更高）。
-    let runtime = AsyncMutex::new(base_vars.clone());
-    // 提取变量的类型层（JSON Body 类型保留渲染用；每次运行独立——上下文隔离）。
-    let typed: AsyncMutex<HashMap<String, serde_json::Value>> = AsyncMutex::new(HashMap::new());
-    // 失败 / Blocked / Skipped 步骤的提取产出名集合：后续步骤若引用其中
-    // 之一起码此刻拿不到值，标记 Blocked（比失败即停更细粒度的依赖保护）。
-    let lost_vars: AsyncMutex<std::collections::HashSet<String>> =
-        AsyncMutex::new(std::collections::HashSet::new());
-    let mut results = Vec::with_capacity(total);
+    let shared = std::sync::Arc::new(SharedRunState {
+        runtime: AsyncMutex::new(base_vars.clone()),
+        typed: AsyncMutex::new(HashMap::new()),
+        lost: AsyncMutex::new(std::collections::HashSet::new()),
+        last_status: AsyncMutex::new(None),
+    });
+    let mut results: Vec<EndpointResult> = Vec::with_capacity(total);
     let mut vars_snapshots = Vec::with_capacity(total);
     let mut cancelled = false;
     let mut stopped_on_failure = false;
 
-    for (idx, step) in steps.iter().enumerate() {
-        // ---- 禁用步骤：占位 skipped，不发送 ----
-        if !step.enabled {
-            vars_snapshots.push(runtime.lock().await.clone());
-            let r = skipped_result(step, idx, "步骤已禁用");
+    /// 推一行结果并报「该步完成」进度。
+    macro_rules! push_row {
+        ($step:expr, $result:expr) => {{
             let done = results.len() + 1;
-            results.push(r);
+            results.push($result);
             if let Some(cb) = progress {
                 cb(ScenarioProgress {
                     done,
@@ -683,6 +1094,19 @@ pub async fn run_scenario(
                     url: None,
                 });
             }
+            let _ = $step;
+        }};
+    }
+
+    let mut idx = 0usize;
+    while idx < total {
+        let step = &steps[idx];
+
+        // ---- 禁用步骤：占位 skipped，不发送 ----
+        if !step.enabled {
+            vars_snapshots.push(shared.runtime.lock().await.clone());
+            push_row!(step, skipped_result(step, idx, "步骤已禁用"));
+            idx += 1;
             continue;
         }
 
@@ -690,152 +1114,116 @@ pub async fn run_scenario(
             cancelled = true;
             break;
         }
-        let render_vars = runtime.lock().await.clone();
-        // 每步执行前的 runtime 快照（重跑失败步骤 / 从本步执行的初始变量来源）。
-        vars_snapshots.push(render_vars.clone());
 
-        // ---- Blocked 判定：缺失变量产自失败 / Blocked / Skipped 步骤时不发送 ----
-        let lost = lost_vars.lock().await.clone();
-        let blocked: Vec<String> = step_var_refs(step)
-            .into_iter()
-            .filter(|r| !render_vars.contains_key(r) && lost.contains(r))
-            .collect();
-        if !blocked.is_empty() {
-            let list = blocked
-                .iter()
-                .map(|m| format!("{{{{{m}}}}}"))
-                .collect::<Vec<_>>()
-                .join("、");
-            let r = blocked_result(
-                step,
-                idx,
-                format!("依赖的变量 {list} 因前序步骤失败 / 跳过而缺失"),
-            );
-            for e in &step.extract {
-                lost_vars.lock().await.insert(e.name.clone());
+        // ---- 并行批：从 idx 起连续 parallel 启用步骤（≥2 成批并发）----
+        if step.parallel {
+            let mut end = idx;
+            while end < total && steps[end].enabled && steps[end].parallel {
+                end += 1;
             }
-            let done = results.len() + 1;
-            results.push(r);
-            if let Some(cb) = progress {
-                cb(ScenarioProgress {
-                    done,
-                    total,
-                    step: results.last(),
-                    url: None,
-                });
-            }
-            continue;
-        }
-
-        // ---- 渲染（JSON Body 类型保留）+ scheme 校验 ----
-        let typed_snapshot = typed.lock().await.clone();
-        let url = miyo_core::resolve_variables(&step.url_template, &render_vars);
-        let spec = miyo_core::render_spec_typed(&step.spec_template, &render_vars, &typed_snapshot);
-        let config = TestSpec {
-            pre_request: Vec::new(),
-            extract: step.extract.clone(),
-            assertions: step.assertions.clone(),
-        };
-        // 每步独立超时：接口自带 timeout_ms 优先，否则用场景级解析值兜底。
-        let step_timeout = step.endpoint.request.timeout_ms.or(options.timeout_ms);
-
-        // scheme 白名单（对齐 execute_request：仅 http/https），防变量替换
-        // 把 scheme / host 换成任意协议。
-        let scheme_ok = {
-            let lower = url.to_ascii_lowercase();
-            lower.starts_with("http://") || lower.starts_with("https://")
-        };
-        if !scheme_ok {
-            let mut r = EndpointResult::failed_fast(
-                step.endpoint.id,
-                &step.endpoint,
-                Some(url.clone()),
-                format!("URL 仅支持 http/https 协议：{url}"),
-            );
-            r.step_index = Some(idx);
-            r.step_status = Some(step_status::FAILED.to_string());
-            for e in &step.extract {
-                lost_vars.lock().await.insert(e.name.clone());
-            }
-            let done = results.len() + 1;
-            results.push(r);
-            if let Some(cb) = progress {
-                cb(ScenarioProgress {
-                    done,
-                    total,
-                    step: results.last(),
-                    url: None,
-                });
-            }
-            if options.stop_on_failure {
-                stopped_on_failure = true;
-                break;
-            }
-            continue;
-        }
-
-        // 进入本步：先报「已发出」（实际 URL 已确定），让前端在等待网络期间
-        // 就能展示正在跑哪一步、打到哪个地址。
-        if let Some(cb) = progress {
-            cb(ScenarioProgress {
-                done: idx,
-                total,
-                step: None,
-                url: Some(&url),
-            });
-        }
-        let (mut result, _) = run_one_core(
-            &step.endpoint,
-            &url,
-            &spec,
-            config,
-            &runtime,
-            step_timeout,
-            options.cancel.as_ref(),
-        )
-        .await;
-        // 结果自描述：链路位次 + 渲染后实际 URL（前端 / CLI 免按位对齐猜测）。
-        result.step_index = Some(idx);
-        result.step_status = Some(if result.cancelled {
-            step_status::CANCELLED.to_string()
-        } else if result.ok {
-            step_status::SUCCESS.to_string()
-        } else {
-            step_status::FAILED.to_string()
-        });
-        let failed = !result.ok;
-        if failed {
-            for e in &step.extract {
-                lost_vars.lock().await.insert(e.name.clone());
-            }
-        } else {
-            // 成功步的 body 提取进类型层（供后续步骤 JSON Body 类型保留渲染；
-            // header 提取恒为字符串，不参与类型层）。
-            let body_value: Option<serde_json::Value> = result
-                .response
-                .as_ref()
-                .and_then(|r| serde_json::from_str(&r.body).ok());
-            if let Some(body) = body_value {
-                let mut t = typed.lock().await;
-                for e in &step.extract {
-                    if let Some(v) = crate::extract::extract_body_json_typed(Some(&body), &e.path) {
-                        if !matches!(v, serde_json::Value::String(_)) {
-                            t.insert(e.name.clone(), v);
+            if end - idx >= 2 {
+                let snapshot = shared.runtime.lock().await.clone();
+                let (tx, mut rx) = mpsc::unbounded_channel::<BatchMsg>();
+                // 并发上限（信号量）：大批量时在途请求不超过 PARALLEL_BATCH_CAP。
+                let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(PARALLEL_BATCH_CAP));
+                for (k, s) in steps[idx..end].iter().enumerate() {
+                    let step_arc = std::sync::Arc::new(s.clone());
+                    let shared_c = shared.clone();
+                    let opts_c = options.clone();
+                    let tx_c = tx.clone();
+                    let permits_c = permits.clone();
+                    let pos = idx + k;
+                    tokio::spawn(async move {
+                        let _permit = match permits_c.acquire_owned().await {
+                            Ok(p) => p,
+                            Err(_) => return, // 信号量已关闭（不会发生：主循环持引用）
+                        };
+                        let r = execute_step(&step_arc, pos, &shared_c, &opts_c, &|url| {
+                            let _ = tx_c.send(BatchMsg::Enter { pos, url });
+                        })
+                        .await;
+                        drop(_permit);
+                        let _ = tx_c.send(BatchMsg::Done {
+                            pos,
+                            result: Box::new(r),
+                        });
+                    });
+                }
+                drop(tx);
+                let mut slot: Vec<Option<EndpointResult>> =
+                    (0..(end - idx)).map(|_| None).collect();
+                let mut batch_entered: std::collections::HashSet<usize> = Default::default();
+                while let Some(msg) = rx.recv().await {
+                    match msg {
+                        BatchMsg::Enter { pos, url } => {
+                            batch_entered.insert(pos);
+                            if let Some(cb) = progress {
+                                cb(ScenarioProgress {
+                                    done: pos,
+                                    total,
+                                    step: None,
+                                    url: Some(&url),
+                                });
+                            }
+                        }
+                        BatchMsg::Done { pos, result } => {
+                            slot[pos - idx] = Some(*result);
                         }
                     }
+                    if slot.iter().all(|s| s.is_some()) {
+                        break;
+                    }
                 }
+                for (k, s) in steps[idx..end].iter().enumerate() {
+                    vars_snapshots.push(snapshot.clone());
+                    let r = slot[k].take().unwrap_or_else(|| {
+                        let mut r = EndpointResult::failed_fast(
+                            s.endpoint.id,
+                            &s.endpoint,
+                            None,
+                            "并行批任务未返回（取消或调度异常）",
+                        );
+                        r.step_index = Some(idx + k);
+                        r.cancelled = true;
+                        r.step_status = Some(step_status::CANCELLED.to_string());
+                        r
+                    });
+                    push_row!(s, r);
+                }
+                if options.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+                    cancelled = true;
+                    break;
+                }
+                if options.stop_on_failure
+                    && results
+                        .iter()
+                        .rev()
+                        .take(end - idx)
+                        .any(|r| !r.ok && !r.cancelled)
+                {
+                    stopped_on_failure = true;
+                    break;
+                }
+                idx = end;
+                continue;
             }
         }
-        let done = results.len() + 1;
-        results.push(result);
-        if let Some(cb) = progress {
-            cb(ScenarioProgress {
-                done,
-                total,
-                step: results.last(),
-                url: None,
-            });
-        }
+
+        // ---- 串行步骤：完整管线（Blocked / 条件 / 等待 / 循环 / 发送）----
+        vars_snapshots.push(shared.runtime.lock().await.clone());
+        let enter_cb = |url: String| {
+            if let Some(cb) = progress {
+                cb(ScenarioProgress {
+                    done: idx,
+                    total,
+                    step: None,
+                    url: Some(&url),
+                });
+            }
+        };
+        let r = execute_step(step, idx, &shared, options, &enter_cb).await;
+        let failed = !r.ok && !r.cancelled;
+        push_row!(step, r);
         // 取消优先于失败即停：在途请求被中止的步骤 ok = false 但非真实失败，
         // 先判取消再判失败，避免「取消」被误报为「失败即停」。
         if options.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
@@ -846,6 +1234,7 @@ pub async fn run_scenario(
             stopped_on_failure = true;
             break;
         }
+        idx += 1;
     }
 
     // ---- 早停补账：失败即停 / 取消后的剩余启用步骤落 skipped 行 ----
@@ -856,26 +1245,20 @@ pub async fn run_scenario(
             "失败即停，未执行"
         };
         for (idx, step) in steps.iter().enumerate().skip(results.len()) {
-            vars_snapshots.push(runtime.lock().await.clone());
-            let r = skipped_result(step, idx, reason);
-            let done = results.len() + 1;
-            results.push(r);
-            if let Some(cb) = progress {
-                cb(ScenarioProgress {
-                    done,
-                    total,
-                    step: results.last(),
-                    url: None,
-                });
-            }
+            vars_snapshots.push(shared.runtime.lock().await.clone());
+            push_row!(step, skipped_result(step, idx, reason));
         }
     }
 
+    // 此时批任务已全部回收（rx 关闭即全部 Done），Arc 应独占；防御性兜底空表。
+    let final_vars = std::sync::Arc::try_unwrap(shared)
+        .map(|s| s.runtime.into_inner())
+        .unwrap_or_default();
     ScenarioRunResult {
         results,
         cancelled,
         stopped_on_failure,
-        variables: runtime.into_inner(),
+        variables: final_vars,
         vars_snapshots,
         warnings,
     }

@@ -732,6 +732,35 @@ pub struct ScenarioStep {
     /// 内联请求定义；`None` = 引用式步骤（endpoint_id 必有）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<ScenarioInlineRequest>,
+    /// 执行条件（miyo-test `StepCondition` 形状 JSON 透传；不满足 → skipped 不发送）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<serde_json::Value>,
+    /// 循环配置（miyo-test `StepLoop` 形状 JSON 透传；轮询 / 重复执行）。
+    #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]
+    pub r#loop: Option<serde_json::Value>,
+    /// 执行前等待毫秒（0..=60_000；限速 / 等待上游就绪）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
+    /// 与相邻的 parallel 步骤成批并发执行（批内共享变量池，提取按完成序合并）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub parallel: bool,
+}
+
+impl Default for ScenarioStep {
+    fn default() -> Self {
+        ScenarioStep {
+            endpoint_id: None,
+            enabled: true,
+            extract: serde_json::Value::Null,
+            assertions: serde_json::Value::Null,
+            name: None,
+            request: None,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
+        }
+    }
 }
 
 impl ScenarioStep {
@@ -739,11 +768,7 @@ impl ScenarioStep {
     pub fn referenced(endpoint_id: Uuid) -> Self {
         ScenarioStep {
             endpoint_id: Some(endpoint_id),
-            enabled: true,
-            extract: serde_json::Value::Null,
-            assertions: serde_json::Value::Null,
-            name: None,
-            request: None,
+            ..Default::default()
         }
     }
 

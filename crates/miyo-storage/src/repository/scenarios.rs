@@ -172,11 +172,9 @@ mod tests {
             sort_order: 0,
             steps: vec![ScenarioStep {
                 endpoint_id: Some(Uuid::new_v4()),
-                enabled: true,
                 extract: json!([{ "name": "token", "from": "body", "path": "$.token" }]),
                 assertions: json!([]),
-                name: None,
-                request: None,
+                ..Default::default()
             }],
             script: None,
             created_at: Utc::now(),
@@ -229,7 +227,6 @@ mod tests {
         let mut scenario = make_scenario(project.id);
         scenario.steps.push(ScenarioStep {
             endpoint_id: None,
-            enabled: true,
             extract: json!([]),
             assertions: json!([{ "type": "status", "op": "eq", "expected": 200 }]),
             name: Some("创建订单".into()),
@@ -238,6 +235,7 @@ mod tests {
                 url: "{{base_url}}/shop/orders".into(),
                 spec: miyo_core::model::RequestSpec::default(),
             }),
+            ..Default::default()
         });
         save_scenario(&db, &scenario).await.unwrap();
         let reloaded = get_scenario(&db, scenario.id).await.unwrap();

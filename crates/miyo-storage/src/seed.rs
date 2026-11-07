@@ -980,8 +980,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                 assertions: serde_json::json!([
                     { "type": "status", "op": "eq", "expected": 200 }
                 ]),
-                name: None,
-                request: None,
+                ..Default::default()
             },
             ScenarioStep {
                 endpoint_id: Some(chain_ep.id),
@@ -991,8 +990,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                     { "type": "status", "op": "eq", "expected": 200 },
                     { "type": "jsonpath", "path": "$[0].userId", "op": "eq", "expected": "{{userId}}" }
                 ]),
-                name: None,
-                request: None,
+                ..Default::default()
             },
             ScenarioStep {
                 endpoint_id: Some(open_endpoints["用户详情"].id),
@@ -1001,8 +999,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                 assertions: serde_json::json!([
                     { "type": "jsonpath", "path": "$.id", "op": "eq", "expected": "{{userId}}" }
                 ]),
-                name: None,
-                request: None,
+                ..Default::default()
             },
         ],
         script: None,
@@ -1159,8 +1156,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                     { "type": "status", "op": "eq", "expected": 201 },
                     { "type": "jsonpath", "path": "$.orderNo", "op": "exists", "expected": null }
                 ]),
-                name: None,
-                request: None,
+                ..Default::default()
             },
             ScenarioStep {
                 endpoint_id: Some(preview_pay.id),
@@ -1172,8 +1168,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                     { "type": "status", "op": "eq", "expected": 200 },
                     { "type": "jsonpath", "path": "$.payableAmount", "op": "exists", "expected": null }
                 ]),
-                name: None,
-                request: None,
+                ..Default::default()
             },
             ScenarioStep {
                 endpoint_id: Some(pay_order.id),
@@ -1185,8 +1180,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                     { "type": "status", "op": "eq", "expected": 200 },
                     { "type": "jsonpath", "path": "$.status", "op": "eq", "expected": "PAID" }
                 ]),
-                name: None,
-                request: None,
+                ..Default::default()
             },
         ],
         script: None,

@@ -169,29 +169,18 @@ fn cmp_ops(op: &str, got: f64, want: f64) -> bool {
     }
 }
 
-/// 执行单条断言。
-pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&Value>) -> Outcome {
-    let description = describe(a);
-    let op = a.op.as_deref().unwrap_or("eq").to_string();
-    let expected = a.expected.as_ref().map(v_to_text).unwrap_or_default();
-
-    let Some(actual) = actual(a, resp, body_value) else {
-        let mut o = match op.as_str() {
-            "not_exists" => Outcome::pass(description),
-            "exists" => Outcome::fail(description, "值不存在（未获取到实际值）".into()),
-            _ => Outcome::fail(
-                description,
-                "未获取到断言的实际值（JSONPath 无匹配或响应头不存在）".into(),
-            ),
+/// 值级比较（断言与步骤执行条件共用）：`op` + 实际值（None = 未取到，
+/// 按 not_exists 语义求值）+ 期望值 → Err(原因)。
+pub fn compare_values(op: &str, actual: Option<Value>, expected: &Value) -> Result<(), String> {
+    let expected = v_to_text(expected);
+    let Some(actual) = actual else {
+        return match op {
+            "not_exists" => Ok(()),
+            "exists" => Err("值不存在（未获取到实际值）".into()),
+            _ => Err("未获取到实际值（变量不存在或取值无匹配）".into()),
         };
-        if a.expected.is_some() {
-            o.expected = Some(expected);
-        }
-        return o;
     };
-    let actual_text = v_to_text(&actual);
-
-    let result = match op.as_str() {
+    match op {
         "eq" => {
             if value_eq(&actual, &expected) {
                 Ok(())
@@ -229,7 +218,7 @@ pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&
             let got = to_f64(&actual);
             let want = expected.parse::<f64>();
             match (got, want) {
-                (Some(g), Ok(w)) if cmp_ops(&op, g, w) => Ok(()),
+                (Some(g), Ok(w)) if cmp_ops(op, g, w) => Ok(()),
                 (Some(g), Ok(w)) => Err(format!("实际值 {g} 不满足 {op} {w}")),
                 (None, _) => Err(format!("实际值 {} 不是数字", v_to_text(&actual))),
                 (_, Err(_)) => Err(format!("期望值「{expected}」不是数字")),
@@ -276,7 +265,16 @@ pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&
             }
         }
         other => Err(format!("不支持的操作符：{other}")),
-    };
+    }
+}
+
+/// 执行单条断言。
+pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&Value>) -> Outcome {
+    let description = describe(a);
+    let op = a.op.as_deref().unwrap_or("eq");
+    let expected_value = a.expected.clone().unwrap_or(Value::Null);
+
+    let result = compare_values(op, actual(a, resp, body_value), &expected_value);
 
     let mut outcome = match result {
         Ok(()) => Outcome::pass(description),
@@ -284,10 +282,13 @@ pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&
     };
     // 结构化对比值：期望仅在断言显式给出时随行，实际取到才随行——
     // 前端「期望 x · 实际 y」以此渲染，不再从 reason 文案反解。
+    let expected = a.expected.as_ref().map(v_to_text).unwrap_or_default();
     if a.expected.is_some() {
         outcome.expected = Some(expected);
     }
-    outcome.actual = Some(actual_text);
+    if let Some(actual) = actual(a, resp, body_value) {
+        outcome.actual = Some(v_to_text(&actual));
+    }
     outcome
 }
 

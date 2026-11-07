@@ -472,11 +472,9 @@ mod tests {
             steps: vec![
                 ScenarioStep {
                     endpoint_id: Some(ep.id),
-                    enabled: true,
                     extract: serde_json::json!([{"var": "token", "from": "body", "path": "$.token"}]),
                     assertions: serde_json::json!([{"type": "status", "op": "eq", "value": 200}]),
-                    name: None,
-                    request: None,
+                    ..Default::default()
                 },
                 // 指向不存在接口的步骤：恢复时应兜底 nil 而非 panic / 丢失。
                 ScenarioStep {
@@ -484,8 +482,7 @@ mod tests {
                     enabled: false,
                     extract: serde_json::json!([]),
                     assertions: serde_json::json!([]),
-                    name: None,
-                    request: None,
+                    ..Default::default()
                 },
             ],
             script: Some("const steps = [];".into()),

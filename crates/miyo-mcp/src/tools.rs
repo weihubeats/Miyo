@@ -909,8 +909,7 @@ mod tests {
                     { "name": "userId", "from": "body", "path": "$.userId" }
                 ]),
                 assertions: serde_json::json!([]),
-                name: None,
-                request: None,
+                ..Default::default()
             }],
             script: None,
             created_at: chrono::Utc::now(),

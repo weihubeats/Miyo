@@ -235,6 +235,10 @@ async fn scenario_chain_flows_extracted_vars() {
     let steps = vec![
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep("登录", HttpMethod::POST, "/login", serde_json::Value::Null),
             url_template: format!("{base}/login"),
             spec_template: RequestSpec::default(),
@@ -253,6 +257,10 @@ async fn scenario_chain_flows_extracted_vars() {
         },
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep("回显", HttpMethod::POST, "/echo", serde_json::Value::Null),
             url_template: format!("{base}/echo?env={{{{token}}}}"),
             spec_template: RequestSpec::default(),
@@ -324,6 +332,10 @@ async fn scenario_stops_on_failure() {
     let steps = vec![
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep("登录", HttpMethod::POST, "/login", serde_json::Value::Null),
             url_template: format!("{base}/login"),
             spec_template: RequestSpec::default(),
@@ -338,6 +350,10 @@ async fn scenario_stops_on_failure() {
         },
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep("回显", HttpMethod::GET, "/echo", serde_json::Value::Null),
             url_template: format!("{base}/echo"),
             spec_template: RequestSpec::default(),
@@ -463,6 +479,10 @@ async fn scenario_ecommerce_flow_with_typed_vars() {
     let steps = vec![
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep("创建订单", HttpMethod::POST, "/shop/orders", serde_json::Value::Null),
             url_template: format!("{base}/shop/orders"),
             spec_template: RequestSpec::default(),
@@ -471,6 +491,10 @@ async fn scenario_ecommerce_flow_with_typed_vars() {
         },
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep("支付预览", HttpMethod::GET, "/shop/pay-preview", serde_json::Value::Null),
             url_template: format!("{base}/shop/pay-preview?orderNo={{{{orderNo}}}}&payToken={{{{payToken}}}}"),
             spec_template: RequestSpec::default(),
@@ -479,6 +503,10 @@ async fn scenario_ecommerce_flow_with_typed_vars() {
         },
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep("确认支付", HttpMethod::POST, "/shop/pay", serde_json::Value::Null),
             url_template: format!("{base}/shop/pay"),
             spec_template: RequestSpec {
@@ -555,6 +583,10 @@ async fn scenario_blocks_on_missing_upstream_var() {
     let steps = vec![
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep(
                 "创建订单",
                 HttpMethod::POST,
@@ -568,6 +600,10 @@ async fn scenario_blocks_on_missing_upstream_var() {
         },
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep(
                 "支付预览",
                 HttpMethod::GET,
@@ -582,6 +618,10 @@ async fn scenario_blocks_on_missing_upstream_var() {
         },
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep(
                 "确认支付",
                 HttpMethod::POST,
@@ -638,6 +678,10 @@ async fn scenario_reports_disabled_and_early_stop_as_skipped() {
     let steps = vec![
         ScenarioStepInput {
             enabled: false,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep(
                 "禁用步",
                 HttpMethod::GET,
@@ -651,6 +695,10 @@ async fn scenario_reports_disabled_and_early_stop_as_skipped() {
         },
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep(
                 "失败步",
                 HttpMethod::POST,
@@ -665,6 +713,10 @@ async fn scenario_reports_disabled_and_early_stop_as_skipped() {
         },
         ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep(
                 "后续步",
                 HttpMethod::GET,
@@ -702,6 +754,10 @@ async fn scenario_rejects_non_http_scheme() {
     let _addr = spawn_shop_server().await;
     let steps = vec![ScenarioStepInput {
         enabled: true,
+        condition: None,
+        r#loop: None,
+        wait_ms: None,
+        parallel: false,
         endpoint: make_ep("坏协议", HttpMethod::GET, "/x", serde_json::Value::Null),
         url_template: "file:///etc/passwd".to_string(),
         spec_template: RequestSpec::default(),
@@ -724,6 +780,10 @@ async fn scenario_warns_undefined_vars() {
     let base = format!("http://{addr}");
     let steps = vec![ScenarioStepInput {
         enabled: true,
+        condition: None,
+        r#loop: None,
+        wait_ms: None,
+        parallel: false,
         endpoint: make_ep(
             "引用缺失变量",
             HttpMethod::GET,
@@ -751,6 +811,10 @@ async fn scenario_runs_have_isolated_contexts() {
     let mk_steps = || {
         vec![ScenarioStepInput {
             enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
             endpoint: make_ep(
                 "创建订单",
                 HttpMethod::POST,
@@ -789,4 +853,298 @@ async fn scenario_runs_have_isolated_contexts() {
         r2.variables.get("orderNo").map(String::as_str),
         Some("SO-1")
     );
+}
+
+// ---------- 阶段三：条件 / 循环 / 等待 / 并行 ----------
+
+use miyo_test::config::{StepCondition, StepLoop};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+
+fn var_cond(name: &str, op: &str, value: serde_json::Value) -> StepCondition {
+    StepCondition {
+        source: "var".into(),
+        name: name.into(),
+        op: op.into(),
+        value: Some(value),
+    }
+}
+
+/// 条件不满足 → skipped（不发送、不触发失败即停）；满足 → 正常执行。
+#[tokio::test]
+async fn scenario_condition_skips_step() {
+    let addr = spawn_shop_server().await;
+    let base = format!("http://{addr}");
+    // 变量条件基于存在的变量求值（缺失变量除 exists/empty 族外均不满足）。
+    let mut base_vars = HashMap::new();
+    base_vars.insert("paid".to_string(), "false".to_string());
+    let steps = vec![
+        ScenarioStepInput {
+            enabled: true,
+            condition: Some(var_cond("paid", "eq", json!("true"))),
+            ..mk_get(format!("{base}/shop/pay-preview"))
+        },
+        ScenarioStepInput {
+            enabled: true,
+            condition: Some(var_cond("paid", "neq", json!("true"))),
+            ..mk_get(format!(
+                "{base}/shop/pay-preview?orderNo=SO-1&payToken=pt-9"
+            ))
+        },
+        ScenarioStepInput {
+            enabled: true,
+            condition: Some(StepCondition {
+                source: "prevStatus".into(),
+                name: String::new(),
+                op: "eq".into(),
+                value: Some(json!(200)),
+            }),
+            ..mk_get(format!("{base}/shop/pay-preview"))
+        },
+    ];
+    let result = run_scenario(steps, &base_vars, &ScenarioOptions::default(), None).await;
+
+    assert_eq!(result.results.len(), 3);
+    // 第 1 步：paid 未定义 → 条件不满足 → skipped（不算失败）。
+    assert_eq!(result.results[0].effective_status(), "skipped");
+    assert!(result.results[0].url.is_none());
+    assert!(result.results[0]
+        .request_error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("条件不满足"));
+    // 第 2 步：neq true 成立（paid 缺失 ≠ "true"）→ 执行成功。
+    assert_eq!(result.results[1].effective_status(), "success");
+    // 第 3 步：prevStatus 取第 2 步的 200 → 执行。
+    assert_eq!(result.results[2].effective_status(), "success");
+    // skipped 不算失败：stopped_on_failure=false（默认本就 false；再验 fail 计数语义由调用方算）。
+    assert!(!result.stopped_on_failure);
+}
+
+fn mk_get(url: String) -> ScenarioStepInput {
+    ScenarioStepInput {
+        endpoint: make_ep("步", HttpMethod::GET, "/x", serde_json::Value::Null),
+        url_template: url,
+        spec_template: RequestSpec::default(),
+        extract: vec![],
+        assertions: vec![],
+        enabled: true,
+        condition: None,
+        r#loop: None,
+        wait_ms: None,
+        parallel: false,
+    }
+}
+
+/// count 循环：跑满 N 轮、结果聚合（loop_runs = N、耗时合计）。
+#[tokio::test]
+async fn scenario_count_loop_runs_n_rounds() {
+    // 有状态上游：每次 ping 计数 +1，返回当前计数。
+    let counter = Arc::new(AtomicU32::new(0));
+    let c = counter.clone();
+    let app = Router::new().route(
+        "/ping",
+        get(move || {
+            let c = c.clone();
+            async move {
+                let n = c.fetch_add(1, Ordering::SeqCst) + 1;
+                axum::Json(json!({"n": n}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let base = format!("http://{addr}");
+
+    let steps = vec![ScenarioStepInput {
+        enabled: true,
+        r#loop: Some(StepLoop {
+            mode: "count".into(),
+            count: Some(3),
+            while_condition: None,
+            max_loops: None,
+            interval_ms: None,
+        }),
+        extract: vec![extract("n", "$.n")],
+        assertions: vec![assert_status(200)],
+        ..mk_get(format!("{base}/ping"))
+    }];
+    let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+
+    assert_eq!(result.results.len(), 1);
+    let r = &result.results[0];
+    assert!(r.ok, "{r:?}");
+    assert_eq!(r.loop_runs, Some(3), "应跑满 3 轮");
+    // 每轮重新渲染：最后一轮提取的 n = 3（前两轮被覆盖）。
+    assert_eq!(r.extracted.get("n").map(String::as_str), Some("3"));
+    assert_eq!(counter.load(Ordering::SeqCst), 3, "上游应被命中 3 次");
+}
+
+/// while 循环轮询：上游第 3 次起 paid=true，条件成立退出（成功）。
+#[tokio::test]
+async fn scenario_while_loop_polls_until_condition() {
+    let counter = Arc::new(AtomicU32::new(0));
+    let c = counter.clone();
+    let app = Router::new().route(
+        "/status",
+        get(move || {
+            let c = c.clone();
+            async move {
+                let n = c.fetch_add(1, Ordering::SeqCst) + 1;
+                axum::Json(json!({"paid": n >= 3}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let base = format!("http://{addr}");
+
+    let steps = vec![ScenarioStepInput {
+        enabled: true,
+        r#loop: Some(StepLoop {
+            mode: "while".into(),
+            count: None,
+            while_condition: Some(var_cond("paid", "neq", json!("true"))),
+            max_loops: Some(10),
+            interval_ms: None,
+        }),
+        extract: vec![extract("paid", "$.paid")],
+        assertions: vec![assert_status(200)],
+        ..mk_get(format!("{base}/status"))
+    }];
+    let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+
+    let r = &result.results[0];
+    assert!(r.ok, "轮询到条件成立应成功：{r:?}");
+    assert_eq!(r.loop_runs, Some(3), "第 3 轮 paid=true 后退出");
+    assert_eq!(counter.load(Ordering::SeqCst), 3);
+}
+
+/// while 循环达上限条件仍成立 → 整步 failed（轮询超时语义）。
+#[tokio::test]
+async fn scenario_while_loop_max_reached_fails() {
+    let app = Router::new().route(
+        "/status",
+        get(|| async { axum::Json(json!({"paid": false})) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let base = format!("http://{addr}");
+
+    let steps = vec![ScenarioStepInput {
+        enabled: true,
+        r#loop: Some(StepLoop {
+            mode: "while".into(),
+            count: None,
+            // 恒为「继续」的条件：达上限仍成立 → 轮询超时语义的失败。
+            while_condition: Some(var_cond("paid", "neq", json!("true"))),
+            max_loops: Some(3),
+            interval_ms: None,
+        }),
+        extract: vec![extract("paid", "$.paid")],
+        assertions: vec![assert_status(200)],
+        ..mk_get(format!("{base}/status"))
+    }];
+    let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+
+    let r = &result.results[0];
+    assert!(!r.ok);
+    assert_eq!(r.effective_status(), "failed");
+    assert!(r
+        .request_error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("循环条件"));
+    assert_eq!(r.loop_runs, Some(3));
+}
+
+/// wait_ms：执行前等待（限速语义），单步耗时包含等待。
+#[tokio::test]
+async fn scenario_wait_ms_sleeps_before_send() {
+    let addr = spawn_shop_server().await;
+    let base = format!("http://{addr}");
+    let steps = vec![ScenarioStepInput {
+        enabled: true,
+        wait_ms: Some(120),
+        ..mk_get(format!("{base}/shop/pay-preview"))
+    }];
+    let started = std::time::Instant::now();
+    let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+    let elapsed = started.elapsed().as_millis();
+    assert_eq!(result.results[0].effective_status(), "success");
+    assert!(elapsed >= 100, "应至少等待 wait_ms：{elapsed}ms");
+    assert!(
+        result.results[0].duration_ms.unwrap_or(0.0) >= 100.0,
+        "步骤耗时含等待：{:?}",
+        result.results[0].duration_ms
+    );
+}
+
+/// 并行批：两个慢步骤并发执行（总耗时 ≈ 单步而非两步之和）。
+#[tokio::test]
+async fn scenario_parallel_batch_runs_concurrently() {
+    let app = Router::new()
+        .route(
+            "/slow-a",
+            get(|| async {
+                tokio::time::sleep(Duration::from_millis(120)).await;
+                axum::Json(json!({"v": "A"}))
+            }),
+        )
+        .route(
+            "/slow-b",
+            get(|| async {
+                tokio::time::sleep(Duration::from_millis(120)).await;
+                axum::Json(json!({"v": "B"}))
+            }),
+        )
+        .route("/fast", get(|| async { axum::Json(json!({"v": "F"})) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let base = format!("http://{addr}");
+
+    let steps = vec![
+        ScenarioStepInput {
+            enabled: true,
+            parallel: true,
+            extract: vec![extract("va", "$.v")],
+            ..mk_get(format!("{base}/slow-a"))
+        },
+        ScenarioStepInput {
+            enabled: true,
+            parallel: true,
+            extract: vec![extract("vb", "$.v")],
+            ..mk_get(format!("{base}/slow-b"))
+        },
+        // 非并行步骤收尾（串行依赖语义不变）。
+        ScenarioStepInput {
+            enabled: true,
+            extract: vec![extract("vf", "$.v")],
+            ..mk_get(format!("{base}/fast"))
+        },
+    ];
+    let started = std::time::Instant::now();
+    let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+    let elapsed = started.elapsed().as_millis();
+
+    assert_eq!(result.results.len(), 3);
+    assert!(result.results.iter().all(|r| r.ok), "{:?}", result.results);
+    assert!(
+        elapsed < 220,
+        "两个 120ms 慢步应并发（<220ms），实际 {elapsed}ms"
+    );
+    // 结果按原位次排列；两步提取值都进变量池。
+    assert_eq!(
+        result.results[0].extracted.get("va").map(String::as_str),
+        Some("A")
+    );
+    assert_eq!(
+        result.results[1].extracted.get("vb").map(String::as_str),
+        Some("B")
+    );
+    assert_eq!(result.variables.get("vf").map(String::as_str), Some("F"));
 }

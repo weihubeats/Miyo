@@ -24,6 +24,91 @@ fn default_extract_from() -> String {
     "body".to_string()
 }
 
+/// 步骤执行条件（不满足 → 整步 skipped，不发送请求）。
+///
+/// - `source = "var"`：对运行时变量求值（`name` 为变量名，每轮循环重取最新值）；
+/// - `source = "prevStatus"`：对最近一个已执行步骤的 HTTP 状态码求值；
+/// - `op` 与断言算子同集（eq/neq/contains/…/exists/empty），
+///   `value` 为期望值（数字/布尔/字符串按断言同款宽松比较）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StepCondition {
+    /// "var"（缺省） | "prevStatus"。
+    #[serde(default = "default_condition_source")]
+    pub source: String,
+    /// source = var 时的变量名。
+    #[serde(default)]
+    pub name: String,
+    /// 比较算子（同 AssertionSpec.op）。
+    pub op: String,
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+}
+
+fn default_condition_source() -> String {
+    "var".to_string()
+}
+
+impl StepCondition {
+    pub fn is_valid(&self) -> bool {
+        match self.source.as_str() {
+            "var" => !self.name.trim().is_empty() && !self.op.trim().is_empty(),
+            "prevStatus" => !self.op.trim().is_empty(),
+            _ => false,
+        }
+    }
+}
+
+/// 步骤循环：同一请求按条件重复发送（轮询 / 重试放行场景）。
+///
+/// - `mode = "count"`：固定执行 `count` 轮；
+/// - `mode = "while"`：每轮结束后对 `while_condition` 求值，true 继续，
+///   最多 `max_loops` 轮（达上限仍 true 判失败——轮询超时语义）；
+/// - 任一轮断言失败 / 请求失败即终止整步（failed）；取消即时中止；
+/// - `interval_ms` 为轮间隔（轮询节流）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StepLoop {
+    /// "count" | "while"。
+    pub mode: String,
+    /// count 模式的轮数（1..=1000）。
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// while 模式的继续条件（每轮结束后求值）。
+    #[serde(default)]
+    pub while_condition: Option<StepCondition>,
+    /// while 模式轮数上限（1..=100，缺省 10）。
+    #[serde(default)]
+    pub max_loops: Option<u32>,
+    /// 轮间隔毫秒（0..=60_000，缺省 0）。
+    #[serde(default)]
+    pub interval_ms: Option<u64>,
+}
+
+impl StepLoop {
+    pub const MAX_COUNT: u32 = 1000;
+    pub const MAX_LOOPS: u32 = 100;
+    pub const MAX_INTERVAL_MS: u64 = 60_000;
+
+    pub fn is_valid(&self) -> bool {
+        match self.mode.as_str() {
+            "count" => self.count.is_some(),
+            "while" => self.while_condition.as_ref().is_some_and(|c| c.is_valid()),
+            _ => false,
+        }
+    }
+
+    /// 有效轮数上限（收钳到安全范围）。
+    pub fn rounds_cap(&self) -> u32 {
+        match self.mode.as_str() {
+            "count" => self.count.unwrap_or(1).clamp(1, Self::MAX_COUNT),
+            _ => self.max_loops.unwrap_or(10).clamp(1, Self::MAX_LOOPS),
+        }
+    }
+
+    pub fn interval(&self) -> u64 {
+        self.interval_ms.unwrap_or(0).min(Self::MAX_INTERVAL_MS)
+    }
+}
+
 /// 断言项。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssertionSpec {
@@ -119,5 +204,45 @@ mod tests {
     #[test]
     fn invalid_json_fails() {
         assert!(TestSpec::from_request_value(Some(&json!({"assertions": [{"type": 1}]}))).is_err());
+    }
+
+    #[test]
+    fn parse_step_condition_and_loop() {
+        let c: StepCondition = serde_json::from_value(json!({
+            "source": "var", "name": "status", "op": "eq", "value": "PAID"
+        }))
+        .unwrap();
+        assert!(c.is_valid());
+        let prev: StepCondition =
+            serde_json::from_value(json!({"source": "prevStatus", "op": "eq", "value": 200}))
+                .unwrap();
+        assert!(prev.is_valid());
+        assert!(!StepCondition {
+            source: "var".into(),
+            name: "  ".into(),
+            op: "eq".into(),
+            value: None
+        }
+        .is_valid());
+
+        let l: StepLoop = serde_json::from_value(json!({
+            "mode": "while", "max_loops": 5, "interval_ms": 500,
+            "while_condition": {"source": "var", "name": "paid", "op": "neq", "value": "true"}
+        }))
+        .unwrap();
+        assert!(l.is_valid());
+        assert_eq!(l.rounds_cap(), 5);
+        assert_eq!(l.interval(), 500);
+        let count_loop: StepLoop =
+            serde_json::from_value(json!({"mode": "count", "count": 3})).unwrap();
+        assert_eq!(count_loop.rounds_cap(), 3);
+        assert!(!StepLoop {
+            mode: "while".into(),
+            count: None,
+            while_condition: None,
+            max_loops: None,
+            interval_ms: None
+        }
+        .is_valid());
     }
 }

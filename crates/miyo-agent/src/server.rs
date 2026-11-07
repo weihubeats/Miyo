@@ -1073,6 +1073,10 @@ async fn run_scenario_handler(
             extract: config.extract,
             assertions: config.assertions,
             enabled: step.enabled,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
         });
     }
     if steps.iter().all(|s| !s.enabled) {
@@ -1599,16 +1603,14 @@ mod tests {
                     enabled: true,
                     extract: serde_json::json!([{ "name": "orderId", "from": "body", "path": "$.orderId" }]),
                     assertions: serde_json::json!([{ "type": "status", "op": "eq", "expected": "200" }]),
-                    name: None,
-                    request: None,
+                    ..Default::default()
                 },
                 miyo_core::model::ScenarioStep {
                     endpoint_id: Some(pay.id),
                     enabled: true,
                     extract: serde_json::json!([]),
                     assertions: serde_json::json!([]),
-                    name: None,
-                    request: None,
+                    ..Default::default()
                 },
             ],
             script: None,
@@ -1733,8 +1735,7 @@ mod tests {
                         {"name": "payToken", "from": "body", "path": "$.payToken"}
                     ]),
                     assertions: serde_json::json!([{"type": "status", "op": "eq", "expected": 200}]),
-                    name: None,
-                    request: None,
+                    ..Default::default()
                 },
                 miyo_core::model::ScenarioStep {
                     endpoint_id: Some(preview.id),
@@ -1743,8 +1744,7 @@ mod tests {
                         {"name": "payableAmount", "from": "body", "path": "$.payableAmount"}
                     ]),
                     assertions: serde_json::json!([{"type": "status", "op": "eq", "expected": 200}]),
-                    name: None,
-                    request: None,
+                    ..Default::default()
                 },
                 miyo_core::model::ScenarioStep {
                     endpoint_id: Some(pay.id),
@@ -1755,8 +1755,7 @@ mod tests {
                     assertions: serde_json::json!([
                         {"type": "jsonpath", "path": "$.status", "op": "eq", "expected": "PAID"}
                     ]),
-                    name: None,
-                    request: None,
+                    ..Default::default()
                 },
             ],
             script: None,
@@ -1826,16 +1825,14 @@ mod tests {
                     extract: serde_json::json!([]),
                     // 断言 500 但上游返回 200 → 失败
                     assertions: serde_json::json!([{ "type": "status", "op": "eq", "expected": "500" }]),
-                    name: None,
-                    request: None,
+                    ..Default::default()
                 },
                 miyo_core::model::ScenarioStep {
                     endpoint_id: Some(b.id),
                     enabled: true,
                     extract: serde_json::json!([]),
                     assertions: serde_json::json!([]),
-                    name: None,
-                    request: None,
+                    ..Default::default()
                 },
             ],
             script: None,
@@ -2146,8 +2143,7 @@ mod tests {
                 enabled: true,
                 extract: json!([{ "name": "userId", "from": "body", "path": "$.userId" }]),
                 assertions: json!([]),
-                name: None,
-                request: None,
+                ..Default::default()
             }],
             script: None,
             created_at: chrono::Utc::now(),
