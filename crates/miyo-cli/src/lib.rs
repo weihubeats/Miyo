@@ -267,3 +267,273 @@ pub async fn run_collection(backup: BackupFile, opts: &RunOptions) -> RunReport 
         total_duration_ms: started.elapsed().as_secs_f64() * 1000.0,
     }
 }
+
+// ---------- 场景运行（CI/CD：集成测试工作流） ----------
+
+use miyo_test::runner::{run_scenario, ScenarioOptions, ScenarioStepInput};
+
+/// 场景运行选项（clap 参数一一对应）。
+#[derive(Debug, Clone, Default)]
+pub struct ScenarioRunOptions {
+    /// 注入变量 k=v（优先级最高；`base_url` 由此或 base_url_override 提供）。
+    pub vars: Vec<(String, String)>,
+    /// 覆盖 `{{base_url}}` 变量值（优先级高于 --var base_url=...）。
+    pub base_url_override: Option<String>,
+    /// 单步超时毫秒（步骤自带 timeout_ms 优先）。
+    pub timeout_ms: Option<u64>,
+    /// 失败即停。
+    pub stop_on_failure: bool,
+}
+
+/// 从场景导出 JSON 运行集成测试工作流。
+///
+/// 输入接受两种形态：桌面端「集成测试 → 导出 JSON」文件
+///（`{"magic":"miyo.scenario", ..., "scenario": {...}}`，引用步骤已物化为
+/// 内联拷贝）或裸场景体（`{"name": ..., "steps": [...]}`）。
+/// 引用式步骤（endpoint_id 无内联请求）无法在 CLI 独立执行，落 skipped。
+pub async fn run_scenario_file(
+    path: &Path,
+    opts: &ScenarioRunOptions,
+) -> Result<RunReport, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("无法读取场景文件 {}：{e}", path.display()))?;
+    run_scenario_json(&text, opts).await
+}
+
+/// 同 [`run_scenario_file`]，输入为 JSON 文本（测试友好）。
+pub async fn run_scenario_json(text: &str, opts: &ScenarioRunOptions) -> Result<RunReport, String> {
+    let raw: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("场景文件解析失败：{e}"))?;
+    let body = raw
+        .get("scenario")
+        .filter(|_| raw.get("magic").and_then(|m| m.as_str()) == Some("miyo.scenario"))
+        .unwrap_or(&raw);
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("scenario")
+        .to_string();
+    let steps_json = body
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .ok_or_else(|| "场景文件缺少 steps 数组".to_string())?;
+
+    // ---- 变量表：--var > base_url 覆盖 ----
+    let mut runtime_vars: HashMap<String, String> = HashMap::new();
+    for (k, v) in &opts.vars {
+        runtime_vars.insert(k.trim().to_string(), v.to_string());
+    }
+    if let Some(base) = &opts.base_url_override {
+        runtime_vars.insert("base_url".to_string(), base.clone());
+    }
+
+    let mut inputs: Vec<ScenarioStepInput> = Vec::new();
+    let mut skips: Vec<(usize, String)> = Vec::new();
+    for (i, s) in steps_json.iter().enumerate() {
+        let enabled = s.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+        let name = s
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("step-{}", i + 1));
+        let extract: Vec<miyo_test::config::ExtractSpec> = s
+            .get("extract")
+            .cloned()
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
+            .unwrap_or_default();
+        let assertions: Vec<miyo_test::config::AssertionSpec> = s
+            .get("assertions")
+            .cloned()
+            .map(|v| serde_json::from_value(v).unwrap_or_default())
+            .unwrap_or_default();
+        let condition = s
+            .get("condition")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .map(serde_json::from_value::<miyo_test::config::StepCondition>)
+            .transpose()
+            .map_err(|e| format!("第 {} 步的执行条件无效：{e}", i + 1))?;
+        let r#loop = s
+            .get("loop")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .map(serde_json::from_value::<miyo_test::config::StepLoop>)
+            .transpose()
+            .map_err(|e| format!("第 {} 步的循环配置无效：{e}", i + 1))?;
+        let wait_ms = s.get("wait_ms").and_then(|v| v.as_u64());
+        let parallel = s.get("parallel").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        let inline = s.get("request");
+        let Some(inline) = inline else {
+            skips.push((
+                i,
+                "引用式步骤缺少接口配置（桌面端导出时会自动物化为内联请求）".into(),
+            ));
+            inputs.push(ScenarioStepInput {
+                endpoint: placeholder_endpoint(&name, i),
+                url_template: String::new(),
+                spec_template: miyo_core::model::RequestSpec::default(),
+                extract,
+                assertions,
+                enabled: false,
+                condition,
+                r#loop,
+                wait_ms,
+                parallel,
+            });
+            continue;
+        };
+        let method = inline
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET")
+            .to_string();
+        let url = inline
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let spec: miyo_core::model::RequestSpec = inline
+            .get("spec")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| format!("第 {} 步的请求规格无效：{e}", i + 1))?
+            .unwrap_or_default();
+        inputs.push(ScenarioStepInput {
+            endpoint: miyo_core::model::Endpoint {
+                id: uuid::Uuid::new_v4(),
+                project_id: uuid::Uuid::nil(),
+                folder_id: None,
+                name,
+                method: method
+                    .parse()
+                    .map_err(|e| format!("第 {} 步的 HTTP 方法无效：{e}", i + 1))?,
+                path: url.clone(),
+                description: String::new(),
+                status: miyo_core::model::EndpointStatus::Developing,
+                sort_order: i as i64,
+                request: spec.clone(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            url_template: url,
+            spec_template: spec,
+            extract,
+            assertions,
+            enabled,
+            condition,
+            r#loop,
+            wait_ms,
+            parallel,
+        });
+    }
+
+    let started = std::time::Instant::now();
+    let options = ScenarioOptions {
+        timeout_ms: opts.timeout_ms,
+        cancel: None,
+        stop_on_failure: opts.stop_on_failure,
+    };
+    let result = run_scenario(inputs, &runtime_vars, &options, None).await;
+
+    let mut cases: Vec<CaseOutcome> = Vec::new();
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    let mut skipped = 0usize;
+    for r in &result.results {
+        let name = if r.loop_runs.unwrap_or(1) > 1 {
+            format!("{} ×{}", r.endpoint_name, r.loop_runs.unwrap_or(1))
+        } else {
+            r.endpoint_name.clone()
+        };
+        let idx = r.step_index.unwrap_or_default();
+        let skip_reason = skips
+            .iter()
+            .find(|(i, _)| *i == idx)
+            .map(|(_, reason)| reason.clone());
+        let total_assertions = r.outcomes.len();
+        let failures: Vec<(String, Option<String>)> = r
+            .outcomes
+            .iter()
+            .filter(|o| !o.passed)
+            .map(|o| (o.description.clone(), o.reason.clone()))
+            .collect();
+        let status_text = r.effective_status();
+        if status_text == "skipped" || status_text == "blocked" {
+            skipped += 1;
+            let reason = skip_reason.unwrap_or_else(|| {
+                r.blocked_reason
+                    .clone()
+                    .or_else(|| r.request_error.clone())
+                    .unwrap_or_else(|| match status_text {
+                        "blocked" => "依赖前序失败步骤".into(),
+                        _ => "条件不满足 / 已禁用".into(),
+                    })
+            });
+            cases.push(CaseOutcome {
+                name,
+                method: r.method.clone(),
+                path: r.path.clone(),
+                group: String::new(),
+                kind: CaseKind::Skipped { reason },
+            });
+        } else if r.ok {
+            passed += 1;
+            cases.push(CaseOutcome {
+                name,
+                method: r.method.clone(),
+                path: r.path.clone(),
+                group: String::new(),
+                kind: CaseKind::Passed {
+                    status: r.status,
+                    duration_ms: r.duration_ms,
+                    assertions: (total_assertions - failures.len(), total_assertions),
+                },
+            });
+        } else {
+            failed += 1;
+            cases.push(CaseOutcome {
+                name,
+                method: r.method.clone(),
+                path: r.path.clone(),
+                group: String::new(),
+                kind: CaseKind::Failed {
+                    status: r.status,
+                    duration_ms: r.duration_ms,
+                    failures,
+                    request_error: r.request_error.clone(),
+                },
+            });
+        }
+    }
+
+    Ok(RunReport {
+        project: name,
+        total_endpoints: result.results.len(),
+        cases,
+        passed,
+        failed,
+        skipped,
+        total_duration_ms: started.elapsed().as_secs_f64() * 1000.0,
+    })
+}
+
+/// 引用式步骤的占位端点（skipped 展示用）。
+fn placeholder_endpoint(name: &str, i: usize) -> miyo_core::model::Endpoint {
+    miyo_core::model::Endpoint {
+        id: uuid::Uuid::new_v4(),
+        project_id: uuid::Uuid::nil(),
+        folder_id: None,
+        name: name.to_string(),
+        method: miyo_core::model::HttpMethod::GET,
+        path: String::new(),
+        description: String::new(),
+        status: miyo_core::model::EndpointStatus::Developing,
+        sort_order: i as i64,
+        request: miyo_core::model::RequestSpec::default(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    }
+}

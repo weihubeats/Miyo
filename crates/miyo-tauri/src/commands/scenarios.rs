@@ -97,6 +97,18 @@ pub struct ScenarioStepArgs {
     /// 断言规则（AssertionSpec 数组形状，JSON 透传）。
     #[serde(default)]
     pub assertions: serde_json::Value,
+    /// 执行条件（StepCondition 形状，JSON 透传；None = 无条件）。
+    #[serde(default)]
+    pub condition: Option<serde_json::Value>,
+    /// 循环配置（StepLoop 形状，JSON 透传；None = 单次）。
+    #[serde(default)]
+    pub r#loop: Option<serde_json::Value>,
+    /// 执行前等待毫秒。
+    #[serde(default)]
+    pub wait_ms: Option<u64>,
+    /// 与相邻 parallel 步骤成批并发。
+    #[serde(default)]
+    pub parallel: bool,
 }
 
 /// 场景运行入参。
@@ -165,6 +177,20 @@ pub async fn run_scenario(
         .map_err(|e| {
             CommandError::validation(format!("第 {} 步的提取/断言配置无效：{e}", idx + 1))
         })?;
+        let condition = step
+            .condition
+            .as_ref()
+            .map(|v| serde_json::from_value::<miyo_test::config::StepCondition>(v.clone()))
+            .transpose()
+            .map_err(|e| {
+                CommandError::validation(format!("第 {} 步的执行条件无效：{e}", idx + 1))
+            })?;
+        let r#loop = step
+            .r#loop
+            .as_ref()
+            .map(|v| serde_json::from_value::<miyo_test::config::StepLoop>(v.clone()))
+            .transpose()
+            .map_err(|e| CommandError::validation(format!("第 {} 步的循环配置无效：{e}", idx + 1)))?;
         steps.push(ScenarioStepInput {
             endpoint: step.endpoint,
             url_template: step.url,
@@ -172,6 +198,10 @@ pub async fn run_scenario(
             extract: config.extract,
             assertions: config.assertions,
             enabled: step.enabled,
+            condition,
+            r#loop,
+            wait_ms: step.wait_ms.map(|w| w.min(miyo_test::config::StepLoop::MAX_INTERVAL_MS)),
+            parallel: step.parallel,
         });
     }
     if steps.iter().all(|s| !s.enabled) {

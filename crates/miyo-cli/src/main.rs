@@ -7,7 +7,9 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use miyo_cli::{junit, load_backup, run_collection, RunOptions};
+use miyo_cli::{
+    junit, load_backup, run_collection, run_scenario_file, RunOptions, ScenarioRunOptions,
+};
 
 #[derive(Parser)]
 #[command(
@@ -48,6 +50,26 @@ enum Commands {
         /// 任一接口失败立即停止
         #[arg(long)]
         fail_fast: bool,
+    },
+    /// 运行集成测试场景（CI/CD：桌面端「集成测试 → 导出 JSON」的文件）
+    Scenario {
+        /// 场景文件（miyo.scenario 导出 JSON；引用步骤已自动物化为内联请求）
+        scenario: PathBuf,
+        /// 注入变量 k=v（可多次，优先级最高；base_url 由此或 --base-url 提供）
+        #[arg(long = "var")]
+        vars: Vec<String>,
+        /// 覆盖 {{base_url}} 变量值（优先级高于 --var base_url=...）
+        #[arg(long)]
+        base_url: Option<String>,
+        /// 单步超时（毫秒）
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+        /// 输出 JUnit XML 报告到该路径
+        #[arg(long)]
+        junit: Option<PathBuf>,
+        /// 失败即停（任一步失败不再执行后续步骤）
+        #[arg(long)]
+        stop_on_failure: bool,
     },
 }
 
@@ -147,6 +169,115 @@ fn main() -> ExitCode {
             }
             println!(
                 "汇总：{} 通过 / {} 失败 / {} 跳过（{} 个接口，耗时 {:.1}s）",
+                report.passed,
+                report.failed,
+                report.skipped,
+                report.total_endpoints,
+                report.total_duration_ms / 1000.0,
+            );
+
+            if let Some(path) = junit_path {
+                match junit::write_junit(&report, &path) {
+                    Ok(()) => println!("JUnit 报告已写入 {}", path.display()),
+                    Err(e) => {
+                        eprintln!("{e}");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            if report.ok() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Commands::Scenario {
+            scenario,
+            vars,
+            base_url,
+            timeout_ms,
+            junit: junit_path,
+            stop_on_failure,
+        } => {
+            let mut parsed_vars: Vec<(String, String)> = Vec::new();
+            for pair in &vars {
+                match pair.split_once('=') {
+                    Some((k, v)) if !k.trim().is_empty() => {
+                        parsed_vars.push((k.trim().to_string(), v.to_string()))
+                    }
+                    _ => {
+                        eprintln!("无效的 --var（应为 k=v）：{pair}");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            let opts = ScenarioRunOptions {
+                vars: parsed_vars,
+                base_url_override: base_url,
+                timeout_ms,
+                stop_on_failure,
+            };
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime 构建失败");
+            let report = match rt.block_on(run_scenario_file(&scenario, &opts)) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return ExitCode::from(2);
+                }
+            };
+
+            println!("▶ 场景：{}", report.project);
+            for case in &report.cases {
+                match &case.kind {
+                    miyo_cli::CaseKind::Passed {
+                        status,
+                        duration_ms,
+                        assertions,
+                    } => {
+                        let ms = duration_ms.map(|d| format!("{d:.0}ms")).unwrap_or_default();
+                        println!(
+                            "  ✓ {} {} — {} · {ms} · 断言 {}/{}",
+                            case.method,
+                            case.path,
+                            status.map(|s| s.to_string()).unwrap_or_default(),
+                            assertions.0,
+                            assertions.1
+                        );
+                    }
+                    miyo_cli::CaseKind::Failed {
+                        status,
+                        duration_ms: _,
+                        failures,
+                        request_error,
+                    } => {
+                        println!(
+                            "  ✗ {} {} — {}",
+                            case.method,
+                            case.path,
+                            status
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "请求失败".into())
+                        );
+                        if let Some(err) = request_error {
+                            println!("      错误：{err}");
+                        }
+                        for (desc, reason) in failures {
+                            match reason {
+                                Some(r) => println!("      ✗ {desc}：{r}"),
+                                None => println!("      ✗ {desc}"),
+                            }
+                        }
+                    }
+                    miyo_cli::CaseKind::Skipped { reason } => {
+                        println!("  ⊘ {} {} — 跳过：{reason}", case.method, case.path);
+                    }
+                }
+            }
+            println!(
+                "汇总：{} 通过 / {} 失败 / {} 跳过（{} 步，耗时 {:.1}s）",
                 report.passed,
                 report.failed,
                 report.skipped,
