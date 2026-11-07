@@ -37,7 +37,7 @@ pub struct StepResponse {
     pub size_bytes: usize,
     pub truncated: bool,
     /// 正文是否仅为 IPC 预览（命令层超限截断时置位）。
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub body_omitted: bool,
     /// 正文是否为历史落库截断版（64KB 上限；全文不可再取回，仅提示）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -89,7 +89,7 @@ pub struct EndpointResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub step_index: Option<usize>,
     /// 该步因取消而中止（在途请求被 cancel 中止，区别于真实失败）。
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cancelled: bool,
     /// 响应快照（发送成功时存在；failed_fast 无响应）。
     #[serde(skip_serializing_if = "Option::is_none")]

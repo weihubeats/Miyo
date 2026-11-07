@@ -1540,9 +1540,11 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "chrono",
+ "jsonpath-rust",
  "miyo-core",
  "miyo-http",
  "miyo-storage",
+ "miyo-sync",
  "miyo-test",
  "reqwest",
  "serde",
