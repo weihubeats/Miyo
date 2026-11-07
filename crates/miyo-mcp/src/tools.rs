@@ -272,6 +272,7 @@ fn tool_definitions() -> Vec<Value> {
                     "environmentId": { "type": "string", "description": "可选，环境 UUID（缺省用全局+项目变量；生产环境先经用户确认）" },
                     "stopOnFailure": { "type": "boolean", "description": "可选，失败即停（默认 true）" },
                     "variables": { "type": "object", "description": "可选，初始变量注入（优先级最高）", "additionalProperties": { "type": "string" } },
+                    "autoIdempotency": { "type": "boolean", "description": "可选，true 时为写操作步骤自动补 Idempotency-Key 头（键 = runId-步骤位次，重试不重复执行业务）——AI 重试或不确定幂等性时建议开启" },
                     "wait": { "type": "boolean", "description": "可选，true（默认）同步等待完整结果；false 立即返回 runId，用 get_run_result 轮询" }
                 },
                 "required": ["scenarioId"]
@@ -739,6 +740,9 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, Tool
                 .map_err(|e| ToolFailure::new("INVALID_ARGUMENT", e))?
             {
                 payload["environmentId"] = serde_json::json!(id.to_string());
+            }
+            if let Some(v) = args.get("autoIdempotency").and_then(|v| v.as_bool()) {
+                payload["autoIdempotency"] = serde_json::json!(v);
             }
             let wait = args.get("wait").and_then(|v| v.as_bool()).unwrap_or(true);
             payload["wait"] = serde_json::json!(wait);
@@ -1846,6 +1850,97 @@ mod tests {
             .as_array()
             .unwrap()
             .is_empty());
+        // 首次失败：无 recurring。
+        assert!(
+            failed_steps[0].get("recurring").is_none() || failed_steps[0]["recurring"].is_null()
+        );
+
+        // 8.5 再跑一次同样的坏断言 → analyze 标记连续失败（环境漂移信号）。
+        let (env, is_err) = call(
+            &connect,
+            22,
+            "run_scenario",
+            json!({"scenarioId": scenario_id, "stopOnFailure": false}),
+        )
+        .await;
+        assert!(!is_err, "{env}");
+        let run3 = env["data"]["runId"].as_str().unwrap().to_string();
+        let (env, is_err) = call(&connect, 23, "analyze_run_failure", json!({"runId": run3})).await;
+        assert!(!is_err, "{env}");
+        let failed_steps = env["data"]["failedSteps"].as_array().unwrap();
+        assert!(!failed_steps.is_empty(), "{env}");
+        let step1 = failed_steps
+            .iter()
+            .find(|s| s["index"] == 1)
+            .expect("步 2 应在失败清单");
+        assert_eq!(
+            step1["recurring"]["consecutiveRuns"], 2,
+            "连续两次失败应标记：{env}"
+        );
+        assert!(step1["suggestions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s.as_str().unwrap_or("").contains("环境漂移")));
+
+        // 8.6 幂等键自动注入：autoIdempotency=true → 写操作步骤带 Idempotency-Key。
+        let (env, is_err) = call(
+            &connect,
+            24,
+            "run_scenario",
+            json!({
+                "scenarioId": scenario_id,
+                "stopOnFailure": false,
+                "autoIdempotency": true
+            }),
+        )
+        .await;
+        assert!(!is_err, "{env}");
+        let run4 = env["data"]["runId"].as_str().unwrap().to_string();
+        let (env, is_err) = call(
+            &connect,
+            25,
+            "get_step_result",
+            json!({"runId": run4, "stepIndex": 0}),
+        )
+        .await;
+        assert!(!is_err, "{env}");
+        let headers = env["data"]["request"]["headers"].as_array().unwrap();
+        assert!(
+            headers.iter().any(|h| h[0]
+                .as_str()
+                .unwrap_or("")
+                .eq_ignore_ascii_case("Idempotency-Key")),
+            "写操作步骤应自动带幂等键：{env}"
+        );
+        let key = headers
+            .iter()
+            .find(|h| {
+                h[0].as_str()
+                    .unwrap_or("")
+                    .eq_ignore_ascii_case("Idempotency-Key")
+            })
+            .unwrap()[1]
+            .as_str()
+            .unwrap();
+        assert_eq!(key, format!("{run4}-0"));
+        // GET 步骤（步骤 2）不注入。
+        let (env, is_err) = call(
+            &connect,
+            26,
+            "get_step_result",
+            json!({"runId": run4, "stepIndex": 1}),
+        )
+        .await;
+        assert!(!is_err, "{env}");
+        let headers = env["data"]["request"]["headers"].as_array().unwrap();
+        assert!(
+            !headers.iter().any(|h| h[0]
+                .as_str()
+                .unwrap_or("")
+                .eq_ignore_ascii_case("Idempotency-Key")),
+            "读操作不应注入幂等键：{env}"
+        );
 
         // 9. 步骤级操作回归：delete_scenario_step 删到 2 步 + add_scenario_step 加回。
         let (env, is_err) = call(

@@ -76,6 +76,51 @@ pub const MCP_TOOLS: &[McpToolDef] = &[
         name: "agent_info",
         kind: "read",
     },
+    // ---- 集成测试升级（2026-11）：场景全生命周期 ----
+    McpToolDef {
+        name: "list_environments",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "get_environment",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "update_scenario",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "delete_scenario",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "add_scenario_step",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "update_scenario_step",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "delete_scenario_step",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "validate_scenario",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "get_run_result",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "get_step_result",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "analyze_run_failure",
+        kind: "read",
+    },
 ];
 
 /// settings 表中「已停用 MCP 工具」的键；值为 JSON 字符串数组。
@@ -428,6 +473,11 @@ pub struct RunScenarioRequest {
     /// 运行标识（缺省生成 UUID；落库 id 与之相同——查询口径统一）。
     #[serde(default)]
     pub run_id: Option<String>,
+    /// 幂等键自动注入：为写操作步骤（POST/PUT/PATCH/DELETE）补
+    /// `Idempotency-Key: {runId}-{步骤位次}`（已有该头的步骤不覆盖）。
+    /// 同一步骤循环重试共用一键——AI 重试不会重复下单。
+    #[serde(default, rename = "autoIdempotency")]
+    pub auto_idempotency: bool,
 }
 
 fn default_true() -> bool {
@@ -1250,7 +1300,32 @@ async fn execute_scenario(
                 )))
             }
         };
+        // 幂等键自动注入：写操作步骤且未显式配置 Idempotency-Key 时补一键
+        //（键 = runId-位次；循环轮次共用——同一逻辑操作重试不重复执行）。
+        let is_write = {
+            let m = match (&step.request, step.endpoint_id) {
+                (Some(inline), _) => inline.method.clone(),
+                (None, Some(ep_id)) => repo::get_endpoint(&state.db, ep_id)
+                    .await
+                    .map(|ep| ep.method.to_string())
+                    .unwrap_or_default(),
+                (None, None) => String::new(),
+            };
+            ["POST", "PUT", "PATCH", "DELETE"].contains(&m.to_uppercase().as_str())
+        };
         let mut spec = spec;
+        if req.auto_idempotency && is_write {
+            let has_key = spec
+                .headers
+                .iter()
+                .any(|h| h.enabled && h.key.eq_ignore_ascii_case("Idempotency-Key"));
+            if !has_key {
+                spec.headers.push(miyo_core::model::KeyValue::new(
+                    "Idempotency-Key",
+                    format!("{run_id}-{idx}"),
+                ));
+            }
+        }
         miyo_core::apply_global_params(&mut spec, &global_params, &vars);
         let config = miyo_test::config::TestSpec::from_request_value(Some(&serde_json::json!({
             "extract": step.extract,
@@ -2717,6 +2792,16 @@ async fn get_run_step_handler(
     })))
 }
 
+/// 同一断言连续失败的历史对比信息。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecurringFailure {
+    /// 含本次在内连续失败的运行次数。
+    pub consecutive_runs: i64,
+    /// 最近一次失败的时间（RFC3339）。
+    pub last_seen_at: String,
+}
+
 /// GET `/agent/runs/{id}/analysis`：失败原因分析（启发式规则，标注为推测）。
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2724,6 +2809,10 @@ pub struct FailedStepAnalysis {
     pub index: usize,
     pub name: String,
     pub method: String,
+    /// 历史对比：同一断言在最近 N 次运行中连续失败（环境漂移 / 接口行为
+    /// 变更的强信号）。None = 首次失败或无历史可比。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recurring: Option<RecurringFailure>,
     /// 错误类型（REQUEST_ERROR / ASSERTION_FAILED / DEPENDENCY_BLOCKED /
     /// RUN_CANCELLED / LOOP_TIMEOUT…）。
     pub error_type: String,
@@ -2768,6 +2857,33 @@ async fn analyze_run_handler(
     };
     let results: Vec<miyo_test::runner::EndpointResult> =
         serde_json::from_str(&run.results_json).unwrap_or_default();
+
+    // ---- 历史对比：该场景最近几次运行（不含本次）的失败断言集合 ----
+    // 同一断言（步位次 + 断言描述）连续失败 → 环境漂移 / 接口行为变更信号。
+    let previous_runs = repo::list_scenario_runs(&state.db, run.scenario_id, 10)
+        .await
+        .unwrap_or_default();
+    let mut history: Vec<(String, std::collections::HashSet<String>)> = Vec::new(); // (finished_at, failedAssertionKeys)
+    for prev in previous_runs.iter().filter(|r| r.id != run.id) {
+        let prev_results: Vec<miyo_test::runner::EndpointResult> =
+            serde_json::from_str(&prev.results_json).unwrap_or_default();
+        let keys: std::collections::HashSet<String> = prev_results
+            .iter()
+            .filter(|pr| !pr.ok && !pr.cancelled)
+            .flat_map(|pr| {
+                let idx = pr.step_index.unwrap_or_default();
+                pr.outcomes
+                    .iter()
+                    .filter(|o| !o.passed)
+                    .map(move |o| format!("{idx}::{}", o.description))
+            })
+            .collect();
+        history.push((prev.finished_at.to_rfc3339(), keys));
+    }
+    // 历史按 finished_at 倒序（repo 排序），取连续失败计数：从最近一次往前，
+    // 断言键集合包含当前失败键则计数 +1，首次不含即停。
+    let history_tail: Vec<(String, std::collections::HashSet<String>)> =
+        history.into_iter().take(9).collect();
 
     let mut failed_steps = Vec::new();
     for r in &results {
@@ -2872,10 +2988,43 @@ async fn analyze_run_handler(
                 })
             })
             .collect();
+        // 连续失败计数：按当前失败断言键在前史中逐次回溯。
+        let idx = r.step_index.unwrap_or_default();
+        let current_keys: std::collections::HashSet<String> = r
+            .outcomes
+            .iter()
+            .filter(|o| !o.passed)
+            .map(|o| format!("{idx}::{}", o.description))
+            .collect();
+        let mut consecutive = 1i64;
+        let mut last_seen = run.finished_at.to_rfc3339();
+        for (at, keys) in &history_tail {
+            if current_keys.is_subset(keys) && !keys.is_empty() {
+                consecutive += 1;
+                last_seen = at.clone();
+            } else {
+                break;
+            }
+        }
+        let recurring = if consecutive >= 2 && !assertion_failures.is_empty() {
+            Some(RecurringFailure {
+                consecutive_runs: consecutive,
+                last_seen_at: last_seen,
+            })
+        } else {
+            None
+        };
+        if let Some(rec) = &recurring {
+            suggestions.push(format!(
+                "该断言已连续 {} 次运行失败（最近 {}）——优先怀疑环境漂移或接口行为变更，而非脚本问题",
+                rec.consecutive_runs, rec.last_seen_at
+            ));
+        }
         failed_steps.push(FailedStepAnalysis {
             index: r.step_index.unwrap_or_default(),
             name: r.endpoint_name.clone(),
             method: r.method.clone(),
+            recurring,
             error_type,
             error,
             status: r.status,
