@@ -17,9 +17,9 @@ import { useRouter } from 'vue-router'
 import { useLocaleStore } from '../stores/locale'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useIntegrationStore } from '../stores/integration'
+import Brand from '../components/Brand.vue'
 import CustomSelect from '../components/ui/CustomSelect.vue'
 import EnvironmentSelector from '../components/EnvironmentSelector.vue'
-import Icon from '../components/ui/Icon.vue'
 import ScenarioLibrary from '../components/integration/ScenarioLibrary.vue'
 import WorkflowEditor from '../components/integration/WorkflowEditor.vue'
 
@@ -75,13 +75,11 @@ watch(
 <template>
   <div class="it-root">
     <header class="it-topbar">
+      <!-- Brand 打头：macOS 交通灯落在品牌区上方，可点元素不被遮挡（同 WorkspaceView 惯例） -->
+      <Brand :title="t('integration.title')" class="it-brand" />
       <button class="miyo-btn miyo-btn-sm" type="button" :title="t('integration.backHint')" @click="goBack">
         ← {{ t('integration.back') }}
       </button>
-      <span class="it-title">
-        <Icon name="beaker" :size="15" />
-        {{ t('integration.title') }}
-      </span>
       <div class="it-topbar-spacer"></div>
       <CustomSelect
         class="it-project"
@@ -116,7 +114,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
+  padding: 8px 12px 8px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
   -webkit-app-region: drag;
@@ -126,17 +124,14 @@ watch(
   -webkit-app-region: no-drag;
 }
 
-.it-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-1);
-}
-
 .it-topbar-spacer {
   flex: 1;
+}
+
+/* 品牌区定宽：给 macOS 交通灯留位（同 tb-brand 惯例） */
+.it-brand {
+  flex: none;
+  width: 168px;
 }
 
 .it-project {

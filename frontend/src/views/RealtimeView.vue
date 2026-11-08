@@ -15,6 +15,7 @@ import { useMiyoApi } from '../composables/useMiyoApi'
 import { useToast } from '../composables/useToast'
 import { useLocaleStore } from '../stores/locale'
 import { formatTime } from '../utils/dateTime'
+import Brand from '../components/Brand.vue'
 import Icon from '../components/ui/Icon.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
 import KeyValueTable, { type KVRow } from '../components/ui/KeyValueTable.vue'
@@ -366,6 +367,8 @@ onUnmounted(() => {
 <template>
   <div class="rt-root">
     <div class="row miyo-mb-2 rt-top">
+      <!-- Brand 打头：macOS 交通灯落在品牌区上方（同 WorkspaceView / IntegrationView 惯例） -->
+      <Brand v-if="isMainWindow" :title="t('realtime.windowTitle')" class="rt-brand" />
       <button
         v-if="isMainWindow"
         class="miyo-btn miyo-btn-sm"
@@ -563,6 +566,12 @@ onUnmounted(() => {
 }
 .rt-top {
   justify-content: flex-start;
+}
+
+/* 品牌区定宽：给 macOS 交通灯留位（同 it-brand 惯例） */
+.rt-brand {
+  flex: none;
+  width: 168px;
 }
 /* 页签内容区：flex 纵向撑满，日志区 flex:1 吃掉剩余高度（直接子节点必须是它，block 包裹会断掉传递） */
 .rt-pane {
