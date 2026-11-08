@@ -128,11 +128,6 @@ watch(
   flex: 1;
 }
 
-/* 品牌区定宽：给 macOS 交通灯留位（同 tb-brand 惯例） */
-.it-brand {
-  flex: none;
-  width: 168px;
-}
 
 .it-project {
   min-width: 160px;

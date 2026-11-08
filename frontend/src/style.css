@@ -1016,6 +1016,12 @@ html[data-platform='macos'] .dash-top {
 html[data-platform='macos'] .gql-root > .row {
   margin-left: 88px;
 }
+html[data-platform='macos'] .it-topbar {
+  padding-left: 88px;
+}
+html[data-platform='macos'] .rt-top {
+  padding-left: 76px;
+}
 
 /* ---- 拖拽中：全局抓取光标 + 禁止选中 ---- */
 body.dragging-dnd {

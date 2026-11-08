@@ -568,11 +568,6 @@ onUnmounted(() => {
   justify-content: flex-start;
 }
 
-/* 品牌区定宽：给 macOS 交通灯留位（同 it-brand 惯例） */
-.rt-brand {
-  flex: none;
-  width: 168px;
-}
 /* 页签内容区：flex 纵向撑满，日志区 flex:1 吃掉剩余高度（直接子节点必须是它，block 包裹会断掉传递） */
 .rt-pane {
   display: flex;
