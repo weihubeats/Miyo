@@ -541,7 +541,10 @@ async fn persist_scenario_run(
 
 /// 删除单条运行历史。
 #[tauri::command(rename_all = "camelCase")]
-pub async fn delete_scenario_run(state: State<'_, AppState>, run_id: String) -> CommandResult<bool> {
+pub async fn delete_scenario_run(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> CommandResult<bool> {
     let uuid = Uuid::parse_str(&run_id)
         .map_err(|_| CommandError::validation(format!("运行历史 id 无效：{run_id}")))?;
     Ok(repo::delete_scenario_run(&state.db, uuid).await?)
