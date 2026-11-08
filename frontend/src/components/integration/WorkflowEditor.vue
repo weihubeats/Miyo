@@ -29,6 +29,16 @@ import {
   type ScenarioProgressEvent,
 } from '../../composables/useScenarioRun'
 import { computeVarChain, type VarScanStep } from '../../utils/scenarioVars'
+import {
+  validateScenario,
+  summarizeIssues,
+  issuesOfStep,
+  type ValidateStep,
+  type ValidateIssue,
+  type ValidateField,
+} from '../../utils/scenarioValidate'
+import { computeFlowGraph, requiredVarsFrom as requiredVarsFromFlow, toFlowSteps } from '../../utils/scenarioFlow'
+import { applyPolicy, detectPolicy, OVERRIDE_POLICIES, type OverridePolicy } from '../../utils/overridePolicy'
 import { applyStepOverrides, applyUrlOverride } from '../../utils/stepOverrides'
 import { envColorClass, mergedVariableMap } from '../../utils/environment'
 import { applyPathVars } from '../../utils/pathVariables'
@@ -167,6 +177,18 @@ const draftSnapshot = (): string =>
   })
 
 const dirty = computed(() => scenario.value !== null && draftSnapshot() !== savedBaseline)
+
+// ---------- 顶栏保存状态（idle / dirty / saving） ----------
+const saveStateText = computed(() => {
+  if (saving.value) return t('integration.saveStateSaving')
+  if (dirty.value) return t('integration.saveStateDirty')
+  return t('integration.saveStateSaved')
+})
+const saveStateClass = computed(() => {
+  if (saving.value) return 'saving'
+  if (dirty.value) return 'dirty'
+  return 'saved'
+})
 
 const scenarioRef = computed(() => (scenario.value ? { id: scenario.value.id, name: scenario.value.name } : null))
 
@@ -384,6 +406,22 @@ function duplicateStep(s: EditorStep): void {
 function ensureOverrides(s: EditorStep): StepOverrides {
   if (!s.overrides) s.overrides = {}
   return s.overrides
+}
+
+// ---------- 覆盖策略三态（继承 / 合并 / 替换） ----------
+const POLICY_OPTIONS = computed(() =>
+  OVERRIDE_POLICIES.map((p) => ({ value: p, label: t(`integration.policy.${p}`) })),
+)
+
+/** 当前步骤的覆盖策略（由 overrides 内容推断，无新增持久化字段）。 */
+function stepPolicy(s: EditorStep): OverridePolicy {
+  return detectPolicy(endpointOf(s)?.request ?? null, s.overrides)
+}
+
+/** 切换策略：inherit → null；merge/replace → 按策略重算 overrides。 */
+function onPolicyChange(s: EditorStep, value: string): void {
+  const policy = (OVERRIDE_POLICIES as string[]).includes(value) ? (value as OverridePolicy) : 'merge'
+  s.overrides = applyPolicy(policy, endpointOf(s)?.request ?? null, s.overrides)
 }
 
 /** 引用式 → 内联：复制接口当前配置为步骤私有请求（此后与接口解耦）。 */
@@ -639,6 +677,143 @@ const externalVarNames = computed(() =>
 )
 const varChain = computed(() => computeVarChain(varScanSteps.value, externalVarNames.value))
 
+// ---------- 运行前校验（纯函数物化，见 utils/scenarioValidate） ----------
+/** 表达式面板里「值型算子」集合：这些算子缺期望值无法求值。 */
+const VALUE_OPS = new Set(['eq', 'neq', 'contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'regex', 'in'])
+
+const validateSteps = computed<ValidateStep[]>(() =>
+  steps.value.map((s, i) => {
+    const ep = s.kind === 'ref' ? endpointOf(s) : null
+    const texts = varScanSteps.value[i]?.referenceTexts ?? []
+    const cond = s.condition
+    const wc = s.loop?.while_condition ?? null
+    return {
+      index: i,
+      enabled: s.enabled,
+      name: stepTitle(s),
+      endpointId: s.endpointId,
+      endpointResolved: s.kind === 'inline' || ep != null,
+      url:
+        s.kind === 'inline'
+          ? s.inline.url
+          : ep
+            ? applyUrlOverride(urlTemplateFor(ep), s.overrides)
+            : '',
+      referenceTexts: texts,
+      extracts: s.extract.filter((e) => e.name.trim() || e.path.trim()),
+      assertions: s.assertions.map((a) => ({
+        type: a.type,
+        path: a.path,
+        op: a.op,
+        needsExpected: VALUE_OPS.has(a.op),
+        expected: a.expected,
+      })),
+      assertionsParsed: true,
+      extractParsed: true,
+      condition: cond
+        ? {
+            source: (cond.source ?? 'var') as 'var' | 'prevStatus',
+            name: cond.name ?? '',
+            op: cond.op ?? 'eq',
+            value: cond.value ?? null,
+            needsValue: VALUE_OPS.has(cond.op ?? 'eq'),
+          }
+        : null,
+      loop: s.loop
+        ? {
+            mode: s.loop.mode,
+            count: s.loop.count ?? null,
+            maxLoops: s.loop.max_loops ?? null,
+            intervalMs: s.loop.interval_ms ?? null,
+            whileCondition: wc
+              ? {
+                  name: wc.name ?? '',
+                  op: wc.op ?? 'eq',
+                  value: wc.value ?? null,
+                  needsValue: VALUE_OPS.has(wc.op ?? 'eq'),
+                }
+              : null,
+          }
+        : null,
+      parallel: s.parallel,
+    }
+  }),
+)
+
+const issues = computed(() =>
+  validateScenario(validateSteps.value, {
+    externalNames: externalVarNames.value,
+    scenarioName: name.value,
+    hasEnvironment: !!workspace.activeEnvId,
+  }),
+)
+const issueSummary = computed(() => summarizeIssues(issues.value))
+const errorCount = computed(() => issueSummary.value.errors)
+const warnCount = computed(() => issueSummary.value.warnings)
+/** 校验面板展开态：有阻断时默认展开，用户可手动收起。 */
+const validateOpen = ref(false)
+watch(
+  errorCount,
+  (n, prev) => {
+    if (n > 0 && !prev) validateOpen.value = true
+  },
+  { immediate: true },
+)
+
+/** 单步问题（步骤卡角标）。 */
+function stepIssues(stepIndex: number): ValidateIssue[] {
+  return issuesOfStep(issues.value, stepIndex)
+}
+
+/** 校验项 → 定位：切到编排视图、选中步骤、切到对应页签、滚动到视口。 */
+function gotoIssue(issue: ValidateIssue): void {
+  if (issue.stepIndex < 0) {
+    viewMode.value = 'manual'
+    return
+  }
+  viewMode.value = 'manual'
+  const s = steps.value[issue.stepIndex]
+  if (!s) return
+  selectStep(s)
+  const field: ValidateField = issue.field === 'general' ? 'request' : issue.field
+  if (detailTabs.some((x) => x.key === field)) detailTab.value = field
+  void nextTick(() => {
+    const el = stepsEl.value?.querySelector(`[data-step-key="${s.key}"]`)
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  })
+}
+
+// ---------- 工作流连线（变量流向可视化） ----------
+const flowSteps = computed(() =>
+  toFlowSteps(
+    steps.value.map((s, i) => ({
+      index: i,
+      enabled: s.enabled,
+      name: stepTitle(s),
+      extracts: s.extract,
+      referenceTexts: varScanSteps.value[i]?.referenceTexts ?? [],
+      conditionName: s.condition?.name ?? null,
+      loopWhileName: s.loop?.while_condition?.name ?? null,
+      looping: s.loop != null,
+      parallel: s.parallel,
+    })),
+  ),
+)
+const flowGraph = computed(() => computeFlowGraph(flowSteps.value, externalVarNames.value))
+/** 步骤下标 → 该步「上一条连线」（入口边 from=-1 挂在首个启用步骤上）。 */
+const edgeInto = computed(() => {
+  const map = new Map<number, (typeof flowGraph.value.edges)[number]>()
+  for (const e of flowGraph.value.edges) map.set(e.to, e)
+  return map
+})
+
+/** 连线上的变量标签：超过 3 个折叠为 +N。 */
+function edgeVarsLabel(e: { vars: string[]; externalVars: string[] }): { shown: string[]; more: number; external: boolean } {
+  const all = e.vars
+  const shown = all.slice(0, 3)
+  return { shown, more: Math.max(0, all.length - shown.length), external: all.length === 0 && e.externalVars.length > 0 }
+}
+
 // ---------- 运行（useScenarioRun + 物化） ----------
 function buildOneRunStep(s: EditorStep): BuiltRunStep | null {
   if (!s.enabled) return null
@@ -769,6 +944,11 @@ function onRunClick(): void {
     void run.stop()
     return
   }
+  // 运行前校验：有阻断项先展开面板让用户定位修复（不静默拒绝——面板里有「仍然运行」）。
+  if (errorCount.value > 0) {
+    validateOpen.value = true
+    viewMode.value = viewMode.value === 'script' ? 'manual' : viewMode.value
+  }
   if (writeStepTitles.value.length) {
     confirmRunOpen.value = true
     return
@@ -779,6 +959,81 @@ function onRunClick(): void {
 function confirmRun(): void {
   confirmRunOpen.value = false
   void run.run()
+}
+
+/** 校验面板的「仍然运行」：忽略阻断项。写操作照旧走副作用确认。 */
+function forceRun(): void {
+  validateOpen.value = false
+  if (writeStepTitles.value.length) {
+    confirmRunOpen.value = true
+    return
+  }
+  void run.run()
+}
+
+// ---------- 手填前置变量（单步 / 从步骤执行且无运行时快照时） ----------
+const varsFillOpen = ref(false)
+const varsFillValues = ref<Record<string, string>>({})
+const varsFillNewName = ref('')
+const varsFillTarget = ref<{ from: number; only: boolean } | null>(null)
+/** 该步（及后续步骤）真正依赖的变量：必须手填，否则运行会拿到空值。 */
+const varsFillRequired = computed(() => (varsFillTarget.value ? requiredVarsFrom(varsFillTarget.value.from) : []))
+/** 弹窗里列出的行：依赖变量 ∪ 用户手动添加的。 */
+const varsFillMissing = computed(() => {
+  const names = [...varsFillRequired.value]
+  for (const k of Object.keys(varsFillValues.value)) if (!names.includes(k)) names.push(k)
+  return names
+})
+/** 所有必需变量都填了才允许运行。 */
+const varsFillReady = computed(() =>
+  varsFillRequired.value.every((n) => (varsFillValues.value[n] ?? '').trim().length > 0),
+)
+
+/**
+ * 计算某步起真正需要的外部输入：该步（含）之后消费、但不是更早启用步骤提取的变量。
+ * 这些正是「无快照时链路断掉」的部分，必须由用户补齐。
+ */
+function requiredVarsFrom(fromIdx: number): string[] {
+  return requiredVarsFromFlow(flowSteps.value, flowGraph.value.definedBy, externalVarNames.value, fromIdx)
+}
+
+/** 选「从步骤执行 / 单步执行」：有快照直接跑；否则先弹窗收变量。 */
+function requestRunFrom(fromIdx: number, onlyThis: boolean): void {
+  const start = buildRunSteps().findIndex((b) => b.index === fromIdx)
+  if (start === -1) return
+  if (run.varsSnapshots.value[start]) {
+    void run.runFrom(fromIdx, onlyThis)
+    return
+  }
+  const required = requiredVarsFrom(fromIdx)
+  if (!required.length) {
+    // 该步不依赖任何前序产物：直接跑，不会产生隐式空变量。
+    void run.runFrom(fromIdx, onlyThis)
+    return
+  }
+  varsFillTarget.value = { from: fromIdx, only: onlyThis }
+  varsFillValues.value = Object.fromEntries(required.map((n) => [n, '']))
+  varsFillNewName.value = ''
+  varsFillOpen.value = true
+}
+
+function addVarsFillRow(): void {
+  const name = varsFillNewName.value.trim()
+  if (!name) return
+  if (!(name in varsFillValues.value)) varsFillValues.value[name] = ''
+  varsFillNewName.value = ''
+}
+
+function confirmVarsFill(): void {
+  const target = varsFillTarget.value
+  if (!target || !varsFillReady.value) return
+  const vars: Record<string, string> = {}
+  for (const [k, v] of Object.entries(varsFillValues.value)) {
+    if (v.trim()) vars[k] = v
+  }
+  varsFillOpen.value = false
+  varsFillTarget.value = null
+  void run.runFrom(target.from, target.only, vars)
 }
 
 // ---------- 进度事件 ----------
@@ -1165,8 +1420,8 @@ function onMenuSelect(item: MenuItem): void {
   if (item.key === 'dup') duplicateStep(target.step)
   else if (item.key === 'to-inline') convertToInline(target.step)
   else if (item.key === 'del') removeStep(target.step)
-  else if (item.key === 'run-from') void run.runFrom(target.idx, false)
-  else if (item.key === 'run-only') void run.runFrom(target.idx, true)
+  else if (item.key === 'run-from') requestRunFrom(target.idx, false)
+  else if (item.key === 'run-only') requestRunFrom(target.idx, true)
 }
 
 // ---------- 定位 ----------
@@ -1226,12 +1481,68 @@ function runStepMethod(pos: number): string {
 
     <RunCompareModal v-model:open="compareOpen" :scenario-id="props.scenarioId" />
 
+    <!-- 单步 / 从步骤执行：无运行时快照时手填前置变量，绝不隐式传空变量 -->
+    <Modal
+      v-model:open="varsFillOpen"
+      :title="t('integration.varsFillTitle')"
+      width="460px"
+    >
+      <p class="wf-confirm-body">{{ t('integration.varsFillBody') }}</p>
+      <div class="wf-varsfill">
+        <div v-for="(v, k) in varsFillMissing" :key="v" class="wf-varsfill-row">
+          <span class="wf-varsfill-name" :title="v">{{ v }}</span>
+          <input
+            v-model="varsFillValues[v]"
+            class="miyo-input wf-varsfill-input"
+            type="text"
+            spellcheck="false"
+            :placeholder="t('integration.varsFillPh')"
+          >
+          <IconButton
+            v-if="!varsFillRequired.includes(v)"
+            name="x"
+            :size="12"
+            :title="t('common.delete')"
+            @click="delete varsFillValues[v]; k"
+          />
+        </div>
+        <div class="wf-varsfill-row">
+          <input
+            v-model="varsFillNewName"
+            class="miyo-input wf-varsfill-input"
+            type="text"
+            spellcheck="false"
+            :placeholder="t('integration.varsFillNamePh')"
+          >
+          <button class="miyo-btn miyo-btn-sm" type="button" :disabled="!varsFillNewName.trim()" @click="addVarsFillRow">
+            <Icon name="plus" :size="12" /> {{ t('integration.varsFillAdd') }}
+          </button>
+        </div>
+      </div>
+      <template #footer>
+        <button class="miyo-btn miyo-btn-sm" type="button" @click="varsFillOpen = false">
+          {{ t('common.cancel') }}
+        </button>
+        <button
+          class="miyo-btn miyo-btn-sm miyo-btn-primary"
+          type="button"
+          :disabled="!varsFillReady"
+          @click="confirmVarsFill"
+        >
+          <Icon name="play" :size="12" /> {{ t('integration.run') }}
+        </button>
+      </template>
+    </Modal>
+
     <!-- ===== 顶栏 ===== -->
     <header class="wf-topbar">
       <IconButton name="chevron-right" :size="14" :title="t('integration.back')" @click="emit('back')" />
       <input v-model="name" class="wf-name" type="text" :placeholder="t('integration.editorNamePh')" spellcheck="false" />
       <input v-model="category" class="wf-category" type="text" :placeholder="t('integration.categoryLabel')" spellcheck="false" />
       <SegmentedControl v-model="viewMode" :options="VIEW_OPTIONS" size="sm" />
+      <span class="wf-save-state" :class="saveStateClass" :title="saveStateText">
+        <span class="wf-save-dot"></span>{{ saveStateText }}
+      </span>
       <div class="wf-topbar-spacer"></div>
       <CustomSelect
         class="wf-strategy"
@@ -1257,6 +1568,12 @@ function runStepMethod(pos: number): string {
         {{ run.running.value ? t('integration.stop') : t('integration.run') }}
       </button>
     </header>
+
+    <!-- 运行进度条：只在运行中显示，避免常驻占位造成布局跳动 -->
+    <div v-if="run.running.value" class="wf-progress">
+      <div class="wf-progress-bar" :style="{ width: `${Math.max(2, run.progressPercent.value)}%` }"></div>
+      <span class="wf-progress-text">{{ run.progress.value }} / {{ run.progressPercent.value }}%</span>
+    </div>
 
     <!-- ===== 执行结果视图（独立模式；数据为落库快照） ===== -->
     <RunResultView
@@ -1316,18 +1633,100 @@ function runStepMethod(pos: number): string {
           </button>
         </div>
 
+        <!-- 运行前校验面板：有阻断才自动展开；可收起，面板内可「仍然运行」 -->
+        <div v-if="issues.length" class="wf-validate" :class="{ collapsed: !validateOpen }">
+          <button class="wf-validate-head" type="button" @click="validateOpen = !validateOpen">
+            <Icon name="chevron-right" :size="12" class="wf-validate-caret" />
+            <span class="wf-validate-title">{{ t('integration.validateTitle') }}</span>
+            <span v-if="errorCount" class="wf-validate-tag error">{{ t('integration.validateErrors', { n: errorCount }) }}</span>
+            <span v-if="warnCount" class="wf-validate-tag warn">{{ t('integration.validateWarnings', { n: warnCount }) }}</span>
+            <div class="wf-validate-spacer"></div>
+            <span v-if="!validateOpen" class="wf-validate-hint">{{ t('integration.validateExpand') }}</span>
+          </button>
+          <ul v-if="validateOpen" class="wf-validate-list">
+            <li
+              v-for="(is, k) in issues"
+              :key="k"
+              class="wf-validate-item"
+              :class="is.severity"
+              role="button"
+              tabindex="0"
+              @click="gotoIssue(is)"
+              @keydown.enter="gotoIssue(is)"
+            >
+              <span class="wf-validate-sev">{{ is.severity === 'error' ? '!' : '·' }}</span>
+              <span class="wf-validate-where">
+                {{ is.stepIndex >= 0 ? t('integration.validateStepAt', { n: is.stepIndex + 1 }) : t('integration.validateScene') }}
+              </span>
+              <span class="wf-validate-msg">{{ t(is.message, is.detail ?? {}) }}</span>
+              <span class="wf-validate-go">{{ t('integration.validateGoto') }}</span>
+            </li>
+          </ul>
+          <div v-if="validateOpen && errorCount" class="wf-validate-foot">
+            <span class="wf-validate-foot-hint">{{ t('integration.validateForceHint') }}</span>
+            <button class="miyo-btn miyo-btn-sm" type="button" @click="forceRun">
+              {{ t('integration.validateForceRun') }}
+            </button>
+          </div>
+        </div>
+
         <div ref="stepsEl" class="wf-steps">
+          <!-- 入口连线：链路起点 -->
+          <div v-if="steps.length" class="wf-edge wf-edge-entry">
+            <span class="wf-edge-dot"></span>
+            <span class="wf-edge-label">{{ t('integration.flowStart') }}</span>
+          </div>
           <div
             v-for="(s, i) in steps"
             :key="s.key"
-            class="wf-step"
-            :class="{ selected: selectedKey === s.key, disabled: !s.enabled }"
+            class="wf-step-wrap"
             :data-step-key="s.key"
-            role="button"
-            tabindex="0"
-            @click="selectStep(s)"
-            @keydown.enter="selectStep(s)"
           >
+            <!-- 步骤间连线：挂上从前序步骤流转过来的变量名 -->
+            <div
+              v-if="edgeInto.get(i)"
+              class="wf-edge"
+              :class="{
+                muted: !s.enabled || edgeInto.get(i)!.muted,
+                dash: edgeInto.get(i)!.parallel,
+                loop: !!(s.loop || edgeInto.get(i)!.vars.length),
+              }"
+            >
+              <span class="wf-edge-line"></span>
+              <span v-if="edgeInto.get(i)!.vars.length" class="wf-edge-chips">
+                <span
+                  v-for="v in edgeVarsLabel(edgeInto.get(i)!).shown"
+                  :key="v"
+                  class="wf-edge-chip"
+                  :title="t('integration.flowVarsTitle', { name: v })"
+                >{{ v }}</span>
+                <span v-if="edgeVarsLabel(edgeInto.get(i)!).more" class="wf-edge-chip more">
+                  +{{ edgeVarsLabel(edgeInto.get(i)!).more }}
+                </span>
+              </span>
+              <span
+                v-else-if="edgeInto.get(i)!.externalVars.length"
+                class="wf-edge-chip ext"
+                :title="t('integration.flowExternalTitle', { names: edgeInto.get(i)!.externalVars.join(', ') })"
+              >{{ t('integration.flowExternal', { n: edgeInto.get(i)!.externalVars.length }) }}</span>
+              <span v-if="s.loop" class="wf-edge-loop" :title="loopBadgeTitle(s.loop)">
+                {{ t('integration.flowLoop', { n: loopBadgeCount(s.loop) }) }}
+              </span>
+            </div>
+
+            <div
+              class="wf-step"
+              :class="{
+                selected: selectedKey === s.key,
+                disabled: !s.enabled,
+                invalid: stepIssues(i).some((x) => x.severity === 'error'),
+                batch: s.parallel,
+              }"
+              role="button"
+              tabindex="0"
+              @click="selectStep(s)"
+              @keydown.enter="selectStep(s)"
+            >
             <span class="wf-drag" :title="t('integration.addStep')" aria-hidden="true">⋮⋮</span>
             <span class="wf-step-index num">{{ i + 1 }}</span>
             <span class="wf-step-method" :class="methodBadgeTone(stepMethod(s))">{{ stepMethod(s) }}</span>
@@ -1385,6 +1784,10 @@ function runStepMethod(pos: number): string {
                 </button>
               </Popconfirm>
             </span>
+            <span v-if="stepIssues(i).length" class="wf-step-issue" :class="{ err: stepIssues(i).some((x) => x.severity === 'error') }" :title="stepIssues(i).map((x) => t(x.message, x.detail ?? {})).join('\n')">
+              {{ stepIssues(i).length }}
+            </span>
+          </div>
           </div>
           <div v-if="!steps.length" class="wf-steps-empty">
             <Icon name="beaker" :size="20" />
@@ -1433,6 +1836,19 @@ function runStepMethod(pos: number): string {
           </div>
           <Tabs v-model="detailTab" :tabs="detailTabs" size="sm" />
           <div class="wf-detail-body">
+            <!-- 覆盖策略三态（仅引用式步骤）：数据上只体现为 overrides 内容，无新增字段 -->
+            <div v-if="selectedStep.kind === 'ref'" class="wf-policy">
+              <span class="wf-policy-label">{{ t('integration.policyLabel') }}</span>
+              <CustomSelect
+                class="wf-policy-select"
+                :model-value="stepPolicy(selectedStep)"
+                :options="POLICY_OPTIONS"
+                size="sm"
+                :pop-min-width="150"
+                @update:model-value="(v) => onPolicyChange(selectedStep!, String(v ?? 'merge'))"
+              />
+              <span class="wf-policy-hint">{{ t(`integration.policyHint.${stepPolicy(selectedStep)}`) }}</span>
+            </div>
             <StepRequestEditor
               v-show="detailTab === 'request'"
               :kind="selectedStep.kind"
@@ -1591,6 +2007,23 @@ function runStepMethod(pos: number): string {
                       spellcheck="false"
                       :placeholder="t('integration.assertExpectedPh')"
                     />
+                  </div>
+                  <!-- 退出条件：把引擎的终止语义显式写出来，避免用户以为「失败会继续重试」 -->
+                  <div class="wf-loop-exit">
+                    <div class="wf-loop-exit-row">
+                      <span class="wf-loop-exit-badge ok">{{ t('integration.loopExitSuccess') }}</span>
+                      <span class="wf-loop-exit-text">
+                        {{ selectedStep.loop.mode === 'count' ? t('integration.loopExitCount') : t('integration.loopExitWhile') }}
+                      </span>
+                    </div>
+                    <div class="wf-loop-exit-row">
+                      <span class="wf-loop-exit-badge fail">{{ t('integration.loopExitFail') }}</span>
+                      <span class="wf-loop-exit-text">{{ t('integration.loopExitFailText') }}</span>
+                    </div>
+                    <div class="wf-loop-exit-row">
+                      <span class="wf-loop-exit-badge cap">{{ t('integration.loopExitCap') }}</span>
+                      <span class="wf-loop-exit-text">{{ t('integration.loopExitCapText') }}</span>
+                    </div>
                   </div>
                 </template>
               </div>
@@ -1815,8 +2248,451 @@ function runStepMethod(pos: number): string {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
   padding-right: 2px;
+}
+
+/* ---- 工作流连线（步骤间的变量流向可视） ---- */
+.wf-step-wrap {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 6px;
+}
+
+.wf-edge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+  padding-left: 30px;
+  min-width: 0;
+}
+
+.wf-edge-entry {
+  min-height: 16px;
+}
+
+.wf-edge-line {
+  flex: none;
+  width: 1px;
+  height: 100%;
+  min-height: 14px;
+  background: var(--border-strong);
+}
+
+/* 虚线段：批内并行 / 入口 */
+.wf-edge.dash .wf-edge-line {
+  background: repeating-linear-gradient(to bottom, var(--border-strong) 0 3px, transparent 3px 6px);
+}
+
+.wf-edge.muted .wf-edge-line {
+  opacity: 0.4;
+}
+
+.wf-edge-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 28px;
+}
+
+.wf-edge-label {
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+  letter-spacing: 0.04em;
+}
+
+.wf-edge-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.wf-edge-chip {
+  flex: none;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: var(--fs-xxs);
+  font-family: var(--font-mono);
+  line-height: 15px;
+}
+
+.wf-edge-chip.ext {
+  background: var(--bg-hover);
+  color: var(--text-3);
+}
+
+.wf-edge-chip.more {
+  background: transparent;
+  color: var(--text-3);
+}
+
+.wf-edge.muted .wf-edge-chip {
+  opacity: 0.5;
+}
+
+.wf-edge-loop {
+  flex: none;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-strong);
+  color: var(--text-3);
+  font-size: var(--fs-xxs);
+  line-height: 14px;
+}
+
+/* 批次内的并行步骤：左侧色条标出「同批并发」 */
+.wf-step.batch {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.wf-step.invalid {
+  border-color: var(--danger);
+}
+
+.wf-step-issue {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-3);
+  font-size: var(--fs-xxs);
+  line-height: 16px;
+  text-align: center;
+}
+
+.wf-step-issue.err {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ---- 运行前校验面板 ---- */
+.wf-validate {
+  flex: none;
+  margin: 0 0 6px;
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+
+.wf-validate-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  text-align: left;
+}
+
+.wf-validate-caret {
+  flex: none;
+  transition: transform 0.15s ease;
+  transform: rotate(90deg);
+}
+
+.wf-validate.collapsed .wf-validate-caret {
+  transform: rotate(0deg);
+}
+
+.wf-validate-title {
+  font-weight: 600;
+}
+
+.wf-validate-tag {
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xxs);
+  line-height: 16px;
+}
+
+.wf-validate-tag.error {
+  background: var(--danger);
+  color: #fff;
+}
+
+.wf-validate-tag.warn {
+  background: var(--warning);
+  color: #1a1a1a;
+}
+
+.wf-validate-spacer {
+  flex: 1;
+}
+
+.wf-validate-hint {
+  color: var(--text-3);
+  font-size: var(--fs-xxs);
+}
+
+.wf-validate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.wf-validate-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.wf-validate-item:hover {
+  background: var(--bg-hover);
+}
+
+.wf-validate-sev {
+  flex: none;
+  width: 10px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.wf-validate-item.error .wf-validate-sev {
+  color: var(--danger);
+}
+
+.wf-validate-item.warning .wf-validate-sev {
+  color: var(--warning);
+}
+
+.wf-validate-where {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xxs);
+}
+
+.wf-validate-msg {
+  flex: 1;
+  min-width: 0;
+}
+
+.wf-validate-go {
+  flex: none;
+  opacity: 0;
+  color: var(--accent);
+  font-size: var(--fs-xxs);
+  transition: opacity 0.12s ease;
+}
+
+.wf-validate-item:hover .wf-validate-go {
+  opacity: 1;
+}
+
+/* ---- 顶栏保存状态 ---- */
+.wf-save-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.wf-save-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.wf-save-state.dirty {
+  color: var(--warning);
+}
+
+.wf-save-state.dirty .wf-save-dot {
+  background: var(--warning);
+}
+
+.wf-save-state.saving .wf-save-dot {
+  background: var(--accent);
+  animation: wf-pulse 1s ease-in-out infinite;
+}
+
+@keyframes wf-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wf-save-state.saving .wf-save-dot {
+    animation: none;
+  }
+}
+
+/* ---- 运行进度条 ---- */
+.wf-progress {
+  flex: none;
+  position: relative;
+  height: 2px;
+  background: var(--bg-hover);
+}
+
+.wf-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.wf-progress-text {
+  position: absolute;
+  right: 8px;
+  top: 3px;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+}
+
+/* ---- 循环退出条件说明 ---- */
+.wf-loop-exit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+}
+
+.wf-loop-exit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
+}
+
+.wf-loop-exit-badge {
+  flex: none;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xxs);
+  line-height: 15px;
+}
+
+.wf-loop-exit-badge.ok {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
+
+.wf-loop-exit-badge.fail {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+}
+
+.wf-loop-exit-badge.cap {
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+  color: var(--warning);
+}
+
+.wf-loop-exit-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+/* ---- 校验面板底部：忽略阻断仍然运行 ---- */
+.wf-validate-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 6px;
+  border-top: 1px solid var(--border);
+}
+
+.wf-validate-foot-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+}
+
+/* ---- 手填变量弹窗 ---- */
+.wf-varsfill {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+
+.wf-varsfill-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wf-varsfill-name {
+  flex: none;
+  width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--accent);
+}
+
+.wf-varsfill-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- 覆盖策略 ---- */
+.wf-policy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.wf-policy-label {
+  flex: none;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+}
+
+.wf-policy-select {
+  width: 110px;
+}
+
+.wf-policy-hint {
+  flex: 1;
+  min-width: 120px;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
 }
 
 .wf-step {

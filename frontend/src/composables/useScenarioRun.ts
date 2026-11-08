@@ -426,9 +426,10 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
   /**
    * 从编辑态位次 `fromIdx` 起（含）执行到末尾；单步执行 = 只跑该位次。
    * 初始变量：原运行在该步执行前的 runtime 快照（重建链路上下文）；
-   * 无快照（从未整跑过 / 历史回看）时仅用环境变量并提示。
+   * 无快照（从未整跑过 / 历史回看）时用调用方手填的 `varsOverride`，
+   * 仍无则由宿主拦截——绝不隐式传 undefined 让后端拿到空变量。
    */
-  async function runFrom(fromIdx: number, onlyThis: boolean): Promise<void> {
+  async function runFrom(fromIdx: number, onlyThis: boolean, varsOverride?: Record<string, string>): Promise<void> {
     const built = await prepareRun()
     if (!built) return
     const all = buildRunSteps()
@@ -438,8 +439,8 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     if (!subset.length) return
 
     const snapshot = varsSnapshots.value[start]
-    const initialVars = snapshot ? { ...snapshot } : undefined
-    if (!snapshot) {
+    const initialVars = snapshot ? { ...snapshot } : varsOverride && Object.keys(varsOverride).length ? { ...varsOverride } : undefined
+    if (!snapshot && !initialVars) {
       toast.info(t('integration.runFromStepNoSnapshot'))
     }
 
