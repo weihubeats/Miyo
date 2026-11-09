@@ -282,6 +282,18 @@ pub struct ScenarioStepDetail {
     pub assertions: serde_json::Value,
     /// 生效请求规格（头 / Body / 认证形态），写脚本时照抄。
     pub request: RequestSpec,
+    /// 执行控制（保存后原样读回——此前 get_scenario 不回显这些字段，
+    /// AI 写完 waitMs / loop / condition 后读不到，误判为被静默丢弃，issue #156）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r#loop: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub parallel: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<serde_json::Value>,
 }
 
 /// GET `/agent/scenarios/{id}` 详情。
@@ -901,6 +913,11 @@ async fn get_scenario_handler(
             extract: step.extract.clone(),
             assertions: step.assertions.clone(),
             request,
+            condition: step.condition.clone(),
+            r#loop: step.r#loop.clone(),
+            wait_ms: step.wait_ms,
+            parallel: step.parallel,
+            overrides: step.overrides.clone(),
         });
     }
     let project = repo::get_project(&state.db, scenario.project_id)
@@ -2040,6 +2057,12 @@ async fn list_environments_handler(
 pub struct EnvQuery {
     #[serde(rename = "projectId", default)]
     pub project_id: Option<uuid::Uuid>,
+    /// validate_scenario 专用：运行期将经 run_scenario 的 variables 注入的
+    /// 变量名（逗号分隔）——命中的引用不再报 VARIABLE_NOT_FOUND，
+    /// 避免每次运行传唯一值（订单号 / 幂等键）的合法用法刷一屏 warning
+    /// 淹没真问题（issue #157）。
+    #[serde(rename = "runtimeVariables", default)]
+    pub runtime_variables: String,
 }
 
 /// GET `/agent/environments/{id}`：环境详情（敏感值脱敏）。
@@ -2507,9 +2530,20 @@ async fn validate_scenario_handler(
             let parsed = serde_json::from_value::<miyo_test::config::StepLoop>(l.clone());
             match parsed {
                 Ok(l) if l.is_valid() => {}
-                _ => errors.push(ValidateIssue {
+                Ok(l) => {
+                    // while 的 source / expression 用法错误报真实原因（issue #156）
+                    let message = l.while_problem().unwrap_or_else(|| {
+                        "循环配置无效（mode/count/while_condition 组合不合法）".into()
+                    });
+                    errors.push(ValidateIssue {
+                        code: "STEP_INVALID_LOOP".into(),
+                        message,
+                        step_index: Some(i),
+                    });
+                }
+                Err(e) => errors.push(ValidateIssue {
                     code: "STEP_INVALID_LOOP".into(),
-                    message: "循环配置无效（mode/count/while_condition 组合不合法）".into(),
+                    message: format!("循环配置无效：{e}"),
                     step_index: Some(i),
                 }),
             }
@@ -2578,6 +2612,15 @@ async fn validate_scenario_handler(
         refs.sort();
         refs.dedup();
 
+        // 运行期注入变量（runtimeVariables）：运行开始即存在，任何步骤引用
+        // 都合法——不再报 VARIABLE_NOT_FOUND / VARIABLE_USED_BEFORE_DEFINED。
+        let runtime_vars: std::collections::HashSet<&str> = q
+            .runtime_variables
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+
         // 可用集合：静态变量 + 本步之前的提取产出。
         let mut avail_now = available.clone();
         for earlier in produced_later.iter().take(i) {
@@ -2585,6 +2628,9 @@ async fn validate_scenario_handler(
         }
         for r in refs {
             if avail_now.contains(&r) || r == "base_url" {
+                continue;
+            }
+            if runtime_vars.contains(r.as_str()) {
                 continue;
             }
             if produced_later

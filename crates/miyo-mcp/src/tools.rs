@@ -423,7 +423,12 @@ fn tool_definitions() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "scenarioId": { "type": "string", "description": "场景 UUID" },
-                    "environmentId": { "type": "string", "description": "可选，按指定环境校验变量可用性" }
+                    "environmentId": { "type": "string", "description": "可选，按指定环境校验变量可用性" },
+                    "runtimeVariables": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "可选，运行期将经 run_scenario 的 variables 注入的变量名（如每次运行传唯一订单号/幂等键）——这些引用不再报 VARIABLE_NOT_FOUND"
+                    }
                 },
                 "required": ["scenarioId"]
             }
@@ -599,6 +604,16 @@ fn validate_tool_call(params: &Value) -> Result<(), (i64, String)> {
             uuid_req(&args, "scenarioId")?;
             if name == "validate_scenario" {
                 opt_uuid_arg(&args, "environmentId").map_err(|e| (-32602, e))?;
+                if let Some(v) = args.get("runtimeVariables") {
+                    if !v.is_null()
+                        && !v
+                            .as_array()
+                            .map(|a| a.iter().all(|x| x.is_string()))
+                            .unwrap_or(false)
+                    {
+                        return Err((-32602, "runtimeVariables 必须是字符串数组".to_string()));
+                    }
+                }
             }
             Ok(())
         }
@@ -980,9 +995,19 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, Tool
             let scenario_id = uuid_req(&args, "scenarioId")?;
             let env = opt_uuid_arg(&args, "environmentId")
                 .map_err(|e| ToolFailure::new("INVALID_ARGUMENT", e))?;
+            let runtime_vars: Vec<String> = args
+                .get("runtimeVariables")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
             serde_json::to_value(
                 client
-                    .validate_scenario(scenario_id, env)
+                    .validate_scenario(scenario_id, env, &runtime_vars)
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )

@@ -214,15 +214,26 @@ impl ControlClient {
             .await
     }
 
-    /// 校验场景（结构化问题清单）。
+    /// 校验场景（结构化问题清单）。`runtime_variables`：运行期将注入的
+    /// 变量名——校验不再对它们的引用报 VARIABLE_NOT_FOUND（issue #157）。
     pub async fn validate_scenario(
         &self,
         scenario_id: Uuid,
         environment_id: Option<Uuid>,
+        runtime_variables: &[String],
     ) -> Result<serde_json::Value, AppError> {
-        let suffix = match environment_id {
-            Some(id) => format!("?environmentId={id}"),
-            None => String::new(),
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if let Some(id) = environment_id {
+            query.append_pair("environmentId", &id.to_string());
+        }
+        if !runtime_variables.is_empty() {
+            query.append_pair("runtimeVariables", &runtime_variables.join(","));
+        }
+        let query = query.finish();
+        let suffix = if query.is_empty() {
+            String::new()
+        } else {
+            format!("?{query}")
         };
         self.get_json(&format!("/agent/scenarios/{scenario_id}/validate{suffix}"))
             .await
