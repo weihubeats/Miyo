@@ -2,8 +2,9 @@
 /**
  * TabBar：打开中的接口标签页。
  * - 每个标签：方法标签（GET 绿 / POST 黄…）+ 截断的接口名；宽 120–200px；
- * - 布局：末尾两个平级按钮——「+」新建、「⋯」标签管理；溢出时各自吸在
- *   右边缘（Chrome 式，sticky 实现），tab 再多也不会把它们滚丢；
+ * - 布局：末尾两个平级按钮——「+」新建、「⋯」标签管理；溢出时吸在
+ *   右边缘（Chrome 式，sticky 实现，「+」比「⋯」多让出一枚按钮宽度避免
+ *   同位重叠），tab 再多也不会把它们滚丢；
  * - 激活态 = text-1 + 底部主题色下划线；未保存草稿在标题旁显示小圆点，
  *   hover 时圆点被 ✕ 替换（两者不同时出现，避免挤占）；
  * - 关闭按钮 hover 才出现；脏标签关闭走 Popconfirm；
@@ -90,6 +91,20 @@ watch(
       ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   },
 )
+
+/**
+ * 竖向滚轮转横向平移：页签条只横滚，但 overflow-y:hidden 下鼠标滚轮
+ * （deltaY）原生无事可做，用户只能 shift+滚轮或触控板横扫。
+ * 页签溢出时把纵向增量接到 scrollLeft 上（Chrome 页签条同款行为）；
+ * 触控板的横向分量（deltaX 占优）仍走原生滚动，不劫持。
+ */
+function onTabWheel(event: WheelEvent): void {
+  const el = tabListEl.value
+  if (!el || el.scrollWidth <= el.clientWidth) return
+  if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return
+  event.preventDefault()
+  el.scrollLeft += event.deltaY
+}
 
 /**
  * 标签行数据一次求值：原来模板每标签调 methodOf/titleOf/isDirty 3-4 次
@@ -255,7 +270,7 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
 
 <template>
   <div ref="barEl" class="tab-bar">
-    <div ref="tabListEl" class="tab-scroll" role="tablist" @keydown="onTabListKeydown">
+    <div ref="tabListEl" class="tab-scroll" role="tablist" @keydown="onTabListKeydown" @wheel="onTabWheel">
       <div
         v-for="tab in tabs"
         :key="tab.id"
@@ -324,7 +339,11 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
   flex-shrink: 0;
 }
 
-/* 内层滚动区：只有标签横滚 */
+/* 内层滚动区：只有标签横滚。
+   滚动条必须自己画出来——macOS 叠加式滚动条会盖在页签下半截上、
+   经典式（系统「始终显示」/Windows）则挤占行高把 32px 页签压扁，
+   多开几枚页签后整条看起来像断裂（v0.0.56 用户实测）。
+   与 ProjectTabs 的 .proj-tabs 同款：藏掉滚动条，平移交给滚轮/触控板。 */
 .tab-scroll {
   display: flex;
   gap: 2px;
@@ -332,12 +351,19 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tab-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 /* 新建「+」/ 管理「⋯」跟在末尾 tab 后面；溢出时吸在右边缘（Chrome 式），永远可见 */
 .tab-scroll > .tt-trigger {
   position: sticky;
-  right: 0;
+  /* 比「⋯」（right:0，宽 28px）多让出 30px：两钮都写 right:0 会在页签溢出时
+     被钉到同一位置叠成一枚按钮（v0.0.56 用户实测）。
+     30 = 「⋯」宽 28 + 间隙 2，吸右后仍保持 [+][⋯] 的并排顺序。 */
+  right: 30px;
   z-index: 1;
   flex-shrink: 0;
   align-self: center;
@@ -379,7 +405,8 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
 /* 管理按钮：与 + 同尺寸同底，仅图标颜色退到次级，避免与 + 抢焦点 */
 .tab-more {
   color: var(--text-2);
-  /* 溢出吸右时要盖住下方滚过的标签，需实底 */
+  /* 溢出吸右时要盖住下方滚过的标签，需实底；right:0 + 上方 trigger 的
+     right:30px 让两钮吸右时错开一枚按钮宽度，不再同位重叠 */
   position: sticky;
   right: 0;
   z-index: 1;

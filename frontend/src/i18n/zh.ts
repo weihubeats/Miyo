@@ -589,7 +589,7 @@ export const zh = {
   'integration.compareNotRun': '未执行',
   'workspace.history': '请求历史',
   'workspace.cookies': 'Cookie',
-  'workspace.docs': '文档 (Docs)',
+  'workspace.docs': '文档',
   'workspace.tools': '工作台工具',
   'workspace.moreTools': '更多工具',
   'workspace.graphql': 'GraphQL 工作台',

@@ -77,14 +77,17 @@ describe('TabBar：新建按钮紧跟末尾且不被滚丢', () => {
     wrapper.unmount()
   })
 
-  it('「+」与「⋯」分别 sticky 右吸：溢出时钉在右边缘', () => {
+  it('「+」与「⋯」分别 sticky 右吸：溢出时钉在右边缘且错开不重叠', () => {
     const wrapper = mountBar()
     // jsdom 无布局且本工程 vitest 不注入 SFC 样式，定位能力用源码断言
     //（themePattern.spec.ts 同款做法）；DOM 顺序由上一用例覆盖
     const src = readFileSync(join(process.cwd(), 'src/components/TabBar.vue'), 'utf8')
     const style = src.slice(src.indexOf('<style'))
-    expect(style).toContain('.tab-scroll > .tt-trigger')
-    // 「⋯」是 trigger 的兄弟，需自带 sticky 才不会滚丢
+    // 「+」的触发包裹层 sticky 吸右，且偏移须大于「⋯」宽度（28px）：
+    // 两钮都写 right:0 会被钉到同一位置叠成一枚按钮
+    expect(style).toMatch(/\.tab-scroll > \.tt-trigger\s*\{[\s\S]*?position:\s*sticky/)
+    expect(style).toMatch(/\.tab-scroll > \.tt-trigger\s*\{[\s\S]*?right:\s*30px/)
+    // 「⋯」是 trigger 的兄弟，同样 sticky 吸右（right:0）
     expect(style).toMatch(/\.tab-more\s*\{[\s\S]*?position:\s*sticky/)
     expect(style).toMatch(/\.tab-more\s*\{[\s\S]*?right:\s*0/)
     wrapper.unmount()
@@ -126,6 +129,38 @@ describe('TabBar：新建按钮紧跟末尾且不被滚丢', () => {
     expect(spy).toHaveBeenCalledTimes(1)
     // 调用目标即当前激活的 tab 行，而非容器或 + 按钮
     expect(spy.mock.instances[0]).toBe(document.querySelector('.tab.active'))
+    wrapper.unmount()
+  })
+
+  it('滚轮纵向增量转横向平移：页签溢出时劫持 deltaY 并阻止默认行为', async () => {
+    const wrapper = mountBar()
+    const scroll = document.querySelector<HTMLElement>('.tab-scroll')!
+    // jsdom 无布局：直接桩出溢出状态
+    Object.defineProperty(scroll, 'scrollWidth', { value: 2000, configurable: true })
+    Object.defineProperty(scroll, 'clientWidth', { value: 800, configurable: true })
+    const evt = new WheelEvent('wheel', { deltaY: 120, cancelable: true })
+    scroll.dispatchEvent(evt)
+    expect(scroll.scrollLeft).toBe(120)
+    expect(evt.defaultPrevented).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('滚轮：未溢出或横向分量占优（触控板横扫）时不劫持', async () => {
+    const wrapper = mountBar()
+    const scroll = document.querySelector<HTMLElement>('.tab-scroll')!
+    // 未溢出：不劫持
+    Object.defineProperty(scroll, 'scrollWidth', { value: 800, configurable: true })
+    Object.defineProperty(scroll, 'clientWidth', { value: 800, configurable: true })
+    const vertical = new WheelEvent('wheel', { deltaY: 120, cancelable: true })
+    scroll.dispatchEvent(vertical)
+    expect(vertical.defaultPrevented).toBe(false)
+    expect(scroll.scrollLeft).toBe(0)
+    // 溢出但 deltaX 占优（触控板横向轻扫）：交给原生滚动
+    Object.defineProperty(scroll, 'scrollWidth', { value: 2000, configurable: true })
+    const horizontal = new WheelEvent('wheel', { deltaX: 60, deltaY: 10, cancelable: true })
+    scroll.dispatchEvent(horizontal)
+    expect(horizontal.defaultPrevented).toBe(false)
+    expect(scroll.scrollLeft).toBe(0)
     wrapper.unmount()
   })
 

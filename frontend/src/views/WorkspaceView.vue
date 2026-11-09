@@ -899,6 +899,11 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 8px;
   flex: 1;
+  /* 右区内容不允许压缩（.tb-region 的 min-width:0 会对右区也生效）：
+     空间不足时必须由左侧项目标签区收缩吸收（.proj-tabs 可横滚），
+     否则 justify-content:flex-end 会把按钮组向左溢出、
+     直接盖在激活项目标签和「⋯」按钮上（v0.0.56 用户实测）。 */
+  min-width: max-content;
 }
 
 .tb-divider {
