@@ -393,6 +393,32 @@ describe('EndpointEditor：地址栏逐键不改写，提交才归一化', () =>
     expect(errors.errors).toEqual([])
   })
 
+  it('粘贴多行 cURL：换行折叠后仍走导入，不被当成路径塞进地址栏', async () => {
+    const errors = collectErrors()
+    const { wrapper, store } = await mountEditor()
+    const input = wrapper.find('.url-input')
+    store.activeEndpoint!.path = '/aa/bb/'
+    await nextTick()
+
+    // 从终端整段复制的形态：续行反斜杠 + 换行 + 缩进
+    const multi = 'curl \\\n  -X POST https://p.example.com/pay \\\n  -H "Content-Type: application/json" \\\n  -d \'{"a":1}\''
+    const ev = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'clipboardData', { value: { getData: () => multi } })
+    input.element.dispatchEvent(ev)
+
+    expect(ev.defaultPrevented).toBe(true)
+    // spec 里 api.parseCurlCommand 是桩：只要走到导入分支即说明分流正确，
+    // 真正的命令解析由 Rust parse_curl 负责（utils/url.spec 已覆盖判定本身）。
+    await vi.waitFor(() => expect(store.activeEndpoint!.path).toBe('/a'))
+    expect(store.sessionBaseUrl).toBe('https://p.example.com')
+    // 回归：按原文判定时 isCurlCommand 为假 → pickPathToken 取到的是一段碎片
+    expect(store.activeEndpoint!.path).not.toContain('curl')
+
+    wrapper.unmount()
+    errors.restore()
+    expect(errors.errors).toEqual([])
+  })
+
   it('gRPC 地址逐键输入：失焦不加 / 前缀（host:port 原样保留）', async () => {
     const errors = collectErrors()
     const store = useWorkspaceStore()

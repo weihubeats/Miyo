@@ -75,4 +75,16 @@ describe('isCurlCommand', () => {
     expect(isCurlCommand('https://api.x.com/curlies')).toBe(false)
     expect(isCurlCommand('curlies are cute')).toBe(false)
   })
+
+  /**
+   * 单行 input 输入框会把剪贴板里的换行折成空格（实测 insertText("a\nb") → "a b"），
+   * 地址栏拿到的 cURL 可能已在 `curl` 与 `-X` 之间插入了空格、续行反斜杠也被吞掉。
+   * 判定必须在「空白折叠后」的文本上做，否则整条命令会被当路径塞进地址栏。
+   */
+  it('容忍续行被折叠成空格 / 反斜杠残留 / 多余空白的 cURL', () => {
+    expect(isCurlCommand('curl   -X POST https://api.x.com/users')).toBe(true)
+    expect(isCurlCommand('curl \\ -X POST https://api.x.com/users')).toBe(true)
+    expect(isCurlCommand('curl\t-X POST https://api.x.com/users')).toBe(true)
+    expect(isCurlCommand('$ curl \\\n        --data-raw \'{"a":1}\' \\\n        https://api.x.com/pay')).toBe(true)
+  })
 })

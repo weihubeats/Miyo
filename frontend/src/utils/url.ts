@@ -38,7 +38,10 @@ export function isCurlCommand(text: string): boolean {
   if (!t) return false
   // 去掉終端複製常見的前導提示符（`$ curl …` / `> curl …`）。
   const stripped = t.replace(/^[$#>]+[ \t]+/, '').trimStart()
-  return /^(curl(\.exe)?)([\s\\]|$)/i.test(stripped) || /^\/\S*curl([\s\\]|$)/i.test(stripped)
+  // 空白折叠：单行 input 会把剪贴板换行折成空格、续行反斜杠被吞掉，
+  // `curl \\\n -X POST` 会变成 `curl \ -X POST`——按原文判定会漏成「路径」。
+  const folded = stripped.replace(/\s+/g, ' ')
+  return /^(curl(\.exe)?)([\s\\]|$)/i.test(stripped) || /^\/\S*curl([\s\\]|$)/i.test(stripped) || /^(curl(\.exe)?) /i.test(folded)
 }
 
 /** 把导入 URL 拆成路径 + 查询参数 + origin；无 scheme 时按 https 补全。 */
