@@ -720,16 +720,23 @@ onBeforeUnmount(() => {
         @keydown="onSidebarKeydown"
       ></div>
       <main class="miyo-main">
-        <TabBar
-          v-if="store.openTabs.length"
-          @create="store.openCreateTab()"
-        />
-        <CreateChoicePage
-          v-else-if="activeIsCreate"
-          @pick="onCreatePick"
-          @close="onCreatePageClose"
-        />
-        <EndpointEditor v-else />
+        <!-- 内容区同一时刻只该有一个分支占位：选择页 / 编辑器互斥。
+             **不要写成 activeIsCreate 与 openTabs.length 两个兄弟分支**——
+             选择页关闭后 activeTabId 仍可能指向「新建」，第一分支恒真，
+             TabBar/编辑器永远走不到；选择页自己按 openTabs 返回注释节点时，
+             宿主给它的 flex:1 还在，column 布局把空闲高度全部分给空壳，
+             编辑器被压成 0 → 内容区整块空白（v0.0.55 用户实测）。
+             唯一真相：openTabs 里还有页签就一定有编辑器。 -->
+        <template v-if="store.openTabs.length">
+          <TabBar @create="store.openCreateTab()" />
+          <CreateChoicePage
+            v-if="activeIsCreate"
+            @pick="onCreatePick"
+            @close="onCreatePageClose"
+          />
+          <EndpointEditor v-else />
+        </template>
+        <CreateChoicePage v-else @pick="onCreatePick" @close="onCreatePageClose" />
       </main>
     </div>
 

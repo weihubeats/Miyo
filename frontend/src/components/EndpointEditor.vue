@@ -1448,6 +1448,11 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   align-items: center;
+  /* 顶部行（面包屑 / 请求地址栏）不参与纵向压缩：`.editor` 是 column flex，
+   * 子项默认 flex-shrink:1，高度预算一旦算错（父容器被别的元素抢走空间）
+   * 这些行会被压成 0 —— 表现为「面包屑、二级导航、地址栏全部消失只剩黑底」
+   * （v0.0.55 实测）。宁可纵向溢出走 .editor 的滚动，也不静默塌成一条线。 */
+  flex-shrink: 0;
 }
 
 .sub-nav {
@@ -1459,6 +1464,8 @@ onUnmounted(() => {
   border-radius: var(--radius-md);
   background: var(--bg-2);
   align-self: flex-start;
+  /* 同 .editor-row：导航行高度固定，不参与 column flex 的收缩分配 */
+  flex-shrink: 0;
 }
 
 .sub-nav-item {
@@ -2158,6 +2165,10 @@ onUnmounted(() => {
    * （页签行 + 模式条 + 编辑器），缺的纵向空间由可压缩的空态低条
    * （120px 下限）与 .editor 纵向滚动承担——避免「打开 POST 接口 Body 只剩一条线」 */
   min-height: 320px;
+  /* 防御（v0.0.55 实测）：预算是「编辑器可视高 − chrome」时算出的，父容器若被别的
+   * 元素抢走高度，320px 地板会顶穿容器、把同列其他行挤出可视区。允许被压到地板以下，
+   * 压到 0 则连页签行一起消失——用「至少露出页签行」这一档兜住，其余交给滚动。 */
+  min-height: min(320px, 100%);
 }
 
 /* ---- 页签行：左页签 + 右侧「请求设置」触发钮 ----
