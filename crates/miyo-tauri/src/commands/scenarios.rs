@@ -423,7 +423,7 @@ const HISTORY_BODY_BYTES: usize = 64 * 1024;
 
 /// 请求快照脱敏：headers / cookies 中敏感键值替换为占位符，URL query 同样
 /// 处理（凭据不落历史库；与请求历史的 redact_history_spec 同口径）。
-fn redact_request_snapshot(snapshot: &mut miyo_http::client::RequestSnapshot) {
+pub(crate) fn redact_request_snapshot(snapshot: &mut miyo_http::client::RequestSnapshot) {
     snapshot.headers = snapshot
         .headers
         .iter()
@@ -451,7 +451,7 @@ fn redact_request_snapshot(snapshot: &mut miyo_http::client::RequestSnapshot) {
 
 /// 变量池脱敏：键名命中敏感词根的值替换为占位符（历史 / meta 中的变量
 /// 快照不落明文凭据）。
-fn redact_vars(vars: &HashMap<String, String>) -> HashMap<String, String> {
+pub(crate) fn redact_vars(vars: &HashMap<String, String>) -> HashMap<String, String> {
     vars.iter()
         .map(|(k, v)| {
             if is_sensitive_key(k) && !v.is_empty() {

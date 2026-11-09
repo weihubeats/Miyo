@@ -487,7 +487,16 @@ async fn test_case_management_flow() {
         headers: vec![],
         body_type: "json".into(),
         body_content: "{\"amount\":100}".into(),
+        assertions: serde_json::Value::Array(Vec::new()),
+        extractors: serde_json::Value::Array(Vec::new()),
+        auth: None,
+        timeout_ms: None,
+        disable_cookies: false,
+        sort_order: 0,
         last_run_status: TestCaseStatus::Untested,
+        last_run_at: None,
+        last_run_ok: None,
+        last_run_fail: None,
         created_at: now,
     };
 
@@ -531,7 +540,16 @@ async fn test_case_management_flow() {
         headers: vec![],
         body_type: "none".into(),
         body_content: String::new(),
+        assertions: serde_json::Value::Array(Vec::new()),
+        extractors: serde_json::Value::Array(Vec::new()),
+        auth: None,
+        timeout_ms: None,
+        disable_cookies: false,
+        sort_order: 0,
         last_run_status: TestCaseStatus::Failed,
+        last_run_at: None,
+        last_run_ok: None,
+        last_run_fail: None,
         created_at: Utc::now(),
     };
     repo::create_test_case(&db, &case2).await.unwrap();

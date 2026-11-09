@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-get-test-case"
+description = "Enables the get_test_case command without any pre-configured scope."
+commands.allow = ["get_test_case"]
+
+[[permission]]
+identifier = "deny-get-test-case"
+description = "Denies the get_test_case command without any pre-configured scope."
+commands.deny = ["get_test_case"]

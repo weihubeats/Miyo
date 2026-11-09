@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use miyo_core::model::{
     EnvironmentVariable, HttpMethod, KeyValue, MockRule, RequestExample, RequestHistory,
-    RequestSpec, ResponseExample, TestCase, TestCaseStatus, WsMessageType,
+    RequestSpec, ResponseExample, TestCase, TestCaseRun, TestCaseStatus, WsMessageType,
 };
 
 async fn pool() -> SqlitePool {
@@ -721,7 +721,16 @@ async fn list_test_cases_by_endpoints_groups_and_orders() {
         headers: Vec::new(),
         body_type: "none".into(),
         body_content: String::new(),
+        assertions: serde_json::Value::Array(Vec::new()),
+        extractors: serde_json::Value::Array(Vec::new()),
+        auth: None,
+        timeout_ms: None,
+        disable_cookies: false,
+        sort_order: 0,
         last_run_status: TestCaseStatus::Untested,
+        last_run_at: None,
+        last_run_ok: None,
+        last_run_fail: None,
         created_at: created,
     };
     let base = chrono::Utc::now();
@@ -786,7 +795,16 @@ async fn test_case_path_variables_persist_and_update() {
         headers: Vec::new(),
         body_type: "none".into(),
         body_content: String::new(),
+        assertions: serde_json::Value::Array(Vec::new()),
+        extractors: serde_json::Value::Array(Vec::new()),
+        auth: None,
+        timeout_ms: None,
+        disable_cookies: false,
+        sort_order: 0,
         last_run_status: TestCaseStatus::Untested,
+        last_run_at: None,
+        last_run_ok: None,
+        last_run_fail: None,
         created_at: chrono::Utc::now(),
     };
     repo::create_test_case(&db, &case).await.unwrap();
@@ -814,11 +832,19 @@ async fn test_case_path_variables_persist_and_update() {
         &[],
         "none",
         "",
+        &serde_json::json!([{ "type": "status", "op": "eq", "expected": 200 }]),
+        &serde_json::json!([{ "name": "uid", "from": "body", "path": "$.id" }]),
+        &None,
+        Some(8000),
+        false,
     )
     .await
     .unwrap();
     let after = repo::list_test_cases(&db, ep.id).await.unwrap();
     assert_eq!(after[0].path_variables, next, "更新后应回读到新取值");
+    assert_eq!(after[0].timeout_ms, Some(8000), "超时覆盖应回读");
+    assert_eq!(after[0].assertions.as_array().map(Vec::len), Some(1));
+    assert_eq!(after[0].extractors.as_array().map(Vec::len), Some(1));
 }
 
 fn history_row(project: Uuid, endpoint: Option<Uuid>, i: usize) -> RequestHistory {
@@ -997,7 +1023,16 @@ async fn test_case_folder_roundtrip() {
         headers: Vec::new(),
         body_type: "json".into(),
         body_content: String::new(),
+        assertions: serde_json::Value::Array(Vec::new()),
+        extractors: serde_json::Value::Array(Vec::new()),
+        auth: None,
+        timeout_ms: None,
+        disable_cookies: false,
+        sort_order: 0,
         last_run_status: TestCaseStatus::Untested,
+        last_run_at: None,
+        last_run_ok: None,
+        last_run_fail: None,
         created_at: chrono::Utc::now(),
     };
     repo::create_test_case(&db, &case).await.unwrap();
@@ -1105,4 +1140,111 @@ async fn scenario_run_history_roundtrip_and_prune() {
         .await
         .unwrap();
     assert!(after.is_empty());
+}
+
+/// 用例执行历史：save → list（新→旧）→ get → 摘要回写 → prune 保留上限 → 级联删除。
+#[tokio::test]
+async fn test_case_run_history_roundtrip() {
+    let db = pool().await;
+    let project = repo::create_project(&db, "历史", "").await.unwrap();
+    let endpoint = repo::create_endpoint(&db, project.id, None, "下单")
+        .await
+        .unwrap();
+    let case = TestCase {
+        id: Uuid::new_v4(),
+        request_id: endpoint.id,
+        name: "正向-下单".into(),
+        category: "正向".into(),
+        folder: String::new(),
+        method: HttpMethod::POST,
+        url_path: "/orders".into(),
+        path_variables: Vec::new(),
+        params: Vec::new(),
+        headers: Vec::new(),
+        body_type: "json".into(),
+        body_content: String::new(),
+        assertions: serde_json::Value::Array(Vec::new()),
+        extractors: serde_json::Value::Array(Vec::new()),
+        auth: None,
+        timeout_ms: None,
+        disable_cookies: false,
+        sort_order: 0,
+        last_run_status: TestCaseStatus::Untested,
+        last_run_at: None,
+        last_run_ok: None,
+        last_run_fail: None,
+        created_at: chrono::Utc::now(),
+    };
+    repo::create_test_case(&db, &case).await.unwrap();
+
+    let mk_run = |i: u32, ok: bool| TestCaseRun {
+        id: Uuid::new_v4(),
+        case_id: case.id,
+        endpoint_id: Some(endpoint.id),
+        environment_id: None,
+        started_at: chrono::Utc::now() - chrono::Duration::seconds(i as i64),
+        finished_at: chrono::Utc::now(),
+        duration_ms: Some(100.0 + f64::from(i)),
+        status: if ok {
+            TestCaseStatus::Success
+        } else {
+            TestCaseStatus::Failed
+        },
+        status_code: Some(200),
+        ok_count: if ok { 3 } else { 2 },
+        fail_count: if ok { 0 } else { 1 },
+        error: (!ok).then(|| "断言失败：code 不等于 0".to_string()),
+        results_json: "{}".into(),
+    };
+    // 25 条（> KEEP=20）：i 越小越新（started_at = now - i 秒），最新一条成功。
+    for i in 0..25 {
+        let run = mk_run(i, i == 0);
+        repo::save_test_case_run(&db, &run).await.unwrap();
+        repo::prune_test_case_runs(&db, case.id, repo::TEST_CASE_RUN_KEEP)
+            .await
+            .unwrap();
+    }
+    let runs = repo::list_test_case_runs(&db, case.id, 50).await.unwrap();
+    assert_eq!(runs.len(), 20, "应只保留最近 20 条");
+    // 新→旧：最新一条（i=0，成功）排最前。
+    assert_eq!(runs[0].status, TestCaseStatus::Success);
+    assert_eq!(runs[0].ok_count, 3);
+    assert_eq!(runs[1].status, TestCaseStatus::Failed);
+
+    let got = repo::get_test_case_run(&db, runs[0].id).await.unwrap();
+    assert_eq!(got.map(|r| r.case_id), Some(case.id));
+
+    // 摘要回写：last_run_status/at/ok/fail。
+    repo::update_test_case_run_summary(
+        &db,
+        case.id,
+        TestCaseStatus::Success,
+        chrono::Utc::now(),
+        Some(3),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    let cases = repo::list_test_cases(&db, endpoint.id).await.unwrap();
+    assert_eq!(cases[0].last_run_status, TestCaseStatus::Success);
+    assert!(cases[0].last_run_at.is_some());
+    assert_eq!(cases[0].last_run_ok, Some(3));
+    assert_eq!(cases[0].last_run_fail, Some(0));
+
+    // 删除单条。
+    assert!(repo::delete_test_case_run(&db, runs[0].id).await.unwrap());
+    assert_eq!(
+        repo::list_test_case_runs(&db, case.id, 50)
+            .await
+            .unwrap()
+            .len(),
+        19
+    );
+
+    // 用例删除 → 历史级联删除。
+    repo::delete_test_case(&db, case.id).await.unwrap();
+    assert!(repo::list_test_case_runs(&db, case.id, 50)
+        .await
+        .unwrap()
+        .is_empty());
 }

@@ -90,6 +90,12 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-cancel-load-test`
 - `allow-test-collection`
 - `allow-cancel-test-collection`
+- `allow-cancel-test-endpoint`
+- `allow-get-test-case`
+- `allow-reorder-test-cases`
+- `allow-list-test-case-runs`
+- `allow-get-test-case-run`
+- `allow-delete-test-case-run`
 - `allow-log-files`
 - `allow-log-tail`
 - `allow-log-dir-path`
@@ -385,6 +391,32 @@ Enables the cancel_test_collection command without any pre-configured scope.
 <td>
 
 Denies the cancel_test_collection command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-cancel-test-endpoint`
+
+</td>
+<td>
+
+Enables the cancel_test_endpoint command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-cancel-test-endpoint`
+
+</td>
+<td>
+
+Denies the cancel_test_endpoint command without any pre-configured scope.
 
 </td>
 </tr>
@@ -905,6 +937,32 @@ Enables the delete_test_case command without any pre-configured scope.
 <td>
 
 Denies the delete_test_case command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-delete-test-case-run`
+
+</td>
+<td>
+
+Enables the delete_test_case_run command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-delete-test-case-run`
+
+</td>
+<td>
+
+Denies the delete_test_case_run command without any pre-configured scope.
 
 </td>
 </tr>
@@ -1477,6 +1535,58 @@ Enables the get_scenario_run command without any pre-configured scope.
 <td>
 
 Denies the get_scenario_run command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-get-test-case`
+
+</td>
+<td>
+
+Enables the get_test_case command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-get-test-case`
+
+</td>
+<td>
+
+Denies the get_test_case command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-get-test-case-run`
+
+</td>
+<td>
+
+Enables the get_test_case_run command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-get-test-case-run`
+
+</td>
+<td>
+
+Denies the get_test_case_run command without any pre-configured scope.
 
 </td>
 </tr>
@@ -2082,6 +2192,32 @@ Denies the list_teams command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-list-test-case-runs`
+
+</td>
+<td>
+
+Enables the list_test_case_runs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-test-case-runs`
+
+</td>
+<td>
+
+Denies the list_test_case_runs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-list-test-cases`
 
 </td>
@@ -2543,6 +2679,32 @@ Enables the rename_test_case_folder command without any pre-configured scope.
 <td>
 
 Denies the rename_test_case_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-reorder-test-cases`
+
+</td>
+<td>
+
+Enables the reorder_test_cases command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-reorder-test-cases`
+
+</td>
+<td>
+
+Denies the reorder_test_cases command without any pre-configured scope.
 
 </td>
 </tr>

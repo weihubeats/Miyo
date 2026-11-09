@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-reorder-test-cases"
+description = "Enables the reorder_test_cases command without any pre-configured scope."
+commands.allow = ["reorder_test_cases"]
+
+[[permission]]
+identifier = "deny-reorder-test-cases"
+description = "Denies the reorder_test_cases command without any pre-configured scope."
+commands.deny = ["reorder_test_cases"]

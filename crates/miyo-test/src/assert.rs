@@ -292,6 +292,118 @@ pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&
     outcome
 }
 
+/// JS 沙箱断言（type = javascript）：`expected` 为脚本代码，在
+/// rquickjs 沙箱（`miyo_http::script_sandbox`）内执行——可用
+/// `pm.response.code / .json() / .text()`、`pm.environment` 与
+/// `assert(value, msg?)` 便捷断言；任一 `pm.test` 失败或脚本抛错即失败。
+/// 2s 超时；无网络、无文件系统、无宿主环境变量访问。
+///
+/// 沙箱懒初始化为进程级单例（专有线程串行执行；句柄 Send+Sync）：
+/// 仅在真的出现 JS 断言时才付出一个线程的成本，且所有执行路径
+///（单接口 / 集合 / 场景 / MCP）无需改动签名即可获得该能力。
+static JS_SANDBOX: std::sync::OnceLock<Option<miyo_http::script_sandbox::ScriptSandbox>> =
+    std::sync::OnceLock::new();
+
+fn js_sandbox() -> Option<&'static miyo_http::script_sandbox::ScriptSandbox> {
+    JS_SANDBOX
+        .get_or_init(|| miyo_http::script_sandbox::ScriptSandbox::new().ok())
+        .as_ref()
+}
+
+/// 执行 JS 脚本断言（async：沙箱经 channel 回传结果）。
+pub async fn evaluate_javascript(a: &AssertionSpec, resp: &HttpResponseData) -> Outcome {
+    let description = a.name.clone().unwrap_or_else(|| "JS 脚本断言".to_string());
+    let code = match a.expected.as_ref().and_then(|v| v.as_str()) {
+        Some(c) if !c.trim().is_empty() => c.to_string(),
+        _ => return Outcome::fail(description, "JS 断言代码为空".into()),
+    };
+    let Some(sandbox) = js_sandbox() else {
+        return Outcome::fail(description, "脚本沙箱不可用".into());
+    };
+    // assert(value, msg?) 便捷断言：假值即抛错，与 pm.test 双轨可用。
+    let input = miyo_http::script_sandbox::ScriptInput {
+        code: format!(
+            "function assert(value, msg) {{ if (!value) throw new Error(msg || 'JS 断言失败'); }}\n{code}"
+        ),
+        environment: std::collections::HashMap::new(),
+        request: miyo_http::script_sandbox::ScriptRequestData {
+            method: String::new(),
+            url: String::new(),
+            headers: Vec::new(),
+            body: String::new(),
+        },
+        response: Some(miyo_http::script_sandbox::ScriptResponseData::from_response(resp)),
+    };
+    match sandbox.run(input).await {
+        Ok(result) => {
+            if let Some(f) = result.tests.iter().find(|t| !t.passed) {
+                Outcome::fail(
+                    description,
+                    f.error
+                        .clone()
+                        .unwrap_or_else(|| format!("断言「{}」失败", f.name)),
+                )
+            } else {
+                Outcome::pass(description)
+            }
+        }
+        Err(e) => Outcome::fail(description, e.user_message()),
+    }
+}
+
+/// JS 断言端到端：真沙箱执行（pass / fail / 超时保护由沙箱自身测试覆盖）。
+#[tokio::test]
+async fn javascript_assertion_pass_and_fail() {
+    use bytes::Bytes;
+    let resp = HttpResponseData {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: Bytes::from(r#"{"code":0,"data":{"amount":88.5}}"#.to_string()),
+        duration_ms: 12.0,
+        size_bytes: 34,
+        cookies: Vec::new(),
+        truncated: false,
+        request: None,
+    };
+    // pm.test 风格：通过
+    let a = AssertionSpec {
+        name: Some("业务码".into()),
+        r#type: "javascript".into(),
+        path: None,
+        op: None,
+        expected: Some(serde_json::json!(
+            "const j = pm.response.json(); pm.test('code=0', () => j.code === 0);"
+        )),
+    };
+    assert!(evaluate_javascript(&a, &resp).await.passed);
+    // assert() 便捷风格：失败带原因
+    let bad = AssertionSpec {
+        name: Some("金额".into()),
+        r#type: "javascript".into(),
+        path: None,
+        op: None,
+        expected: Some(serde_json::json!(
+            "const j = pm.response.json(); assert(j.data.amount > 100, '金额不足')"
+        )),
+    };
+    let outcome = evaluate_javascript(&bad, &resp).await;
+    assert!(!outcome.passed);
+    assert!(outcome
+        .reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("金额不足"));
+    // 空代码：直接失败
+    let empty = AssertionSpec {
+        name: None,
+        r#type: "javascript".into(),
+        path: None,
+        op: None,
+        expected: Some(serde_json::json!("  ")),
+    };
+    assert!(!evaluate_javascript(&empty, &resp).await.passed);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

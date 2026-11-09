@@ -38,6 +38,10 @@ pub fn extract_body_json_typed(body_value: Option<&Value>, path: &str) -> Option
 }
 
 /// 按 extract 配置提取变量。
+///
+/// from 取值：`body`（JSONPath）/ `header`（头名）/ `cookie`（按名解析
+/// Set-Cookie，取首个匹配的值段）/ `body_regex`（对响应正文做正则，
+/// 有捕获组取组 1，否则取整个匹配）。
 pub fn extract_variables(
     specs: &[ExtractSpec],
     resp: &HttpResponseData,
@@ -51,6 +55,8 @@ pub fn extract_variables(
                 .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case(&spec.path))
                 .map(|(_, v)| v.clone()),
+            "cookie" => extract_cookie(&resp.headers, &spec.path),
+            "body_regex" => extract_body_regex(&resp.body_text(), &spec.path),
             _ => extract_body_json(body_value, &spec.path),
         };
         if let Some(value) = value {
@@ -58,6 +64,35 @@ pub fn extract_variables(
         }
     }
     out
+}
+
+/// 按名解析 Set-Cookie：首个同名 Cookie 的值段（`name=value; …` 截到 `;`）。
+fn extract_cookie(headers: &[(String, String)], name: &str) -> Option<String> {
+    for (k, v) in headers {
+        if !k.eq_ignore_ascii_case("set-cookie") {
+            continue;
+        }
+        for pair in v.split(';') {
+            let pair = pair.trim();
+            let Some((n, val)) = pair.split_once('=') else {
+                continue;
+            };
+            if n.trim().eq_ignore_ascii_case(name) {
+                return Some(val.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 正则提取：有捕获组取组 1，否则取整个匹配；非法正则返回 None。
+fn extract_body_regex(body: &str, pattern: &str) -> Option<String> {
+    let re = regex::Regex::new(pattern).ok()?;
+    let caps = re.captures(body)?;
+    match caps.len() {
+        0..=1 => caps.get(0).map(|m| m.as_str().to_string()),
+        _ => caps.get(1).map(|m| m.as_str().to_string()),
+    }
 }
 
 /// 提取变量（带类型层）：字符串表与 [`extract_variables`] 同形（现有渲染 /
@@ -77,6 +112,8 @@ pub fn extract_variables_typed(
                 .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case(&spec.path))
                 .map(|(_, v)| v.clone()),
+            "cookie" => extract_cookie(&resp.headers, &spec.path),
+            "body_regex" => extract_body_regex(&resp.body_text(), &spec.path),
             _ => extract_body_json(body_value, &spec.path),
         };
         if let Some(value) = value {
@@ -130,6 +167,68 @@ mod tests {
         let v = json!({"n": 7.5, "flag": true});
         assert_eq!(extract_body_json(Some(&v), "$.n"), Some("7.5".into()));
         assert_eq!(extract_body_json(Some(&v), "$.flag"), Some("true".into()));
+    }
+
+    #[test]
+    fn cookie_extraction_by_name() {
+        let resp = resp_with(
+            "{}",
+            vec![
+                ("Content-Type", "application/json"),
+                ("Set-Cookie", "session=abc123; Path=/; HttpOnly"),
+                ("Set-Cookie", "token=xyz; Path=/"),
+            ],
+        );
+        let specs = vec![
+            ExtractSpec {
+                name: "sid".into(),
+                from: "cookie".into(),
+                path: "session".into(),
+            },
+            ExtractSpec {
+                name: "tk".into(),
+                from: "cookie".into(),
+                path: "TOKEN".into(),
+            },
+            ExtractSpec {
+                name: "missing".into(),
+                from: "cookie".into(),
+                path: "nope".into(),
+            },
+        ];
+        let out = extract_variables(&specs, &resp, None);
+        assert_eq!(out.get("sid").map(String::as_str), Some("abc123"));
+        assert_eq!(out.get("tk").map(String::as_str), Some("xyz"));
+        assert!(!out.contains_key("missing"));
+    }
+
+    #[test]
+    fn body_regex_extraction_group1() {
+        let resp = resp_with(r#"{"msg": "订单 SO-2026 已创建"}"#, vec![]);
+        let specs = vec![
+            ExtractSpec {
+                name: "order".into(),
+                from: "body_regex".into(),
+                path: r#"SO-(\d+)"#.into(),
+            },
+            ExtractSpec {
+                name: "whole".into(),
+                from: "body_regex".into(),
+                path: "订单 [^\"]+".into(),
+            },
+            ExtractSpec {
+                name: "bad".into(),
+                from: "body_regex".into(),
+                path: "((".into(),
+            },
+        ];
+        let out = extract_variables(&specs, &resp, None);
+        assert_eq!(out.get("order").map(String::as_str), Some("2026"));
+        assert_eq!(
+            out.get("whole").map(String::as_str),
+            Some("订单 SO-2026 已创建")
+        );
+        assert!(!out.contains_key("bad"), "非法正则按无匹配处理");
     }
 
     #[test]

@@ -342,6 +342,12 @@ pub mod plugin {
                 commands::update_test_case_content,
                 commands::update_test_case_status,
                 commands::delete_test_case,
+                commands::get_test_case,
+                commands::reorder_test_cases,
+                commands::list_test_case_runs,
+                commands::get_test_case_run,
+                commands::delete_test_case_run,
+                commands::cancel_test_endpoint,
             ])
             .build()
     }

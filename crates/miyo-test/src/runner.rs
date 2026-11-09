@@ -16,7 +16,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use uuid::Uuid;
 
-use crate::assert::{evaluate, Outcome};
+use crate::assert::{evaluate, evaluate_javascript, Outcome};
 use crate::config::TestSpec;
 use crate::extract::extract_variables;
 
@@ -177,7 +177,25 @@ pub async fn run_endpoint(
     // 配置解析由 run_one 统一处理（含"无测试配置跳过"与"配置错误"语义）；
     // 运行时变量经互斥表访问（串行入口独占，集合入口多 worker 共享）。
     let shared = AsyncMutex::new(std::mem::take(runtime_vars));
-    let (result, resp) = run_one(ep, url, spec, &shared, timeout_ms, None).await;
+    let (result, resp) = run_one(ep, url, spec, &shared, timeout_ms, None, false).await;
+    *runtime_vars = shared.into_inner();
+    (result, resp)
+}
+
+/// 单接口测试的可取消变体：`cancel` 触发时中止在途请求，结果标记
+/// `cancelled = true`（测试用例单跑的「取消」按钮走这里）。
+/// `force_send`：无断言也照常发送（用例 = 请求快照，发送本身就是目的）。
+pub async fn run_endpoint_with_cancel(
+    ep: &Endpoint,
+    url: &str,
+    spec: &RequestSpec,
+    runtime_vars: &mut HashMap<String, String>,
+    timeout_ms: Option<u64>,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    force_send: bool,
+) -> (EndpointResult, Option<HttpResponseData>) {
+    let shared = AsyncMutex::new(std::mem::take(runtime_vars));
+    let (result, resp) = run_one(ep, url, spec, &shared, timeout_ms, cancel, force_send).await;
     *runtime_vars = shared.into_inner();
     (result, resp)
 }
@@ -194,6 +212,7 @@ async fn run_one(
     runtime: &AsyncMutex<HashMap<String, String>>,
     timeout_ms: Option<u64>,
     cancel: Option<&tokio_util::sync::CancellationToken>,
+    force_send: bool,
 ) -> (EndpointResult, Option<HttpResponseData>) {
     let config = match TestSpec::from_request_value(ep.request.tests.as_ref()) {
         Ok(c) => c,
@@ -209,7 +228,9 @@ async fn run_one(
             );
         }
     };
-    if config.is_empty() {
+    // force_send = true（测试用例执行）：无断言也照常发送并返回响应快照，
+    // 「空配置跳过」只适用于接口断言集合的旧语义。
+    if config.is_empty() && !force_send {
         return (
             EndpointResult {
                 endpoint_id: ep.id,
@@ -290,17 +311,22 @@ async fn run_one_core(
     // 3. 断言（expected 中的 {{变量}} 按快照解析；body 只解析一次复用）。
     let snapshot = runtime.lock().await.clone();
     let body_value: Option<Value> = serde_json::from_slice(resp.body.as_ref()).ok();
-    let outcomes: Vec<Outcome> = config
-        .assertions
-        .iter()
-        .map(|a| {
-            if needs_resolve(a) {
-                evaluate(&resolve(a, &snapshot), &resp, body_value.as_ref())
-            } else {
-                evaluate(a, &resp, body_value.as_ref())
-            }
-        })
-        .collect();
+    // JS 沙箱断言（type=javascript）需 await 沙箱回传，故逐条循环而非 map。
+    let mut outcomes: Vec<Outcome> = Vec::with_capacity(config.assertions.len());
+    for a in &config.assertions {
+        let resolved;
+        let a: &crate::config::AssertionSpec = if needs_resolve(a) {
+            resolved = resolve(a, &snapshot);
+            &resolved
+        } else {
+            a
+        };
+        if a.r#type == "javascript" {
+            outcomes.push(evaluate_javascript(a, &resp).await);
+        } else {
+            outcomes.push(evaluate(a, &resp, body_value.as_ref()));
+        }
+    }
     let ok = outcomes.iter().all(|o| o.passed);
 
     // 4. 提取变量（供后续接口使用）。
@@ -340,6 +366,9 @@ pub struct CollectionItem {
     pub endpoint: Endpoint,
     pub url: String,
     pub spec: RequestSpec,
+    /// 无断言也照常发送（测试用例批量执行 = 请求快照，发送本身是目的；
+    /// 接口断言集合保持 false = 空配置跳过旧语义）。
+    pub force_send: bool,
 }
 
 /// 集合测试选项。
@@ -408,6 +437,7 @@ pub async fn run_collection(
                     &runtime,
                     timeout_ms,
                     cancel.as_ref(),
+                    item.force_send,
                 )
                 .await;
                 if tx.send((idx, result)).await.is_err() {
@@ -1397,6 +1427,7 @@ mod tests {
                 endpoint: e,
                 url,
                 spec: RequestSpec::default(),
+                force_send: false,
             }
         };
         // slow 在前：串行会是慢→快→慢；并发 2 下结果仍与输入同序。

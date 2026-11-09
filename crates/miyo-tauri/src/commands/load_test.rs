@@ -20,6 +20,12 @@ pub struct TestEndpointArgs {
     pub endpoint: Endpoint,
     pub url: String,
     pub environment_id: Option<Uuid>,
+    /// 测试用例 ID（提供后本次运行落 `test_case_runs` 执行历史并回写摘要）。
+    #[serde(default)]
+    pub case_id: Option<Uuid>,
+    /// 运行标识（提供后可通过 `cancel_test_endpoint` 中止在途请求）。
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 /// 运行接口配置的断言测试（tests 未配置时也走通，返回空结果集）。
@@ -41,15 +47,48 @@ pub async fn test_endpoint(
     let url = miyo_core::resolve_variables(&args.url, &vars);
     let mut spec = render_spec(&args.endpoint.request, &vars);
     apply_global_params(&mut spec, &settings.global_params, &vars);
+    // 取消令牌（测试用例单跑「取消」按钮；run_id 不提供则不可取消）。
+    let cancel = args.run_id.as_ref().map(|id| {
+        let token = tokio_util::sync::CancellationToken::new();
+        state
+            .run_cancels
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(id.clone(), token.clone());
+        (id.clone(), token)
+    });
+    let started_at = chrono::Utc::now();
     let mut runtime = std::collections::HashMap::new();
-    let (result, _) = miyo_test::runner::run_endpoint(
+    let (result, _) = miyo_test::runner::run_endpoint_with_cancel(
         &args.endpoint,
         &url,
         &spec,
         &mut runtime,
         Some(timeout_ms),
+        cancel.as_ref().map(|(_, t)| t),
+        // 用例运行 = 请求快照，无断言也真实发送。
+        args.case_id.is_some(),
     )
     .await;
+    if let Some((id, _)) = &cancel {
+        state
+            .run_cancels
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(id);
+    }
+    // 用例运行落执行历史（fail-open）：case_id 提供时才落。
+    if let Some(case_id) = args.case_id {
+        super::test_case::persist_test_case_run(
+            &state.db,
+            case_id,
+            Some(args.endpoint.id),
+            args.environment_id,
+            started_at,
+            &result,
+        )
+        .await;
+    }
     // 自增序列若被本次测试推进，回写磁盘（尽力而为）。后台执行，不加在返回路径上。
     let db = state.db.clone();
     tauri::async_runtime::spawn(async move {
@@ -165,6 +204,12 @@ pub fn cancel_test_collection(state: State<'_, AppState>, run_id: String) -> Com
     Ok(cancel_run(&state, &run_id))
 }
 
+/// 取消一个在途的单接口 / 用例测试（`run_id` 不存在或已完成时返回 `false`）。
+#[tauri::command(rename_all = "camelCase")]
+pub fn cancel_test_endpoint(state: State<'_, AppState>, run_id: String) -> CommandResult<bool> {
+    Ok(cancel_run(&state, &run_id))
+}
+
 /// 长任务取消的公共实现（压测 / 集合测试共用 `run_cancels` 注册表）。
 fn cancel_run(state: &AppState, run_id: &str) -> bool {
     let token = state
@@ -186,6 +231,9 @@ pub struct TestCollectionItem {
     pub endpoint: Endpoint,
     pub url: String,
     pub spec: RequestSpec,
+    /// 测试用例 ID（提供后本次运行落 `test_case_runs` 执行历史并回写摘要）。
+    #[serde(default)]
+    pub case_id: Option<Uuid>,
 }
 
 /// 集合测试入参。
@@ -230,6 +278,7 @@ pub async fn test_collection(
         state.global_settings(),
         resolve_timeout_ms(&args.items[0].spec, &state),
     );
+    let started_at = chrono::Utc::now();
     let vars = vars?;
     let settings = settings?;
     let timeout_ms = timeout_ms?;
@@ -245,6 +294,8 @@ pub async fn test_collection(
                 endpoint: it.endpoint.clone(),
                 url,
                 spec,
+                // 用例条目无断言也真实发送；接口断言集合维持旧跳过语义。
+                force_send: it.case_id.is_some(),
             }
         })
         .collect();
@@ -279,6 +330,20 @@ pub async fn test_collection(
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(id);
+    }
+    // 用例运行逐条落执行历史（fail-open）：仅带 case_id 的条目落。
+    for (item, r) in args.items.iter().zip(result.results.iter()) {
+        if let Some(case_id) = item.case_id {
+            super::test_case::persist_test_case_run(
+                &state.db,
+                case_id,
+                Some(item.endpoint.id),
+                args.environment_id,
+                started_at,
+                r,
+            )
+            .await;
+        }
     }
     if let Err(e) = super::seq::sync_seq_counters_if_dirty(&state.db).await {
         tracing::warn!("[test_collection] 同步自增序列失败：{e}");

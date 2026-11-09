@@ -1069,6 +1069,9 @@ impl TestCaseStatus {
 ///
 /// 每个用例保存一次调用的独立快照：URL 路径 + 路径变量 + Query 参数 + 请求头 +
 /// Body，可单独运行、一键回填调试页重新调用。`request_id` 关联主接口（`endpoints`）。
+/// 断言 / 提取为引擎方言 JSON 数组透传（同场景步骤的 extract / assertions 形状），
+/// 由 `miyo-test` 引擎求值；`auth` / `timeout_ms` / `disable_cookies` 为用例级
+/// 执行控制覆盖（None / 0 = 沿用接口与全局默认）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TestCase {
     pub id: Uuid,
@@ -1092,8 +1095,63 @@ pub struct TestCase {
     /// body 类型标识：json / form-data / raw / urlencoded / graphql / binary / none。
     pub body_type: String,
     pub body_content: String,
+    /// 断言规则（miyo-test `AssertionSpec` 形状 JSON 数组透传；空 = 无断言，
+    /// 维持「2xx-3xx 即通过」语义）。
+    #[serde(default)]
+    pub assertions: serde_json::Value,
+    /// 变量提取规则（miyo-test `ExtractSpec` 形状 JSON 数组透传）。
+    #[serde(default)]
+    pub extractors: serde_json::Value,
+    /// 用例级认证覆盖（None = 继承接口快照原状，即 none）。
+    #[serde(default)]
+    pub auth: Option<AuthSpec>,
+    /// 用例级超时覆盖毫秒（None = 沿用接口 → 全局 → 300s 三重兜底）。
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    /// 禁用 Cookie 回放。
+    #[serde(default)]
+    pub disable_cookies: bool,
+    /// 组内排序（拖拽排序写回；同值按 created_at 稳定序）。
+    #[serde(default)]
+    pub sort_order: i64,
     pub last_run_status: TestCaseStatus,
+    /// 最近一次执行时间（落执行历史时同步回写）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<DateTime<Utc>>,
+    /// 最近一次执行断言通过 / 失败数（无断言为 NULL）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_ok: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_fail: Option<u32>,
     pub created_at: DateTime<Utc>,
+}
+
+/// 测试用例执行历史（每次运行一行，append-only；修改用例不覆盖历史）。
+///
+/// `results_json` 为 `EndpointResult` 快照（正文 64KB 截断 + 敏感头/变量
+/// 脱敏在写入方完成，与 scenario_runs 同口径）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TestCaseRun {
+    pub id: Uuid,
+    pub case_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<Uuid>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<f64>,
+    pub status: TestCaseStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    #[serde(default)]
+    pub ok_count: u32,
+    #[serde(default)]
+    pub fail_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub results_json: String,
 }
 
 /// Mock 匹配条件项。

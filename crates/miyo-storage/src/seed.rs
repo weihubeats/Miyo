@@ -2500,7 +2500,16 @@ fn test_case(
         headers,
         body_type: body_type.to_string(),
         body_content: body_content.to_string(),
+        assertions: serde_json::Value::Array(Vec::new()),
+        extractors: serde_json::Value::Array(Vec::new()),
+        auth: None,
+        timeout_ms: None,
+        disable_cookies: false,
+        sort_order: 0,
         last_run_status: TestCaseStatus::Untested,
+        last_run_at: None,
+        last_run_ok: None,
+        last_run_fail: None,
         created_at: Utc::now(),
     }
 }
