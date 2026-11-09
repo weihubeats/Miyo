@@ -419,17 +419,25 @@ export interface ScenarioLibraryItem extends Scenario {
   last_run?: ScenarioRunSummary | null
 }
 
-/** 提取规则编辑形状（与后端 ExtractSpec 同构）。 */
+/** 提取规则编辑形状（与后端 ExtractSpec 同构；cookie/body_regex 由 miyo-test extract.rs 解析）。 */
 export interface ScenarioExtractRule {
   name: string
-  from: 'body' | 'header'
+  from: 'body' | 'header' | 'cookie' | 'body_regex'
   path: string
 }
 
-/** 断言规则编辑形状（与后端 AssertionSpec 同构）。 */
+/** 断言规则编辑形状（与后端 AssertionSpec 同构；javascript 的 expected 为沙箱内执行的代码）。 */
 export interface ScenarioAssertionRule {
   name?: string | null
-  type: 'status' | 'header' | 'jsonpath' | 'response_time_ms'
+  type:
+    | 'status'
+    | 'header'
+    | 'jsonpath'
+    | 'response_time_ms'
+    | 'body'
+    | 'length'
+    | 'graphql_errors'
+    | 'javascript'
   path?: string | null
   op?:
     | 'eq'
@@ -906,8 +914,42 @@ export interface TestCase {
   /** body 类型标识：json / form-data / raw / urlencoded / graphql / binary / none。 */
   body_type: string
   body_content: string
+  /** 断言规则（miyo-test AssertionSpec 形状；空数组 = 无断言，2xx-3xx 即通过）。 */
+  assertions?: ScenarioAssertionRule[]
+  /** 变量提取规则（miyo-test ExtractSpec 形状）。 */
+  extractors?: ScenarioExtractRule[]
+  /** 用例级认证覆盖（null = 继承快照原状）。 */
+  auth?: AuthSpec | null
+  /** 用例级超时覆盖毫秒（null = 沿用接口 → 全局 → 300s）。 */
+  timeout_ms?: number | null
+  /** 禁用 Cookie 回放。 */
+  disable_cookies?: boolean
+  /** 组内排序序号（拖拽写回；同值按 created_at 稳定序）。 */
+  sort_order?: number
   last_run_status: TestCaseStatus
+  /** 最近一次执行时间 / 断言通过数 / 失败数（落历史时回写）。 */
+  last_run_at?: string | null
+  last_run_ok?: number | null
+  last_run_fail?: number | null
   created_at: string
+}
+
+/** 测试用例执行历史（Rust `TestCaseRun`，append-only；results 为 EndpointResult 快照）。 */
+export interface TestCaseRun {
+  id: string
+  case_id: string
+  endpoint_id?: string | null
+  environment_id?: string | null
+  started_at: string
+  finished_at: string
+  duration_ms?: number | null
+  status: TestCaseStatus
+  status_code?: number | null
+  ok_count: number
+  fail_count: number
+  error?: string | null
+  /** EndpointResult 快照 JSON 字符串（响应正文 64KB 截断 + 敏感头脱敏后），前端自行 parse。 */
+  results_json: string
 }
 
 /** 代码生成语言（Rust `Lang`，miyo-tauri `codegen_render` 的 `lang` 取值）。 */
@@ -969,9 +1011,13 @@ export interface Outcome {
   description: string
   passed: boolean
   reason: string | null
+  /** 结构化对比值（断言显式给出 expected 时随行）。 */
+  expected?: string | null
+  /** 实际值文本（取到实际值时随行）。 */
+  actual?: string | null
 }
 
-/** 单接口测试结果（Rust `EndpointResult`）。 */
+/** 单接口 / 场景步骤测试结果（Rust `EndpointResult`）。 */
 export interface EndpointResult {
   endpoint_id: string
   endpoint_name: string
@@ -982,6 +1028,20 @@ export interface EndpointResult {
   duration_ms: number | null
   request_error: string | null
   outcomes: Outcome[]
+  /** 本步提取到的变量（场景链路展示用）。 */
+  extracted?: Record<string, string>
+  /** 实际发送的渲染后 URL（配置错误未发送时为 null）。 */
+  url?: string | null
+  /** 场景链路步骤位次（单接口 / 集合运行为 null）。 */
+  step_index?: number | null
+  /** 在途请求被取消。 */
+  cancelled?: boolean
+  /** 响应快照（发送成功时存在；failed_fast 无响应）。 */
+  response?: ScenarioStepResponse | null
+  /** 六态状态（success/failed/blocked/skipped/cancelled；单接口 / 集合为 null）。 */
+  step_status?: string | null
+  blocked_reason?: string | null
+  loop_runs?: number | null
 }
 
 /** 压测结果（Rust `LoadResult`）。 */

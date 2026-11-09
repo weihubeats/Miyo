@@ -83,6 +83,9 @@ import type {
   SyncRemoteConfig,
   Team,
   TestCase,
+  ScenarioAssertionRule,
+  ScenarioExtractRule,
+  TestCaseRun,
   TestCaseStatus,
 } from '../types/miyoApi'
 
@@ -347,6 +350,11 @@ export function useMiyoApi() {
       headers: KeyValue[]
       bodyType: string
       bodyContent: string
+      assertions: ScenarioAssertionRule[]
+      extractors: ScenarioExtractRule[]
+      auth: AuthSpec | null
+      timeoutMs: number | null
+      disableCookies: boolean
     },
   ) =>
     run(() =>
@@ -359,6 +367,11 @@ export function useMiyoApi() {
         headers: payload.headers,
         bodyType: payload.bodyType,
         bodyContent: payload.bodyContent,
+        assertions: payload.assertions,
+        extractors: payload.extractors,
+        auth: payload.auth,
+        timeoutMs: payload.timeoutMs,
+        disableCookies: payload.disableCookies,
       }),
     )
 
@@ -623,8 +636,15 @@ export function useMiyoApi() {
     run(() => call<void>('save_text_file', { path, contents }))
 
   // ---------- 测试 / 压测 ----------
-  const testEndpoint = (args: { endpoint: Endpoint; url: string; environment_id: string | null }) =>
-    run(() => call<EndpointResult>('test_endpoint', { args }))
+  const testEndpoint = (args: {
+    endpoint: Endpoint
+    url: string
+    environment_id: string | null
+    /** 测试用例 ID（提供后本次运行落执行历史并回写摘要）。 */
+    case_id?: string | null
+    /** 运行标识（提供后可 cancelTestEndpoint 中止）。 */
+    run_id?: string | null
+  }) => run(() => call<EndpointResult>('test_endpoint', { args }))
 
   const loadTest = (args: {
     url: string
@@ -642,7 +662,7 @@ export function useMiyoApi() {
 
   /** 集合测试：一次 IPC 跑完整个集合（后端并发 + 可取消 + 进度事件）。 */
   const testCollection = (args: {
-    items: Array<{ endpoint: Endpoint; url: string; spec: RequestSpec }>
+    items: Array<{ endpoint: Endpoint; url: string; spec: RequestSpec; case_id?: string | null }>
     environment_id: string | null
     concurrency?: number | null
     run_id?: string | null
@@ -651,6 +671,26 @@ export function useMiyoApi() {
   /** 取消在途集合测试（run_id 不存在或已完成时返回 false）。 */
   const cancelTestCollection = (runId: string) =>
     call<boolean>('cancel_test_collection', { runId })
+
+  /** 取消在途的单接口 / 用例测试（run_id 不存在或已完成时返回 false）。 */
+  const cancelTestEndpoint = (runId: string) =>
+    call<boolean>('cancel_test_endpoint', { runId })
+
+  /** 拖拽排序：按展示顺序写回组内 sort_order。 */
+  const reorderTestCases = (caseIds: string[]) =>
+    run(() => call<void>('reorder_test_cases', { caseIds }))
+
+  /** 用例执行历史（新→旧）。 */
+  const listTestCaseRuns = (caseId: string, limit?: number) =>
+    run(() => call<TestCaseRun[]>('list_test_case_runs', { caseId, limit: limit ?? null }))
+
+  /** 单条执行历史详情。 */
+  const getTestCaseRun = (runId: string) =>
+    run(() => call<TestCaseRun | null>('get_test_case_run', { runId }))
+
+  /** 删除单条执行历史。 */
+  const deleteTestCaseRun = (runId: string) =>
+    run(() => call<boolean>('delete_test_case_run', { runId }))
 
   // ---------- Cookie 管理 ----------
   /** 列出 Jar 中的 Cookie（domain 为空返回全部；否则子串过滤域名）。 */
@@ -863,6 +903,11 @@ export function useMiyoApi() {
     cancelLoadTest,
     testCollection,
     cancelTestCollection,
+    cancelTestEndpoint,
+    reorderTestCases,
+    listTestCaseRuns,
+    getTestCaseRun,
+    deleteTestCaseRun,
     cookieList,
     cookieClear,
     logFiles,

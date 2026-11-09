@@ -244,3 +244,20 @@ export function matchTestCaseKeyword(c: TestCase, keyword: string): boolean {
   }
   return false
 }
+
+/** 相对时间文案（列表「最近执行」列）：刚刚 / N 分钟前 / N 小时前 / N 天前，超过 30 天显示日期。 */
+export function relativeRunTime(iso?: string | null): string {
+  if (!iso) return ''
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return ''
+  const diff = Date.now() - t
+  const min = Math.floor(diff / 60_000)
+  if (min < 1) return '<1min'
+  if (min < 60) return `${min}min`
+  const hour = Math.floor(min / 60)
+  if (hour < 24) return `${hour}h`
+  const day = Math.floor(hour / 24)
+  if (day < 30) return `${day}d`
+  const d = new Date(t)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}

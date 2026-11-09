@@ -45,9 +45,12 @@ import type {
   KeyValue,
   OAuth2Token,
   Project,
+  EndpointResult,
   RequestExample,
   RequestHistory,
   ResponseExample,
+  ScenarioAssertionRule,
+  ScenarioExtractRule,
   TestCase,
   TestCaseCategory,
   TestCaseStatus,
@@ -897,7 +900,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const testCases = ref<Map<string, TestCase[]>>(new Map())
 
   /** 最近一次运行结果元信息（状态码 / 耗时），驱动列表「运行结果」列与抽屉联动。 */
-  const caseRunMeta = ref<Map<string, { status: number; durationMs: number }>>(new Map())
+  /** 用例会话内运行摘要：status/durationMs 供列表列展示，result 供抽屉「执行结果」Tab。 */
+  const caseRunMeta = ref<
+    Map<string, { status: number; durationMs: number; result?: EndpointResult }>
+  >(new Map())
 
   /** 当前接口的用例数（导航 Tab 徽标 N）。 */
   const testCaseCount = computed(() => {
@@ -905,13 +911,40 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return id ? (testCases.value.get(id)?.length ?? 0) : 0
   })
 
-  /** 加载接口的测试用例（懒加载 + 缓存，失败时按空处理）。 */
+  /** 用例列表加载态：loading（骨架）/ error（重试条）/ ready。 */
+  const testCaseLoadState = ref<Map<string, 'loading' | 'ready' | 'error'>>(new Map())
+
+  /** 加载接口的测试用例（懒加载 + 缓存；失败置 error 态供重试）。 */
   async function loadTestCases(endpointId: string): Promise<void> {
+    testCaseLoadState.value.set(endpointId, 'loading')
     try {
       testCases.value.set(endpointId, (await api.listTestCases(endpointId)) ?? [])
+      testCaseLoadState.value.set(endpointId, 'ready')
     } catch (err) {
       console.error('[workspace.loadTestCases]', err)
-      testCases.value.set(endpointId, [])
+      testCaseLoadState.value.set(endpointId, 'error')
+    }
+  }
+
+  /** 拖拽排序：按展示顺序写回 sort_order（本地 + 后端）。 */
+  async function reorderTestCases(endpointId: string, orderedIds: string[]): Promise<boolean> {
+    try {
+      await api.reorderTestCases(orderedIds)
+      const list = testCases.value.get(endpointId)
+      if (list) {
+        const rank = new Map(orderedIds.map((id, i) => [id, i]))
+        for (const c of list) {
+          const r = rank.get(c.id)
+          if (r !== undefined) c.sort_order = r
+        }
+        list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.created_at.localeCompare(b.created_at))
+      }
+      return true
+    } catch (err) {
+      toast.error(t('ws.caseUpdateFail'), {
+        message: err instanceof Error ? err.message : String(err),
+      })
+      return false
     }
   }
 
@@ -944,6 +977,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       headers: snap.headers,
       body_type: snap.body_type,
       body_content: snap.body_content,
+      assertions: [],
+      extractors: [],
+      auth: null,
+      timeout_ms: null,
+      disable_cookies: false,
+      sort_order: 0,
       last_run_status: 'Untested',
       created_at: new Date().toISOString(),
     }
@@ -1100,12 +1139,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     activeView.value = 'debug'
   }
 
-  /** 用例快照 → 可发送请求（URL + spec），单跑与集合跑共用。 */
+  /** 用例快照 → 可发送请求（URL + spec），单跑与集合跑共用。
+   *  断言 / 提取以引擎方言进 tests：由 miyo-test 引擎统一求值（与场景同链路）。 */
   function buildCaseRequest(testCase: TestCase): { url: string; spec: Endpoint['request'] } {
     const isAbs = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(testCase.url_path)
     const path = testCase.url_path.startsWith('/') ? testCase.url_path : `/${testCase.url_path}`
     // 路径变量必须在拼 URL 时替换掉，否则 `/users/{id}` 会被原样发出去。
     const vars = testCase.path_variables ?? []
+    const assertions = Array.isArray(testCase.assertions) ? testCase.assertions : []
+    const extractors = Array.isArray(testCase.extractors) ? testCase.extractors : []
     return {
       url: isAbs
         ? applyPathVars(testCase.url_path, vars)
@@ -1114,14 +1156,23 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         params: testCase.params,
         headers: testCase.headers,
         path_variables: vars,
-        auth: { type: 'none' } as AuthSpec,
+        auth: (testCase.auth ?? { type: 'none' }) as AuthSpec,
         body: restoreBody(testCase.body_type, testCase.body_content),
         active_tab: null,
-        timeout_ms: null,
+        timeout_ms: testCase.timeout_ms ?? null,
         follow_redirects: true,
-        tests: null,
+        disable_cookies: testCase.disable_cookies ?? false,
+        tests: { assertions, extract: extractors },
       },
     }
+  }
+
+  /** 有断言或提取的用例（判定语义不同：引擎判定 vs 2xx-3xx）。 */
+  function caseHasChecks(testCase: TestCase): boolean {
+    return (
+      (Array.isArray(testCase.assertions) && testCase.assertions.length > 0) ||
+      (Array.isArray(testCase.extractors) && testCase.extractors.length > 0)
+    )
   }
 
   /** 变量合并表（单源 utils/environment.mergedVariableMap，与调试页 envVars 同源）。 */
@@ -1153,30 +1204,62 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return `${urlDomain.value}${rel}`
   }
 
-  /** 运行单个用例：拼 URL 执行请求，回写运行状态。返回响应或 null。 */
-  async function runTestCase(endpointId: string, testCase: TestCase, environmentId: string | null): Promise<ExecuteResponse | null> {
+  /**
+   * 运行单个用例：与集合跑共用同一执行引擎（miyo-test run_one，强制发送），
+   * 断言 / 提取在后端求值，运行历史落 test_case_runs（case_id 透传）。
+   * 返回引擎结果（响应快照 + 断言明细 + 提取值），null = 请求未发出（本地异常）。
+   */
+  async function runTestCase(
+    endpointId: string,
+    testCase: TestCase,
+    environmentId: string | null,
+    opts?: { runId?: string },
+  ): Promise<EndpointResult | null> {
     try {
       const { url, spec } = buildCaseRequest(testCase)
-      const response = await api.executeRequest({
+      const endpoint = savedIndex.value.get(endpointId) ?? drafts.value.get(endpointId)
+      const result = await api.testEndpoint({
+        endpoint: {
+          ...(endpoint ?? {
+            id: endpointId,
+            project_id: project.value?.id ?? '',
+            folder_id: null,
+            name: testCase.name,
+            method: testCase.method,
+            path: testCase.url_path,
+            description: '',
+            status: 'designing',
+            sort_order: 0,
+            request: spec,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }),
+          request: spec,
+        },
         url,
-        method: testCase.method,
-        spec,
         environment_id: environmentId,
-        project_id: project.value?.id ?? null,
-        endpoint_id: endpointId,
-        request_id: null,
+        case_id: testCase.id,
+        run_id: opts?.runId ?? null,
       })
-      const status: TestCaseStatus = response.status >= 200 && response.status < 400 ? 'Success' : 'Failed'
+      const status = caseStatusOf(testCase, result)
       caseRunMeta.value.set(testCase.id, {
-        status: response.status,
-        durationMs: response.duration_ms,
+        status: result.status ?? 0,
+        durationMs: result.duration_ms ?? 0,
+        result,
       })
       void updateCaseStatusLocally(endpointId, testCase.id, status)
-      return response
+      return result
     } catch (err) {
       void updateCaseStatusLocally(endpointId, testCase.id, 'Failed')
       throw err
     }
+  }
+
+  /** 用例运行结果 → 状态：有断言/提取走引擎判定（ok），无则维持 2xx-3xx 语义。 */
+  function caseStatusOf(testCase: TestCase, result: EndpointResult): TestCaseStatus {
+    if (caseHasChecks(testCase)) return result.ok ? 'Success' : 'Failed'
+    const st = result.status
+    return st !== null && st !== undefined && st >= 200 && st < 400 ? 'Success' : 'Failed'
   }
 
   /** 回写用例运行状态（本地 + 后端）。 */
@@ -1191,7 +1274,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
-  /** 抽屉「保存修改」：更新用例完整请求内容（本地 + 后端）。 */
+  /** 抽屉「保存修改」：更新用例完整内容（请求快照 + 断言 / 提取 / 执行控制）。 */
   async function updateTestCaseContent(
     endpointId: string,
     caseId: string,
@@ -1203,6 +1286,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       headers: KeyValue[]
       bodyType: string
       bodyContent: string
+      assertions: ScenarioAssertionRule[]
+      extractors: ScenarioExtractRule[]
+      auth: AuthSpec | null
+      timeoutMs: number | null
+      disableCookies: boolean
     },
   ): Promise<void> {
     await api.updateTestCaseContent(caseId, payload)
@@ -1216,6 +1304,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       target.headers = payload.headers
       target.body_type = payload.bodyType
       target.body_content = payload.bodyContent
+      target.assertions = payload.assertions
+      target.extractors = payload.extractors
+      target.auth = payload.auth
+      target.timeout_ms = payload.timeoutMs
+      target.disable_cookies = payload.disableCookies
     }
   }
 
@@ -1227,10 +1320,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
    */
   async function runAllTestCases(
     endpointId: string,
-    opts?: { runId?: string; folder?: string; onProgress?: (done: number, total: number) => void },
+    opts?: { runId?: string; folder?: string; ids?: string[]; onProgress?: (done: number, total: number) => void },
   ): Promise<{ total: number; success: number; cancelled: boolean }> {
     const all = testCases.value.get(endpointId) ?? []
-    const cases = opts?.folder ? all.filter((c) => c.folder === opts.folder) : all
+    const cases = opts?.ids
+      ? all.filter((c) => opts.ids!.includes(c.id))
+      : opts?.folder
+        ? all.filter((c) => c.folder === opts.folder)
+        : all
     if (cases.length === 0) return { total: 0, success: 0, cancelled: false }
     const endpoint = savedIndex.value.get(endpointId) ?? drafts.value.get(endpointId)
     const runId = opts?.runId ?? crypto.randomUUID()
@@ -1238,22 +1335,26 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       items: cases.map((c) => {
         const { url, spec } = buildCaseRequest(c)
         return {
-          endpoint: endpoint ?? {
-            id: endpointId,
-            project_id: project.value?.id ?? '',
-            folder_id: null,
-            name: c.name,
-            method: c.method,
-            path: c.url_path,
-            description: '',
-            status: 'designing',
-            sort_order: 0,
+          endpoint: {
+            ...(endpoint ?? {
+              id: endpointId,
+              project_id: project.value?.id ?? '',
+              folder_id: null,
+              name: c.name,
+              method: c.method,
+              path: c.url_path,
+              description: '',
+              status: 'designing',
+              sort_order: 0,
+              request: spec,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }),
             request: spec,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
           },
           url,
           spec,
+          case_id: c.id,
         }
       }),
       environment_id: activeEnvId.value,
@@ -1266,11 +1367,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     result.results.forEach((r, i) => {
       const c = cases[i]
       if (!c) return
-      const status: TestCaseStatus = r.ok ? 'Success' : 'Failed'
-      if (r.ok) success += 1
+      const status = caseStatusOf(c, r)
+      if (status === 'Success') success += 1
       caseRunMeta.value.set(c.id, {
         status: r.status ?? 0,
         durationMs: r.duration_ms ?? 0,
+        result: r,
       })
       void updateCaseStatusLocally(endpointId, c.id, status)
     })
@@ -2490,6 +2592,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     caseRunMeta,
     testCaseCount,
     loadTestCases,
+    testCaseLoadState,
+    reorderTestCases,
     saveTestCase,
     renameTestCase,
     setTestCaseFolder,
@@ -2499,6 +2603,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     removeTestCase,
     applyTestCaseToDraft,
     openTestCaseInDebug,
+    buildCaseRequest,
     updateTestCaseContent,
     resolveTestCaseUrl,
     globalTimeoutMs,

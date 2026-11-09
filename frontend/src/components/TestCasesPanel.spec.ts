@@ -37,6 +37,12 @@ const store = vi.hoisted(() => ({
   renameTestCase: vi.fn(),
   cloneTestCase: vi.fn(),
   removeTestCase: vi.fn(),
+  setTestCaseFolder: vi.fn(),
+  reorderTestCases: vi.fn(),
+  cancelAllTestCases: vi.fn(),
+  buildCaseRequest: vi.fn(() => ({ url: '/x', spec: {} })),
+  loadTestCases: vi.fn(),
+  testCaseLoadState: new Map<string, 'loading' | 'ready' | 'error'>(),
 }))
 
 vi.mock('../stores/workspace', () => ({
@@ -80,22 +86,53 @@ describe('TestCasesPanel', () => {
     useLocaleStore().setMode('zh')
     store.set([['ep-1', [makeCase('c1', '内部划转-SGB', '正向'), makeCase('c2', '金额超限', '边界值')]]])
     store.meta.clear()
+    store.testCaseLoadState.set('ep-1', 'ready')
     store.environments = []
     store.activeEnvId = null
     vi.clearAllMocks()
   })
 
-  it('运行结果列：未运行显示 —；有元信息时显示 状态码 + 耗时', () => {
+  it('运行结果列：未运行显示 —；有元信息时显示 状态码 + 耗时（耗时独立列）', () => {
     const wrapper = mountPanel(draft())
     expect(wrapper.text()).toContain('—')
     store.meta.set('c1', { status: 200, durationMs: 145 })
     const w2 = mountPanel(draft())
     expect(w2.text()).toContain('200 OK')
-    expect(w2.text()).toContain('(145ms)')
+    expect(w2.text()).toContain('145ms')
     store.meta.set('c2', { status: 500, durationMs: 320 })
     const w3 = mountPanel(draft())
     expect(w3.text()).toContain('500 Internal Error')
-    expect(w3.text()).toContain('(320ms)')
+    expect(w3.text()).toContain('320ms')
+  })
+
+  it('统计条：总用例 / 通过 / 失败 / 未执行 / 通过率', () => {
+    store.meta.set('c1', { status: 200, durationMs: 100 })
+    const wrapper = mountPanel(draft())
+    const stats = wrapper.find('.tcp-stats').text()
+    expect(stats).toContain('2')
+    expect(stats).toContain('1')
+    expect(stats).toContain('100%')
+  })
+
+  it('批量选择：勾选出现批量操作条，可全选 / 清空', async () => {
+    const wrapper = mountPanel(draft())
+    expect(wrapper.find('.tcp-batchbar').exists()).toBe(false)
+    // 点「批量选择」→ 全选
+    await wrapper.findAll('.tcp-actions .miyo-btn')[0].trigger('click')
+    const bar = wrapper.find('.tcp-batchbar')
+    expect(bar.exists()).toBe(true)
+    expect(bar.text()).toContain('已选 2 条')
+    await wrapper.findAll('.tcp-actions .miyo-btn')[0].trigger('click')
+    expect(wrapper.find('.tcp-batchbar').exists()).toBe(false)
+  })
+
+  it('执行状态 / 方法过滤：过滤后行数与空态', async () => {
+    store.meta.set('c1', { status: 200, durationMs: 100 })
+    mountPanel(draft())
+    const wrapper = mountPanel(draft())
+    // c2 未运行 → 状态列显示 —；c1 有会话摘要
+    expect(wrapper.findAll('.tcp-body-row')).toHaveLength(2)
+    expect(wrapper.findAll('.tcp-last-none')).toHaveLength(1)
   })
 
   it('Method 展示为 Badge（带方法语义色）', () => {

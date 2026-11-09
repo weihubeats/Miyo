@@ -6,21 +6,27 @@
  * - 数据表：# | 名称 | 分组 | 运行结果 | 操作（... 菜单：直接运行 / 编辑 / 克隆 / 删除）；
  * - 点击用例行 → 回填调试页（method / path / params / headers / body）并切回「调试」。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import Sortable from 'sortablejs'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useLocaleStore } from '../stores/locale'
-import { CATEGORY_TONE, TEST_CASE_CATEGORIES, caseCategoryLabel, formatDuration, matchTestCaseKeyword, statusTextOf, statusToneOf } from '../utils/testCases'
+import { CATEGORY_TONE, TEST_CASE_CATEGORIES, caseCategoryLabel, formatDuration, matchTestCaseKeyword, relativeRunTime, statusTextOf, statusToneOf } from '../utils/testCases'
 import { methodTextTone } from '../utils/methodTone'
-import type { Endpoint, TestCase, TestCaseCategory } from '../types/miyoApi'
+import type { Endpoint, HttpMethod, TestCase, TestCaseCategory } from '../types/miyoApi'
+import CustomSelect from './ui/CustomSelect.vue'
 import EmptyState from './ui/EmptyState.vue'
 import EnvBadge from './ui/EnvBadge.vue'
 import Icon from './ui/Icon.vue'
 import IconButton from './ui/IconButton.vue'
 import Menu, { type MenuItem } from './ui/Menu.vue'
+import Modal from './ui/Modal.vue'
+import Popconfirm from './ui/Popconfirm.vue'
+import Skeleton from './ui/Skeleton.vue'
 import TestCaseDrawer from './TestCaseDrawer.vue'
 import TestCaseModal from './TestCaseModal.vue'
 import ExportSmokeDialog from './docs/ExportSmokeDialog.vue'
 import { useToast } from '../composables/useToast'
+import { useMiyoApi } from '../composables/useMiyoApi'
 
 const props = defineProps<{ draft: Endpoint | null }>()
 
@@ -28,6 +34,7 @@ const store = useWorkspaceStore()
 const toast = useToast()
 const locale = useLocaleStore()
 const t = locale.t
+const api = useMiyoApi()
 
 type FilterKey = '全部' | TestCaseCategory
 
@@ -41,12 +48,58 @@ const cases = computed<TestCase[]>(() =>
   props.draft ? (store.testCases.get(props.draft.id) ?? []) : [],
 )
 
+/** 执行状态过滤（全部 / 通过 / 失败 / 未执行）。 */
+type StatusFilter = 'all' | 'Success' | 'Failed' | 'Untested'
+const statusFilter = ref<StatusFilter>('all')
+
+/** 请求方法过滤（全部 / GET / POST / …；按当前用例里出现过的方法动态生成）。 */
+const methodFilter = ref<'all' | HttpMethod>('all')
+const methodOptions = computed<{ value: 'all' | HttpMethod; label: string }[]>(() => {
+  const seen = new Set<HttpMethod>()
+  for (const c of cases.value) seen.add(c.method)
+  return [
+    { value: 'all', label: t('cases.methodAll') },
+    ...[...seen].map((m) => ({ value: m, label: m })),
+  ]
+})
+
 const filtered = computed<TestCase[]>(() => {
   const byCat =
     filter.value === '全部' ? cases.value : cases.value.filter((c) => c.category === filter.value)
+  const byStatus = statusFilter.value === 'all' ? byCat : byCat.filter((c) => effectiveStatus(c) === statusFilter.value)
+  const byMethod = methodFilter.value === 'all' ? byStatus : byStatus.filter((c) => c.method === methodFilter.value)
   const q = keyword.value.trim()
-  if (!q) return byCat
-  return byCat.filter((c) => matchTestCaseKeyword(c, q))
+  if (!q) return byMethod
+  return byMethod.filter((c) => matchTestCaseKeyword(c, q))
+})
+
+/** 生效状态：会话内跑过以 caseRunMeta 摘要为准（和列表列同源），否则看落库值。 */
+function effectiveStatus(c: TestCase): 'Success' | 'Failed' | 'Untested' {
+  const meta = store.caseRunMeta.get(c.id)
+  if (meta) return meta.status >= 200 && meta.status < 400 ? 'Success' : 'Failed'
+  return c.last_run_status
+}
+
+/** 统计条：总用例 / 通过 / 失败 / 未执行 / 通过率（当前接口全量口径，随过滤 Tab 无关）。 */
+const stats = computed(() => {
+  let passed = 0
+  let failed = 0
+  let untested = 0
+  for (const c of cases.value) {
+    const st = effectiveStatus(c)
+    if (st === 'Success') passed += 1
+    else if (st === 'Failed') failed += 1
+    else untested += 1
+  }
+  const total = cases.value.length
+  const executed = passed + failed
+  return {
+    total,
+    passed,
+    failed,
+    untested,
+    rate: executed ? Math.round((passed / executed) * 100) : null,
+  }
 })
 
 /** 空态标题：无用例 → 空提示；有搜索词无命中 → 无匹配；仅分类无命中 → 分组空提示。 */
@@ -365,7 +418,8 @@ function openRowMenu(event: MouseEvent, c: TestCase): void {
     { key: 'run', label: t('cases.menuRun'), icon: 'play' },
     { key: 'edit', label: t('cases.menuEdit'), icon: 'pencil' },
     { key: 'open-debug', label: t('cases.menuOpenDebug'), icon: 'layout-grid' },
-    { key: 'clone', label: t('cases.menuClone'), icon: 'copy', dividerBefore: true },
+    { key: 'add-to-scenario', label: t('cases.addToScenario'), icon: 'package', dividerBefore: true },
+    { key: 'clone', label: t('cases.menuClone'), icon: 'copy' },
     { key: 'delete', label: t('common.delete'), icon: 'trash', danger: true, confirm: t('cases.deleteConfirm', { name: c.name }) },
   ]
   menuEl.value?.openAt(event.currentTarget as HTMLElement, items, 'left')
@@ -385,6 +439,10 @@ async function onMenuSelect(item: MenuItem): Promise<void> {
     case 'open-debug':
       store.openTestCaseInDebug(d.id, c)
       break
+    case 'add-to-scenario':
+      scenarioTarget.value = c
+      scenarioDialogOpen.value = true
+      break
     case 'clone':
       await store.cloneTestCase(d.id, c)
       break
@@ -396,6 +454,90 @@ async function onMenuConfirm(item: MenuItem): Promise<void> {
   const d = props.draft
   if (!c || !d || item.key !== 'delete') return
   await store.removeTestCase(d.id, c.id)
+}
+
+// ---------- 添加到集成测试场景（统一执行引擎：用例 → 场景步骤） ----------
+const scenarioDialogOpen = ref(false)
+const scenarioTarget = ref<TestCase | null>(null)
+const scenarios = ref<import('../types/miyoApi').Scenario[]>([])
+const scenarioPick = ref<string>('__new__')
+const scenarioNewName = ref('')
+const scenarioBusy = ref(false)
+
+watch(scenarioDialogOpen, async (open) => {
+  if (!open) return
+  scenarioPick.value = '__new__'
+  scenarioNewName.value = ''
+  try {
+    scenarios.value = props.draft?.project_id
+      ? ((await api.listScenarios(props.draft.project_id)) ?? [])
+      : []
+  } catch {
+    scenarios.value = []
+  }
+})
+
+/** 用例快照 → 场景内联步骤：请求整体内联，断言 / 提取挂步骤级（同一引擎求值）。 */
+function caseToScenarioStep(c: TestCase): import('../types/miyoApi').ScenarioStep {
+  const { spec } = store.buildCaseRequest(c)
+  const isAbs = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(c.url_path)
+  const path = c.url_path.startsWith('/') ? c.url_path : `/${c.url_path}`
+  return {
+    endpoint_id: null,
+    enabled: true,
+    name: c.name,
+    extract: Array.isArray(c.extractors) ? c.extractors : [],
+    assertions: Array.isArray(c.assertions) ? c.assertions : [],
+    request: {
+      method: c.method,
+      url: isAbs ? c.url_path : `{{base_url}}${path}`,
+      spec,
+    },
+  }
+}
+
+async function confirmAddToScenario(): Promise<void> {
+  const d = props.draft
+  const c = scenarioTarget.value
+  if (!d || !c || scenarioBusy.value) return
+  scenarioBusy.value = true
+  try {
+    const step = caseToScenarioStep(c)
+    const now = new Date().toISOString()
+    if (scenarioPick.value === '__new__') {
+      const name = scenarioNewName.value.trim()
+      if (!name) {
+        toast.warning(t('cases.scenarioNameRequired'))
+        return
+      }
+      const scenario: import('../types/miyoApi').Scenario = {
+        id: crypto.randomUUID(),
+        project_id: d.project_id,
+        name,
+        description: '',
+        category: '',
+        sort_order: 0,
+        steps: [step],
+        created_at: now,
+        updated_at: now,
+      }
+      await api.saveScenario(scenario)
+    } else {
+      const target = scenarios.value.find((x) => x.id === scenarioPick.value)
+      if (!target) return
+      target.steps.push(step)
+      target.updated_at = now
+      await api.saveScenario(target)
+    }
+    toast.success(t('cases.scenarioAdded', { name: c.name }))
+    scenarioDialogOpen.value = false
+  } catch (err) {
+    toast.error(t('ws.caseUpdateFail'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  } finally {
+    scenarioBusy.value = false
+  }
 }
 
 // ---------- 导出冒烟文档 ----------
@@ -410,8 +552,11 @@ function openDrawer(c: TestCase): void {
   drawerOpen.value = true
 }
 
-/** 抽屉「立即运行」：原地执行（不切 Tab），结果留在抽屉内。 */
-async function runDrawerPayload(payload: {
+/** 抽屉载荷（完整：请求快照 + 断言提取 + 执行控制）。 */
+interface DrawerPayload {
+  name: string
+  category: TestCaseCategory
+  folder: string
   method: string
   urlPath: string
   pathVariables: TestCase['path_variables']
@@ -419,7 +564,15 @@ async function runDrawerPayload(payload: {
   headers: TestCase['headers']
   bodyType: string
   bodyContent: string
-}): Promise<import('../types/miyoApi').ExecuteResponse | null> {
+  assertions: TestCase['assertions']
+  extractors: TestCase['extractors']
+  auth: TestCase['auth']
+  timeoutMs: number | null
+  disableCookies: boolean
+}
+
+/** 抽屉「立即运行」：原地执行（不切 Tab），结果留在抽屉内。 */
+async function runDrawerPayload(payload: DrawerPayload): Promise<import('../types/miyoApi').EndpointResult | null> {
   const d = props.draft
   if (!d || !drawerCase.value) return null
   const snapshot: TestCase = {
@@ -431,22 +584,17 @@ async function runDrawerPayload(payload: {
     headers: payload.headers,
     body_type: payload.bodyType,
     body_content: payload.bodyContent,
+    assertions: payload.assertions ?? [],
+    extractors: payload.extractors ?? [],
+    auth: payload.auth ?? null,
+    timeout_ms: payload.timeoutMs,
+    disable_cookies: payload.disableCookies,
   }
   return store.runTestCase(d.id, snapshot, store.activeEnvId)
 }
 
-/** 抽屉「保存修改」：名称/分组 + 请求内容一起落库。 */
-async function saveDrawerPayload(payload: {
-  name: string
-  category: TestCaseCategory
-  method: string
-  urlPath: string
-  pathVariables: TestCase['path_variables']
-  params: TestCase['params']
-  headers: TestCase['headers']
-  bodyType: string
-  bodyContent: string
-}): Promise<void> {
+/** 抽屉「保存修改」：名称/分组/文件夹 + 请求内容 + 断言提取 + 执行控制一起落库。 */
+async function saveDrawerPayload(payload: DrawerPayload): Promise<void> {
   const d = props.draft
   if (!d || !drawerCase.value) return
   const c = drawerCase.value
@@ -458,10 +606,191 @@ async function saveDrawerPayload(payload: {
     headers: payload.headers,
     bodyType: payload.bodyType,
     bodyContent: payload.bodyContent,
+    assertions: payload.assertions ?? [],
+    extractors: payload.extractors ?? [],
+    auth: payload.auth ?? null,
+    timeoutMs: payload.timeoutMs,
+    disableCookies: payload.disableCookies,
   })
-  const ok = await store.renameTestCase(d.id, c.id, payload.name, payload.category, c.folder ?? '')
-  if (ok) toast.success(t('cases.saved'))
+  const metaChanged =
+    payload.name !== c.name || payload.category !== c.category || (payload.folder ?? '') !== (c.folder ?? '')
+  if (metaChanged) {
+    await store.renameTestCase(d.id, c.id, payload.name, payload.category, payload.folder)
+  }
+  // 同步父级持有的抽屉用例引用（保存后 lastResult / 标题即时刷新）。
+  const list = store.testCases.get(d.id)
+  const target = list?.find((x) => x.id === c.id)
+  if (target) {
+    drawerCase.value = target
+  }
+  toast.success(t('cases.saved'))
 }
+
+// ---------- 批量选择 / 批量操作 ----------
+/** 勾选的用例 id（勾选即进入批量模式，操作条出现）。 */
+const checkedIds = ref<Set<string>>(new Set())
+
+function toggleCheck(id: string): void {
+  const next = new Set(checkedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  checkedIds.value = next
+}
+
+function isGroupAllChecked(g: { cases: TestCase[] }): boolean {
+  return g.cases.length > 0 && g.cases.every((c) => checkedIds.value.has(c.id))
+}
+
+/** 全选 / 取消一组（组头复选框）。 */
+function toggleGroupCheck(g: { cases: TestCase[] }): void {
+  const next = new Set(checkedIds.value)
+  const all = isGroupAllChecked(g)
+  for (const c of g.cases) {
+    if (all) next.delete(c.id)
+    else next.add(c.id)
+  }
+  checkedIds.value = next
+}
+
+function clearChecks(): void {
+  checkedIds.value = new Set()
+}
+
+const checkedCases = computed<TestCase[]>(() =>
+  cases.value.filter((c) => checkedIds.value.has(c.id)),
+)
+
+/** 批量删除（Popconfirm 二次确认后逐条删，复用现有删除链路）。 */
+const batchDeleting = ref(false)
+async function batchDelete(): Promise<void> {
+  const d = props.draft
+  if (!d || !checkedCases.value.length || batchDeleting.value) return
+  batchDeleting.value = true
+  try {
+    for (const c of checkedCases.value) {
+      await store.removeTestCase(d.id, c.id)
+    }
+    toast.success(t('cases.batchDeleted', { n: checkedCases.value.length }))
+    clearChecks()
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
+/** 批量运行：勾选集合并入集合链路（复用 runAllTestCases 的 ids 过滤）。 */
+const batchRunning = ref(false)
+async function batchRun(): Promise<void> {
+  const d = props.draft
+  if (!d || !checkedCases.value.length || batchRunning.value || runningAll.value) return
+  batchRunning.value = true
+  const runId = crypto.randomUUID()
+  activeCollectionRunId.value = runId
+  collectionProgress.value = { done: 0, total: checkedCases.value.length }
+  try {
+    const r = await store.runAllTestCases(d.id, {
+      runId,
+      ids: checkedCases.value.map((c) => c.id),
+      onProgress: (done, total) => {
+        collectionProgress.value = { done, total }
+      },
+    })
+    toast[r.success === r.total ? 'success' : 'info'](
+      t('cases.runAllDone', { ok: r.success, total: r.total }),
+    )
+  } catch (err) {
+    toast.error(t('cases.runAllFail'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  } finally {
+    if (activeCollectionRunId.value === runId) activeCollectionRunId.value = null
+    collectionProgress.value = null
+    batchRunning.value = false
+  }
+}
+
+/** 批量移动分组（下拉选择目标组；空 = 未分组）。 */
+async function batchMove(folder: string): Promise<void> {
+  const d = props.draft
+  if (!d || !checkedCases.value.length) return
+  const ok = await store.setTestCaseFolder(d.id, checkedCases.value.map((c) => c.id), folder)
+  if (ok) toast.success(t('cases.batchMoved', { n: checkedCases.value.length }))
+}
+
+/** 批量操作条的目标分组候选（现有组 + 未分组）。 */
+const batchMoveTargets = computed<{ value: string; label: string }[]>(() => [
+  ...folderNames.value.map((f) => ({ value: f, label: f })),
+  { value: '', label: t('cases.ungrouped') },
+])
+
+// ---------- 拖拽排序 / 跨组移动（SortableJS，组内换位 + 跨组改 folder） ----------
+const groupEls = new Map<string, HTMLElement>()
+const sortables: Sortable[] = []
+
+function setGroupEl(name: string, el: unknown): void {
+  if (el instanceof HTMLElement) groupEls.set(name, el)
+  else groupEls.delete(name)
+}
+
+function initSortables(): void {
+  disposeSortables()
+  for (const [name, el] of groupEls) {
+    sortables.push(
+      Sortable.create(el, {
+        group: 'tcp-cases',
+        animation: 150,
+        easing: 'cubic-bezier(0.2, 0, 0, 1)',
+        filter: 'button, input, label',
+        preventOnFilter: false,
+        onEnd: (evt) => {
+          void onCaseDrop(name, evt)
+        },
+      }),
+    )
+  }
+}
+
+function disposeSortables(): void {
+  for (const s of sortables) s.destroy()
+  sortables.length = 0
+}
+
+/** 落点处理：组内换位 → 全量重排序；跨组 → 改 folder + 重排序。 */
+async function onCaseDrop(
+  fromName: string,
+  evt: Sortable.SortableEvent,
+): Promise<void> {
+  const d = props.draft
+  if (!d) return
+  const toName = (evt.to as HTMLElement).dataset.groupName ?? ''
+  const draggedId = (evt.item as HTMLElement).dataset.caseId
+  if (!draggedId) return
+  // DOM 新序 → 该组 id 序（只包含可见行；过滤态下拖拽只影响可见子集）。
+  const domIds = [...(evt.to as HTMLElement).querySelectorAll<HTMLElement>('[data-case-id]')]
+    .map((el) => el.dataset.caseId)
+    .filter((id): id is string => !!id)
+  if (toName !== fromName) {
+    const ok = await store.setTestCaseFolder(d.id, [draggedId], toName)
+    if (!ok) return
+  }
+  // 全量稳定序：把可见子集的 DOM 序合并回完整列表（未见的用例保持相对位置）。
+  const full = store.testCases.get(d.id) ?? []
+  const subset = new Set(domIds)
+  const ordered: string[] = []
+  let k = 0
+  for (const c of full) {
+    if (subset.has(c.id)) {
+      ordered.push(domIds[k++] ?? c.id)
+    } else {
+      ordered.push(c.id)
+    }
+  }
+  await store.reorderTestCases(d.id, ordered)
+}
+
+onMounted(initSortables)
+onBeforeUnmount(disposeSortables)
+// 分组结构变化（新建/重命名/过滤切换）后重建 Sortable 实例。
+watch(groups, () => initSortables(), { flush: 'post' })
 
 // ---------- 运行 ----------
 const runningIds = ref<Set<string>>(new Set())
@@ -474,11 +803,20 @@ async function runOne(c: TestCase): Promise<void> {
   try {
     const res = await store.runTestCase(d.id, c, store.activeEnvId)
     if (res) {
-      const ok = res.status >= 200 && res.status < 400
-      if (ok) {
-        toast.success(t('cases.passed', { name: c.name }), { message: `HTTP ${res.status} · ${res.duration_ms}ms` })
+      // 引擎判定：有断言看 ok；无断言维持 2xx-3xx。提示带断言通过数。
+      const ok = effectiveStatus(c)
+      const n = res.outcomes.length
+      const detail = [
+        res.status != null ? `HTTP ${res.status}` : null,
+        res.duration_ms != null ? formatDuration(res.duration_ms) : null,
+        n ? t('cases.assertSummary', { ok: res.outcomes.filter((o) => o.passed).length, n }) : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+      if (ok === 'Success') {
+        toast.success(t('cases.passed', { name: c.name }), { message: detail })
       } else {
-        toast.error(t('cases.failed', { name: c.name }), { message: `HTTP ${res.status} · ${res.duration_ms}ms` })
+        toast.error(t('cases.failed', { name: c.name }), { message: detail })
       }
     }
   } catch (err) {
@@ -542,17 +880,33 @@ const STATUS_TONE: Record<TestCase['last_run_status'], string> = {
   Untested: 'var(--text-3)',
 }
 
-/** 最近一次运行元信息（状态码 / 耗时），运行结果列富化展示。 */
-function runMetaOf(c: TestCase): { status: number; durationMs: number } | undefined {
+/** 最近一次运行元信息（状态码 / 耗时 / 结果），运行结果列富化展示。 */
+function runMetaOf(c: TestCase): { status: number; durationMs: number; result?: import('../types/miyoApi').EndpointResult } | undefined {
   return store.caseRunMeta.get(c.id)
 }
+
+/** 最近一次断言摘要（落库值：ok/fail；会话内以 result 为准）。 */
+function assertSummaryOf(c: TestCase): { ok: number; fail: number } | null {
+  const r = runMetaOf(c)?.result
+  if (r) return { ok: r.outcomes.filter((o) => o.passed).length, fail: r.outcomes.filter((o) => !o.passed).length }
+  if (c.last_run_ok == null && c.last_run_fail == null) return null
+  return { ok: c.last_run_ok ?? 0, fail: c.last_run_fail ?? 0 }
+}
+
+/** 列表加载态（骨架）与错误态（重试）。 */
+const loadState = computed<'loading' | 'ready' | 'error'>(() =>
+  props.draft ? (store.testCaseLoadState.get(props.draft.id) ?? 'ready') : 'ready',
+)
 
 watch(
   () => props.draft?.id,
   () => {
     filter.value = '全部'
     keyword.value = ''
+    statusFilter.value = 'all'
+    methodFilter.value = 'all'
     selectedId.value = null
+    checkedIds.value = new Set()
     collapsedFolders.value = new Set()
     renamingFolder.value = null
     groupRun.value = null
@@ -606,6 +960,14 @@ watch(
           class="miyo-btn miyo-btn-sm"
           type="button"
           :disabled="!cases.length"
+          @click="checkedIds.size ? clearChecks() : checkedIds = new Set(cases.map((c) => c.id))"
+        >
+          <Icon name="list" :size="13" /> {{ checkedIds.size ? t('cases.batchCancel') : t('cases.batchSelect') }}
+        </button>
+        <button
+          class="miyo-btn miyo-btn-sm"
+          type="button"
+          :disabled="!cases.length"
           :title="t('cases.exportSmokeHint')"
           @click="exportSmokeOpen = true"
         >
@@ -643,6 +1005,74 @@ watch(
       </div>
     </div>
 
+    <!-- 统计条：总用例 / 通过 / 失败 / 未执行 / 通过率 -->
+    <div v-if="cases.length" class="tcp-stats">
+      <span class="tcp-stat">
+        <span class="tcp-stat-num">{{ stats.total }}</span> {{ t('cases.statTotal') }}
+      </span>
+      <span class="tcp-stat tone-pass">
+        <span class="tcp-stat-num">{{ stats.passed }}</span> {{ t('cases.statPassed') }}
+      </span>
+      <span class="tcp-stat tone-fail">
+        <span class="tcp-stat-num">{{ stats.failed }}</span> {{ t('cases.statFailed') }}
+      </span>
+      <span class="tcp-stat">
+        <span class="tcp-stat-num">{{ stats.untested }}</span> {{ t('cases.statUntested') }}
+      </span>
+      <span v-if="stats.rate !== null" class="tcp-stat tcp-stat-rate">
+        {{ t('cases.statRate') }} <span class="tcp-stat-num">{{ stats.rate }}%</span>
+      </span>
+    </div>
+
+    <!-- 二级过滤：执行状态 + 请求方法（与分类 Tab / 关键字搜索叠加） -->
+    <div v-if="cases.length" class="tcp-subfilters">
+      <CustomSelect
+        class="tcp-subfilter"
+        :model-value="statusFilter"
+        :options="[
+          { value: 'all', label: t('cases.statusAll') },
+          { value: 'Success', label: t('cases.statusPassed') },
+          { value: 'Failed', label: t('cases.statusFailed') },
+          { value: 'Untested', label: t('cases.statusUntested') },
+        ]"
+        size="sm"
+        :pop-min-width="110"
+        @update:model-value="(v) => (statusFilter = String(v ?? 'all') as StatusFilter)"
+      />
+      <CustomSelect
+        class="tcp-subfilter"
+        :model-value="methodFilter"
+        :options="methodOptions"
+        size="sm"
+        :pop-min-width="110"
+        @update:model-value="(v) => (methodFilter = String(v ?? 'all') as 'all' | HttpMethod)"
+      />
+    </div>
+
+    <!-- 批量操作条 -->
+    <div v-if="checkedIds.size" class="tcp-batchbar">
+      <span class="tcp-batchbar-n">{{ t('cases.batchSelected', { n: checkedIds.size }) }}</span>
+      <button class="miyo-btn miyo-btn-sm" type="button" :disabled="batchRunning" @click="batchRun">
+        <Icon name="play" :size="12" /> {{ t('cases.batchRun') }}
+      </button>
+      <CustomSelect
+        class="tcp-batchbar-move"
+        :model-value="'__noop__'"
+        :options="[{ value: '__noop__', label: t('cases.batchMove') }, ...batchMoveTargets]"
+        size="sm"
+        :pop-min-width="140"
+        @update:model-value="(v) => { if (v !== '__noop__') { void batchMove(String(v ?? '')) } }"
+      />
+      <Popconfirm :title="t('cases.batchDeleteConfirm', { n: checkedIds.size })" @confirm="batchDelete">
+        <button class="miyo-btn miyo-btn-sm miyo-btn-danger" type="button" :disabled="batchDeleting">
+          <Icon name="trash" :size="12" /> {{ t('common.delete') }}
+        </button>
+      </Popconfirm>
+      <button class="miyo-btn miyo-btn-sm" type="button" @click="clearChecks">
+        {{ t('cases.batchCancel') }}
+      </button>
+    </div>
+
     <!-- 行内新建文件夹：Enter / ✓ 确认，Esc / ✕ 取消（空态同样可用） -->
     <div v-if="creatingFolder" class="tcp-create-row" @focusout="onCreateRowFocusout">
       <Icon name="folder-plus" :size="13" class="tcp-create-icon" />
@@ -671,18 +1101,38 @@ watch(
       />
     </div>
 
-    <!-- 用例表格（按文件夹分组：命名组按发现序，未分组殿后；可折叠） -->
-    <div v-if="filtered.length || pendingFolders.size" class="tcp-table">
+    <!-- 加载骨架（首屏拉取用例期间） -->
+    <div v-if="loadState === 'loading'" class="sk-cases" aria-busy="true" :aria-label="t('common.loading')">
+      <Skeleton v-for="i in 5" :key="i" width="86%" height="14px" />
+    </div>
+    <!-- 加载失败：错误条 + 重试 -->
+    <div v-else-if="loadState === 'error'" class="miyo-inline-error" role="alert">
+      <span class="miyo-inline-error-text">{{ t('cases.loadFail') }}</span>
+      <button class="miyo-btn miyo-btn-sm" type="button" @click="store.loadTestCases(props.draft!.id)">
+        {{ t('common.retry') }}
+      </button>
+    </div>
+    <!-- 用例表格（按文件夹分组：命名组按发现序，未分组殿后；可折叠；组内拖拽排序 / 跨组拖动） -->
+    <div v-else-if="filtered.length || pendingFolders.size" class="tcp-table">
       <div class="tcp-row tcp-head">
+        <span v-if="checkedIds.size" class="tcp-col-check"></span>
         <span class="tcp-col-idx">#</span>
         <span class="tcp-col-name">{{ t('cases.colName') }}</span>
-        <span class="tcp-col-cat">{{ t('cases.colCategory') }}</span>
+        <span class="tcp-col-last">{{ t('cases.colLastRun') }}</span>
         <span class="tcp-col-status">{{ t('cases.colResult') }}</span>
         <span class="tcp-col-ops">{{ t('cases.colOps') }}</span>
       </div>
       <template v-for="g in groups" :key="g.name || '__ungrouped__'">
         <!-- 分组头：折叠 + 名称（行内重命名）+ 计数 + 分组运行 + 操作菜单 -->
         <div class="tcp-group-head" :class="{ 'is-collapsed': collapsedFolders.has(g.name) }">
+          <label v-if="checkedIds.size && g.cases.length" class="tcp-group-check" :title="t('cases.batchSelect')">
+            <input
+              type="checkbox"
+              :checked="isGroupAllChecked(g)"
+              @click.prevent
+              @change="toggleGroupCheck(g)"
+            />
+          </label>
           <button
             class="tcp-group-toggle"
             type="button"
@@ -750,61 +1200,91 @@ watch(
           </div>
         </div>
         <template v-if="!collapsedFolders.has(g.name)">
-          <div v-if="!g.cases.length" class="tcp-group-empty">
-            {{ t('cases.groupEmpty') }}
-            <button class="tcp-group-empty-add" type="button" @click="openCreate(g.name)">
-              <Icon name="plus" :size="11" /> {{ t('cases.addCase') }}
-            </button>
-          </div>
+          <!-- Sortable 容器：组内换位 + 跨组拖动（data-group-name 标识落点组） -->
           <div
-            v-for="(c, j) in g.cases"
-            :key="c.id"
-            class="tcp-row tcp-body-row"
-            :class="{ 'is-selected': selectedId === c.id }"
-            @click="selectRow(c)"
+            class="tcp-group-body"
+            :data-group-name="g.name"
+            :ref="(el) => setGroupEl(g.name, el)"
           >
-            <span class="tcp-col-idx">{{ g.start + j + 1 }}</span>
-        <button class="tcp-col-name tcp-name-btn" type="button" :title="t('cases.rowTitle', { name: c.name })" @click="openDrawer(c)">
-          <span class="tcp-method" :class="methodTextTone(c.method)">{{ c.method }}</span>
-          <span class="tcp-name-text">{{ c.name }}</span>
-        </button>
-        <span class="tcp-col-cat">
-          <span class="tcp-cat-dot" :style="{ background: CATEGORY_TONE[c.category] }"></span>
-          {{ caseCategoryLabel(c.category) }}
-        </span>
-        <span class="tcp-col-status">
-          <span v-if="runningIds.has(c.id)" class="tcp-status tcp-status-running">
-            <span class="tcp-spinner"></span>
-            {{ t('cases.running') }}
-          </span>
-          <template v-else-if="runMetaOf(c)">
-            <span
-              class="tcp-status tcp-status-meta"
-              :class="`tone-${statusToneOf(runMetaOf(c)!.status)}`"
+            <div v-if="!g.cases.length" class="tcp-group-empty">
+              {{ t('cases.groupEmpty') }}
+              <button class="tcp-group-empty-add" type="button" @click="openCreate(g.name)">
+                <Icon name="plus" :size="11" /> {{ t('cases.addCase') }}
+              </button>
+            </div>
+            <div
+              v-for="(c, j) in g.cases"
+              :key="c.id"
+              class="tcp-row tcp-body-row"
+              :class="{ 'is-selected': selectedId === c.id }"
+              :data-case-id="c.id"
+              @click="selectRow(c)"
             >
-              <span class="tcp-dot"></span>
-              {{ runMetaOf(c)!.status }} {{ statusTextOf(runMetaOf(c)!.status) }}
-              <span class="tcp-dur">({{ formatDuration(runMetaOf(c)!.durationMs) }})</span>
-            </span>
-          </template>
-          <span
-            v-else
-            class="tcp-status"
-            :class="`tcp-status-${c.last_run_status.toLowerCase()}`"
-            :style="{ color: STATUS_TONE[c.last_run_status] }"
-          >
-            {{ c.last_run_status === 'Untested' ? '—' : c.last_run_status }}
-          </span>
-        </span>
-        <span class="tcp-col-ops">
-          <IconButton
-            name="more-horizontal"
-            :size="14"
-            :title="t('common.moreActions')"
-            @click="openRowMenu($event, c)"
-          />
-        </span>
-      </div>
+              <label v-if="checkedIds.size" class="tcp-col-check" @click.stop>
+                <input
+                  type="checkbox"
+                  :checked="checkedIds.has(c.id)"
+                  @change="toggleCheck(c.id)"
+                />
+              </label>
+              <span class="tcp-col-idx">{{ g.start + j + 1 }}</span>
+              <button class="tcp-col-name tcp-name-btn" type="button" @click="openDrawer(c)">
+                <span class="tcp-name-line">
+                  <span class="tcp-method" :class="methodTextTone(c.method)">{{ c.method }}</span>
+                  <span class="tcp-name-text">{{ c.name }}</span>
+                  <span class="tcp-cat-tag" :style="{ color: CATEGORY_TONE[c.category] }">
+                    {{ caseCategoryLabel(c.category) }}
+                  </span>
+                </span>
+                <span class="tcp-path-line" :title="c.url_path">{{ c.url_path }}</span>
+              </button>
+              <span class="tcp-col-last">
+                <template v-if="c.last_run_at || runMetaOf(c)">
+                  <span class="tcp-last-time">{{ relativeRunTime(c.last_run_at) }}</span>
+                  <span v-if="runMetaOf(c)" class="tcp-last-dur">{{ formatDuration(runMetaOf(c)!.durationMs) }}</span>
+                  <span
+                    v-else-if="assertSummaryOf(c)"
+                    class="tcp-last-assert"
+                    :class="{ 'has-fail': assertSummaryOf(c)!.fail }"
+                  >
+                    {{ assertSummaryOf(c)!.ok }}/{{ assertSummaryOf(c)!.ok + assertSummaryOf(c)!.fail }}
+                  </span>
+                </template>
+                <span v-else class="tcp-last-none">—</span>
+              </span>
+              <span class="tcp-col-status">
+                <span v-if="runningIds.has(c.id)" class="tcp-status tcp-status-running">
+                  <span class="tcp-spinner"></span>
+                  {{ t('cases.running') }}
+                </span>
+                <template v-else-if="runMetaOf(c)">
+                  <span
+                    class="tcp-status tcp-status-meta"
+                    :class="`tone-${statusToneOf(runMetaOf(c)!.status)}`"
+                  >
+                    <span class="tcp-dot"></span>
+                    {{ runMetaOf(c)!.status }} {{ statusTextOf(runMetaOf(c)!.status) }}
+                  </span>
+                </template>
+                <span
+                  v-else
+                  class="tcp-status"
+                  :class="`tcp-status-${c.last_run_status.toLowerCase()}`"
+                  :style="{ color: STATUS_TONE[c.last_run_status] }"
+                >
+                  {{ c.last_run_status === 'Untested' ? '—' : c.last_run_status }}
+                </span>
+              </span>
+              <span class="tcp-col-ops">
+                <IconButton
+                  name="more-horizontal"
+                  :size="14"
+                  :title="t('common.moreActions')"
+                  @click="openRowMenu($event, c)"
+                />
+              </span>
+            </div>
+          </div><!-- /tcp-group-body -->
         </template>
       </template>
     </div>
@@ -815,6 +1295,48 @@ watch(
       :title="emptyTitle"
       :description="emptyDescription"
     />
+
+    <!-- 添加到集成测试场景：选已有场景或新建（步骤内联用例快照，统一引擎） -->
+    <Modal
+      :open="scenarioDialogOpen"
+      :title="t('cases.addToScenarioTitle', { name: scenarioTarget?.name ?? '' })"
+      width="440px"
+      @update:open="scenarioDialogOpen = $event"
+    >
+      <div class="tcp-scn-list">
+        <label class="tcp-scn-item">
+          <input v-model="scenarioPick" type="radio" value="__new__" />
+          <input
+            v-model="scenarioNewName"
+            class="miyo-input tcp-scn-newname"
+            type="text"
+            :placeholder="t('cases.scenarioNewPh')"
+            spellcheck="false"
+            maxlength="60"
+            @click="scenarioPick = '__new__'"
+          />
+        </label>
+        <label v-for="sc in scenarios" :key="sc.id" class="tcp-scn-item">
+          <input v-model="scenarioPick" type="radio" :value="sc.id" />
+          <span class="tcp-scn-name">{{ sc.name }}</span>
+          <span class="tcp-scn-n">{{ sc.steps.length }}</span>
+        </label>
+        <p v-if="!scenarios.length" class="tcp-scn-empty">{{ t('cases.scenarioEmpty') }}</p>
+      </div>
+      <template #footer>
+        <button class="miyo-btn" type="button" @click="scenarioDialogOpen = false">
+          {{ t('common.cancel') }}
+        </button>
+        <button
+          class="miyo-btn miyo-btn-primary"
+          type="button"
+          :disabled="scenarioBusy || (scenarioPick === '__new__' && !scenarioNewName.trim())"
+          @click="confirmAddToScenario"
+        >
+          {{ t('common.confirm') }}
+        </button>
+      </template>
+    </Modal>
 
     <TestCaseModal
       :open="modalOpen"
@@ -830,7 +1352,9 @@ watch(
     <TestCaseDrawer
       :open="drawerOpen"
       :endpoint-id="draft?.id ?? ''"
+      :endpoint="draft"
       :test-case="drawerCase"
+      :last-result="drawerCase ? (store.caseRunMeta.get(drawerCase.id)?.result ?? null) : null"
       :resolve-url="store.resolveTestCaseUrl"
       :on-run="runDrawerPayload"
       :on-save="saveDrawerPayload"
@@ -1139,6 +1663,207 @@ watch(
   flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
+}
+
+/* ---- 统计条：总 / 通过 / 失败 / 未执行 / 通过率 ---- */
+.tcp-stats {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 8px 12px 0;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  flex-wrap: wrap;
+}
+.tcp-stat-num {
+  font-weight: 600;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+}
+.tcp-stat.tone-pass .tcp-stat-num { color: var(--success); }
+.tcp-stat.tone-fail .tcp-stat-num { color: var(--danger); }
+.tcp-stat-rate {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+/* ---- 二级过滤：状态 / 方法 ---- */
+.tcp-subfilters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 12px 0;
+}
+.tcp-subfilter {
+  width: 130px;
+}
+
+/* ---- 批量操作条 ---- */
+.tcp-batchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--accent-tint);
+}
+.tcp-batchbar-n {
+  font-size: var(--fs-xs);
+  color: var(--text-1);
+  font-weight: 600;
+  margin-right: auto;
+}
+.tcp-batchbar-move {
+  width: 150px;
+}
+
+/* ---- 组头复选 / 行复选 ---- */
+.tcp-group-check,
+.tcp-col-check {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.tcp-col-check {
+  width: 18px;
+}
+.tcp-group-check input,
+.tcp-col-check input {
+  accent-color: var(--accent);
+}
+
+/* ---- 组体（Sortable 容器） ---- */
+.tcp-group-body {
+  display: flex;
+  flex-direction: column;
+}
+/* 拖拽落点高亮（Sortable chosen/ghost） */
+.tcp-group-body .sortable-ghost {
+  opacity: 0.4;
+}
+.tcp-group-body .sortable-chosen {
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.3);
+}
+
+/* ---- 「最近执行」列：相对时间 + 耗时 / 断言摘要 ---- */
+.tcp-col-last {
+  width: 130px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.tcp-last-time {
+  font-family: var(--font-mono);
+}
+.tcp-last-dur,
+.tcp-last-assert {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+.tcp-last-assert.has-fail {
+  color: var(--danger);
+}
+.tcp-last-none {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+/* ---- 名称两行密度：第一行 方法徽章 + 名称 + 分类 tag，第二行路径 ---- */
+.tcp-name-btn {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  padding: 4px 0;
+}
+.tcp-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tcp-cat-tag {
+  flex-shrink: 0;
+  font-size: var(--fs-xxs);
+  opacity: 0.85;
+}
+.tcp-path-line {
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 添加到场景对话框 ---- */
+.tcp-scn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.tcp-scn-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease);
+}
+.tcp-scn-item:hover {
+  border-color: var(--border-strong);
+}
+.tcp-scn-item input[type='radio'] {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.tcp-scn-newname {
+  flex: 1;
+  height: 26px;
+  font-size: var(--fs-xs);
+}
+.tcp-scn-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+}
+.tcp-scn-n {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+}
+.tcp-scn-empty {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* ---- 加载骨架 ---- */
+.sk-cases {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 
 .tcp-spinner {

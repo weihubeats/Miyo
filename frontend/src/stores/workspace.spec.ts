@@ -134,6 +134,21 @@ vi.mock('../composables/useMiyoApi', () => ({
       else list[idx] = ep
       return ep
     }),
+    /** 记录 testEndpoint 收到的 url（用例运行已切换到引擎通道）。 */
+    testEndpoint: vi.fn().mockImplementation(async (args: { url: string; endpoint: Endpoint }) => {
+      backend.execCalls.push({ url: args.url, spec: args.endpoint.request })
+      return {
+        endpoint_id: args.endpoint.id,
+        endpoint_name: '用例',
+        method: 'GET',
+        path: args.url,
+        ok: true,
+        status: 200,
+        duration_ms: 1,
+        request_error: null,
+        outcomes: [],
+      }
+    }),
     /** 记录 executeRequest 收到的 url/spec，供「用例运行是否代入路径变量」断言。 */
     executeRequest: vi.fn().mockImplementation(async (args: { url: string; spec: unknown }) => {
       backend.execCalls.push(args)
@@ -818,7 +833,7 @@ describe('全局请求超时：未配置时回退后端内置默认', () => {
  *
  * 旧 bug：`TestCase` 没有 `path_variables` 字段，`buildCaseRequest` 写死
  * `path_variables: []` 且不代入 URL，于是 `/users/{id}` 这种带路径传参的用例
- * 单跑时把字面量 `{id}` 原样发给后端。此处断言真正送到 executeRequest 的 URL。
+ * 单跑时把字面量 `{id}` 原样发给后端。此处断言真正送到执行引擎（testEndpoint）的 URL。
  */
 describe('用例运行：URL 路径变量代入', () => {
   const baseCase = (over: Partial<TestCase>): TestCase => ({

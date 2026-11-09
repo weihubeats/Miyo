@@ -57,6 +57,8 @@ import Tabs, { type TabItem } from '../ui/Tabs.vue'
 import JsonCodeMirror from '../JsonCodeMirror.vue'
 import ScenarioRunReport from '../scenario/ScenarioRunReport.vue'
 import ScenarioVarsPanel from '../scenario/ScenarioVarsPanel.vue'
+import ExtractList from '../assertion/ExtractList.vue'
+import AssertionList from '../assertion/AssertionList.vue'
 import StepRequestEditor from './StepRequestEditor.vue'
 import RunResultView from './RunResultView.vue'
 import RunCompareModal from './RunCompareModal.vue'
@@ -82,17 +84,14 @@ const api = useMiyoApi()
 const toast = useToast()
 
 // ---------- 场景加载与编辑态 ----------
-interface EditorExtract {
-  name: string
-  from: 'body' | 'header'
-  path: string
-}
+// 编辑态 = 共享规则类型 + 必填化（行编辑器共享组件按 Scenario*Rule 消费）。
+type EditorExtract = ScenarioExtractRule
 
-interface EditorAssertion {
+type EditorAssertion = ScenarioAssertionRule & {
   name: string
-  type: string
+  type: ScenarioAssertionRule['type']
   path: string
-  op: string
+  op: NonNullable<ScenarioAssertionRule['op']>
   expected: string
 }
 
@@ -254,7 +253,7 @@ function parseExtract(v: unknown): EditorExtract[] {
     .filter((r) => r && typeof r.name === 'string')
     .map((r) => ({
       name: r.name ?? '',
-      from: r.from === 'header' ? 'header' : 'body',
+      from: r.from === 'header' || r.from === 'cookie' || r.from === 'body_regex' ? r.from : 'body',
       path: typeof r.path === 'string' ? r.path : '',
     }))
 }
@@ -266,9 +265,9 @@ function parseAssertions(v: unknown): EditorAssertion[] {
     .filter((r) => r && typeof r.type === 'string')
     .map((r) => ({
       name: typeof r.name === 'string' ? r.name : '',
-      type: r.type ?? 'status',
+      type: (r.type ?? 'status') as ScenarioAssertionRule['type'],
       path: typeof r.path === 'string' ? r.path : '',
-      op: typeof r.op === 'string' ? r.op : 'eq',
+      op: (typeof r.op === 'string' ? r.op : 'eq') as NonNullable<ScenarioAssertionRule['op']>,
       expected: r.expected == null ? '' : String(r.expected),
     }))
 }
@@ -537,54 +536,17 @@ const waitMsText = numBridge(
   (v) => { if (selectedStep.value) selectedStep.value.waitMs = v },
 )
 
-// ---------- 提取 / 断言行编辑（原地改数组） ----------
+// ---------- 提取 / 断言行编辑（行编辑器抽为共享组件；增删经 update 事件回写步骤字段） ----------
 const selExtract = computed(() => selectedStep.value?.extract ?? [])
 const selAssertions = computed(() => selectedStep.value?.assertions ?? [])
 
-function addExtract(): void {
-  selectedStep.value?.extract.push({ name: '', from: 'body', path: '' })
-}
-function addAssertion(): void {
-  selectedStep.value?.assertions.push({ name: '', type: 'status', path: '', op: 'eq', expected: '200' })
+function onExtractRules(rules: ScenarioExtractRule[]): void {
+  if (selectedStep.value) selectedStep.value.extract = rules
 }
 
-const ASSERT_TYPES = ['status', 'jsonpath', 'header', 'response_time_ms'] as const
-/** 各断言类型的可用算子（status/数字类无 contains；body 只做包含判断）。 */
-function opsFor(type: string): string[] {
-  switch (type) {
-    case 'status':
-    case 'response_time_ms':
-      return ['eq', 'neq', 'gt', 'gte', 'lt', 'lte']
-    case 'header':
-      return ['eq', 'neq', 'contains', 'not_contains', 'exists', 'not_exists', 'matches', 'not_matches', 'empty', 'not_empty']
-    case 'jsonpath':
-      return ['eq', 'neq', 'contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'exists', 'not_exists', 'matches', 'not_matches', 'empty', 'not_empty']
-    case 'body':
-      return ['contains', 'not_contains', 'exists', 'not_exists']
-    default:
-      return ['eq']
-  }
-}
-
-const ASSERT_TYPE_KEYS = computed(() =>
-  ASSERT_TYPES.map((v) => ({ value: v, label: t(`integration.assertType.${v}`) })),
-)
-function assertOpOptions(type: string) {
-  return opsFor(type).map((op) => ({ value: op, label: t(`integration.assertOp.${op}`) }))
-}
-function onAssertTypeChange(a: EditorAssertion, type: string): void {
-  a.type = type
-  const ops = opsFor(type)
-  if (!ops.includes(a.op)) a.op = ops[0] ?? 'eq'
-  if (type === 'status' || type === 'response_time_ms' || type === 'body') a.path = ''
-}
-/** 需要 path 目标的断言类型。 */
-function needsPath(type: string): boolean {
-  return type === 'jsonpath' || type === 'header'
-}
-/** 需要期望值的断言类型（exists/empty 类不需要）。 */
-function needsExpected(a: EditorAssertion): boolean {
-  return !['exists', 'not_exists', 'empty', 'not_empty'].includes(a.op)
+function onAssertionRules(rules: ScenarioAssertionRule[]): void {
+  // 共享组件按基类型回抛；行数据源自编辑态（含必填字段），此处按编辑态类型收窄。
+  if (selectedStep.value) selectedStep.value.assertions = rules as EditorAssertion[]
 }
 
 // ---------- 接口引用：URL 模板 / 展示 ----------
@@ -2051,80 +2013,16 @@ function runStepMethod(pos: number): string {
                 <p class="wf-ctrl-hint">{{ t('integration.parallelHint') }}</p>
               </div>
             </div>
-            <div v-show="detailTab === 'extract'" class="wf-rules">
-              <div class="wf-rules-head">
-                <span class="wf-rules-hint">{{ t('integration.extractEmpty') }}</span>
-                <button class="miyo-btn miyo-btn-sm" type="button" @click="addExtract">
-                  <Icon name="plus" :size="12" /> {{ t('integration.extractAdd') }}
-                </button>
-              </div>
-              <div v-for="(r, j) in selExtract" :key="j" class="wf-rule-row">
-                <input v-model="r.name" class="miyo-input wf-rule-name" type="text" :placeholder="t('integration.extractNamePh')" spellcheck="false" />
-                <CustomSelect
-                  class="wf-rule-from"
-                  :model-value="r.from"
-                  :options="[
-                    { value: 'body', label: t('integration.extractFromBody') },
-                    { value: 'header', label: t('integration.extractFromHeader') },
-                  ]"
-                  size="sm"
-                  :pop-min-width="130"
-                  @update:model-value="(v) => (r.from = v === 'header' ? 'header' : 'body')"
-                />
-                <input
-                  v-model="r.path"
-                  class="miyo-input wf-rule-path"
-                  type="text"
-                  spellcheck="false"
-                  :placeholder="r.from === 'header' ? t('integration.extractHeaderNamePh') : t('integration.extractPathPh')"
-                />
-                <IconButton name="trash" :size="13" :title="t('common.delete')" @click="selExtract.splice(j, 1)" />
-              </div>
-            </div>
-            <div v-show="detailTab === 'assert'" class="wf-rules">
-              <div class="wf-rules-head">
-                <span class="wf-rules-hint">{{ t('integration.assertEmpty') }}</span>
-                <button class="miyo-btn miyo-btn-sm" type="button" @click="addAssertion">
-                  <Icon name="plus" :size="12" /> {{ t('integration.assertAdd') }}
-                </button>
-              </div>
-              <div v-for="(a, j) in selAssertions" :key="j" class="wf-rule-row wf-assert-row">
-                <input v-model="a.name" class="miyo-input wf-rule-name" type="text" :placeholder="t('integration.assertNamePh')" spellcheck="false" />
-                <CustomSelect
-                  class="wf-rule-type"
-                  :model-value="a.type"
-                  :options="ASSERT_TYPE_KEYS"
-                  size="sm"
-                  :pop-min-width="150"
-                  @update:model-value="(v) => onAssertTypeChange(a, String(v ?? 'status'))"
-                />
-                <input
-                  v-if="needsPath(a.type)"
-                  v-model="a.path"
-                  class="miyo-input wf-rule-path"
-                  type="text"
-                  spellcheck="false"
-                  :placeholder="t('integration.assertTargetPh')"
-                />
-                <CustomSelect
-                  class="wf-rule-op"
-                  :model-value="a.op"
-                  :options="assertOpOptions(a.type)"
-                  size="sm"
-                  :pop-min-width="130"
-                  @update:model-value="(v) => (a.op = String(v ?? 'eq'))"
-                />
-                <input
-                  v-if="needsExpected(a)"
-                  v-model="a.expected"
-                  class="miyo-input wf-rule-expected"
-                  type="text"
-                  spellcheck="false"
-                  :placeholder="t('integration.assertExpectedPh')"
-                />
-                <IconButton name="trash" :size="13" :title="t('common.delete')" @click="selAssertions.splice(j, 1)" />
-              </div>
-            </div>
+            <ExtractList
+              v-show="detailTab === 'extract'"
+              :rules="selExtract"
+              @update:rules="onExtractRules"
+            />
+            <AssertionList
+              v-show="detailTab === 'assert'"
+              :rules="selAssertions"
+              @update:rules="onAssertionRules"
+            />
             <ScenarioVarsPanel
               v-show="detailTab === 'vars'"
               :chain="varChain"
@@ -3045,25 +2943,12 @@ function runStepMethod(pos: number): string {
   width: 110px;
 }
 
-.wf-rule-from {
-  flex: none;
-  width: 104px;
-}
-
-.wf-rule-type {
-  flex: none;
-  width: 128px;
-}
 
 .wf-rule-op {
   flex: none;
   width: 116px;
 }
 
-.wf-rule-path {
-  flex: 1;
-  min-width: 0;
-}
 
 .wf-rule-expected {
   flex: 1;

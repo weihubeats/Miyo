@@ -54,7 +54,7 @@ export function extractVarRefs(text: string): string[] {
 export interface VarSource {
   stepIndex: number
   stepName: string
-  from: 'body' | 'header'
+  from: 'body' | 'header' | 'cookie' | 'body_regex'
   path: string
 }
 
@@ -82,7 +82,7 @@ export interface VarScanStep {
   index: number
   name: string
   /** 该步 extract 规则（去空行后的有效行）。 */
-  extracts: { name: string; from: 'body' | 'header'; path: string }[]
+  extracts: { name: string; from: 'body' | 'header' | 'cookie' | 'body_regex'; path: string }[]
   /** 参与引用扫描的模板文本（URL / 头值 / 参数值 / Body / 断言期望…）。 */
   referenceTexts: string[]
 }
