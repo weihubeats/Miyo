@@ -57,6 +57,7 @@ impl From<AppError> for CommandError {
     fn from(err: AppError) -> Self {
         let code = match &err {
             AppError::Database(_) => "DATABASE",
+            AppError::SchemaTooNew(_) => "DATABASE_SCHEMA_TOO_NEW",
             AppError::Io(_) => "IO",
             AppError::Http(_) => "HTTP",
             AppError::NetworkTimeout(_) => "TIMEOUT",

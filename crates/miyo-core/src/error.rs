@@ -6,6 +6,12 @@ pub enum AppError {
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
 
+    /// 库 schema 比当前程序新（用户回退到旧版本）：sqlx 的 `MigrateError::VersionMissing`
+    /// 归此变体，给出可操作提示，而不是笼统的「数据库操作失败」。
+    /// 载荷为库实际版本号（取最大值）。
+    #[error("database schema version mismatch (db version {0})")]
+    SchemaTooNew(i64),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -111,6 +117,9 @@ impl AppError {
     pub fn user_message(&self) -> String {
         match self {
             AppError::Database(_) => "数据库操作失败".to_string(),
+            AppError::SchemaTooNew(v) => format!(
+                "数据库由更新版本的 Miyo 创建（库版本 {v}），当前版本无法识别。请在设置中改用新的数据目录，或安装最新版 Miyo"
+            ),
             AppError::Io(_) => format!("文件操作失败：{self}"),
             AppError::Http(_) => "网络请求失败".to_string(),
             AppError::NetworkTimeout(_) => "连接超时：服务器未在限定时间内响应".to_string(),

@@ -108,10 +108,50 @@ pub mod plugin {
                     )) {
                         Ok(db) => db,
                         Err(e) => {
-                            // 无提示退出对用户表现为「闪退」：先弹原生错误框给出原因与数据目录
+                            // 版本降级兜底：库比程序新（用户从新版回退旧版，如 issue #153）
+                            // 时把数据目录改指向新的隔离目录，重启即能进；老库原样留存。
+                            let db_path = miyo_storage::db::database_path();
+                            let switched = tauri::async_runtime::block_on(
+                                miyo_storage::db::redirect_newer_data_dir(&db_path),
+                            );
+                            if let Some(dir) = &switched {
+                                // env 覆盖时 data_dir.txt 不生效（env 优先级更高），提示要改成环境变量。
+                                let action = if miyo_core::paths::data_dir_from_env().is_some() {
+                                    format!(
+                                        "当前数据目录由环境变量 MIYO_DATA_DIR 指定，程序不会覆盖它。\n\
+                                         请把该环境变量改指向新目录后重新启动：\n{}",
+                                        dir.display()
+                                    )
+                                } else {
+                                    format!(
+                                        "已切换到一个新的数据目录（旧数据原样保留，安装最新版可继续使用）：\n{}\n\n\
+                                         请点击「确定」后重新启动 Miyo。",
+                                        dir.display()
+                                    )
+                                };
+                                rfd::MessageDialog::new()
+                                    .set_level(rfd::MessageLevel::Warning)
+                                    .set_title("Miyo 数据版本过新")
+                                    .set_description(format!(
+                                        "检测到数据由更新版本的 Miyo 创建，当前版本无法打开。\n\n{action}"
+                                    ))
+                                    .show();
+                                return Err(CommandError::from(e).into());
+                            }
+                            // 无提示退出对用户表现为「闪退」：先弹原生错误框给出原因与数据目录。
+                            // 未经兜底却报版本问题（如来自覆盖目录）：给出可操作指引。
+                            let origin = tauri::async_runtime::block_on(
+                                miyo_storage::db::newer_schema_note(&db_path),
+                            );
+                            let reason = match origin {
+                                Some(v) => format!(
+                                    "数据由更新版本的 Miyo 创建（库版本 {v}），当前版本无法识别。\n\
+                                     请在设置中改用其他数据目录，或安装最新版 Miyo。"
+                                ),
+                                None => e.user_message(),
+                            };
                             let msg = format!(
-                                "数据库初始化失败，应用无法启动。\n\n原因：{}\n\n数据目录：{}",
-                                e.user_message(),
+                                "数据库初始化失败，应用无法启动。\n\n原因：{reason}\n\n数据目录：{}",
                                 miyo_storage::db::data_dir().display()
                             );
                             rfd::MessageDialog::new()

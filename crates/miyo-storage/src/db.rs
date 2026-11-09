@@ -37,6 +37,11 @@ pub fn database_path() -> PathBuf {
     data_dir().join("miyo.db")
 }
 
+/// 默认数据目录下的库文件（bootstrap 覆盖不生效时；用于「库版本降级」自动改指向）。
+pub fn default_database_path() -> PathBuf {
+    default_data_dir().join("miyo.db")
+}
+
 /// 开发构建（debug）启动前删除数据库文件（含 WAL / SHM）：迁移重建后由
 /// `seed::seed_dev_data` 写入一致的测试数据集，`npm run tauri dev`
 /// 每次重启都从干净数据开始。release 构建为空操作，不影响正式数据。
@@ -96,12 +101,131 @@ pub async fn init_db(path: &Path) -> Result<SqlitePool> {
     if !fresh {
         snapshot_database(&pool, path).await?;
     }
+    // 迁移失败 → AppError：版本不匹配（用户回退旧版本）走专用提示。
+    fn migrate_error(e: sqlx::migrate::MigrateError) -> AppError {
+        match e {
+            sqlx::migrate::MigrateError::VersionMissing(v) => AppError::SchemaTooNew(v),
+            other => AppError::Database(sqlx::Error::Protocol(other.to_string())),
+        }
+    }
+
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
-        .map_err(|e| AppError::Database(sqlx::Error::Protocol(e.to_string())))?;
+        .map_err(migrate_error)?;
     integrity_check(&pool, path).await?;
     Ok(pool)
+}
+
+/// 库文件里已应用的最大迁移版本（无库 / 无 `_sqlx_migrations` 表返回 `None`）。
+/// 只读打开，不跑迁移。
+pub async fn max_applied_version(path: &Path) -> Option<i64> {
+    if !path.exists() {
+        return None;
+    }
+    let pool = connect(path).await.ok()?;
+    let row: Option<(Option<i64>,)> = sqlx::query_as("SELECT MAX(version) FROM _sqlx_migrations")
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None);
+    pool.close().await;
+    row.and_then(|r| r.0)
+}
+
+/// 库比程序新时返回库版本号（只读判断，用于启动失败时给出准确原因）。
+pub async fn newer_schema_note(path: &Path) -> Option<i64> {
+    let applied = max_applied_version(path).await?;
+    (applied > schema_version()).then_some(applied)
+}
+
+/// 本程序认识的最高迁移版本（编译期内嵌，与 `sqlx::migrate!` 同一份目录）。
+pub fn schema_version() -> i64 {
+    sqlx::migrate!("./migrations")
+        .migrations
+        .iter()
+        .map(|m| m.version)
+        .max()
+        .unwrap_or(0)
+}
+
+/// 启动降级兜底：当前库比程序新（用户回退旧版本）时，把数据目录改指向一个
+/// 全新的隔离目录（`{目录名}-v{库版本}-p{程序版本}`），老库原样留存——否则旧版每次都启动
+/// 失败且只能手改文件逃生（issue #153）。
+///
+/// 改指向的落点跟随「覆盖来源」，不要串：
+/// - `MIYO_DATA_DIR` / `RUSTFOX_DATA_DIR` 环境变量在生效时 bootstrap 改了也无效（env 优先级更高），
+///   所以此时**不动配置**，只返回隔离目录路径由调用方提示用户改环境变量；
+/// - 其余情况（默认目录，或来源本来就是 bootstrap）才写 bootstrap。
+///
+/// 不抢占的两种情况：隔离目录里已有数据库（不覆盖可能正在用的数据）、bootstrap
+/// 已存在但不是我们写法（用户显式配置过目录，可能是另一个还能用的旧版目录）。
+/// 返回 `Some(新目录)` 表示已改指向（需重启生效；env 情况下需用户自行改），`None` 表示未改动。
+pub async fn redirect_newer_data_dir(path: &Path) -> Option<PathBuf> {
+    redirect_newer_data_dir_in(path, Path::new("")).await
+}
+
+/// [`redirect_newer_data_dir`] 的可注入实现：`unwritable_bootstrap` 非空时把 bootstrap
+/// 指向该目录，且不尝试建目录，用来模拟「写盘失败」护栏（测试用）。
+async fn redirect_newer_data_dir_in(path: &Path, unwritable_bootstrap: &Path) -> Option<PathBuf> {
+    let db_version = max_applied_version(path).await?;
+    if db_version <= schema_version() {
+        return None;
+    }
+    // 隔离目录命名基于库**实际所在**目录：env 覆盖时它就是 env 指向的目录。
+    let base = path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(data_dir);
+    let sibling = isolated_dir_for(&base, db_version);
+    if sibling.join("miyo.db").exists() {
+        tracing::warn!("降级兜底目录已存在数据库，不覆盖：{sibling:?}");
+        return None;
+    }
+    // env 覆盖优先于 bootstrap：此时写 bootstrap 是无效动作，且会误导后续读者。
+    if miyo_core::paths::data_dir_from_env().is_some() {
+        tracing::warn!(
+            "数据目录来自环境变量且库版本更新，请手动改指向：{} → {}",
+            base.display(),
+            sibling.display()
+        );
+        return Some(sibling);
+    }
+    let bootstrap = if unwritable_bootstrap.as_os_str().is_empty() {
+        bootstrap_path()
+    } else {
+        // 可注入：父目录不存在，后续写入必然失败（模拟只读盘 / 权限不足）。
+        unwritable_bootstrap.join(miyo_core::paths::DATA_DIR_BOOTSTRAP_FILE)
+    };
+    if bootstrap.exists() {
+        // 用户显式配置过目录：可能是另一个还能用的旧版目录，不擅自改。
+        tracing::warn!("数据目录来自覆盖配置且库版本更新，保留用户配置：{bootstrap:?}");
+        return None;
+    }
+    if let Err(e) = std::fs::create_dir_all(&sibling) {
+        tracing::warn!("创建降级兜底目录失败：{e}");
+        return None;
+    }
+    if let Err(e) = std::fs::write(&bootstrap, sibling.to_string_lossy().as_bytes()) {
+        tracing::warn!("写入降级兜底目录配置失败：{e}");
+        return None;
+    }
+    tracing::warn!(
+        "当前库版本 {db_version} 高于程序支持的 {}，已改指向新目录：{}",
+        schema_version(),
+        sibling.display()
+    );
+    Some(sibling)
+}
+
+/// 降级隔离目录名：`{base 目录名}-v{库版本}-p{程序版本}`。
+/// 追加程序版本是为了「同一库版本、不同旧程序」各自落到不同目录，互不覆盖。
+fn isolated_dir_for(base: &Path, db_version: i64) -> PathBuf {
+    let name = base
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Miyo".to_string());
+    let program = env!("CARGO_PKG_VERSION").replace('.', "");
+    base.with_file_name(format!("{name}-v{db_version}-p{program}"))
 }
 
 /// 库文件名品牌更名兼容（RustFox → Miyo）：目标 `miyo.db` 不存在且同目录

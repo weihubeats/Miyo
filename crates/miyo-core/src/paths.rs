@@ -93,6 +93,14 @@ pub fn bootstrap_path() -> PathBuf {
 /// 环境变量读取新名 [`DATA_DIR_ENV`] 在前；旧名 [`LEGACY_DATA_DIR_ENV`]
 /// 兜底（更名前已配置覆盖的用户升级后覆盖继续生效）。
 pub fn data_dir_override() -> Option<PathBuf> {
+    data_dir_from_env().or_else(read_bootstrap_override)
+}
+
+/// 仅环境变量来源的覆盖（不含 bootstrap）：`MIYO_DATA_DIR` 优先，`RUSTFOX_DATA_DIR` 兜底。
+///
+/// 与 [`data_dir_override`] 分开是为了让「写 bootstrap 有没有用」这件事可判断——
+/// env 优先级更高，库版本降级兜底在 env 生效时写 bootstrap 是无效动作。
+pub fn data_dir_from_env() -> Option<PathBuf> {
     for (key, is_legacy) in [(DATA_DIR_ENV, false), (LEGACY_DATA_DIR_ENV, true)] {
         if let Some(raw) = std::env::var_os(key) {
             let p = PathBuf::from(raw);
@@ -105,7 +113,7 @@ pub fn data_dir_override() -> Option<PathBuf> {
             tracing::warn!("{key} 非绝对路径，已忽略");
         }
     }
-    read_bootstrap_override()
+    None
 }
 
 /// 读取 bootstrap 文件中的覆盖路径（空文件/相对路径视为未配置）。
@@ -271,6 +279,29 @@ mod tests {
             Some(home.join("old")),
             "仅旧环境变量时兜底生效"
         );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn data_dir_from_env_ignores_bootstrap() {
+        let _serial = env_serial();
+        let home = temp_home("from-env");
+        std::fs::create_dir_all(home.join("bootstrap")).expect("建 bootstrap 目录");
+        std::fs::write(
+            home.join("bootstrap").join(DATA_DIR_BOOTSTRAP_FILE),
+            home.join("from-file").to_str().unwrap(),
+        )
+        .expect("写 bootstrap");
+        // 只有 bootstrap：env 来源判定必须为 None（降级兜底据此决定写不写 bootstrap）
+        let _env = EnvGuard::remove(DATA_DIR_ENV);
+        let _legacy = EnvGuard::remove(LEGACY_DATA_DIR_ENV);
+        let _boot = EnvGuard::set(BOOTSTRAP_DIR_ENV, home.join("bootstrap").to_str().unwrap());
+        assert_eq!(data_dir_from_env(), None);
+        assert_eq!(data_dir_override(), Some(home.join("from-file")));
+        // 加上 env：env 来源命中，且仍优先于 bootstrap
+        let _env = EnvGuard::set(DATA_DIR_ENV, home.join("custom").to_str().unwrap());
+        assert_eq!(data_dir_from_env(), Some(home.join("custom")));
+        assert_eq!(data_dir_override(), Some(home.join("custom")));
         let _ = std::fs::remove_dir_all(&home);
     }
 
