@@ -457,6 +457,124 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "list_test_cases",
+            "description": "列出接口的测试用例（名称/分组/分类/最近执行状态与断言通过数）。先 get_endpoint 看接口，再列它的用例。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "endpointId": { "type": "string", "description": "接口 UUID" }
+                },
+                "required": ["endpointId"]
+            }
+        }),
+        json!({
+            "name": "get_test_case",
+            "description": "获取测试用例完整定义：请求快照（方法/路径/路径变量/Params/Headers/Body/认证/超时）、断言规则、变量提取规则、最近执行状态。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "caseId": { "type": "string", "description": "测试用例 UUID" }
+                },
+                "required": ["caseId"]
+            }
+        }),
+        json!({
+            "name": "create_test_case",
+            "description": "创建测试用例（保存为一个可重复执行的请求快照 + 断言 + 提取）。request.method/urlPath 必填；assertions/extractors 为引擎方言数组（断言 type: status/jsonpath/header/body/response_time_ms/length/graphql_errors/javascript；提取 from: body/header/cookie/body_regex）。会落库（副作用）。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "endpointId": { "type": "string", "description": "归属接口 UUID（request_id）" },
+                    "name": { "type": "string", "description": "用例名" },
+                    "category": { "type": "string", "description": "分组：正向/负向/边界值/安全性/其他", "enum": ["正向", "负向", "边界值", "安全性", "其他"] },
+                    "folder": { "type": "string", "description": "可选，自由文件夹名（空 = 未分组）" },
+                    "request": {
+                        "type": "object",
+                        "description": "请求快照：{method, urlPath, pathVariables?, params?, headers?, bodyType?, bodyContent?, auth?, timeoutMs?, disableCookies?}",
+                        "properties": {
+                            "method": { "type": "string" },
+                            "urlPath": { "type": "string", "description": "相对路径（配合环境 base_url）或完整 URL；{var} 路径变量随 pathVariables 赋值" },
+                            "params": { "type": "array", "items": { "type": "object", "properties": { "key": {"type":"string"}, "value": {"type":"string"}, "enabled": {"type":"boolean"} } } },
+                            "headers": { "type": "array", "items": { "type": "object", "properties": { "key": {"type":"string"}, "value": {"type":"string"}, "enabled": {"type":"boolean"} } } },
+                            "pathVariables": { "type": "array", "items": { "type": "object", "properties": { "key": {"type":"string"}, "value": {"type":"string"} } } },
+                            "bodyType": { "type": "string", "enum": ["none","json","raw","urlencoded","form-data","graphql","binary"] },
+                            "bodyContent": { "type": "string", "description": "json/raw 为文本；urlencoded/form-data 为 KV 数组的 JSON 字符串" },
+                            "auth": { "type": "object", "description": "可选，AuthSpec（如 {type:'bearer', token:'…'}）——属敏感信息，仅用户显式提供时写入" },
+                            "timeoutMs": { "type": "number" },
+                            "disableCookies": { "type": "boolean" }
+                        },
+                        "required": ["method", "urlPath"]
+                    },
+                    "assertions": { "type": "array", "items": { "type": "object", "properties": { "name": {"type":"string"}, "type": {"type":"string"}, "path": {"type":"string"}, "op": {"type":"string"}, "expected": {} } } },
+                    "extractors": { "type": "array", "items": { "type": "object", "properties": { "name": {"type":"string"}, "from": {"type":"string"}, "path": {"type":"string"} } } }
+                },
+                "required": ["endpointId", "name", "request"]
+            }
+        }),
+        json!({
+            "name": "update_test_case",
+            "description": "整体更新测试用例（字段覆盖语义；会落库）。结构同 create_test_case。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "caseId": { "type": "string" },
+                    "name": { "type": "string" },
+                    "category": { "type": "string" },
+                    "folder": { "type": "string" },
+                    "request": { "type": "object", "description": "同 create_test_case 的 request" },
+                    "assertions": { "type": "array" },
+                    "extractors": { "type": "array" }
+                },
+                "required": ["caseId"]
+            }
+        }),
+        json!({
+            "name": "delete_test_case",
+            "description": "删除测试用例（不可恢复，执行历史级联删除）。删除前必须与用户确认。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "caseId": { "type": "string" }
+                },
+                "required": ["caseId"]
+            }
+        }),
+        json!({
+            "name": "run_test_case",
+            "description": "执行一个测试用例（真实发送请求）：返回结构化结果（状态码/耗时/逐条断言 expected/actual/passed/reason/提取值/响应快照摘要），并落执行历史。写操作（POST/PUT/PATCH/DELETE）执行前必须与用户确认目标环境。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "caseId": { "type": "string", "description": "测试用例 UUID" },
+                    "environmentId": { "type": "string", "description": "可选，指定执行环境（缺省用项目默认环境）" }
+                },
+                "required": ["caseId"]
+            }
+        }),
+        json!({
+            "name": "list_test_case_runs",
+            "description": "列出测试用例的执行历史（新→旧：时间/状态/耗时/断言通过数）。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "caseId": { "type": "string" },
+                    "limit": { "type": "number", "description": "可选，1-200，默认 50" }
+                },
+                "required": ["caseId"]
+            }
+        }),
+        json!({
+            "name": "get_test_case_run",
+            "description": "获取一次用例执行的完整详情（请求快照/响应/逐条断言/提取值）。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "runId": { "type": "string", "description": "执行历史 UUID（run_test_case 或 list_test_case_runs 返回）" }
+                },
+                "required": ["runId"]
+            }
+        }),
+        json!({
             "name": "analyze_run_failure",
             "description": "分析场景运行的失败步骤：结合请求/响应/断言/提取情况，按规则分类错误类型（请求错误/断言失败/依赖阻断/取消）并给出可能原因与建议。输出为启发式推测而非确定结论，修复前请结合 get_step_result 的原始响应核对。",
             "inputSchema": {
@@ -476,6 +594,93 @@ fn tool_definitions() -> Vec<Value> {
 }
 
 // ---------- 工具调用 ----------
+
+/// Unix 秒 → RFC3339（miyo-mcp 不依赖 chrono，简化实现：足够用于 created_at）。
+fn time_rfc3339(secs: u64) -> String {
+    let days = secs / 86_400;
+    let rem = secs % 86_400;
+    let (h, m, sec) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    // 天数 → (y, m, d)（民用历反推，1 = 1970-01-01）。
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    format!("{year:04}-{month:02}-{d:02}T{h:02}:{m:02}:{sec:02}Z")
+}
+
+/// create_test_case：args → TestCase JSON（缺省补齐：id / created_at / 空数组）。
+fn build_test_case_json(endpoint_id: uuid::Uuid, args: &serde_json::Value) -> serde_json::Value {
+    let req = &args["request"];
+    let kv = |field: &str| req.get(field).cloned().unwrap_or(serde_json::json!([]));
+    serde_json::json!({
+        "id": uuid::Uuid::new_v4(),
+        "request_id": endpoint_id,
+        "name": args["name"].as_str().unwrap_or("").trim(),
+        "category": args.get("category").and_then(|v| v.as_str()).unwrap_or("正向"),
+        "folder": args.get("folder").and_then(|v| v.as_str()).unwrap_or(""),
+        "method": req["method"].as_str().unwrap_or("GET"),
+        "url_path": req["urlPath"].as_str().unwrap_or("/"),
+        "path_variables": kv("pathVariables"),
+        "params": kv("params"),
+        "headers": kv("headers"),
+        "body_type": req.get("bodyType").and_then(|v| v.as_str()).unwrap_or("none"),
+        "body_content": req.get("bodyContent").cloned().unwrap_or(serde_json::json!("")),
+        "assertions": args.get("assertions").cloned().unwrap_or(serde_json::json!([])),
+        "extractors": args.get("extractors").cloned().unwrap_or(serde_json::json!([])),
+        "auth": req.get("auth").cloned().unwrap_or(serde_json::Value::Null),
+        "timeout_ms": req.get("timeoutMs").cloned().unwrap_or(serde_json::Value::Null),
+        "disable_cookies": req.get("disableCookies").and_then(|v| v.as_bool()).unwrap_or(false),
+        "last_run_status": "Untested",
+        "created_at": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| time_rfc3339(d.as_secs()))
+            .unwrap_or_default(),
+    })
+}
+
+/// update_test_case：读现状 JSON → 覆盖调用方提供的顶层字段（合并语义）。
+fn merge_test_case_json(
+    mut existing: serde_json::Value,
+    args: &serde_json::Value,
+) -> serde_json::Value {
+    if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
+        existing["name"] = serde_json::json!(name.trim());
+    }
+    if let Some(v) = args.get("category").and_then(|v| v.as_str()) {
+        existing["category"] = serde_json::json!(v);
+    }
+    if let Some(v) = args.get("folder").and_then(|v| v.as_str()) {
+        existing["folder"] = serde_json::json!(v);
+    }
+    if let Some(req) = args.get("request").filter(|v| v.is_object()) {
+        for (k, v) in req.as_object().unwrap() {
+            let key = match k.as_str() {
+                "method" => "method",
+                "urlPath" => "url_path",
+                "pathVariables" => "path_variables",
+                "bodyType" => "body_type",
+                "bodyContent" => "body_content",
+                "timeoutMs" => "timeout_ms",
+                "disableCookies" => "disable_cookies",
+                other => other,
+            };
+            existing[key] = v.clone();
+        }
+    }
+    if let Some(v) = args.get("assertions") {
+        existing["assertions"] = v.clone();
+    }
+    if let Some(v) = args.get("extractors") {
+        existing["extractors"] = v.clone();
+    }
+    existing
+}
 
 /// 连接控制面前的参数校验：工具名与必填参数（含 UUID 格式）先过一遍，
 /// 返回与 [`call_tool`] 完全一致的 -32602 错误；通过后才建连接。
@@ -630,8 +835,42 @@ fn validate_tool_call(params: &Value) -> Result<(), (i64, String)> {
             index_arg(&args, "index")?;
             Ok(())
         }
-        "get_run_result" | "analyze_run_failure" => {
+        "get_run_result" | "analyze_run_failure" | "get_test_case_run" => {
             uuid_req(&args, "runId")?;
+            Ok(())
+        }
+        "list_test_cases" => {
+            uuid_req(&args, "endpointId")?;
+            Ok(())
+        }
+        "get_test_case" | "delete_test_case" | "run_test_case" | "list_test_case_runs" => {
+            uuid_req(&args, "caseId")?;
+            if name == "run_test_case" {
+                opt_uuid_arg(&args, "environmentId").map_err(|e| (-32602, e))?;
+            }
+            Ok(())
+        }
+        "create_test_case" => {
+            uuid_req(&args, "endpointId")?;
+            let req_name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .unwrap_or("");
+            if req_name.is_empty() {
+                return Err((-32602, "缺少必填参数 name（非空字符串）".to_string()));
+            }
+            let req = args.get("request").filter(|v| v.is_object());
+            if req.is_none() {
+                return Err((
+                    -32602,
+                    "缺少必填参数 request（对象：method/urlPath/…）".to_string(),
+                ));
+            }
+            Ok(())
+        }
+        "update_test_case" => {
+            uuid_req(&args, "caseId")?;
             Ok(())
         }
         "get_step_result" => {
@@ -1010,6 +1249,96 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, Tool
                     .validate_scenario(scenario_id, env, &runtime_vars)
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "list_test_cases" => {
+            let endpoint_id = uuid_req(&args, "endpointId")?;
+            serde_json::to_value(
+                client
+                    .list_test_cases(endpoint_id)
+                    .await
+                    .map_err(|e| tool_fail("TESTCASE", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "get_test_case" => {
+            let case_id = uuid_req(&args, "caseId")?;
+            serde_json::to_value(
+                client
+                    .get_test_case(case_id)
+                    .await
+                    .map_err(|e| tool_fail("TESTCASE", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "create_test_case" => {
+            let endpoint_id = uuid_req(&args, "endpointId")?;
+            let case = build_test_case_json(endpoint_id, &args);
+            serde_json::to_value(
+                client
+                    .create_test_case(case)
+                    .await
+                    .map_err(|e| tool_fail("TESTCASE", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "update_test_case" => {
+            let case_id = uuid_req(&args, "caseId")?;
+            // 更新 = 读现状 → 覆盖提供的字段（字段缺省保留原值的合并语义）。
+            let existing = client
+                .get_test_case(case_id)
+                .await
+                .map_err(|e| tool_fail("TESTCASE", &e))?;
+            let case = merge_test_case_json(existing, &args);
+            serde_json::to_value(
+                client
+                    .update_test_case(case_id, case)
+                    .await
+                    .map_err(|e| tool_fail("TESTCASE", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "delete_test_case" => {
+            let case_id = uuid_req(&args, "caseId")?;
+            serde_json::to_value(
+                client
+                    .delete_test_case(case_id)
+                    .await
+                    .map_err(|e| tool_fail("TESTCASE", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "run_test_case" => {
+            let case_id = uuid_req(&args, "caseId")?;
+            let env = opt_uuid_arg(&args, "environmentId")
+                .map_err(|e| ToolFailure::new("INVALID_ARGUMENT", e))?;
+            serde_json::to_value(
+                client
+                    .run_test_case(case_id, env)
+                    .await
+                    .map_err(|e| tool_fail("TESTCASE", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "list_test_case_runs" => {
+            let case_id = uuid_req(&args, "caseId")?;
+            let limit = args.get("limit").and_then(|v| v.as_i64());
+            serde_json::to_value(
+                client
+                    .list_test_case_runs(case_id, limit)
+                    .await
+                    .map_err(|e| tool_fail("TESTCASE", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "get_test_case_run" => {
+            let run_id = uuid_req(&args, "runId")?;
+            serde_json::to_value(
+                client
+                    .get_test_case_run(run_id)
+                    .await
+                    .map_err(|e| tool_fail("TESTCASE", &e))?,
             )
             .expect("序列化失败")
         }

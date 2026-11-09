@@ -244,6 +244,70 @@ impl ControlClient {
         self.get_json(&format!("/agent/runs/{run_id}")).await
     }
 
+    // ---------- 测试用例（AI/MCP：创建 / 查询 / 执行 / 历史） ----------
+
+    pub async fn list_test_cases(&self, endpoint_id: Uuid) -> Result<serde_json::Value, AppError> {
+        self.get_json(&format!("/agent/endpoints/{endpoint_id}/test-cases"))
+            .await
+    }
+
+    pub async fn get_test_case(&self, case_id: Uuid) -> Result<serde_json::Value, AppError> {
+        self.get_json(&format!("/agent/test-cases/{case_id}")).await
+    }
+
+    pub async fn create_test_case(
+        &self,
+        case: serde_json::Value,
+    ) -> Result<serde_json::Value, AppError> {
+        self.post_json("/agent/test-cases", case).await
+    }
+
+    pub async fn update_test_case(
+        &self,
+        case_id: Uuid,
+        case: serde_json::Value,
+    ) -> Result<serde_json::Value, AppError> {
+        self.put_json(&format!("/agent/test-cases/{case_id}"), case)
+            .await
+    }
+
+    /// 删除测试用例（控制面 DELETE 无专用返回体，按 {deleted:true} 解析）。
+    pub async fn delete_test_case(&self, case_id: Uuid) -> Result<serde_json::Value, AppError> {
+        let res = self
+            .http
+            .delete(format!("{}/agent/test-cases/{case_id}", self.base))
+            .header("Authorization", self.auth())
+            .send()
+            .await
+            .map_err(AppError::from_reqwest)?;
+        decode(res).await
+    }
+
+    pub async fn run_test_case(
+        &self,
+        case_id: Uuid,
+        environment_id: Option<Uuid>,
+    ) -> Result<serde_json::Value, AppError> {
+        let body = serde_json::json!({ "environmentId": environment_id });
+        self.post_json(&format!("/agent/test-cases/{case_id}/run"), body)
+            .await
+    }
+
+    pub async fn list_test_case_runs(
+        &self,
+        case_id: Uuid,
+        limit: Option<i64>,
+    ) -> Result<serde_json::Value, AppError> {
+        let suffix = limit.map(|v| format!("?limit={v}")).unwrap_or_default();
+        self.get_json(&format!("/agent/test-cases/{case_id}/runs{suffix}"))
+            .await
+    }
+
+    pub async fn get_test_case_run(&self, run_id: Uuid) -> Result<serde_json::Value, AppError> {
+        self.get_json(&format!("/agent/test-case-runs/{run_id}"))
+            .await
+    }
+
     /// 单步完整详情（请求快照 + 64KB 内响应正文 + 提取 + 断言）。
     pub async fn get_run_step(
         &self,

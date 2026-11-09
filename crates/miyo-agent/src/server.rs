@@ -118,7 +118,35 @@ pub const MCP_TOOLS: &[McpToolDef] = &[
         kind: "read",
     },
     McpToolDef {
-        name: "analyze_run_failure",
+        name: "list_test_cases",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "get_test_case",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "create_test_case",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "update_test_case",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "delete_test_case",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "run_test_case",
+        kind: "write",
+    },
+    McpToolDef {
+        name: "list_test_case_runs",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "get_test_case_run",
         kind: "read",
     },
 ];
@@ -1680,6 +1708,23 @@ pub fn build_router(state: AgentState) -> Router {
             "/agent/scenarios/{id}/script",
             put(save_scenario_script_handler),
         )
+        .route(
+            "/agent/endpoints/{id}/test-cases",
+            get(list_test_cases_handler),
+        )
+        .route("/agent/test-cases", post(create_test_case_handler))
+        .route(
+            "/agent/test-cases/{id}",
+            get(get_test_case_handler)
+                .put(update_test_case_handler)
+                .delete(delete_test_case_handler),
+        )
+        .route("/agent/test-cases/{id}/run", post(run_test_case_handler))
+        .route(
+            "/agent/test-cases/{id}/runs",
+            get(list_test_case_runs_handler),
+        )
+        .route("/agent/test-case-runs/{id}", get(get_test_case_run_handler))
         .route("/agent/tools", get(list_tools_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth))
         .with_state(state)
@@ -2698,6 +2743,398 @@ async fn validate_scenario_handler(
 impl EnvQuery {
     fn project_id_env(&self) -> Option<uuid::Uuid> {
         self.project_id
+    }
+}
+
+// ---------- 测试用例（issue #154 相关能力：AI/MCP 可创建 / 查询 / 执行用例） ----------
+
+/// 用例快照 → RequestSpec（镜像前端 restoreBody：body_type/body_content 展开为 BodySpec）。
+fn case_spec(case: &miyo_core::model::TestCase) -> miyo_core::model::RequestSpec {
+    use miyo_core::model::{BodySpec, KeyValue, RequestSpec};
+    let body: BodySpec = match case.body_type.as_str() {
+        "json" => BodySpec::Json {
+            raw: case.body_content.clone(),
+        },
+        "raw" | "text" => BodySpec::Text {
+            raw: case.body_content.clone(),
+        },
+        "urlencoded" => BodySpec::UrlEncoded {
+            fields: serde_json::from_str::<Vec<KeyValue>>(&case.body_content).unwrap_or_default(),
+        },
+        "form-data" | "multipart" => BodySpec::Multipart {
+            fields: serde_json::from_str::<Vec<miyo_core::model::MultipartField>>(
+                &case.body_content,
+            )
+            .unwrap_or_default(),
+        },
+        "graphql" => BodySpec::GraphQL {
+            spec: serde_json::from_str(&case.body_content).unwrap_or_default(),
+        },
+        "binary" => BodySpec::Binary {
+            path: case.body_content.clone(),
+        },
+        _ => BodySpec::None,
+    };
+    RequestSpec {
+        params: case.params.clone(),
+        headers: case.headers.clone(),
+        path_variables: case.path_variables.clone(),
+        auth: case
+            .auth
+            .clone()
+            .unwrap_or(miyo_core::model::AuthSpec::None),
+        body,
+        active_tab: None,
+        timeout_ms: case.timeout_ms,
+        follow_redirects: true,
+        tests: None,
+        disable_cookies: case.disable_cookies,
+        body_docs: Default::default(),
+        scripts: None,
+    }
+}
+
+/// GET /agent/endpoints/{id}/test-cases：接口的用例列表。
+async fn list_test_cases_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<Vec<miyo_core::model::TestCase>> {
+    ensure_tool_enabled(&state, "list_test_cases").await?;
+    let cases = repo::list_test_cases(&state.db, id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(cases))
+}
+
+/// POST /agent/test-cases：新建用例（body = TestCase JSON；id 缺省自动生成）。
+async fn create_test_case_handler(
+    State(state): State<AgentState>,
+    Json(mut case): Json<miyo_core::model::TestCase>,
+) -> ApiResult<miyo_core::model::TestCase> {
+    ensure_tool_enabled(&state, "create_test_case").await?;
+    if case.name.trim().is_empty() {
+        return Err(api_error(miyo_core::AppError::Validation(
+            "用例名称不能为空".into(),
+        )));
+    }
+    if case.id.is_nil() {
+        case.id = uuid::Uuid::new_v4();
+    }
+    if case.created_at == chrono::DateTime::<chrono::Utc>::UNIX_EPOCH {
+        case.created_at = chrono::Utc::now();
+    }
+    let created = repo::create_test_case(&state.db, &case)
+        .await
+        .map_err(api_error)?;
+    tracing::info!(
+        "[agent] create_test_case：{}（{} {}）",
+        created.name,
+        created.method.as_str(),
+        created.url_path
+    );
+    Ok(Json(created))
+}
+
+/// GET /agent/test-cases/{id}：用例详情。
+async fn get_test_case_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<miyo_core::model::TestCase> {
+    ensure_tool_enabled(&state, "get_test_case").await?;
+    let case = repo::get_test_case(&state.db, id)
+        .await
+        .map_err(api_error)?
+        .ok_or_else(|| {
+            api_error(miyo_core::AppError::NotFound(format!(
+                "测试用例 {id} 不存在"
+            )))
+        })?;
+    Ok(Json(case))
+}
+
+/// PUT /agent/test-cases/{id}：整体更新（全字段覆盖语义）。
+async fn update_test_case_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    Json(case): Json<miyo_core::model::TestCase>,
+) -> ApiResult<miyo_core::model::TestCase> {
+    ensure_tool_enabled(&state, "update_test_case").await?;
+    let existing = repo::get_test_case(&state.db, id)
+        .await
+        .map_err(api_error)?
+        .ok_or_else(|| {
+            api_error(miyo_core::AppError::NotFound(format!(
+                "测试用例 {id} 不存在"
+            )))
+        })?;
+    repo::update_test_case_meta(
+        &state.db,
+        id,
+        case.name.trim(),
+        &case.category,
+        &case.folder,
+    )
+    .await
+    .map_err(api_error)?;
+    repo::update_test_case_content(
+        &state.db,
+        id,
+        case.method,
+        &case.url_path,
+        &case.path_variables,
+        &case.params,
+        &case.headers,
+        &case.body_type,
+        &case.body_content,
+        &case.assertions,
+        &case.extractors,
+        &case.auth,
+        case.timeout_ms,
+        case.disable_cookies,
+    )
+    .await
+    .map_err(api_error)?;
+    let updated = repo::get_test_case(&state.db, id)
+        .await
+        .map_err(api_error)?
+        .unwrap_or(existing);
+    Ok(Json(updated))
+}
+
+/// DELETE /agent/test-cases/{id}。
+async fn delete_test_case_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<serde_json::Value> {
+    ensure_tool_enabled(&state, "delete_test_case").await?;
+    repo::delete_test_case(&state.db, id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(serde_json::json!({ "deleted": true, "id": id })))
+}
+
+/// POST /agent/test-cases/{id}/run：执行用例（同一 miyo-test 引擎，强制发送；
+/// 落执行历史并回写摘要；64KB 截断 + 脱敏与场景运行同口径）。
+async fn run_test_case_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    body: Option<Json<RunTestCaseRequest>>,
+) -> ApiResult<serde_json::Value> {
+    use miyo_core::{apply_global_params, render_spec, resolve_variables};
+    ensure_tool_enabled(&state, "run_test_case").await?;
+    let req = body.map(|Json(v)| v).unwrap_or_default();
+    let case = repo::get_test_case(&state.db, id)
+        .await
+        .map_err(api_error)?
+        .ok_or_else(|| {
+            api_error(miyo_core::AppError::NotFound(format!(
+                "测试用例 {id} 不存在"
+            )))
+        })?;
+    let ep = repo::get_endpoint(&state.db, case.request_id)
+        .await
+        .map_err(api_error)?;
+    let vars = merged_variables(&state.db, ep.project_id, req.environment_id, None)
+        .await
+        .map_err(api_error)?;
+
+    // 运行用例的合成 Endpoint：请求快照来自用例，tests 挂断言 / 提取（引擎求值）。
+    let mut run_ep = ep.clone();
+    run_ep.name = case.name.clone();
+    run_ep.method = case.method;
+    run_ep.request.tests = Some(serde_json::json!({
+        "assertions": case.assertions,
+        "extract": case.extractors,
+    }));
+    let spec = case_spec(&case);
+    let global_params = repo::get_global_params(&state.db)
+        .await
+        .map_err(api_error)?;
+    let mut spec = render_spec(&spec, &vars);
+    apply_global_params(&mut spec, &global_params, &vars);
+
+    // URL：绝对直用；否则 {{base_url}} 前缀 + 路径变量代入（url_template_for 同构）。
+    let is_abs = case.url_path.contains("://");
+    let with_vars = apply_path_vars(&case.url_path, &case.path_variables);
+    let url_template = if is_abs {
+        with_vars
+    } else if with_vars.starts_with('/') {
+        format!("{{{{base_url}}}}{with_vars}")
+    } else {
+        format!("{{{{base_url}}}}/{with_vars}")
+    };
+    let url = resolve_variables(&url_template, &vars);
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(api_error(miyo_core::AppError::Validation(format!(
+            "解析后的 URL 非法：{url}。环境缺少 base_url？"
+        ))));
+    }
+
+    let timeout_ms = case
+        .timeout_ms
+        .or(spec.timeout_ms)
+        .or(global_timeout_ms(&state.db).await)
+        .unwrap_or(miyo_http::client::DEFAULT_TIMEOUT_MS);
+
+    let started_at = chrono::Utc::now();
+    let mut runtime = std::collections::HashMap::new();
+    let (result, _) = miyo_test::runner::run_endpoint_with_cancel(
+        &run_ep,
+        &url,
+        &spec,
+        &mut runtime,
+        Some(timeout_ms),
+        None,
+        true,
+    )
+    .await;
+
+    // 落执行历史（fail-open）+ 摘要回写：与 Tauri 命令层同口径。
+    let run_id = uuid::Uuid::new_v4();
+    let ok_count = result.outcomes.iter().filter(|o| o.passed).count() as i64;
+    let fail_count = result.outcomes.iter().filter(|o| !o.passed).count() as i64;
+    let status = if result.cancelled {
+        miyo_core::model::TestCaseStatus::Failed
+    } else if result.ok {
+        miyo_core::model::TestCaseStatus::Success
+    } else {
+        miyo_core::model::TestCaseStatus::Failed
+    };
+    let mut snapshot = result.clone();
+    if let Some(resp) = snapshot.response.as_mut() {
+        if resp.body.len() > HISTORY_BODY_BYTES {
+            let (body, _) = truncate_utf8(&resp.body, HISTORY_BODY_BYTES);
+            resp.body = body;
+            resp.history_truncated = true;
+        }
+        if let Some(req_snapshot) = resp.request.as_mut() {
+            redact_agent_snapshot(req_snapshot);
+        }
+    }
+    let record = miyo_core::model::TestCaseRun {
+        id: run_id,
+        case_id: case.id,
+        endpoint_id: Some(ep.id),
+        environment_id: req.environment_id,
+        started_at,
+        finished_at: chrono::Utc::now(),
+        duration_ms: result.duration_ms,
+        status,
+        status_code: result.status,
+        ok_count: ok_count.max(0) as u32,
+        fail_count: fail_count.max(0) as u32,
+        error: result.request_error.clone(),
+        results_json: serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".to_string()),
+    };
+    let ran_at = record.finished_at;
+    if let Err(e) = async {
+        repo::save_test_case_run(&state.db, &record).await?;
+        repo::prune_test_case_runs(&state.db, case.id, repo::TEST_CASE_RUN_KEEP).await?;
+        repo::update_test_case_run_summary(
+            &state.db,
+            case.id,
+            status,
+            ran_at,
+            Some(record.ok_count),
+            Some(record.fail_count),
+        )
+        .await
+    }
+    .await
+    {
+        tracing::warn!("[agent] run_test_case：落历史失败 {e}");
+    }
+    tracing::info!(
+        "[agent] run_test_case：{} {} {} → {}（{}ms，断言 {}/{}）",
+        case.name,
+        case.method.as_str(),
+        url,
+        result
+            .status
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "—".into()),
+        result.duration_ms.unwrap_or(0.0) as u64,
+        ok_count,
+        ok_count + fail_count,
+    );
+    Ok(Json(serde_json::json!({
+        "runId": run_id,
+        "caseId": case.id,
+        "result": snapshot,
+    })))
+}
+
+/// GET /agent/test-cases/{id}/runs：用例执行历史（新→旧）。
+async fn list_test_case_runs_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    Query(q): Query<RunsQuery>,
+) -> ApiResult<Vec<miyo_core::model::TestCaseRun>> {
+    ensure_tool_enabled(&state, "list_test_case_runs").await?;
+    let runs = repo::list_test_case_runs(&state.db, id, q.limit.unwrap_or(50).clamp(1, 200))
+        .await
+        .map_err(api_error)?;
+    Ok(Json(runs))
+}
+
+/// GET /agent/test-case-runs/{id}：单条执行历史详情。
+async fn get_test_case_run_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<miyo_core::model::TestCaseRun> {
+    ensure_tool_enabled(&state, "get_test_case_run").await?;
+    let run = repo::get_test_case_run(&state.db, id)
+        .await
+        .map_err(api_error)?
+        .ok_or_else(|| {
+            api_error(miyo_core::AppError::NotFound(format!(
+                "执行历史 {id} 不存在"
+            )))
+        })?;
+    Ok(Json(run))
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunTestCaseRequest {
+    pub environment_id: Option<uuid::Uuid>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunsQuery {
+    pub limit: Option<i64>,
+}
+
+/// 用例历史的请求快照脱敏（与 scenarios.rs 的 redact_request_snapshot 同口径）。
+fn redact_agent_snapshot(snapshot: &mut miyo_http::client::RequestSnapshot) {
+    for (k, v) in snapshot.headers.iter_mut() {
+        if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
+            *v = miyo_sync::redact::PLACEHOLDER.to_string();
+        }
+    }
+    for (k, v) in snapshot.cookies.iter_mut() {
+        if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
+            *v = miyo_sync::redact::PLACEHOLDER.to_string();
+        }
+    }
+    // URL query 脱敏
+    if let Some(idx) = snapshot.url.find('?') {
+        let (base, query) = snapshot.url.split_at(idx);
+        let redacted: Vec<String> = query[1..]
+            .split('&')
+            .map(|pair| {
+                let Some((k, v)) = pair.split_once('=') else {
+                    return pair.to_string();
+                };
+                if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
+                    format!("{k}={}", miyo_sync::redact::PLACEHOLDER)
+                } else {
+                    pair.to_string()
+                }
+            })
+            .collect();
+        snapshot.url = format!("{base}?{}", redacted.join("&"));
     }
 }
 
