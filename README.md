@@ -155,7 +155,18 @@ Any tool that can send HTTP can call the control plane directly:
 | GET | `/agent/health` | Liveness probe |
 
 Auth: header `Authorization: Bearer <token>` or `X-Agent-Token`;
-the token lives in the `agent-token` file inside the data directory (0600). The port auto-probes from `4110`.
+the token lives in the `agent-token` file inside the data directory (0600).
+
+> **Don't confuse the two integrations** (common first-contact mistake):
+> the **MCP server is a separate stdio process** — it listens on no port, so
+> `GET http://127.0.0.1:<port>/mcp` returning 404 is expected. The HTTP
+> control plane is a different surface whose routes all live under `/agent/*`.
+>
+> The port auto-probes starting at `4110`; the **actual** port is whatever is
+> written (plain digits, no newline) in the `agent-port` file inside the data
+> directory — e.g. macOS: `cat "$HOME/Library/Application Support/Miyo/agent-port"`.
+> Dev builds (`tauri dev`) use the `Miyo-dev` directory, so dev and release
+> each have their own `agent-port` / `agent-token` pair.
 
 Security: loopback-only binding; the only write operation is import; existing `base_url` values are never overwritten (a conflict returns a warning).
 

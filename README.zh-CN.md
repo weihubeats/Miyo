@@ -157,7 +157,16 @@ public Result<Long> createOrder(@RequestBody CreateOrderReq req) { ... }
 
 鉴权：请求头 `Authorization: Bearer <token>` 或 `X-Agent-Token`；
 token 位于数据目录 `agent-token` 文件（0600），应用内「Agent 状态」或
-`agent_status` 命令可查路径。端口从 `4110` 起自动探测。
+`agent_status` 命令可查路径。
+
+> **两种接入形态别混淆**（初次接入最容易踩）：**MCP 是独立的 stdio 进程**，
+> 不监听任何端口——`GET http://127.0.0.1:<port>/mcp` 返回 404 是预期行为；
+> HTTP 控制面是另一套东西，路由全部在 `/agent/*` 下。
+>
+> 端口从 `4110` 起自动探测，**实际端口以数据目录 `agent-port` 文件为准**
+> （纯数字无换行），例如 macOS：`cat "$HOME/Library/Application Support/Miyo/agent-port"`。
+> 开发版（`tauri dev`）使用 `Miyo-dev` 目录，dev 与正式版各有一套
+> `agent-port` / `agent-token`。
 
 安全设计：只绑定 `127.0.0.1`；写操作仅限导入；不覆盖已有 `base_url` 配置（冲突时返回 warning）。
 

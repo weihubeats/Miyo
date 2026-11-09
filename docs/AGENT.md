@@ -24,7 +24,10 @@ AI Agent ──(HTTP + Bearer token)────────┘         │
 ```
 
 - 控制面随 **Miyo 桌面应用启动自动拉起**，无需手动开启；
-- 端口从 `4110` 起自动探测（避开 Mock 的 4010 段）；
+- 端口从 `4110` 起自动探测（避开 Mock 的 4010 段）；**实际端口以数据目录
+  `agent-port` 文件为准**（纯数字无换行），如
+  `cat "$HOME/Library/Application Support/Miyo/agent-port"`；dev 版用 `Miyo-dev`
+  目录，与正式版各有一套 `agent-port` / `agent-token`；
 - 所有请求需携带令牌：`Authorization: Bearer <token>` 或 `X-Agent-Token`。
 
 ## 2. 找到你的 Token
@@ -196,6 +199,7 @@ curl -s http://127.0.0.1:4110/agent/curl \
 | --- | --- |
 | `spawn miyo-mcp ENOENT` | 二进制不在 PATH：v0.0.10+ 改用安装包内绝对路径（见 §3.1），或按旧版方式构建后放入 PATH |
 | `miyo-mcp` 报「未发现运行中的控制面」 | 先启动 Miyo 桌面应用；确认端口 4110~4129 未被防火墙拦本机回环 |
+| `GET http://127.0.0.1:<port>/mcp` 返回 404 | 预期行为——**MCP 是独立的 stdio 进程**（`miyo-mcp` 二进制，不占端口）；HTTP 控制面只有 `/agent/*` 路由。请走 MCP 客户端配置或 `/agent/*` 端点 |
 | 401 UNAUTHORIZED | token 文件与应用不一致（如混用了 dev/正式版目录）；删掉 `agent-token` 后重启应用重新配 |
 | 多项目时报 VALIDATION | 让 Agent 先调 `list_projects`，带上 projectId 重试 |
 | MCP 工具列表没出现 | 检查 `.mcp.json` 语法与 miyo-mcp 可执行权限（`chmod +x`）；查看客户端 MCP 日志 |

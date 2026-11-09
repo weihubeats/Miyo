@@ -19,7 +19,7 @@
 | 步骤管理 | `add_scenario_step` | 追加步骤（index 缺省末尾） |
 | | `update_scenario_step` | 替换位次步骤 |
 | | `delete_scenario_step` | 删除位次步骤 |
-| 执行 | `validate_scenario` | 运行前校验（结构化 issues，可多条） |
+| 执行 | `validate_scenario` | 运行前校验（结构化 issues，可多条；`runtimeVariables` 声明运行期注入变量，避免误报缺失） |
 | | `run_scenario` | 执行（`wait=false` 异步拿 runId 轮询） |
 | 结果 | `get_run_result` | 运行摘要 + 每步摘要（不含响应正文） |
 | | `get_step_result` | 单步完整详情（请求快照/响应正文/提取/逐条断言） |
@@ -59,7 +59,7 @@
     { "source": "performance", "operator": "lessThan", "expected": 2000 }
   ],
   "condition": { "source": "var", "name": "paid", "op": "exists" },
-  "loop": { "mode": "while", "while_condition": { "source": "var", "name": "paid", "op": "neq", "value": "true" }, "max_loops": 10, "interval_ms": 500 },
+  "loop": { "mode": "while", "while_condition": { "source": "response.body", "expression": "$.code", "op": "neq", "value": 200 }, "max_loops": 10, "interval_ms": 500 },
   "waitMs": 0,
   "parallel": false
 }
@@ -68,7 +68,7 @@
 - `request`（内联请求）与 `endpointId`（接口引用）二选一；URL / Body / Query 里用 `{{变量名}}` 引用前序提取值（JSON Body 整值占位保留原始类型）。
 - `extractors.source`：`response.body`（JSONPath）/ `response.header`；`response.status` 不支持提取（用断言）。
 - `assertions.operator`：equals / notEquals / contains / notContains / greaterThan / greaterThanOrEquals / lessThan / lessThanOrEquals / exists / notExists / matches（正则）/ empty / notEmpty。
-- `loop.mode`：`count`（固定轮数 ≤1000）或 `while`（每轮后求值继续条件，`max_loops` ≤100，达上限仍成立判失败）。
+- `loop.mode`：`count`（固定轮数 ≤1000）或 `while`（每轮后求值继续条件，`max_loops` ≤100，达上限仍成立判失败）。`while_condition.source` 支持 `var` / `prevStatus` / `response.status` / `response.body` / `response.header`——响应源直接对本轮响应求值（`response.body` 用 `expression` 传 JSONPath、`response.header` 传头名），异步轮询「本轮响应码 ≠ X 则重试」无需先 extract 再引用；`var` 源继续用 `name`。
 - `parallel: true` 的相邻步骤成批并发（≤8），变量提取按完成序合并。
 
 ## 典型工作流（AI 全自动）

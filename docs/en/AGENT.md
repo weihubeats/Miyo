@@ -23,7 +23,11 @@ AI Agent ──(HTTP + Bearer token)────────┘         │
 ```
 
 - The control plane **starts automatically with the Miyo desktop app**; nothing to enable manually.
-- The port auto-probes from `4110` (avoiding the Mock range around 4010).
+- The port auto-probes starting at `4110` (avoiding the Mock range around 4010);
+  the **actual** port is whatever is written (plain digits, no newline) in the
+  `agent-port` file inside the data directory — e.g.
+  `cat "$HOME/Library/Application Support/Miyo/agent-port"`. Dev builds use the
+  `Miyo-dev` directory, so dev and release have separate `agent-port` / `agent-token` pairs.
 - Every request must carry a token: `Authorization: Bearer <token>` or `X-Agent-Token`.
 
 ## 2. Find your token
@@ -179,6 +183,7 @@ Errors are always `{code, message}`: `VALIDATION`(400) / `NOT_FOUND`(404) / `UNA
 | --- | --- |
 | `spawn miyo-mcp ENOENT` | Binary not on PATH: for v0.0.10+ use the absolute path from §3.1, or build the old way and put it on PATH |
 | `miyo-mcp` says "no running control plane" | Start the Miyo desktop app first; make sure the local loopback 4110~4129 is not blocked by a firewall |
+| `GET http://127.0.0.1:<port>/mcp` returns 404 | Expected — the **MCP server is a separate stdio process** (`miyo-mcp` binary, no port); the HTTP control plane only serves `/agent/*` routes. Use the MCP client config or the `/agent/*` endpoints |
 | 401 UNAUTHORIZED | The token file belongs to a different install (e.g. mixing dev/release directories); delete `agent-token` and restart the app, then reconfigure |
 | VALIDATION with multiple projects | Have the agent call `list_projects` first and retry with a projectId |
 | MCP tool list missing | Check `.mcp.json` syntax and the execute permission on miyo-mcp (`chmod +x`); check the client's MCP logs |
