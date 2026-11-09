@@ -598,6 +598,9 @@ fn blocked_result(step: &ScenarioStepInput, idx: usize, reason: String) -> Endpo
 fn condition_text(c: &crate::config::StepCondition) -> String {
     let target = match c.source.as_str() {
         "prevStatus" => "上一步状态码".to_string(),
+        "response.status" => "本轮状态码".to_string(),
+        "response.body" => format!("响应体 {}", c.expression.as_deref().unwrap_or("")),
+        "response.header" => format!("响应头 {}", c.expression.as_deref().unwrap_or("")),
         _ => format!("变量 {{{{{}}}}}", c.name.trim()),
     };
     let expected = c
@@ -616,14 +619,35 @@ fn condition_text(c: &crate::config::StepCondition) -> String {
 }
 
 /// 求值执行条件：`source = var` 对运行时变量（缺变量按 not_exists 语义），
-/// `source = prevStatus` 对最近一个已执行步骤的状态码。复用断言的值级比较。
+/// `source = prevStatus` 对最近一个已执行步骤的状态码，
+/// `source = response.status / response.body / response.header` 对传入的
+/// 本轮响应求值（while 循环每轮结束传入该轮响应；执行条件阶段传 None）。
+/// 复用断言的值级比较。
 fn eval_condition(
     c: &crate::config::StepCondition,
     vars: &HashMap<String, String>,
     prev_status: Option<u16>,
+    last_response: Option<&StepResponse>,
 ) -> bool {
     let actual: Option<serde_json::Value> = match c.source.as_str() {
         "prevStatus" => prev_status.map(|s| serde_json::Value::Number(s.into())),
+        "response.status" => last_response.map(|r| serde_json::Value::Number(r.status.into())),
+        "response.header" => {
+            let name = c.expression.as_deref().unwrap_or_default().trim();
+            last_response.and_then(|r| {
+                r.headers
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| serde_json::Value::String(v.clone()))
+            })
+        }
+        "response.body" => {
+            let path = c.expression.as_deref().unwrap_or_default().trim();
+            last_response.and_then(|r| {
+                let json = serde_json::from_str::<serde_json::Value>(&r.body).ok();
+                crate::extract::extract_body_json_typed(json.as_ref(), path)
+            })
+        }
         _ => vars
             .get(c.name.trim())
             .map(|v| serde_json::Value::String(v.clone())),
@@ -913,7 +937,7 @@ async fn execute_step(
             }
             return r;
         }
-        if !eval_condition(cond, &render_vars, prev_status) {
+        if !eval_condition(cond, &render_vars, prev_status, None) {
             let mut lostg = shared.lost.lock().await;
             for e in &step.extract {
                 lostg.insert(e.name.clone());
@@ -949,12 +973,11 @@ async fn execute_step(
     let loop_cfg = step.r#loop.clone().filter(|l| l.is_valid());
     if let Some(bad) = &step.r#loop {
         if loop_cfg.is_none() {
-            let mut r = EndpointResult::failed_fast(
-                step.endpoint.id,
-                &step.endpoint,
-                None,
-                "循环配置无效（mode / count / while_condition 组合不合法）",
-            );
+            // while 的 source / expression 用法错误直接报真实原因（issue #156）。
+            let reason = bad.while_problem().unwrap_or_else(|| {
+                "循环配置无效（mode / count / while_condition 组合不合法）".into()
+            });
+            let mut r = EndpointResult::failed_fast(step.endpoint.id, &step.endpoint, None, reason);
             r.step_index = Some(pos);
             r.step_status = Some(step_status::FAILED.to_string());
             let mut lostg = shared.lost.lock().await;
@@ -988,6 +1011,9 @@ async fn execute_step(
         rounds += 1;
         let round_failed = !r.ok && !r.cancelled;
         let round_cancelled = r.cancelled;
+        // while 条件求值用「本轮自己的响应」：response.* 源取本轮状态码 /
+        // 正文 / 头，prevStatus 也指本轮（并行批内不受其他步骤干扰）。
+        let round_resp = r.response.clone();
         last = Some(r);
         if round_cancelled || round_failed {
             break;
@@ -1004,8 +1030,8 @@ async fn execute_step(
                 if rounds >= l.rounds_cap() {
                     if let Some(wc) = &l.while_condition {
                         let vars_now = shared.runtime.lock().await.clone();
-                        let st_now = *shared.last_status.lock().await;
-                        if eval_condition(wc, &vars_now, st_now) {
+                        let st_now = round_resp.as_ref().map(|r| r.status);
+                        if eval_condition(wc, &vars_now, st_now, round_resp.as_ref()) {
                             while_unmet = true;
                         }
                     }
@@ -1013,8 +1039,8 @@ async fn execute_step(
                 }
                 if let Some(wc) = &l.while_condition {
                     let vars_now = shared.runtime.lock().await.clone();
-                    let st_now = *shared.last_status.lock().await;
-                    if !eval_condition(wc, &vars_now, st_now) {
+                    let st_now = round_resp.as_ref().map(|r| r.status);
+                    if !eval_condition(wc, &vars_now, st_now, round_resp.as_ref()) {
                         break;
                     }
                 }

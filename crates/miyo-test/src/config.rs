@@ -38,6 +38,11 @@ pub struct StepCondition {
     /// source = var 时的变量名。
     #[serde(default)]
     pub name: String,
+    /// 响应源取值路径：`response.body` 时为 JSONPath（如 `$.code`），
+    /// `response.header` 时为头名。`var` / `prevStatus` / `response.status`
+    /// 忽略此字段。AI 方言与 extractors / assertions 的 `expression` 同名。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
     /// 比较算子（同 AssertionSpec.op）。
     pub op: String,
     #[serde(default)]
@@ -56,6 +61,23 @@ impl StepCondition {
             _ => false,
         }
     }
+
+    /// while 循环继续条件的合法性（比执行条件宽松）：每轮结束后对本轮
+    /// 响应求值，因此响应源也可用，语义与断言 / extractors 的 source 对齐。
+    pub fn is_valid_while(&self) -> bool {
+        match self.source.as_str() {
+            "var" => !self.name.trim().is_empty() && !self.op.trim().is_empty(),
+            "response.status" | "prevStatus" => !self.op.trim().is_empty(),
+            "response.body" | "response.header" => {
+                !self.op.trim().is_empty()
+                    && self
+                        .expression
+                        .as_deref()
+                        .is_some_and(|e| !e.trim().is_empty())
+            }
+            _ => false,
+        }
+    }
 }
 
 /// 步骤循环：同一请求按条件重复发送（轮询 / 重试放行场景）。
@@ -63,6 +85,9 @@ impl StepCondition {
 /// - `mode = "count"`：固定执行 `count` 轮；
 /// - `mode = "while"`：每轮结束后对 `while_condition` 求值，true 继续，
 ///   最多 `max_loops` 轮（达上限仍 true 判失败——轮询超时语义）；
+///   `while_condition.source` 支持 `var` / `prevStatus` / `response.status` /
+///   `response.body` / `response.header`——响应源直接对本轮响应求值
+///   （异步落账轮询「本轮响应码 ≠ X 则重试」无需先 extract 再引用，issue #156）；
 /// - 任一轮断言失败 / 请求失败即终止整步（failed）；取消即时中止；
 /// - `interval_ms` 为轮间隔（轮询节流）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -91,9 +116,42 @@ impl StepLoop {
     pub fn is_valid(&self) -> bool {
         match self.mode.as_str() {
             "count" => self.count.is_some(),
-            "while" => self.while_condition.as_ref().is_some_and(|c| c.is_valid()),
+            "while" => self
+                .while_condition
+                .as_ref()
+                .is_some_and(|c| c.is_valid_while()),
             _ => false,
         }
+    }
+
+    /// while 配置的具体问题（校验 / 运行错误信息用；None = 合法或非 while）。
+    ///
+    /// 错误话术直接指向真实原因（source / expression / 缺条件），不再笼统
+    /// 报「mode/count/while_condition 组合不合法」——那会把 source 用法错误
+    /// 误导向 mode 组合，排查成本极高（issue #156）。
+    pub fn while_problem(&self) -> Option<String> {
+        if self.mode != "while" {
+            return None;
+        }
+        let c = self.while_condition.as_ref()?;
+        if c.is_valid_while() {
+            return None;
+        }
+        Some(match c.source.as_str() {
+            "var" => "while_condition.source=var 需要提供 name（变量名）与 op".into(),
+            "response.body" | "response.header" => format!(
+                "while_condition.source={} 需要提供 expression（{}）与 op",
+                c.source,
+                if c.source == "response.body" { "JSONPath" } else { "头名" }
+            ),
+            "status" | "header" | "body" => format!(
+                "while_condition.source 不支持简写「{}」——请用 response.{}",
+                c.source, c.source
+            ),
+            other => format!(
+                "while_condition.source 仅支持 var / prevStatus / response.status / response.body / response.header，收到 {other}"
+            ),
+        })
     }
 
     /// 有效轮数上限（收钳到安全范围）。
@@ -220,6 +278,7 @@ mod tests {
         assert!(!StepCondition {
             source: "var".into(),
             name: "  ".into(),
+            expression: None,
             op: "eq".into(),
             value: None
         }
@@ -244,5 +303,51 @@ mod tests {
             interval_ms: None
         }
         .is_valid());
+
+        // ---- while_condition 响应源（issue #156）：合法性与错误话术 ----
+        let wc: StepCondition = serde_json::from_value(json!({
+            "source": "response.body", "expression": "$.code", "op": "neq", "value": 200
+        }))
+        .unwrap();
+        assert!(wc.is_valid_while());
+        assert!(
+            !wc.is_valid(),
+            "响应源仍不得用于步骤执行条件（无响应可求值）"
+        );
+        // expression 缺失 / 空白 → 无效
+        let no_expr: StepCondition =
+            serde_json::from_value(json!({"source": "response.body", "op": "neq"})).unwrap();
+        assert!(!no_expr.is_valid_while());
+        let blank: StepCondition = serde_json::from_value(json!(
+            {"source": "response.header", "expression": "  ", "op": "eq"}
+        ))
+        .unwrap();
+        assert!(!blank.is_valid_while());
+        // 简写 source 与未知 source → 无效，且错误话术指向真实原因
+        let shorthand: StepCondition =
+            serde_json::from_value(json!({"source": "status", "op": "neq"})).unwrap();
+        assert!(!shorthand.is_valid_while());
+        let bad_loop: StepLoop = serde_json::from_value(json!({
+            "mode": "while", "max_loops": 5,
+            "while_condition": {"source": "status", "op": "neq"}
+        }))
+        .unwrap();
+        assert!(!bad_loop.is_valid());
+        let problem = bad_loop.while_problem().unwrap();
+        assert!(
+            problem.contains("response.status"),
+            "话术应指向真实原因：{problem}"
+        );
+        assert!(
+            !problem.contains("mode/count"),
+            "不应再误导为 mode 组合问题：{problem}"
+        );
+        let ok_loop: StepLoop = serde_json::from_value(json!({
+            "mode": "while", "max_loops": 10, "interval_ms": 1000,
+            "while_condition": {"source": "response.body", "expression": "$.code", "op": "neq", "value": 200}
+        }))
+        .unwrap();
+        assert!(ok_loop.is_valid());
+        assert!(ok_loop.while_problem().is_none());
     }
 }

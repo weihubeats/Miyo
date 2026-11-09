@@ -865,6 +865,7 @@ fn var_cond(name: &str, op: &str, value: serde_json::Value) -> StepCondition {
     StepCondition {
         source: "var".into(),
         name: name.into(),
+        expression: None,
         op: op.into(),
         value: Some(value),
     }
@@ -896,6 +897,7 @@ async fn scenario_condition_skips_step() {
             condition: Some(StepCondition {
                 source: "prevStatus".into(),
                 name: String::new(),
+                expression: None,
                 op: "eq".into(),
                 value: Some(json!(200)),
             }),
@@ -1059,6 +1061,83 @@ async fn scenario_while_loop_max_reached_fails() {
         .unwrap_or_default()
         .contains("循环条件"));
     assert_eq!(r.loop_runs, Some(3));
+}
+
+/// while 响应源（issue #156）：while_condition 直接引用本轮响应体
+/// JSONPath，无需先 extract 再引用 var。上游第 3 次起 paid=true。
+#[tokio::test]
+async fn scenario_while_loop_response_body_condition() {
+    let counter = Arc::new(AtomicU32::new(0));
+    let c = counter.clone();
+    let app = Router::new().route(
+        "/status",
+        get(move || {
+            let c = c.clone();
+            async move {
+                let n = c.fetch_add(1, Ordering::SeqCst) + 1;
+                axum::Json(json!({"paid": n >= 3}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let base = format!("http://{addr}");
+
+    let wc: StepCondition = serde_json::from_value(json!({
+        "source": "response.body", "expression": "$.paid", "op": "neq", "value": true
+    }))
+    .unwrap();
+    let steps = vec![ScenarioStepInput {
+        enabled: true,
+        r#loop: Some(StepLoop {
+            mode: "while".into(),
+            count: None,
+            while_condition: Some(wc),
+            max_loops: Some(10),
+            interval_ms: None,
+        }),
+        assertions: vec![assert_status(200)],
+        ..mk_get(format!("{base}/status"))
+    }];
+    let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+
+    let r = &result.results[0];
+    assert!(r.ok, "响应体条件轮询应成功：{r:?}");
+    assert_eq!(r.loop_runs, Some(3), "第 3 轮 $.paid=true 后退出");
+    assert_eq!(counter.load(Ordering::SeqCst), 3);
+}
+
+/// while 响应源：response.status 直接对状态码求值（首轮即满足 → 1 轮退出）。
+#[tokio::test]
+async fn scenario_while_loop_response_status_condition() {
+    let app = Router::new().route("/ok", get(|| async { axum::Json(json!({"ok": true})) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let base = format!("http://{addr}");
+
+    let wc: StepCondition =
+        serde_json::from_value(json!({"source": "response.status", "op": "neq", "value": 200}))
+            .unwrap();
+    let steps = vec![ScenarioStepInput {
+        enabled: true,
+        r#loop: Some(StepLoop {
+            mode: "while".into(),
+            count: None,
+            while_condition: Some(wc),
+            max_loops: Some(10),
+            interval_ms: None,
+        }),
+        assertions: vec![assert_status(200)],
+        ..mk_get(format!("{base}/ok"))
+    }];
+    let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+
+    let r = &result.results[0];
+    assert!(r.ok, "{r:?}");
+    // 首轮 200 即不满足继续条件：1 轮退出；loop_runs 仅在 >1 轮时记录
+    assert_eq!(r.loop_runs, None);
 }
 
 /// wait_ms：执行前等待（限速语义），单步耗时包含等待。
