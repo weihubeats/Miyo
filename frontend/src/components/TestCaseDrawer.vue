@@ -29,7 +29,8 @@ import type {
 } from '../types/miyoApi'
 import { TEST_CASE_CATEGORIES, caseCategoryLabel, formatDuration, relativeRunTime, restoreBody, snapshotRequest } from '../utils/testCases'
 import { applyPathVars, extractPathVarNames } from '../utils/pathVariables'
-import { methodTextTone } from '../utils/methodTone'
+import { methodTextTone, methodTone } from '../utils/methodTone'
+import { applyMethodDefaults, smartTabFor } from '../utils/requestBar'
 import { useLocaleStore } from '../stores/locale'
 import { statusTextOf } from '../utils/testCases'
 import { useMiyoApi } from '../composables/useMiyoApi'
@@ -61,7 +62,7 @@ const props = defineProps<{
   /** 路径 → 可运行 URL（环境 Base URL + 变量解析），导出代码用；与 onRun/onSave 同为父级注入。 */
   resolveUrl: (path: string) => string
   /** 运行回调：返回引擎结果或抛错。由父级（store 或 panel）注入，避免组件耦合执行细节。 */
-  onRun: (payload: DrawerPayload) => Promise<EndpointResult | null>
+  onRun: (payload: DrawerPayload, runId: string) => Promise<EndpointResult | null>
   onSave: (payload: DrawerSavePayload) => Promise<void>
 }>()
 
@@ -135,10 +136,12 @@ function specFromCase(testCase: TestCase): RequestSpec {
 // ---------- Tab ----------
 type DrawerTab = 'config' | 'checks' | 'result'
 const tab = ref<DrawerTab>('config')
+/** 执行结果 Tab 的角标：断言条数（跟随最近一次运行 / 正在回看的历史）。 */
+const resultTabBadge = computed(() => viewRunResult.value?.outcomes?.length || undefined)
 const tabOptions = computed(() => [
   { value: 'config', label: t('casedrawer.tabConfig') },
   { value: 'checks', label: t('casedrawer.tabChecks'), badge: assertions.value.length + extractors.value.length || undefined },
-  { value: 'result', label: t('casedrawer.tabResult'), badge: result.value ? (result.value.outcomes.length || undefined) : undefined },
+  { value: 'result', label: t('casedrawer.tabResult'), badge: resultTabBadge.value },
 ])
 
 /** 请求配置内的分段（复用调试器面板组）。 */
@@ -214,7 +217,8 @@ watch(
       updated_at: testCase.created_at,
     }
     tab.value = 'config'
-    configSection.value = 'params'
+    // 按方法落默认分段（POST 系 → Body），但不改写用例快照
+    configSection.value = smartSectionFor(testCase.method)
     result.value = props.lastResult ?? null
     runError.value = ''
     confirmClose.value = false
@@ -286,19 +290,8 @@ function toggleFullscreen(): void {
 onBeforeUnmount(() => onResizeUp())
 
 // ---------- Method / URL ----------
-watch(method, (m) => {
-  // POST/PUT/PATCH 默认给 JSON Body（首次切到 body 分段）。
-  if (['POST', 'PUT', 'PATCH'].includes(m)) {
-    configSection.value = 'body'
-    const req = caseEndpoint.value?.request
-    if (req && req.body.mode === 'none') req.body = { mode: 'json', raw: '' }
-    if (req && !req.headers.some((h) => h.key?.toLowerCase() === 'content-type')) {
-      req.headers.push({ key: 'Content-Type', value: 'application/json', enabled: true, description: '' })
-    }
-  } else if (['GET', 'DELETE', 'HEAD', 'OPTIONS'].includes(m)) {
-    configSection.value = 'params'
-  }
-})
+// 方法切换的副作用只在用户显式操作时发生（onMethodChange / syncFromEndpoint）：
+// 打开用例时的回填不应顺手给快照补 JSON Body（会被判脏、保存时污染用例）。
 
 /** 路径变量补齐：URL 加了 `{var}` 时补缺失行（保留已有取值）。 */
 watch(urlPath, () => {
@@ -333,6 +326,20 @@ const inheritFlags = computed(() => {
   }
 })
 
+/** 方法 → 分段智能默认（POST 系落 Body，其余落 Params；先例 requestBar.smartTabFor）。 */
+function smartSectionFor(m: string): ConfigSection {
+  const t0 = smartTabFor(m)
+  if (t0 === 'body') return 'body'
+  if (t0 === 'grpc') return 'body'
+  return 'params'
+}
+/** 用户切换方法：写回默认（POST 空 body 补 `{}` + Content-Type），同时跟随分段。 */
+function onMethodChange(v: unknown): void {
+  method.value = String(v ?? 'GET') as HttpMethod
+  const spec = caseEndpoint.value?.request
+  if (spec) configSection.value = smartSectionFor(applyMethodDefaults(spec, method.value))
+}
+
 /** 同步自接口：把接口当前配置重灌进用例（显式动作；不带断言 / 提取）。 */
 function syncFromEndpoint(): void {
   const ep = props.endpoint
@@ -344,6 +351,7 @@ function syncFromEndpoint(): void {
   mine.request.path_variables = ep.request.path_variables.map((p) => ({ ...p }))
   urlPath.value = ep.path
   method.value = ep.method
+  configSection.value = smartSectionFor(ep.method)
   toastSynced()
 }
 
@@ -402,13 +410,13 @@ async function run(): Promise<void> {
   if (!props.testCase) return
   if (!urlPath.value.trim()) return
   running.value = true
-  result.value = null
+  // 保留上一条结果：先清空再等待会让「执行结果」页闪白（P0）
   runError.value = ''
   tab.value = 'result'
   const runId = crypto.randomUUID()
   activeRunId.value = runId
   try {
-    result.value = await props.onRun(buildPayload())
+    result.value = await props.onRun(buildPayload(), runId)
   } catch (err) {
     runError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -632,8 +640,12 @@ const compareResults = computed(() => {
                   :options="METHOD_OPTIONS"
                   size="sm"
                   :pop-min-width="120"
-                  @update:model-value="(v) => (method = String(v ?? 'GET') as HttpMethod)"
-                />
+                  @update:model-value="onMethodChange"
+                >
+                  <template #display="{ label }">
+                    <span class="drw-method-badge" :class="methodTone(method)">{{ label }}</span>
+                  </template>
+                </CustomSelect>
                 <input
                   v-model="urlPath"
                   class="miyo-input drw-url"
@@ -679,7 +691,7 @@ const compareResults = computed(() => {
                 </button>
               </div>
 
-              <div v-if="caseEndpoint" class="drw-section-body">
+              <div v-if="caseEndpoint" class="drw-section-body" :class="{ 'is-body': configSection === 'body' }">
                 <ParamsPanel v-show="configSection === 'params'" :draft="caseEndpoint" />
                 <PathVariablesPanel v-show="configSection === 'path'" :draft="caseEndpoint" />
                 <HeadersPanel v-show="configSection === 'headers'" :draft="caseEndpoint" />
@@ -1060,6 +1072,16 @@ const compareResults = computed(() => {
   width: 118px;
   flex-shrink: 0;
 }
+/* 触发区方法徽章：与场景步骤 / 主请求栏同款（method-* 语义色，深浅主题自适应）。 */
+.drw-method-badge {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xxs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+}
 .drw-url {
   flex: 1;
   min-width: 0;
@@ -1142,6 +1164,18 @@ const compareResults = computed(() => {
 }
 .drw-section-body {
   min-height: 120px;
+}
+/**
+ * BodyPanel 的高度契约：面板 `flex:1`、JsonEditor 填满分派高度（调试器里由卡片 /
+ * 分割条给高度）。抽屉是纵向滚动容器，没有分割条分派高度，父级高度 auto →
+ * `.json-editor` 只能退回 wrap 的 120px 地板并转框内滚动，看起来就是「框很小、
+ * 只能看到中间几行」。这里显式分派一个可视高度，编辑器行为与主请求面板一致。
+ */
+.drw-section-body.is-body {
+  display: flex;
+  flex-direction: column;
+  height: clamp(240px, 42vh, 460px);
+  min-height: 0;
 }
 
 /* 执行控制 */

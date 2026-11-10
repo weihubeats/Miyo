@@ -112,7 +112,7 @@ function runResult(): EndpointResult {
 }
 
 function mountDrawer(overrides: { open?: boolean; testCase?: TestCase | null; endpoint?: Endpoint | null; lastResult?: EndpointResult | null } = {}) {
-  const onRun = vi.fn(async (_payload?: unknown) => runResult())
+  const onRun = vi.fn(async (_payload?: unknown, _runId?: string) => runResult())
   const onSave = vi.fn(async (_payload?: unknown) => undefined)
   const resolveUrl = vi.fn((path: string) => `https://api.test${path}`)
   const wrapper = mount(TestCaseDrawer, {
@@ -202,12 +202,88 @@ describe('TestCaseDrawer（三 Tab 重构版）', () => {
     // 运行会自动切到结果 Tab
     await clickEl('.drw-footer-main .miyo-btn-primary')
     expect(onRun).toHaveBeenCalledTimes(1)
+    // runId 必须透传：否则「取消」调用的 run_id 后端不认识，等于空操作
+    const runId = onRun.mock.calls[0]?.[1]
+    expect(typeof runId).toBe('string')
+    expect((runId as string).length).toBeGreaterThan(10)
     await nextTick()
     const pane = $('.drw-pane-result') as HTMLElement
     expect(pane.textContent).toContain('200')
     expect(pane.textContent).toContain('HTTP 状态码 eq 200')
     expect(pane.textContent).toContain('orderNo = SO-1')
     expect(pane.textContent).toContain('断言 1 通过 / 1 失败')
+  })
+
+  it('方法触发器带语义色徽章（POST 高亮，不再是一行灰字）', () => {
+    mountDrawer()
+    const badge = $('.drw-method-badge')
+    expect(badge).toBeTruthy()
+    expect(badge?.textContent?.trim()).toBe('POST')
+    expect(badge?.className).toContain('text-method-post')
+  })
+
+  it('打开 POST 用例默认停在 Body 分段，GET 用例默认停在 Params', async () => {
+    mountDrawer()
+    expect(($('.drw-section-tab.active')?.textContent ?? '').trim()).toBe('Body')
+
+    document.body.innerHTML = ''
+    mountDrawer({ testCase: makeCase({ method: 'GET', body_type: 'none', body_content: '' }) })
+    await nextTick()
+    expect(($('.drw-section-tab.active')?.textContent ?? '').trim()).toBe('Params')
+  })
+
+  it('打开用例不静默改写快照（POST 空 body 不自动补 JSON / Content-Type）', async () => {
+    const { onSave } = mountDrawer({
+      testCase: makeCase({ headers: [], body_type: 'none', body_content: '' }),
+    })
+    // 只是回填：不应被判脏
+    expect($('.drw-dirty')).toBeNull()
+    await clickEl('.drw-footer-main .miyo-btn:last-child')
+    const payload = onSave.mock.calls[0]?.[0] as { headers: unknown[]; bodyType: string }
+    expect(payload.headers).toEqual([])
+    expect(payload.bodyType).toBe('none')
+  })
+
+  it('Body 分段带高度分配容器（编辑器与主请求面板同契约）', async () => {
+    mountDrawer()
+    const host = $('.drw-section-body') as HTMLElement
+    expect(host.className).toContain('is-body')
+    const paramsTab = $$('.drw-section-tab').find((b) => b.textContent?.trim() === 'Params') as HTMLElement
+    paramsTab.click()
+    await nextTick()
+    expect(($('.drw-section-body') as HTMLElement).className).not.toContain('is-body')
+  })
+
+  it('运行中可取消：取消按钮用透传的 runId 调后端中止', async () => {
+    let release: (v: EndpointResult) => void = () => {}
+    const pending = new Promise<EndpointResult>((resolve) => {
+      release = resolve
+    })
+    const onRun = vi.fn(async (_payload?: unknown, _runId?: string) => pending)
+    const wrapper = mount(TestCaseDrawer, {
+      props: {
+        open: true,
+        endpointId: 'ep-1',
+        endpoint: makeEndpoint(),
+        testCase: makeCase(),
+        lastResult: null,
+        resolveUrl: (p: string) => `https://api.test${p}`,
+        onRun,
+        onSave: vi.fn(async () => undefined),
+      },
+      attachTo: document.body,
+    })
+    await nextTick()
+    await clickEl('.drw-footer-main .miyo-btn-primary')
+    const cancel = $$('.drw-footer-main button').find((b) => b.textContent?.includes('取消'))
+    expect(cancel).toBeTruthy()
+    cancel!.click()
+    await nextTick()
+    const runId = onRun.mock.calls[0]?.[1] as string
+    expect(api.cancelTestEndpoint).toHaveBeenCalledWith(runId)
+    release(runResult())
+    await nextTick()
+    wrapper.unmount()
   })
 
   it('关闭脏检查：修改后 ESC 弹确认条，放弃关闭 / 继续编辑保留', async () => {
