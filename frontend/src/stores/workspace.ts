@@ -1239,6 +1239,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         url,
         environment_id: environmentId,
         case_id: testCase.id,
+        // 透传 run_id：后端据此注册取消令牌，前端「取消」才真能中止在途请求。
         run_id: opts?.runId ?? null,
       })
       const status = caseStatusOf(testCase, result)

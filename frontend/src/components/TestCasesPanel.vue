@@ -546,10 +546,70 @@ const exportSmokeOpen = ref(false)
 // ---------- 详情 / 编辑抽屉 ----------
 const drawerOpen = ref(false)
 const drawerCase = ref<TestCase | null>(null)
+/** 切换用例的确认条：pendingDrawerCase 是被点中的目标用例。 */
+const leaveConfirmOpen = ref(false)
+const leaveTarget = ref<TestCase | null>(null)
+/** 抽屉当前实际展示的用例（被拒绝切换时复位用）。 */
+const openCaseBeforeLeave = ref<TestCase | null>(null)
+let leaveResolve: ((result: { handled: boolean }) => void) | null = null
 
 function openDrawer(c: TestCase): void {
   drawerCase.value = c
   drawerOpen.value = true
+}
+
+/**
+ * 抽屉切换用例前的脏确认：抽屉有未保存修改时，由父级决定
+ * 「保存后切换 / 放弃并切换 / 继续编辑」。
+ * - 继续编辑：handled=false，抽屉停在当前用例（不切）；
+ * - 保存后切换 / 放弃并切换：handled=true，抽屉**原地换到**目标用例（不关抽屉）。
+ */
+function confirmLeaveDrawer(next: TestCase): Promise<{ handled: boolean }> {
+  openCaseBeforeLeave.value = drawerCase.value
+  leaveTarget.value = next
+  leaveConfirmOpen.value = true
+  return new Promise<{ handled: boolean }>((resolve) => {
+    leaveResolve = resolve
+  })
+}
+
+/** 收起确认条并交回决定（target 为空 = 继续编辑）。 */
+function settleLeave(target: TestCase | null): void {
+  const resolve = leaveResolve
+  leaveResolve = null
+  leaveConfirmOpen.value = false
+  leaveTarget.value = null
+  openCaseBeforeLeave.value = null
+  if (target) drawerCase.value = target
+  resolve?.({ handled: !!target })
+}
+
+/** 继续编辑：停在当前用例（drawerCase 已被上一步的 openDrawer 改掉，复位回去）。 */
+function cancelLeaveDrawer(): void {
+  drawerCase.value = openCaseBeforeLeave.value
+  settleLeave(null)
+}
+
+/** 放弃当前修改并切到下一条用例。 */
+function discardAndLeaveDrawer(): void {
+  settleLeave(leaveTarget.value)
+}
+
+/** 保存当前修改后切到下一条用例（保存沿用抽屉底部的同一套落库逻辑）。 */
+function saveAndLeaveDrawer(): void {
+  settleLeave(leaveTarget.value)
+}
+
+/** 抽屉关闭（✕ / ESC / 遮罩 / 保存成功后自关）：清掉用例引用，下次打开从列表重新取。 */
+function onDrawerOpenChange(open: boolean): void {
+  drawerOpen.value = open
+  if (open) return
+  drawerCase.value = null
+}
+
+/** 抽屉内部触发的保存（「保存修改」按钮 / 「保存后切换」）：返回是否落库成功。 */
+async function onDrawerSave(payload: DrawerPayload): Promise<void> {
+  await saveDrawerPayload(payload)
 }
 
 /** 抽屉载荷（完整：请求快照 + 断言提取 + 执行控制）。 */
@@ -571,8 +631,11 @@ interface DrawerPayload {
   disableCookies: boolean
 }
 
-/** 抽屉「立即运行」：原地执行（不切 Tab），结果留在抽屉内。 */
-async function runDrawerPayload(payload: DrawerPayload): Promise<import('../types/miyoApi').EndpointResult | null> {
+/** 抽屉「立即运行」：原地执行（不切 Tab），结果留在抽屉内；runId 让「取消」能真正中止在途请求。 */
+async function runDrawerPayload(
+  payload: DrawerPayload,
+  runId?: string,
+): Promise<import('../types/miyoApi').EndpointResult | null> {
   const d = props.draft
   if (!d || !drawerCase.value) return null
   const snapshot: TestCase = {
@@ -590,7 +653,7 @@ async function runDrawerPayload(payload: DrawerPayload): Promise<import('../type
     timeout_ms: payload.timeoutMs,
     disable_cookies: payload.disableCookies,
   }
-  return store.runTestCase(d.id, snapshot, store.activeEnvId)
+  return store.runTestCase(d.id, snapshot, store.activeEnvId, { runId })
 }
 
 /** 抽屉「保存修改」：名称/分组/文件夹 + 请求内容 + 断言提取 + 执行控制一起落库。 */
@@ -801,7 +864,8 @@ async function runOne(c: TestCase): Promise<void> {
   if (!d || runningIds.value.has(c.id)) return
   runningIds.value = new Set(runningIds.value).add(c.id)
   try {
-    const res = await store.runTestCase(d.id, c, store.activeEnvId)
+    // runId 透传：列表行的「运行中」同样可取消（后端据此注册取消令牌）。
+    const res = await store.runTestCase(d.id, c, store.activeEnvId, { runId: `case-${c.id}-${Date.now()}` })
     if (res) {
       // 引擎判定：有断言看 ok；无断言维持 2xx-3xx。提示带断言通过数。
       const ok = effectiveStatus(c)
@@ -1357,9 +1421,35 @@ watch(
       :last-result="drawerCase ? (store.caseRunMeta.get(drawerCase.id)?.result ?? null) : null"
       :resolve-url="store.resolveTestCaseUrl"
       :on-run="runDrawerPayload"
-      :on-save="saveDrawerPayload"
-      @update:open="drawerOpen = $event"
+      :on-save="onDrawerSave"
+      :confirm-leave="confirmLeaveDrawer"
+      @update:open="onDrawerOpenChange"
     />
+
+    <!-- 切换用例的脏确认：抽屉有未保存修改时，先问「保存后切换 / 放弃并切换 / 继续编辑」 -->
+    <Modal
+      :open="leaveConfirmOpen"
+      :title="t('casedrawer.switchTitle')"
+      width="420px"
+      @update:open="(v) => !v && cancelLeaveDrawer()"
+    >
+      <p class="tcp-leave-msg">
+        {{ t('casedrawer.switchConfirm', { name: leaveTarget?.name ?? '' }) }}
+      </p>
+      <template #footer>
+        <div class="tcp-leave-actions">
+          <button class="miyo-btn miyo-btn-sm" type="button" @click="cancelLeaveDrawer">
+            {{ t('casedrawer.keepEditing') }}
+          </button>
+          <button class="miyo-btn miyo-btn-sm miyo-btn-danger" type="button" @click="discardAndLeaveDrawer">
+            {{ t('casedrawer.discardAndSwitch') }}
+          </button>
+          <button class="miyo-btn miyo-btn-sm miyo-btn-primary" type="button" @click="saveAndLeaveDrawer">
+            {{ t('casedrawer.saveAndSwitch') }}
+          </button>
+        </div>
+      </template>
+    </Modal>
 
     <ExportSmokeDialog
       v-if="exportSmokeOpen"
@@ -1373,6 +1463,19 @@ watch(
 </template>
 
 <style scoped>
+/* 切换用例确认弹窗的说明与按钮排布 */
+.tcp-leave-msg {
+  margin: 0 0 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  line-height: 1.6;
+}
+.tcp-leave-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .tcp {
   display: flex;
   flex-direction: column;

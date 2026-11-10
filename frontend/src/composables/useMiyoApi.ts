@@ -674,7 +674,7 @@ export function useMiyoApi() {
 
   /** 取消在途的单接口 / 用例测试（run_id 不存在或已完成时返回 false）。 */
   const cancelTestEndpoint = (runId: string) =>
-    call<boolean>('cancel_test_endpoint', { runId })
+    quiet<boolean>('cancel_test_endpoint', { runId })
 
   /** 拖拽排序：按展示顺序写回组内 sort_order。 */
   const reorderTestCases = (caseIds: string[]) =>
