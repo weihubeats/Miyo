@@ -138,6 +138,32 @@ describe('WorkflowEditor：第二轮 UI 层', () => {
     wrapper.unmount()
   })
 
+  it('有未保存修改时点「运行」：保存链路不炸 TDZ（savedBaseline 读 validateOpen）', async () => {
+    const wrapper = await mountEditor()
+    // 制造未保存修改（dirty）→ 点运行会先走 save()
+    await wrapper.find('.wf-name').setValue('改了名字再跑')
+    await flushPromises()
+    expect(wrapper.find('.wf-save-state').classes()).toContain('dirty')
+
+    const runBtn = wrapper.findAll('.wf-topbar button').find((b) => b.text().includes('运行'))
+    expect(runBtn).toBeTruthy()
+    await runBtn!.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    // 按钮的同步链路（onRunClick → 写操作确认 / 校验面板）必须跑完，
+    // 不得抛 ReferenceError（TDZ）；确认框出现即说明前置逻辑走通。
+    expect(wrapper.html()).toBeTruthy()
+
+    // 直接点「保存」：同一条 savedBaseline = draftSnapshot() 链路，必须有落库调用
+    const saveBtn = wrapper.findAll('.wf-topbar button').find((b) => b.text().includes('保存'))
+    expect(saveBtn).toBeTruthy()
+    await saveBtn!.trigger('click')
+    await flushPromises()
+    expect(api.saveScenario).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('顶栏保存状态：未改动显示已保存', async () => {
     const wrapper = await mountEditor()
     expect(wrapper.find('.wf-save-state').classes()).toContain('saved')

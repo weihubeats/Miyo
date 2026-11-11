@@ -5,13 +5,12 @@
  * - varScanSteps / varChain：步骤文本扫描 → 变量链路（供连线图与变量面板）；
  * - validateSteps：编辑态 → 校验模型（scenarioValidate 的输入形状）；
  * - issues / issueSummary / errorCount / warnCount：运行前校验结果；
- * - validateOpen：校验面板展开态（出现阻断时自动展开一次，之后用户自控）；
  * - stepIssues：单步问题（步骤卡角标）。
  *
  * 留在宿主的视图层：gotoIssue（切视图 / 选中步骤 / 页签 / 滚动定位）依赖
  * 编辑器局部 UI 状态，不进本组合式。
  */
-import { computed, ref, watch, type Ref } from 'vue'
+import { computed, type Ref } from 'vue'
 import type { useWorkspaceStore } from '../stores/workspace'
 import type { Endpoint } from '../types/miyoApi'
 import { computeVarChain, type VarScanStep } from '../utils/scenarioVars'
@@ -169,16 +168,6 @@ export function useScenarioValidation(options: UseScenarioValidationOptions) {
   const issueSummary = computed(() => summarizeIssues(issues.value))
   const errorCount = computed(() => issueSummary.value.errors)
   const warnCount = computed(() => issueSummary.value.warnings)
-  /** 校验面板展开态：有阻断时默认展开，用户可手动收起。 */
-  const validateOpen = ref(false)
-  watch(
-    errorCount,
-    (n, prev) => {
-      if (n > 0 && !prev) validateOpen.value = true
-    },
-    { immediate: true },
-  )
-
   /** 单步问题（步骤卡角标）。 */
   function stepIssues(stepIndex: number): ValidateIssue[] {
     return issuesOfStep(issues.value, stepIndex)
@@ -193,7 +182,6 @@ export function useScenarioValidation(options: UseScenarioValidationOptions) {
     issueSummary,
     errorCount,
     warnCount,
-    validateOpen,
     stepIssues,
   }
 }

@@ -576,7 +576,6 @@ const {
   issues,
   errorCount,
   warnCount,
-  validateOpen,
   stepIssues,
 } = useScenarioValidation({
   steps,
@@ -586,6 +585,22 @@ const {
   urlTemplateFor,
   stepTitle,
 })
+
+/**
+ * 校验面板展开态（纯视图状态，归宿主）。
+ * 不能放进 useScenarioValidation：`savedBaseline = draftSnapshot()` → `toScenario()` →
+ * `generateScriptText()` 会读它，那条链路在 setup 里就能被 `await run.run()`
+ * 触发（未保存时先落库），早于组合式内部 `const` 初始化 → TDZ「Cannot access
+ * uninitialized variable」。
+ */
+const validateOpen = ref(false)
+watch(
+  errorCount,
+  (n, prev) => {
+    if (n > 0 && !prev) validateOpen.value = true
+  },
+  { immediate: true },
+)
 
 /** 校验项 → 定位：切到编排视图、选中步骤、切到对应页签、滚动到视口。 */
 function gotoIssue(issue: ValidateIssue): void {
