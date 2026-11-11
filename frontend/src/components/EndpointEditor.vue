@@ -428,6 +428,20 @@ const folderName = computed(() => {
   return store.folders.find((f) => f.id === draft.value!.folder_id)?.name ?? ''
 })
 
+/**
+ * 接口名输入框的 size：让框体宽度跟内容走。
+ *
+ * input 不写 size 时按浏览器默认（≈20 字符 ≈ 154px）撑开，短名字（如「SS」）
+ * 也占一条，聚焦全选时整条是一根蓝色长条，容易被误读成「拉不动的滚动条」
+ * （v0.0.57 用户实测）。CSS 的 `field-sizing: content` 已能解决（Safari 17+），
+ * 这里再按字符数给 size 兜底老 WebView：+1 为光标留位，下限 2 保证空名也有
+ * 可点击区域；上限由 CSS max-width 收敛。
+ */
+const nameInputSize = computed(() => {
+  const len = (draft.value?.name ?? '').length
+  return Math.min(Math.max(len + 1, 2), 40)
+})
+
 /** 路径输入框元素引用（快捷按钮聚焦回跳）。 */
 const urlInputEl = ref<HTMLInputElement | null>(null)
 
@@ -851,6 +865,7 @@ onUnmounted(() => {
         <input
           v-model="draft.name"
           class="crumb-name"
+          :size="nameInputSize"
           :placeholder="t('editor.endpointNamePh')"
           spellcheck="false"
           maxlength="60"
@@ -2008,6 +2023,13 @@ onUnmounted(() => {
 .crumb-name {
   min-width: 60px;
   max-width: 280px;
+  /* 宽度跟内容走：input 默认按 size 属性（≈20 字符 = 154px）撑开，
+     短名字（如「SS」）也占满一条，聚焦全选时整条显示成一根蓝色长条，
+     被误读成「拉不动的滚动条」（v0.0.57 用户实测）。
+     field-sizing: content 让框体恰好包住文本，长名字仍受 max-width 约束。
+     老 WebView 不认这条声明，由组件里的 nameInputSize 按字符数给 size 兜底
+     （两条独立生效，不冲突）。 */
+  field-sizing: content;
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
