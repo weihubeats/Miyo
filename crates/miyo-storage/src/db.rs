@@ -98,6 +98,7 @@ pub async fn init_db(path: &Path) -> Result<SqlitePool> {
     migrate_legacy_db_file(path);
     let fresh = !path.exists();
     let pool = connect(path).await?;
+    tighten_file_permissions(path);
     if !fresh {
         snapshot_database(&pool, path).await?;
     }
@@ -115,6 +116,46 @@ pub async fn init_db(path: &Path) -> Result<SqlitePool> {
         .map_err(migrate_error)?;
     integrity_check(&pool, path).await?;
     Ok(pool)
+}
+
+/// 收紧库文件与 WAL/SHM 附属文件权限到仅所有者可读写（unix）。
+/// 库内是调试数据（请求历史、URL、截断响应），多用户机器上不应默认可读；
+/// 敏感变量虽经 AES-GCM 加密，其余内容为明文。Windows 无 POSIX 权限，跳过。
+fn tighten_file_permissions(db_path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // 库本体 + WAL/SHM（connect 用 WAL 模式，文件可能已生成）。
+        let mut candidates = vec![db_path.to_path_buf()];
+        let suffixes = ["-wal", "-shm"];
+        let stem = db_path.to_string_lossy();
+        for s in suffixes {
+            candidates.push(PathBuf::from(format!("{stem}{s}")));
+        }
+        for p in candidates {
+            if let Ok(meta) = std::fs::metadata(&p) {
+                let mut perm = meta.permissions();
+                if perm.mode() & 0o777 != 0o600 {
+                    perm.set_mode(0o600);
+                    let _ = std::fs::set_permissions(&p, perm);
+                }
+            }
+        }
+        // 数据目录本身 0700（密钥 / 端口文件 / token 同树）。
+        if let Some(dir) = db_path.parent() {
+            if let Ok(meta) = std::fs::metadata(dir) {
+                let mut perm = meta.permissions();
+                if perm.mode() & 0o777 != 0o700 {
+                    perm.set_mode(0o700);
+                    let _ = std::fs::set_permissions(dir, perm);
+                }
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = db_path;
+    }
 }
 
 /// 库文件里已应用的最大迁移版本（无库 / 无 `_sqlx_migrations` 表返回 `None`）。
@@ -395,6 +436,30 @@ mod tests {
             .file_name()
             .to_str()
             .is_some_and(|n| n.starts_with("miyo-") && n.ends_with(".db")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 权限收紧：库文件 / WAL / 数据目录仅所有者可访问（unix）。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn init_db_tightens_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "miyo-db-perm-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("miyo.db");
+        let pool = init_db(&path).await.expect("建库");
+        pool.close().await;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600, "库文件应 0600");
+        assert_eq!(mode(&dir), 0o700, "数据目录应 0700");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

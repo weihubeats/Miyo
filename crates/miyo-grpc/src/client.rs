@@ -78,6 +78,14 @@ pub enum GrpcEvent {
 /// 取消令牌与 grpc-timeout 都管不到 connect 阶段，必须有硬超时兜底。
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// 通道缓存：key = `{scheme}://{host:port}`（TLS 开关进 scheme，天然区分）。
+/// `Channel` 内部是 Arc——clone 共享底层 HTTP/2 连接且断线自动重连，反复
+/// 调试同一服务时免去每次 TCP/TLS 握手（unary / 服务端流两条路径共用）。
+/// 桌面会话内地址数有限，缓存不设淘汰。
+static CHANNEL_CACHE: std::sync::OnceLock<
+    tokio::sync::Mutex<std::collections::HashMap<String, Channel>>,
+> = std::sync::OnceLock::new();
+
 /// 建立通道。地址允许携带 scheme（统一剥掉按 TLS 开关重组）；
 /// TLS 使用系统根证书（tls-native-roots），自签证书暂不支持（见里程碑）。
 pub async fn connect(address: &str, use_tls: bool) -> Result<Channel> {
@@ -91,7 +99,17 @@ pub async fn connect(address: &str, use_tls: bool) -> Result<Channel> {
         return Err(AppError::Validation("gRPC 地址不能为空".into()));
     }
     let scheme = if use_tls { "https" } else { "http" };
-    let endpoint = Channel::from_shared(format!("{scheme}://{bare}"))
+    let key = format!("{scheme}://{bare}");
+    {
+        let cache = CHANNEL_CACHE
+            .get_or_init(|| tokio::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .await;
+        if let Some(ch) = cache.get(&key) {
+            return Ok(ch.clone());
+        }
+    }
+    let endpoint = Channel::from_shared(key.clone())
         .map_err(|e| AppError::Validation(format!("gRPC 地址无效：{e}")))?
         .connect_timeout(CONNECT_TIMEOUT);
     let endpoint = if use_tls {
@@ -101,10 +119,16 @@ pub async fn connect(address: &str, use_tls: bool) -> Result<Channel> {
     } else {
         endpoint
     };
-    endpoint
+    let channel = endpoint
         .connect()
         .await
-        .map_err(|e| AppError::Connection(format!("gRPC 连接失败：{e}")))
+        .map_err(|e| AppError::Connection(format!("gRPC 连接失败：{e}")))?;
+    CHANNEL_CACHE
+        .get_or_init(|| tokio::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .await
+        .insert(key, channel.clone());
+    Ok(channel)
 }
 
 /// 动态消息编解码器：prost-reflect 的 DynamicMessage 自带 prost::Message
@@ -536,4 +560,49 @@ pub fn spawn_server_stream(
             }),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 通道缓存复用：同地址第二次 connect 命中缓存——listener 关闭后仍能
+    /// 取到通道（无缓存时 TCP 已拒连必然报错）。TLS 开关进 key（不同 scheme
+    /// 各自缓存，互不串用）。
+    #[tokio::test]
+    async fn connect_reuses_cached_channel_for_same_address() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let first = connect(&addr.to_string(), false).await.expect("首次连接");
+        let second = connect(&addr.to_string(), false)
+            .await
+            .expect("二次连接应命中缓存");
+        // 同一底层连接（Channel 内部 Arc，克隆共享）——两次都成功即缓存生效。
+        drop(first);
+        drop(second);
+
+        // 关闭 listener 后再 connect：缓存路径不发起 TCP，依然成功。
+        drop(listener);
+        let third = connect(&addr.to_string(), false)
+            .await
+            .expect("缓存命中不应重连");
+
+        // 缓存恰一条该地址条目（key 含 scheme；TLS 变体会另立条目）。
+        let cache = CHANNEL_CACHE.get().expect("缓存已初始化");
+        let len = cache.lock().await.len();
+        assert!(len >= 1, "缓存应至少有一条该地址");
+        let _ = third; // 证明取到的是可用克隆
+    }
+
+    /// 地址为空 / 无法解析：校验错误先于缓存写入（不污染缓存）。
+    #[tokio::test]
+    async fn connect_validates_before_cache() {
+        let err = connect("", false).await.expect_err("空地址必须报错");
+        assert!(err.user_message().contains("地址"));
+        // 非法字符（含空格）进 URL 解析失败。
+        let err = connect("invalid address with spaces:1", false)
+            .await
+            .expect_err("非法地址必须报错");
+        assert!(matches!(err, AppError::Validation(_)));
+    }
 }

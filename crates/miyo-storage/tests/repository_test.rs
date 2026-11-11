@@ -1142,6 +1142,147 @@ async fn scenario_run_history_roundtrip_and_prune() {
     assert!(after.is_empty());
 }
 
+/// 场景历史摘要列表：与明细行一致、不含大 JSON 列、新→旧排序。
+#[tokio::test]
+async fn list_scenario_run_summaries_matches_details() {
+    let db = pool().await;
+    let project = repo::create_project(&db, "摘要列表", "").await.unwrap();
+    let scenario = miyo_core::model::Scenario {
+        id: Uuid::new_v4(),
+        project_id: project.id,
+        name: "摘要列表场景".into(),
+        description: String::new(),
+        category: String::new(),
+        sort_order: 0,
+        steps: vec![],
+        script: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    repo::save_scenario(&db, &scenario).await.unwrap();
+    for i in 0..3 {
+        let mut run = scenario_run(scenario.id, Uuid::new_v4(), i);
+        run.ok_count = i;
+        repo::save_scenario_run(&db, &run).await.unwrap();
+    }
+    let summaries = repo::list_scenario_run_summaries(&db, scenario.id, 10)
+        .await
+        .unwrap();
+    assert_eq!(summaries.len(), 3);
+    // 新→旧：第一条是 offset 最大（最新）的。
+    assert!(summaries[0].finished_at >= summaries[1].finished_at);
+    // 与明细（get_scenario_run）逐列一致。
+    let detail = repo::get_scenario_run(&db, Uuid::parse_str(&summaries[0].id).unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.finished_at, summaries[0].finished_at);
+    assert_eq!(detail.ok_count, summaries[0].ok_count);
+    assert_eq!(detail.duration_ms, summaries[0].duration_ms);
+}
+
+/// 项目级「每场景最近一次运行」批量摘要查询：
+/// 多场景多历史 → 每场景恰一条（最新）；跨项目隔离；摘要列与明细一致。
+#[tokio::test]
+async fn latest_run_summaries_for_project_one_row_per_scenario() {
+    let db = pool().await;
+
+    let project = repo::create_project(&db, "摘要项目", "").await.unwrap();
+    let other = repo::create_project(&db, "其他项目", "").await.unwrap();
+    let mut scenarios = Vec::new();
+    for name in ["场景A", "场景B", "场景C"] {
+        let s = miyo_core::model::Scenario {
+            id: Uuid::new_v4(),
+            project_id: project.id,
+            name: name.into(),
+            description: String::new(),
+            category: String::new(),
+            sort_order: 0,
+            steps: vec![],
+            script: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_scenario(&db, &s).await.unwrap();
+        scenarios.push(s);
+    }
+    // 其他项目的场景（隔离校验）
+    let foreign = miyo_core::model::Scenario {
+        id: Uuid::new_v4(),
+        project_id: other.id,
+        name: "别家的".into(),
+        description: String::new(),
+        category: String::new(),
+        sort_order: 0,
+        steps: vec![],
+        script: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    repo::save_scenario(&db, &foreign).await.unwrap();
+
+    // 场景A 三条历史（新旧可辨），场景B 一条，场景C 无历史；foreign 一条。
+    let run_of = |sid: Uuid, offset: i64, ok: i64| miyo_core::model::ScenarioRun {
+        id: Uuid::new_v4(),
+        scenario_id: sid,
+        environment_id: None,
+        finished_at: chrono::Utc::now() + chrono::Duration::minutes(offset),
+        duration_ms: Some(10.0),
+        total_steps: 1,
+        ok_count: ok,
+        fail_count: 0,
+        skipped_count: 0,
+        cancelled: false,
+        stopped_on_failure: false,
+        results_json: "[]".into(),
+        variables_json: "{}".into(),
+        meta_json: None,
+    };
+    let a = scenarios[0].id;
+    let b = scenarios[1].id;
+    repo::save_scenario_run(&db, &run_of(a, 1, 1))
+        .await
+        .unwrap();
+    repo::save_scenario_run(&db, &run_of(a, 2, 2))
+        .await
+        .unwrap();
+    let a_latest = run_of(a, 3, 3);
+    repo::save_scenario_run(&db, &a_latest).await.unwrap();
+    let b_latest = run_of(b, 1, 9);
+    repo::save_scenario_run(&db, &b_latest).await.unwrap();
+    let foreign_run = run_of(foreign.id, 1, 7);
+    repo::save_scenario_run(&db, &foreign_run).await.unwrap();
+
+    let rows = repo::latest_run_summaries_for_project(&db, project.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        2,
+        "只有有历史的场景返回行（场景C 无历史不出现）"
+    );
+    let by_scenario: std::collections::HashMap<Uuid, &repo::ScenarioRunSummaryRow> = rows
+        .iter()
+        .map(|r| (Uuid::parse_str(&r.scenario_id).unwrap(), r))
+        .collect();
+    let a_row = by_scenario.get(&a).unwrap();
+    assert_eq!(a_row.id, a_latest.id.to_string(), "取的是最新一条");
+    assert_eq!(a_row.ok_count, 3);
+    let b_row = by_scenario.get(&b).unwrap();
+    assert_eq!(b_row.ok_count, 9);
+    assert!(
+        !rows.iter().any(|r| r.scenario_id == foreign.id.to_string()),
+        "其他项目的运行不得混入"
+    );
+
+    // 明细（get_scenario_run）与摘要行一致（同一来源同一列）。
+    let detail = repo::get_scenario_run(&db, Uuid::parse_str(&a_row.id).unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.finished_at, a_row.finished_at);
+}
+
 /// 用例执行历史：save → list（新→旧）→ get → 摘要回写 → prune 保留上限 → 级联删除。
 #[tokio::test]
 async fn test_case_run_history_roundtrip() {

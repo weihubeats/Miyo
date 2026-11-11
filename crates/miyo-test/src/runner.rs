@@ -273,10 +273,13 @@ async fn run_one_core(
     cancel: Option<&tokio_util::sync::CancellationToken>,
 ) -> (EndpointResult, Option<HttpResponseData>) {
     // 1. pre_request：快照→本地解析→回写（值支持 {{$timestamp}} 与已提取变量）。
-    let snapshot = runtime.lock().await.clone();
+    // 作用域内借用读锁（resolve_text 同步、无 await），免整表 clone。
     let mut injected = HashMap::with_capacity(config.pre_request.len());
-    for p in &config.pre_request {
-        injected.insert(p.name.clone(), resolve_text(&p.value, &snapshot));
+    {
+        let snapshot = runtime.lock().await;
+        for p in &config.pre_request {
+            injected.insert(p.name.clone(), resolve_text(&p.value, &snapshot));
+        }
     }
     if !injected.is_empty() {
         runtime.lock().await.extend(injected);
@@ -309,13 +312,14 @@ async fn run_one_core(
     };
 
     // 3. 断言（expected 中的 {{变量}} 按快照解析；body 只解析一次复用）。
-    let snapshot = runtime.lock().await.clone();
     let body_value: Option<Value> = serde_json::from_slice(resp.body.as_ref()).ok();
     // JS 沙箱断言（type=javascript）需 await 沙箱回传，故逐条循环而非 map。
     let mut outcomes: Vec<Outcome> = Vec::with_capacity(config.assertions.len());
     for a in &config.assertions {
         let resolved;
         let a: &crate::config::AssertionSpec = if needs_resolve(a) {
+            // 同步解析借用读锁；沙箱调用前守卫随作用域释放。
+            let snapshot = runtime.lock().await;
             resolved = resolve(a, &snapshot);
             &resolved
         } else {
@@ -831,10 +835,14 @@ async fn send_round(
     options: &ScenarioOptions,
     emit_enter: Option<&(dyn Fn(String) + Send + Sync)>,
 ) -> EndpointResult {
-    let render_vars = shared.runtime.lock().await.clone();
-    let typed_snapshot = shared.typed.lock().await.clone();
-    let url = miyo_core::resolve_variables(&step.url_template, &render_vars);
-    let spec = miyo_core::render_spec_typed(&step.spec_template, &render_vars, &typed_snapshot);
+    // 渲染输入借用读锁（resolve / render 同步、无 await），免整表 clone。
+    let (url, spec) = {
+        let render_vars = shared.runtime.lock().await;
+        let typed_snapshot = shared.typed.lock().await;
+        let url = miyo_core::resolve_variables(&step.url_template, &render_vars);
+        let spec = miyo_core::render_spec_typed(&step.spec_template, &render_vars, &typed_snapshot);
+        (url, spec)
+    };
     let config = TestSpec {
         pre_request: Vec::new(),
         extract: step.extract.clone(),
@@ -926,13 +934,16 @@ async fn execute_step(
     emit_enter: &(dyn Fn(String) + Send + Sync),
 ) -> EndpointResult {
     // ---- Blocked 判定：缺失变量产自失败 / Blocked / Skipped 步骤时不发送 ----
-    let render_vars = shared.runtime.lock().await.clone();
-    let lost = shared.lost.lock().await.clone();
+    // 借用读锁（filter 同步），守卫随作用域释放，避免与下文 lost 写锁互踩。
     let prev_status = *shared.last_status.lock().await;
-    let blocked: Vec<String> = step_var_refs(step)
-        .into_iter()
-        .filter(|r| !render_vars.contains_key(r) && lost.contains(r))
-        .collect();
+    let blocked: Vec<String> = {
+        let render_vars = shared.runtime.lock().await;
+        let lost = shared.lost.lock().await;
+        step_var_refs(step)
+            .into_iter()
+            .filter(|r| !render_vars.contains_key(r) && lost.contains(r))
+            .collect()
+    };
     if !blocked.is_empty() {
         let list = blocked
             .iter()
@@ -967,7 +978,7 @@ async fn execute_step(
             }
             return r;
         }
-        if !eval_condition(cond, &render_vars, prev_status, None) {
+        if !eval_condition(cond, &*shared.runtime.lock().await, prev_status, None) {
             let mut lostg = shared.lost.lock().await;
             for e in &step.extract {
                 lostg.insert(e.name.clone());
@@ -1041,13 +1052,16 @@ async fn execute_step(
         rounds += 1;
         let round_failed = !r.ok && !r.cancelled;
         let round_cancelled = r.cancelled;
-        // while 条件求值用「本轮自己的响应」：response.* 源取本轮状态码 /
-        // 正文 / 头，prevStatus 也指本轮（并行批内不受其他步骤干扰）。
-        let round_resp = r.response.clone();
         last = Some(r);
         if round_cancelled || round_failed {
             break;
         }
+        // while 条件求值用「本轮自己的响应」：response.* 源取本轮状态码 /
+        // 正文 / 头，prevStatus 也指本轮（并行批内不受其他步骤干扰）。
+        // 经 last 借用读取（此前整份 clone 本轮响应；变量池同样借用读锁，
+        // 求值为同步调用、持锁期间无 await）。
+        let round_resp = last.as_ref().and_then(|x| x.response.as_ref());
+        let st_now = round_resp.map(|x| x.status);
         match &loop_cfg {
             // count 模式：跑满即止。
             Some(l) if l.mode == "count" => {
@@ -1059,18 +1073,16 @@ async fn execute_step(
             Some(l) => {
                 if rounds >= l.rounds_cap() {
                     if let Some(wc) = &l.while_condition {
-                        let vars_now = shared.runtime.lock().await.clone();
-                        let st_now = round_resp.as_ref().map(|r| r.status);
-                        if eval_condition(wc, &vars_now, st_now, round_resp.as_ref()) {
+                        let vars = shared.runtime.lock().await;
+                        if eval_condition(wc, &vars, st_now, round_resp) {
                             while_unmet = true;
                         }
                     }
                     break;
                 }
                 if let Some(wc) = &l.while_condition {
-                    let vars_now = shared.runtime.lock().await.clone();
-                    let st_now = round_resp.as_ref().map(|r| r.status);
-                    if !eval_condition(wc, &vars_now, st_now, round_resp.as_ref()) {
+                    let vars = shared.runtime.lock().await;
+                    if !eval_condition(wc, &vars, st_now, round_resp) {
                         break;
                     }
                 }

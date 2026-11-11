@@ -59,6 +59,68 @@ pub async fn list_scenario_runs(
     rows.into_iter().map(|r| r.into_model()).collect()
 }
 
+/// 每场景最近一次运行的摘要（不含 results_json / variables_json / meta_json
+/// 三个大 JSON 列——场景库列表页只需要计数，全量读出再丢弃是纯浪费）。
+#[derive(Debug, sqlx::FromRow)]
+pub struct ScenarioRunSummaryRow {
+    pub id: String,
+    pub scenario_id: String,
+    pub finished_at: chrono::DateTime<chrono::Utc>,
+    pub duration_ms: Option<f64>,
+    pub total_steps: i64,
+    pub ok_count: i64,
+    pub fail_count: i64,
+    pub skipped_count: i64,
+    pub cancelled: bool,
+    pub stopped_on_failure: bool,
+}
+
+/// 批量取项目内每个场景最近一次运行的摘要（一次 SQL 替代逐场景 N+1 查询，
+/// 且不读大 JSON 列）。窗口函数按 finished_at 新→旧取 rn=1。
+pub async fn latest_run_summaries_for_project(
+    db: &SqlitePool,
+    project_id: Uuid,
+) -> Result<Vec<ScenarioRunSummaryRow>> {
+    let rows: Vec<ScenarioRunSummaryRow> = sqlx::query_as(
+        "SELECT id, scenario_id, finished_at, duration_ms, total_steps,
+                ok_count, fail_count, skipped_count, cancelled, stopped_on_failure
+         FROM (
+             SELECT id, scenario_id, finished_at, duration_ms, total_steps,
+                    ok_count, fail_count, skipped_count, cancelled, stopped_on_failure,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY scenario_id ORDER BY finished_at DESC
+                    ) AS rn
+             FROM scenario_runs
+             WHERE scenario_id IN (SELECT id FROM scenarios WHERE project_id = ?)
+         )
+         WHERE rn = 1",
+    )
+    .bind(project_id.to_string())
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}
+
+/// 列出某场景最近的运行摘要（新→旧；不读 results_json / variables_json /
+/// meta_json 三个大列——历史列表只展示计数，全量读出解析再丢弃是纯 IO 浪费，
+/// 每条 results_json 最大 64KB × 步数）。详情走 [`get_scenario_run`]。
+pub async fn list_scenario_run_summaries(
+    db: &SqlitePool,
+    scenario_id: Uuid,
+    limit: i64,
+) -> Result<Vec<ScenarioRunSummaryRow>> {
+    let rows: Vec<ScenarioRunSummaryRow> = sqlx::query_as(
+        "SELECT id, scenario_id, finished_at, duration_ms, total_steps,
+                ok_count, fail_count, skipped_count, cancelled, stopped_on_failure
+         FROM scenario_runs WHERE scenario_id = ? ORDER BY finished_at DESC LIMIT ?",
+    )
+    .bind(scenario_id.to_string())
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}
+
 /// 取单条运行历史（回看详情；不存在返回 None）。
 pub async fn get_scenario_run(db: &SqlitePool, id: Uuid) -> Result<Option<ScenarioRun>> {
     let row: Option<ScenarioRunRow> = sqlx::query_as(
@@ -89,6 +151,15 @@ pub async fn delete_scenario_runs_all(db: &SqlitePool, scenario_id: Uuid) -> Res
         .execute(db)
         .await?;
     Ok(result.rows_affected())
+}
+
+/// 统计场景的运行历史条数（删除场景时回执用；COUNT(*) 免拉全量 JSON）。
+pub async fn count_scenario_runs(db: &SqlitePool, scenario_id: Uuid) -> Result<i64> {
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM scenario_runs WHERE scenario_id = ?")
+        .bind(scenario_id.to_string())
+        .fetch_one(db)
+        .await?;
+    Ok(n)
 }
 
 /// 修剪历史：仅保留最近 `keep` 条。

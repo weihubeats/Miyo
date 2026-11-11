@@ -1227,3 +1227,81 @@ async fn scenario_parallel_batch_runs_concurrently() {
     );
     assert_eq!(result.variables.get("vf").map(String::as_str), Some("F"));
 }
+
+/// 性能冒烟：100 步 × 大变量池（500 变量）+ 每步提取 1 个变量。
+/// 锁定借用化重构后的量级（秒级而非分钟级）；不做精确计时断言，
+/// 只防 O(n²) 级退化（如恢复「每步整表克隆 × 渲染快照」会显著变慢）。
+#[tokio::test]
+async fn perf_smoke_100_steps_large_var_pool() {
+    let addr = spawn_server().await;
+    let base = format!("http://{addr}");
+
+    // 大变量池：500 个静态变量。
+    let base_vars: HashMap<String, String> = (0..500)
+        .map(|i| (format!("static_{i}"), format!("value-{i}")))
+        .collect();
+
+    // 100 步：每步 POST /echo，提取 1 个链路变量（变量池逐步增长）。
+    let mut steps = Vec::with_capacity(100);
+    for i in 0u32..100 {
+        steps.push(ScenarioStepInput {
+            enabled: true,
+            condition: None,
+            r#loop: None,
+            wait_ms: None,
+            parallel: false,
+            endpoint: make_ep(
+                &format!("步{i}"),
+                HttpMethod::POST,
+                "/echo",
+                serde_json::Value::Null,
+            ),
+            url_template: if i == 0 {
+                format!("{base}/echo?step={i}&v0={{{{static_0}}}}")
+            } else {
+                format!("{base}/echo?step={i}&env={{{{chain_{}}}}}", i - 1)
+            },
+            spec_template: RequestSpec::default(),
+            extract: vec![ExtractSpec {
+                name: format!("chain_{i}"),
+                from: "body".into(),
+                path: "$.env".into(),
+            }],
+            assertions: vec![AssertionSpec {
+                name: None,
+                r#type: "status".into(),
+                path: None,
+                op: Some("eq".into()),
+                expected: Some(json!(201)), // /echo 返回 CREATED
+            }],
+        });
+    }
+
+    let options = ScenarioOptions {
+        timeout_ms: Some(10_000),
+        cancel: None,
+        stop_on_failure: true,
+    };
+    let started = std::time::Instant::now();
+    let result = run_scenario(steps, &base_vars, &options, None).await;
+    let elapsed = started.elapsed();
+
+    assert_eq!(result.results.len(), 100, "全部步骤应有结果行");
+    assert!(
+        result.results.iter().filter(|r| r.ok).count() == 100,
+        "全部步骤应通过（链路变量逐层提取）"
+    );
+    // 链路变量逐层提取成功（最后一步的 chain_99 已入池）。
+    assert!(
+        result.variables.contains_key("chain_99"),
+        "链路变量应逐层入池"
+    );
+    // 快照与结果同位序（借用化重构不得破坏该契约）。
+    assert_eq!(result.vars_snapshots.len(), 100);
+    // 宽松上界（CI 慢机余量）：本地串行 100 次真实 HTTP 往返 + 500 变量池渲染
+    // 通常 << 5s；若借用化回退为整表深拷贝且变量池继续增长，会显著逼近该界。
+    assert!(
+        elapsed.as_secs() < 30,
+        "100 步大变量池耗时异常：{elapsed:?}"
+    );
+}
