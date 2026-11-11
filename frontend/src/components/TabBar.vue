@@ -97,6 +97,9 @@ onBeforeUnmount(() => {
 /** 超过该位移才认作拖拽，否则当普通点击（切换页签）处理。 */
 const DRAG_THRESHOLD = 4
 
+/** 越过阈值后每单位鼠标位移滚动的像素数。1 = 内容与指针严格 1:1 跟手。 */
+const PAN_RATIO = 1
+
 const panning = ref(false)
 /** active 期间临时关闭页签的过渡动画，拖动跟手才不会拖影。 */
 let panPointerId: number | null = null
@@ -133,9 +136,19 @@ function onListPointerMove(event: PointerEvent): void {
   const el = tabListEl.value
   if (!el) return
   const dx = event.clientX - panStartX
-  if (!panMoved && Math.abs(dx) < DRAG_THRESHOLD) return
-  panMoved = true
-  el.scrollLeft = panStartScroll - dx
+  if (!panMoved) {
+    if (Math.abs(dx) < DRAG_THRESHOLD) return
+    // 越过阈值的这一刻重新锚定起点：
+    // 不重锚时 panStartScroll 仍是「按下时」的滚动位置，第一次赋值会把阈值
+    // 内的位移一次性补上（实测首个 pointermove 直接跳 4px，而后续每步只有
+    // 2px）——手感就是「前面一小段是死的，然后突然挣脱一下」（v0.0.57 用户
+    // 反馈「拖动很奇怪」）。减去阈值后，内容与指针从此严格 1:1 跟手。
+    panStartX = event.clientX
+    panStartScroll = el.scrollLeft
+    panMoved = true
+    return
+  }
+  el.scrollLeft = panStartScroll - dx * PAN_RATIO
 }
 
 function stopDragPan(): void {
@@ -455,12 +468,15 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
 }
 
 /* 横拖平移中：关掉页签过渡动画（跟手不拖影）、禁掉文本选中、
-   光标切成抓手；松手恢复。仅在拖拽进行时生效，常态零影响。 */
+   光标切成抓手；松手恢复。仅在拖拽进行时生效，常态零影响。
+   抓手只覆盖页签条本身，页签上仍需 hover 的 pointer 语义，
+   否则整行长期呈现「已经抓住一整条」的错觉。 */
 .tab-scroll.panning {
   cursor: grabbing;
   user-select: none;
 }
 .tab-scroll.panning .tab {
+  cursor: grabbing;
   transition: none;
 }
 

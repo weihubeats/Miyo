@@ -452,9 +452,38 @@ describe('TabBar：横拖平移滚动', () => {
     el.scrollLeft = 100
 
     pointer(el, 'pointerdown', 500)
-    pointer(el, 'pointermove', 400) // 左移 100px
+    // 第一步越过阈值：只锚定起点，不产生位移（否则会跳变，见下一条用例）
+    pointer(el, 'pointermove', 400)
+    // 之后与指针严格 1:1：再左移 100px → 再向左滚 100px
+    pointer(el, 'pointermove', 300)
 
     expect(el.scrollLeft).toBe(200)
+    wrapper.unmount()
+  })
+
+  it('越过阈值那一步不产生跳变（慢速拖动每一步位移恒定）', () => {
+    const wrapper = mountBar()
+    const el = document.querySelector('.tab-scroll') as HTMLElement
+    fakeOverflow(el)
+    el.setPointerCapture = vi.fn()
+    el.hasPointerCapture = vi.fn(() => true)
+    el.releasePointerCapture = vi.fn()
+    el.scrollLeft = 100
+
+    // 每步 2px 慢拖：旧实现首步一次补 4px（= 阈值），此后每步 2px，
+    // 手感是「先是死的、然后突然挣脱」（v0.0.57 用户「拖动很奇怪」）。
+    const steps: number[] = []
+    pointer(el, 'pointerdown', 500)
+    let prev = el.scrollLeft
+    for (let i = 1; i <= 10; i++) {
+      pointer(el, 'pointermove', 500 - i * 2)
+      steps.push(Math.abs(el.scrollLeft - prev))
+      prev = el.scrollLeft
+    }
+
+    // 前两步不动：第 1 步 2px 未达阈值，第 2 步恰好 4px 触发重锚（只锚定、
+    // 不产生位移）；此后每步严格 2px。旧实现在第 2 步一次补 4px。
+    expect(steps).toEqual([0, 0, 2, 2, 2, 2, 2, 2, 2, 2])
     wrapper.unmount()
   })
 
@@ -542,15 +571,17 @@ describe('TabBar：横拖平移滚动', () => {
     el.scrollLeft = 100
 
     pointer(el, 'pointerdown', 500)
-    pointer(el, 'pointermove', 400)
+    pointer(el, 'pointermove', 400) // 越阈值：锚定起点
+    pointer(el, 'pointermove', 300) // 跟手 100px
     expect(el.scrollLeft).toBe(200)
 
     // 系统抢断（原生 drag / 切窗口）：平移必须复位
-    pointer(el, 'pointercancel', 400)
+    pointer(el, 'pointercancel', 300)
 
     // 第二次拖动仍然生效（panning 没卡在 true）
     pointer(el, 'pointerdown', 500)
     pointer(el, 'pointermove', 400)
+    pointer(el, 'pointermove', 300)
     expect(el.scrollLeft).toBe(300)
     wrapper.unmount()
   })
@@ -567,7 +598,8 @@ describe('TabBar：横拖平移滚动', () => {
     el.scrollLeft = 100
 
     pointer(el, 'pointerdown', 500)
-    pointer(el, 'pointermove', 400)
+    pointer(el, 'pointermove', 400) // 越阈值：锚定起点
+    pointer(el, 'pointermove', 300) // 跟手 100px
     expect(el.scrollLeft).toBe(200)
     await nextTick()
     // 拖拽中：panning 类在（光标抓手 / 关闭过渡动画）
