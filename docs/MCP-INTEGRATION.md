@@ -2,7 +2,7 @@
 
 通过 MCP（`miyo-mcp` stdio）让 AI Agent 完成集成测试的完整生命周期：查询项目/接口/环境 → 创建场景（含变量提取与断言）→ 校验 → 执行 → 逐步查看请求/响应 → 分析失败原因。UI 与 MCP 共享同一套数据模型和执行引擎（`miyo-test`），AI 建的场景在应用内「集成测试」页面立即可见、可编辑、可重跑。
 
-## 工具清单（22 个）
+## 工具清单（31 个）
 
 | 分组 | 工具 | 用途 |
 | --- | --- | --- |
@@ -24,6 +24,12 @@
 | 结果 | `get_run_result` | 运行摘要 + 每步摘要（不含响应正文） |
 | | `get_step_result` | 单步完整详情（请求快照/响应正文/提取/逐条断言） |
 | | `analyze_run_failure` | 失败原因分析（启发式，标注为推测） |
+| | `cancel_run` | 取消运行中的场景（返回已完成步骤，落历史 cancelled=true） |
+| 测试用例 | `list_test_cases` | 接口的测试用例列表 |
+| | `create_test_case` / `update_test_case` / `delete_test_case` | 用例增删改 |
+| | `get_test_case` | 单个用例定义 |
+| | `run_test_case` | 执行单个用例（真实请求，落执行历史） |
+| | `list_test_case_runs` / `get_test_case_run` | 用例执行历史与单次详情 |
 | 其他 | `send_endpoint` / `save_curl` / `get_scenario` 脚本 / `save_scenario_script` / `agent_info` | 兼容保留 |
 
 ## 统一返回协议
@@ -35,7 +41,7 @@
 { "success": false, "data": null, "error": { "code": "SCENARIO_VALIDATION_FAILED", "message": "…", "details": null } }
 ```
 
-失败时 MCP `isError: true`。错误码：`PROJECT_NOT_FOUND` / `ENDPOINT_NOT_FOUND` / `ENVIRONMENT_NOT_FOUND` / `SCENARIO_NOT_FOUND` / `SCENARIO_VALIDATION_FAILED` / `VARIABLE_NOT_FOUND` / `VARIABLE_USED_BEFORE_DEFINED` / `STEP_EXECUTION_FAILED` / `RUN_NOT_FOUND` / `RUN_CANCELLED` / `PERMISSION_DENIED`（工具停用）/ `INVALID_ARGUMENT` / `UNKNOWN_TOOL`。
+失败时 MCP `isError: true`。错误码：`PROJECT_NOT_FOUND` / `ENDPOINT_NOT_FOUND` / `ENVIRONMENT_NOT_FOUND` / `SCENARIO_NOT_FOUND` / `SCENARIO_VALIDATION_FAILED` / `VARIABLE_NOT_FOUND` / `VARIABLE_USED_BEFORE_DEFINED` / `STEP_EXECUTION_FAILED` / `RUN_NOT_FOUND` / `RUN_CANCELLED` / `PERMISSION_DENIED`（工具停用或鉴权失败）/ `INVALID_ARGUMENT` / `UNKNOWN_TOOL`。
 
 ## 步骤定义（AI 方言自动翻译）
 

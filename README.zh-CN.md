@@ -135,13 +135,15 @@ Claude Code 等支持 MCP 的客户端，在项目 `.mcp.json` 中配置一次�
 public Result<Long> createOrder(@RequestBody CreateOrderReq req) { ... }
 ```
 
-之后对话里说「把这个 curl 存到 Miyo」即可。提供 4 个工具：
+之后对话里说「把这个 curl 存到 Miyo」即可。共提供 **31 个工具**，覆盖接口
+导入 / 查询 / 执行、场景编排与运行、测试用例与结果分析——完整清单见
+[docs/AGENT.md](docs/AGENT.md)（或在对话里让 AI 调 `agent_info` 自举）。代表示例：
 
 | 工具 | 说明 |
 | --- | --- |
 | `save_curl` | 解析 cURL 并保存为接口（URL 拆 base_url + 路径 + query） |
-| `list_projects` | 项目列表 |
-| `list_endpoints` | 项目下的接口列表 |
+| `run_scenario` | 运行集成测试场景：步骤串行执行、链路变量自动传递、返回分步结果 |
+| `get_run_result` | 轮询异步场景运行结果（配合 `run_scenario` 的 `wait=false`；可用 `cancel_run` 取消） |
 | `agent_info` | 控制面地址与令牌文件位置 |
 
 ### 直接 HTTP
@@ -154,7 +156,12 @@ public Result<Long> createOrder(@RequestBody CreateOrderReq req) { ... }
 | GET | `/agent/projects` | 项目列表 |
 | GET | `/agent/endpoints/:projectId` | 接口列表 |
 | GET | `/agent/health` | 存活探针 |
+| POST | `/agent/scenarios/:id/run` | 运行场景（`wait=false` 返回 runId） |
+| GET | `/agent/runs/:id` | 运行结果 / 状态 |
+| POST | `/agent/runs/:id/cancel` | 取消运行中的场景 |
 
+上表是入门子集——控制面还覆盖场景 / 测试用例 CRUD 与环境查询，完整路由见
+`docs/AGENT.md` 或 `agent_info` 工具（内嵌完整路由清单）。
 鉴权：请求头 `Authorization: Bearer <token>` 或 `X-Agent-Token`；
 token 位于数据目录 `agent-token` 文件（0600），应用内「Agent 状态」或
 `agent_status` 命令可查路径。
@@ -168,7 +175,11 @@ token 位于数据目录 `agent-token` 文件（0600），应用内「Agent 状�
 > 开发版（`tauri dev`）使用 `Miyo-dev` 目录，dev 与正式版各有一套
 > `agent-port` / `agent-token`。
 
-安全设计：只绑定 `127.0.0.1`；写操作仅限导入；不覆盖已有 `base_url` 配置（冲突时返回 warning）。
+安全设计：只绑定 `127.0.0.1`（Host 须为 127.0.0.1 / localhost / ::1）；
+全部路由要求 Bearer 令牌。写操作覆盖场景与测试用例的增删改及执行——每个
+工具可在 Miyo 设置 → MCP 服务中单独停用；运行历史与 `get_environment`
+返回中的敏感变量已脱敏（`__MIYO_REDACTED__`）。不覆盖已有 `base_url`
+配置（冲突时返回 warning）。
 
 ## 下载与安装
 

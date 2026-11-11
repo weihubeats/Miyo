@@ -56,6 +56,9 @@ jobs:
       - name: Check
         working-directory: crates/miyo-tauri
         run: cargo check
+      - name: Clippy（与主 workspace 同标准 -D warnings）
+        working-directory: crates/miyo-tauri
+        run: cargo clippy --all-targets -- -D warnings
       - name: Test
         working-directory: crates/miyo-tauri
         run: cargo test

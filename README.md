@@ -134,13 +134,17 @@ Save this endpoint to Miyo:
 public Result<Long> createOrder(@RequestBody CreateOrderReq req) { ... }
 ```
 
-Afterwards, say "save this curl to Miyo" in chat. Four tools are provided:
+Afterwards, say "save this curl to Miyo" in chat. **31 tools** are provided,
+covering endpoint import/lookup/execution, scenario orchestration and runs,
+test cases and run analysis — the full list is in
+[docs/en/AGENT.md](docs/en/AGENT.md) (or ask for `agent_info` in chat).
+Representative examples:
 
 | Tool | Description |
 | --- | --- |
 | `save_curl` | Parse a cURL command and save it as an endpoint (URL split into base_url + path + query) |
-| `list_projects` | List projects |
-| `list_endpoints` | List endpoints of a project |
+| `run_scenario` | Run an integration-test scenario: steps execute in order with chained variables, per-step results returned |
+| `get_run_result` | Poll an async scenario run (pair with `run_scenario` `wait=false`; cancel with `cancel_run`) |
 | `agent_info` | Control-plane address and token file location |
 
 ### Direct HTTP
@@ -153,7 +157,13 @@ Any tool that can send HTTP can call the control plane directly:
 | GET | `/agent/projects` | List projects |
 | GET | `/agent/endpoints/:projectId` | List endpoints |
 | GET | `/agent/health` | Liveness probe |
+| POST | `/agent/scenarios/:id/run` | Run a scenario (`wait=false` returns runId) |
+| GET | `/agent/runs/:id` | Run result / status |
+| POST | `/agent/runs/:id/cancel` | Cancel a running scenario |
 
+The route list above is a starter set — the control plane also covers
+scenarios / test-cases CRUD and environments; see `docs/en/AGENT.md` or the
+`agent_info` tool (which embeds the full route list).
 Auth: header `Authorization: Bearer <token>` or `X-Agent-Token`;
 the token lives in the `agent-token` file inside the data directory (0600).
 
@@ -168,7 +178,12 @@ the token lives in the `agent-token` file inside the data directory (0600).
 > Dev builds (`tauri dev`) use the `Miyo-dev` directory, so dev and release
 > each have their own `agent-port` / `agent-token` pair.
 
-Security: loopback-only binding; the only write operation is import; existing `base_url` values are never overwritten (a conflict returns a warning).
+Security: loopback-only binding (Host must be 127.0.0.1 / localhost / ::1);
+every route requires the bearer token. Write operations cover scenario and
+test-case CRUD plus executions — each tool can be disabled individually in
+Miyo → Settings → MCP; sensitive variables are redacted (`__MIYO_REDACTED__`)
+in run history and `get_environment` output. Existing `base_url` values are
+never overwritten (a conflict returns a warning).
 
 ## Download & install
 
