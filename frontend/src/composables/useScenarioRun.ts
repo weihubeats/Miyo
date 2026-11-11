@@ -250,15 +250,22 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
   /** 运行历史列表（新→旧；场景切换后刷新）。 */
   const runHistory = ref<ScenarioRunSummary[]>([])
 
+  /** 历史加载序号：并发请求只有最新一次可写入（挂载 / 每轮运行结束 /
+   *  重跑失败步 / 历史缺失刷新都会触发，乱序返回时丢弃过期结果）。 */
+  let historySeq = 0
+
   async function loadHistory(): Promise<void> {
     if (!scenario.value) {
       runHistory.value = []
       return
     }
+    const seq = ++historySeq
     try {
-      runHistory.value = await api.listScenarioRuns(scenarioId)
+      const runs = await api.listScenarioRuns(scenarioId)
+      if (seq === historySeq) runHistory.value = runs
     } catch {
-      runHistory.value = []
+      // 失败保留现值：首次加载本就是空（行为不变），后续失败不清掉已有列表，
+      // 也不覆盖乱序间新请求写入的数据。
     }
   }
 
@@ -276,6 +283,10 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
   }
 
   function applyHistoryDetail(detail: ScenarioRunDetail): void {
+    // 运行中不接受历史回填：runId 被历史覆盖会让实时进度事件全部被过滤
+    // （面板「卡死」直到运行结束）。运行中的历史选择在 onHistorySelect 拦截，
+    // 此处兜底（pendingRunId 直达 / 恢复路径不会在运行中触发）。
+    if (running.value) return
     runResult.value = {
       results: detail.results,
       cancelled: detail.cancelled,
@@ -318,6 +329,10 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
   }
 
   async function onHistorySelect(item: MenuItem): Promise<void> {
+    if (running.value) {
+      toast.info(t('integration.historyLockedWhileRunning'))
+      return
+    }
     try {
       const detail = await api.getScenarioRun(item.key)
       if (!detail) {

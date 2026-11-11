@@ -28,15 +28,7 @@ import {
   type BuiltRunStep,
   type ScenarioProgressEvent,
 } from '../../composables/useScenarioRun'
-import { computeVarChain, type VarScanStep } from '../../utils/scenarioVars'
-import {
-  validateScenario,
-  summarizeIssues,
-  issuesOfStep,
-  type ValidateStep,
-  type ValidateIssue,
-  type ValidateField,
-} from '../../utils/scenarioValidate'
+import type { ValidateIssue, ValidateField } from '../../utils/scenarioValidate'
 import { computeFlowGraph, requiredVarsFrom as requiredVarsFromFlow, toFlowSteps } from '../../utils/scenarioFlow'
 import { applyPolicy, detectPolicy, OVERRIDE_POLICIES, type OverridePolicy } from '../../utils/overridePolicy'
 import { applyStepOverrides, applyUrlOverride } from '../../utils/stepOverrides'
@@ -72,6 +64,8 @@ import type {
   StepLoop,
   StepOverrides,
 } from '../../types/miyoApi'
+import type { EditorAssertion, EditorExtract, EditorStep } from './editorTypes'
+import { useScenarioValidation } from '../../composables/useScenarioValidation'
 
 const props = defineProps<{ scenarioId: string }>()
 const emit = defineEmits<{ (e: 'back'): void }>()
@@ -84,39 +78,7 @@ const api = useMiyoApi()
 const toast = useToast()
 
 // ---------- 场景加载与编辑态 ----------
-// 编辑态 = 共享规则类型 + 必填化（行编辑器共享组件按 Scenario*Rule 消费）。
-type EditorExtract = ScenarioExtractRule
-
-type EditorAssertion = ScenarioAssertionRule & {
-  name: string
-  type: ScenarioAssertionRule['type']
-  path: string
-  op: NonNullable<ScenarioAssertionRule['op']>
-  expected: string
-}
-
-interface EditorStep {
-  key: string
-  enabled: boolean
-  /** 'inline' = 内联请求；'ref' = 接口引用。 */
-  kind: 'inline' | 'ref'
-  endpointId: string | null
-  name: string
-  /** 内联请求（kind=inline 时有值；spec 与面板共享引用原地改）。 */
-  inline: { method: string; url: string; spec: import('../../types/miyoApi').RequestSpec }
-  extract: EditorExtract[]
-  assertions: EditorAssertion[]
-  /** 执行条件（None = 无条件）。 */
-  condition: StepCondition | null
-  /** 循环（None = 单次）。 */
-  loop: StepLoop | null
-  /** 执行前等待毫秒。 */
-  waitMs: number | null
-  /** 与相邻 parallel 步骤成批并发。 */
-  parallel: boolean
-  /** 引用式步骤的请求参数覆盖（None = 沿用接口配置）。 */
-  overrides: StepOverrides | null
-}
+// 编辑态类型共享于 ./editorTypes.ts（校验/脚本视图组合式同样消费）。
 
 function emptyInline(): EditorStep['inline'] {
   return {
@@ -194,7 +156,10 @@ const scenarioRef = computed(() => (scenario.value ? { id: scenario.value.id, na
 async function load(): Promise<void> {
   loading.value = true
   const pid = store.projectId
-  if (!pid) return
+  if (!pid) {
+    loading.value = false
+    return
+  }
   try {
     const list = await api.listScenarios(pid)
     if (store.projectId !== pid) return // 竞态：已切项目
@@ -205,6 +170,13 @@ async function load(): Promise<void> {
       return
     }
     applyScenario(found)
+  } catch (err) {
+    // 加载失败不再静默吞掉后续初始化：提示后返回列表（此前异常上抛会
+    // 跳过 onMounted 的历史恢复 / pendingRunId，且 loading 永久卡 true）。
+    toast.error(t('integration.loadFail'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+    emit('back')
   } finally {
     loading.value = false
   }
@@ -596,136 +568,24 @@ function isWriteStep(s: EditorStep): boolean {
   return s.enabled && WRITE_METHODS.has(stepMethod(s).toUpperCase())
 }
 
-// ---------- 变量链路（复用 scenarioVars 计算 + ScenarioVarsPanel 展示） ----------
-const varScanSteps = computed<VarScanStep[]>(() =>
-  steps.value.map((s, i) => {
-    const texts: string[] = []
-    if (s.kind === 'inline') {
-      texts.push(s.inline.url)
-      for (const kv of [...s.inline.spec.params, ...s.inline.spec.headers]) {
-        texts.push(kv.value)
-      }
-      if (s.inline.spec.body.mode === 'json' || s.inline.spec.body.mode === 'text') {
-        texts.push(s.inline.spec.body.raw)
-      }
-    } else {
-      const ep = endpointOf(s)
-      if (ep) {
-        texts.push(urlTemplateFor(ep))
-        for (const kv of [...ep.request.params, ...ep.request.headers]) texts.push(kv.value)
-        if (ep.request.body.mode === 'json' || ep.request.body.mode === 'text') {
-          texts.push(ep.request.body.raw)
-        }
-      }
-    }
-    for (const a of s.assertions) texts.push(a.expected)
-    return {
-      index: i,
-      name: stepTitle(s),
-      extracts: s.extract.filter((e) => e.name.trim() && e.path.trim()),
-      referenceTexts: texts,
-    }
-  }),
-)
-
-const externalVarNames = computed(() =>
-  Object.keys(
-    mergedVariableMap({
-      globalVariables: workspace.globalVariables,
-      projectVariables: workspace.project?.variables ?? null,
-      env: workspace.environments.find((e) => e.id === workspace.activeEnvId),
-    }),
-  ),
-)
-const varChain = computed(() => computeVarChain(varScanSteps.value, externalVarNames.value))
-
-// ---------- 运行前校验（纯函数物化，见 utils/scenarioValidate） ----------
-/** 表达式面板里「值型算子」集合：这些算子缺期望值无法求值。 */
-const VALUE_OPS = new Set(['eq', 'neq', 'contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'regex', 'in'])
-
-const validateSteps = computed<ValidateStep[]>(() =>
-  steps.value.map((s, i) => {
-    const ep = s.kind === 'ref' ? endpointOf(s) : null
-    const texts = varScanSteps.value[i]?.referenceTexts ?? []
-    const cond = s.condition
-    const wc = s.loop?.while_condition ?? null
-    return {
-      index: i,
-      enabled: s.enabled,
-      name: stepTitle(s),
-      endpointId: s.endpointId,
-      endpointResolved: s.kind === 'inline' || ep != null,
-      url:
-        s.kind === 'inline'
-          ? s.inline.url
-          : ep
-            ? applyUrlOverride(urlTemplateFor(ep), s.overrides)
-            : '',
-      referenceTexts: texts,
-      extracts: s.extract.filter((e) => e.name.trim() || e.path.trim()),
-      assertions: s.assertions.map((a) => ({
-        type: a.type,
-        path: a.path,
-        op: a.op,
-        needsExpected: VALUE_OPS.has(a.op),
-        expected: a.expected,
-      })),
-      assertionsParsed: true,
-      extractParsed: true,
-      condition: cond
-        ? {
-            source: (cond.source ?? 'var') as 'var' | 'prevStatus',
-            name: cond.name ?? '',
-            op: cond.op ?? 'eq',
-            value: cond.value ?? null,
-            needsValue: VALUE_OPS.has(cond.op ?? 'eq'),
-          }
-        : null,
-      loop: s.loop
-        ? {
-            mode: s.loop.mode,
-            count: s.loop.count ?? null,
-            maxLoops: s.loop.max_loops ?? null,
-            intervalMs: s.loop.interval_ms ?? null,
-            whileCondition: wc
-              ? {
-                  name: wc.name ?? '',
-                  op: wc.op ?? 'eq',
-                  value: wc.value ?? null,
-                  needsValue: VALUE_OPS.has(wc.op ?? 'eq'),
-                }
-              : null,
-          }
-        : null,
-      parallel: s.parallel,
-    }
-  }),
-)
-
-const issues = computed(() =>
-  validateScenario(validateSteps.value, {
-    externalNames: externalVarNames.value,
-    scenarioName: name.value,
-    hasEnvironment: !!workspace.activeEnvId,
-  }),
-)
-const issueSummary = computed(() => summarizeIssues(issues.value))
-const errorCount = computed(() => issueSummary.value.errors)
-const warnCount = computed(() => issueSummary.value.warnings)
-/** 校验面板展开态：有阻断时默认展开，用户可手动收起。 */
-const validateOpen = ref(false)
-watch(
+// ---------- 变量链路 + 运行前校验（纯派生状态，见 composables/useScenarioValidation） ----------
+const {
+  varScanSteps,
+  varChain,
+  externalVarNames,
+  issues,
   errorCount,
-  (n, prev) => {
-    if (n > 0 && !prev) validateOpen.value = true
-  },
-  { immediate: true },
-)
-
-/** 单步问题（步骤卡角标）。 */
-function stepIssues(stepIndex: number): ValidateIssue[] {
-  return issuesOfStep(issues.value, stepIndex)
-}
+  warnCount,
+  validateOpen,
+  stepIssues,
+} = useScenarioValidation({
+  steps,
+  workspace,
+  name,
+  endpointOf,
+  urlTemplateFor,
+  stepTitle,
+})
 
 /** 校验项 → 定位：切到编排视图、选中步骤、切到对应页签、滚动到视口。 */
 function gotoIssue(issue: ValidateIssue): void {
@@ -1000,13 +860,24 @@ function confirmVarsFill(): void {
 
 // ---------- 进度事件 ----------
 let unlisten: UnlistenFn | null = null
+/** 卸载标记：listen 的 Promise 在卸载后才 resolve 时，监听器必须立刻注销
+ *  （否则事件监听器与 applyProgressEvent 永久泄漏）。 */
+let disposed = false
 onMounted(async () => {
-  unlisten = await listen<ScenarioProgressEvent>('miyo:scenario-progress', (e) => {
+  const off = await listen<ScenarioProgressEvent>('miyo:scenario-progress', (e) => {
     run.applyProgressEvent(e.payload)
   })
+  if (disposed) {
+    off()
+    return
+  }
+  unlisten = off
   await load()
-  void run.loadHistory()
-  void run.restoreLatestRun(props.scenarioId)
+  // 先加载历史列表，再恢复最近一次运行：restoreLatestRun 读 runHistory[0]，
+  // 并行调用时列表尚未返回必然空跑（恢复功能整体失效）。
+  void run
+    .loadHistory()
+    .then(() => run.restoreLatestRun(props.scenarioId))
   // 列表「执行历史」直达：加载指定运行并进入结果视图。
   const pending = store.takePendingRun()
   if (pending) {
@@ -1022,6 +893,7 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => {
+  disposed = true
   unlisten?.()
   unlisten = null
   sortInstance?.destroy()

@@ -93,7 +93,14 @@ watch(
       <EnvironmentSelector variant="group" />
     </header>
     <main class="it-body">
-      <WorkflowEditor v-if="store.activeScenarioId" :scenario-id="store.activeScenarioId" @back="store.backToLibrary" />
+      <!-- :key 强制换场景时重建实例：编辑器以 props.scenarioId 一次性捕获
+           场景上下文，复用实例会串场景（运行历史记错归属）。 -->
+      <WorkflowEditor
+        v-if="store.activeScenarioId"
+        :key="store.activeScenarioId"
+        :scenario-id="store.activeScenarioId"
+        @back="store.backToLibrary"
+      />
       <ScenarioLibrary v-else />
     </main>
   </div>
