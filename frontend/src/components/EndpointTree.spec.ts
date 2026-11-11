@@ -429,4 +429,73 @@ describe('EndpointTree：收藏 / 最近访问分组', () => {
     await nextTick()
     expect(wrapper.findAll('.tree-section')).toHaveLength(0)
   })
+
+  /**
+   * 拖拽排序：SortableJS 驱动（与参数表格 / 页签条同一套），
+   * 行间真实交换让位，而不是自研指针 + 插入线。
+   */
+  describe('拖拽排序：SortableJS 行间交换', function dndGroup() {
+    function styleBlock(): string {
+      const src = readFileSync(join(process.cwd(), 'src/components/EndpointTree.vue'), 'utf8')
+      return src.slice(src.indexOf('<style'))
+    }
+
+    it('每层接口列表包一个 .tree-list 容器（Sortable 的挂载单位）', async () => {
+      const { wrapper, store } = await mountTreeWithEndpoints()
+      store.endpoints = [ep('ep-a', '登录'), ep('ep-b', '订单')]
+      await nextTick()
+      const list = wrapper.find('.tree-list')
+      expect(list.exists(), '应有可排序容器').toBe(true)
+      // 容器里只有本层接口行（文件夹行在自己的容器里，不参与接口排序）
+      const ids = [...list.element.querySelectorAll<HTMLElement>('[data-dnd-kind="endpoint"]')].map(
+        (el) => el.dataset.dndId,
+      )
+      expect(ids).toEqual(['ep-a', 'ep-b'])
+      wrapper.unmount()
+      document.body.innerHTML = ''
+    })
+
+    it('拖拽三态样式齐全（占位槽 / 抓起 / 跟手副本）', () => {
+      const style = styleBlock()
+      expect(style).toMatch(/\.tree-row-ghost\s*\{/)
+      expect(style).toMatch(/\.tree-row-chosen\s*\{/)
+      expect(style).toMatch(/\.tree-row-dragging\s*\{/)
+      // 跟手副本必须不透明实底，否则压住列表糊成一片（用户实测反馈）
+      expect(style).toMatch(/\.tree-row-dragging\s*\{[^}]*opacity:\s*1/)
+    })
+
+    it('不再保留自研指针拖拽的残留（插入线 / 浮空卡片 / 落点标签）', () => {
+      const style = styleBlock()
+      expect(style).not.toMatch(/\.tree-drop-hint/)
+      expect(style).not.toMatch(/\.tree-drag-ghost/)
+      expect(style).not.toMatch(/\.dragging-src/)
+    })
+
+    it('Sortable 配置走指针 fallback（WKWebView 的 HTML5 DnD 不可靠）', () => {
+      const src = readFileSync(join(process.cwd(), 'src/components/EndpointTree.vue'), 'utf8')
+      expect(src).toMatch(/forceFallback:\s*true/)
+      expect(src).toMatch(/ghostClass:\s*'tree-row-ghost'/)
+      // 行内交互元素不触发拖拽
+      expect(src).toMatch(/filter:\s*'button, input, select, textarea, a'/)
+    })
+
+    it('松手后按 DOM 顺序回写 store（同层整体重排）', async () => {
+      const { wrapper, store } = await mountTreeWithEndpoints()
+      store.endpoints = [ep('ep-a', '登录'), ep('ep-b', '订单')]
+      await nextTick()
+      const reorder = vi.spyOn(store, 'reorderEndpointsInFolder').mockResolvedValue()
+      // 模拟 SortableJS 拖动完成后的 DOM 顺序：ep-b 在前
+      const list = wrapper.find('.tree-list').element as HTMLElement
+      list.append(list.querySelector('[data-dnd-id="ep-b"]')!)
+      // 直接调用组件内部的重排入口（Sortable 的 onEnd 走同一条链路）
+      const internal = wrapper.vm as unknown as {
+        applyListOrder?: (ids: string[]) => Promise<void>
+      }
+      expect(typeof internal.applyListOrder, '组件应暴露 applyListOrder').toBe('function')
+      await internal.applyListOrder!(['ep-b', 'ep-a'])
+      expect(reorder).toHaveBeenCalledWith(null, ['ep-b', 'ep-a'])
+      wrapper.unmount()
+      document.body.innerHTML = ''
+    })
+  })
 })

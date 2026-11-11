@@ -449,6 +449,57 @@ describe('moveEndpoint：移动后打开草稿的 folder_id / sort_order 同步'
   })
 })
 
+describe('reorderEndpointsInFolder：拖拽松手后的整层重排', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    useLocaleStore().setMode('zh')
+    backend.setActive('p-a')
+    const T = '2026-01-01T00:00:00.000Z'
+    backend.endpointsByProject.set('p-a', [
+      { ...makeEndpoint('ep-a', 'p-a', 'in-a', T), folder_id: 'f-a', sort_order: 0 },
+      { ...makeEndpoint('ep-b', 'p-a', 'in-b', T), folder_id: 'f-a', sort_order: 1 },
+      { ...makeEndpoint('ep-c', 'p-a', 'in-c', T), folder_id: 'f-b', sort_order: 0 },
+    ])
+  })
+
+  it('按新顺序重排并落库，其它文件夹的接口不受影响', async () => {
+    const store = useWorkspaceStore()
+    await store.init()
+
+    await store.reorderEndpointsInFolder('f-a', ['ep-b', 'ep-a'])
+
+    const rows = backend.endpointsByProject.get('p-a')!
+    expect(rows.find((e) => e.id === 'ep-b')!.sort_order).toBe(0)
+    expect(rows.find((e) => e.id === 'ep-a')!.sort_order).toBe(1)
+    expect(rows.find((e) => e.id === 'ep-c')!.sort_order).toBe(0)
+  })
+
+  it('顺序没变时不写库（避免无谓请求）', async () => {
+    const store = useWorkspaceStore()
+    await store.init()
+    const saveSpy = vi.spyOn(store, 'refresh')
+
+    await store.reorderEndpointsInFolder('f-a', ['ep-a', 'ep-b'])
+
+    const rows = backend.endpointsByProject.get('p-a')!
+    expect(rows.find((e) => e.id === 'ep-a')!.sort_order).toBe(0)
+    expect(saveSpy).not.toHaveBeenCalled()
+  })
+
+  it('不属于该层的 id 被忽略（拖拽期间数据变动也不串层）', async () => {
+    const store = useWorkspaceStore()
+    await store.init()
+
+    await store.reorderEndpointsInFolder('f-a', ['ep-c', 'ep-b', 'ep-a'])
+
+    const rows = backend.endpointsByProject.get('p-a')!
+    // ep-c 属于 f-b，不参与 f-a 的排序
+    expect(rows.find((e) => e.id === 'ep-c')!.folder_id).toBe('f-b')
+    expect(rows.find((e) => e.id === 'ep-b')!.sort_order).toBe(0)
+    expect(rows.find((e) => e.id === 'ep-a')!.sort_order).toBe(1)
+  })
+})
+
 describe('cURL 导入：环境前缀优先时不覆写环境，path 存完整 URL', () => {
   const parsed: CurlParsed = {
     url: 'https://httpbin.org/post?x=1',

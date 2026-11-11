@@ -677,6 +677,7 @@ export const zh = {
 
   'tree.folderMoved': '文件夹已移动',
   'tree.endpointMoved': '接口已移动',
+  'tree.dropHint': '→ {folder}',
   'tree.favorites': '收藏',
   'tree.favorite': '收藏',
   'tree.unfavorite': '取消收藏',

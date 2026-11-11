@@ -682,6 +682,7 @@ export const en: Record<ZhKey, string> = {
 
   'tree.folderMoved': 'Folder moved',
   'tree.endpointMoved': 'Endpoint moved',
+  'tree.dropHint': '→ {folder}',
   'tree.favorites': 'Favorites',
   'tree.favorite': 'Favorite',
   'tree.unfavorite': 'Unfavorite',

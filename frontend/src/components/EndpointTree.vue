@@ -1,22 +1,14 @@
 <script lang="ts">
 /**
- * 共享拖拽状态（模块级 reactive，递归实例间可见）。
- * 采用指针事件实现（pointerdown/move/up + elementFromPoint 命中测试），
- * 规避 WKWebView 对 HTML5 Drag & Drop（dragover/drop/dataTransfer）支持不稳的问题。
+ * 共享拖拽状态（模块级 reactive，递归实例间可见）：仅记录「正在拖的是谁」，
+ * 供行样式与键盘导航判断；真实的行间交换交给 SortableJS。
  */
 import { reactive, type InjectionKey } from 'vue'
-
-export interface DndTarget {
-  drop: 'folder' | 'before' | 'after' | 'root'
-  id: string | null
-  index: number
-}
 
 export const dndState = reactive({
   active: false,
   kind: '' as 'folder' | 'endpoint' | '',
   id: '',
-  target: null as DndTarget | null,
 })
 
 /**
@@ -83,6 +75,7 @@ const TREE_INDEX: InjectionKey<import('vue').ComputedRef<TreeChildIndex>> =
  *   ↑↓ 移动焦点、Home/End 跳首尾、→ 展开 / ← 折叠、Enter 打开，roving tabindex。
  */
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
+import Sortable from 'sortablejs'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useToast } from '../composables/useToast'
 import { useLocaleStore } from '../stores/locale'
@@ -154,8 +147,9 @@ const { startEdit, cancelEdit, commitEdit, removeFolder, removeEndpoint, duplica
     treeSelection,
   })
 
-// 根级新建文件夹由侧栏头部按钮触发（跨组件暴露编辑入口）。
-defineExpose({ startEdit })
+// 根级新建文件夹由侧栏头部按钮触发（跨组件暴露编辑入口）；
+// applyListOrder 暴露给单测验证「松手按 DOM 顺序回写 store」这条链路。
+defineExpose({ startEdit, applyListOrder })
 
 // ---------- 共享子索引（根实例构建，递归子树注入复用） ----------
 function buildChildIndex(): TreeChildIndex {
@@ -311,166 +305,80 @@ watch(
   },
 )
 
-// ---------- 拖拽排序 / 移动（指针事件实现，规避 WKWebView HTML5 DnD 缺陷） ----------
-let dragStart = { x: 0, y: 0 }
-let folderExpandTimer: number | null = null
+// ---------- 拖拽排序（SortableJS：行间真实交换让位） ----------
+// 早期用自研 pointer + elementFromPoint 实现，只能靠「插入线」暗示落点，
+// 用户反馈「没有交换的效果，像表格拖动那样才对」（表格拖动就是 SortableJS）。
+// 这里改用同一套：每个层级的接口列表各自挂一个 Sortable，拖过邻居时
+// 邻居实时挪位、被拖行嵌进去，松手按 DOM 顺序回写 store。
+// 跨文件夹移动仍走原有交互（右键 / 批量「移动到」菜单）。
+const listEl = ref<HTMLElement | null>(null)
+let listSortable: Sortable | null = null
 
-const ghostPos = ref({ x: 0, y: 0 })
-const ghostInfo = computed(() => {
-  if (!dndState.active) return null
-  if (dndState.kind === 'endpoint') {
-    const e = store.endpoints.find((x) => x.id === dndState.id)
-    if (!e) return null
-    return { method: e.method, title: (e.name || e.path).slice(0, 5) }
-  }
-  const f = store.folders.find((x) => x.id === dndState.id)
-  if (!f) return null
-  return { method: null, title: f.name.slice(0, 5) }
-})
-
-function onRowPointerDown(event: PointerEvent, kind: 'folder' | 'endpoint', id: string): void {
-  if (event.button !== 0 || dndState.active || editing.value) return
-  dragStart = { x: event.clientX, y: event.clientY }
-  dndState.kind = kind
-  dndState.id = id
-  dndState.target = null
-  window.addEventListener('pointermove', onPointerMove)
-  window.addEventListener('pointerup', onPointerUp)
-  window.addEventListener('pointercancel', onPointerCancel)
+function initListSortable(): void {
+  const el = listEl.value
+  if (!el || listSortable) return
+  listSortable = Sortable.create(el, {
+    animation: 150,
+    easing: 'cubic-bezier(0.2, 0, 0, 1)',
+    // WKWebView（Tauri 内核）对 HTML5 DnD 支持不稳：强制走内置的指针 fallback
+    forceFallback: true,
+    fallbackTolerance: 3,
+    fallbackOnBody: true,
+    ghostClass: 'tree-row-ghost',
+    chosenClass: 'tree-row-chosen',
+    dragClass: 'tree-row-dragging',
+    // 行内的关闭钮/⋯/星标不参与拖拽
+    filter: 'button, input, select, textarea, a',
+    preventOnFilter: false,
+    onStart: (evt: Sortable.SortableEvent) => {
+      suppressNativeDrag()
+      const id = evt.item.dataset.dndId ?? null
+      dndState.active = true
+      dndState.kind = 'endpoint'
+      dndState.id = id ?? ''
+      document.body.classList.add('dragging-dnd')
+    },
+    onEnd: () => {
+      document.body.classList.remove('dragging-dnd')
+      dndState.active = false
+      dndState.kind = ''
+      dndState.id = ''
+      const root = listEl.value
+      if (!root) return
+      // 按 DOM 顺序回写：先本地重排（立即跟手），再持久化
+      const ordered = [...root.querySelectorAll<HTMLElement>('[data-dnd-kind="endpoint"][data-dnd-id]')]
+        .map((row) => row.dataset.dndId)
+        .filter((id): id is string => !!id)
+      setSuppressClick(true)
+      void applyListOrder(ordered)
+    },
+  })
 }
 
-function endDrag(): void {
-  window.removeEventListener('pointermove', onPointerMove)
-  window.removeEventListener('pointerup', onPointerUp)
-  window.removeEventListener('pointercancel', onPointerCancel)
-  document.body.classList.remove('dragging-dnd')
-  clearFolderExpand()
-  dndState.active = false
-  dndState.kind = ''
-  dndState.id = ''
-  dndState.target = null
-}
-
-function onPointerCancel(): void {
-  endDrag()
-}
-
-/** 命中测试：最近的行（folder / before/after）或树根（append 到该层末尾）。 */
-function hitTest(x: number, y: number): DndTarget | null {
-  const el = document.elementFromPoint(x, y) as HTMLElement | null
-  if (!el) return null
-  const row = el.closest<HTMLElement>('[data-dnd-kind]')
-  if (row) {
-    const kind = row.dataset.dndKind
-    const id = row.dataset.dndId ?? null
-    if (kind === 'folder') return { drop: 'folder', id, index: Number.MAX_SAFE_INTEGER }
-    if (kind === 'endpoint') {
-      const rect = row.getBoundingClientRect()
-      const before = y < rect.top + rect.height / 2
-      return {
-        drop: before ? 'before' : 'after',
-        id,
-        index: Number(row.dataset.dndIndex ?? '0'),
-      }
-    }
-    return null
-  }
-  const root = el.closest<HTMLElement>('[data-dnd-tree-root]')
-  if (root)
-    return { drop: 'root', id: root.dataset.dndTreeRoot || null, index: Number.MAX_SAFE_INTEGER }
-  return null
-}
-
-function clearFolderExpand(): void {
-  if (folderExpandTimer !== null) {
-    window.clearTimeout(folderExpandTimer)
-    folderExpandTimer = null
-  }
-}
-
-/** 悬停在关闭的文件夹上 >500ms 时自动展开（方便拖入其中）。 */
-function scheduleFolderExpand(id: string | null): void {
-  clearFolderExpand()
-  if (!id || searchActive.value || expanded.value.has(id)) return
-  folderExpandTimer = window.setTimeout(() => {
-    expanded.value.add(id)
-    folderExpandTimer = null
-  }, 500)
-}
-
-function onPointerMove(event: PointerEvent): void {
-  if (!dndState.active) {
-    if (Math.hypot(event.clientX - dragStart.x, event.clientY - dragStart.y) < 5) return
-    dndState.active = true
-    document.body.classList.add('dragging-dnd')
-  }
-  ghostPos.value = { x: event.clientX, y: event.clientY }
-  let target = hitTest(event.clientX, event.clientY)
-  if (target && target.id === dndState.id && (target.drop === 'before' || target.drop === 'after' || target.drop === 'folder'))
-    target = null
-  if (target?.drop === 'folder') scheduleFolderExpand(target.id)
-  else clearFolderExpand()
-  dndState.target = target
-}
-
-async function onPointerUp(): Promise<void> {
-  const wasActive = dndState.active
-  const d = { kind: dndState.kind, id: dndState.id, target: dndState.target }
-  endDrag()
-  setSuppressClick(wasActive)
-  if (!wasActive || !d.target || !d.id) return
-  const target = d.target
+/** 把 DOM 顺序写回 store（同文件夹内重排）。 */
+async function applyListOrder(ordered: string[]): Promise<void> {
+  if (ordered.length < 2) return
   try {
-    let targetFolder: string | null
-    let index: number
-    if (target.drop === 'folder') {
-      if (target.id === d.id) return
-      targetFolder = target.id
-      index = Number.MAX_SAFE_INTEGER
-    } else if (target.drop === 'before' || target.drop === 'after') {
-      const targetEp = store.endpoints.find((x) => x.id === target.id)
-      if (!targetEp || targetEp.id === d.id) return
-      targetFolder = targetEp.folder_id
-      index = targetEp.sort_order + (target.drop === 'after' ? 1 : 0)
-    } else {
-      targetFolder = target.id
-      index = Number.MAX_SAFE_INTEGER
-    }
-    if (d.kind === 'folder') {
-      if (targetFolder !== d.id) {
-        await store.moveFolder(d.id, targetFolder, index)
-        toast.success(t('tree.folderMoved'))
-      }
-    } else {
-      await store.moveEndpoint(d.id, targetFolder, index)
-      toast.success(t('tree.endpointMoved'))
-    }
+    await store.reorderEndpointsInFolder(props.folderId, ordered)
   } catch (err) {
-    console.error('[EndpointTree.dnd]', err)
+    console.error('[EndpointTree.reorder]', err)
     toast.error(t('tree.moveFail'), { message: err instanceof Error ? err.message : String(err) })
   }
 }
 
-function isOverFolder(id: string): boolean {
-  return dndState.active && dndState.target?.drop === 'folder' && dndState.target.id === id
+/** 拖拽期间压制浏览器原生 drag / 文字选中（SortableJS fallback 已处理大半，双保险）。 */
+function suppressNativeDrag(): void {
+  document.body.classList.add('dragging-dnd')
 }
 
-function isInsertBefore(id: string): boolean {
-  return dndState.active && dndState.target?.drop === 'before' && dndState.target.id === id
-}
-
-function isInsertAfter(id: string): boolean {
-  return dndState.active && dndState.target?.drop === 'after' && dndState.target.id === id
-}
-
-function isDraggingSrc(id: string): boolean {
-  return dndState.active && dndState.id === id
-}
-
-/** 拖拽结束后的残余 click 在树根捕获层消费掉。 */
-function onTreeClickCapture(event: Event): void {
-  if (consumeSuppressClick()) event.stopPropagation()
-}
+onMounted(() => {
+  void nextTick(initListSortable)
+})
+onBeforeUnmount(() => {
+  listSortable?.destroy()
+  listSortable = null
+  document.body.classList.remove('dragging-dnd')
+})
 
 // ---------- 行内动作菜单 ----------
 const menu = ref<InstanceType<typeof Menu> | null>(null)
@@ -839,7 +747,6 @@ function onBatchMenuSelect(item: MenuItem): void {
     :role="folderId === null ? 'tree' : undefined"
     :aria-multiselectable="folderId === null ? true : undefined"
     :data-dnd-tree-root="folderId ?? ''"
-    @click.capture="onTreeClickCapture"
     @keydown="onTreeKeydown"
     @focusin="onTreeFocusIn"
   >
@@ -884,7 +791,7 @@ function onBatchMenuSelect(item: MenuItem): void {
     <template v-for="f in childFolders" :key="f.id">
       <div
         class="tree-row"
-        :class="{ 'dnd-over': isOverFolder(f.id), selected: treeSelection.folders.has(f.id) }"
+        :class="{ selected: treeSelection.folders.has(f.id) }"
         role="treeitem"
         :aria-level="level"
         :aria-expanded="expanded.has(f.id) || searchActive"
@@ -892,7 +799,6 @@ function onBatchMenuSelect(item: MenuItem): void {
         :tabindex="rowTabbable(f.id)"
         data-dnd-kind="folder"
         :data-dnd-id="f.id"
-        @pointerdown="onRowPointerDown($event, 'folder', f.id)"
         @click="onFolderRowClick(f, $event)"
         @contextmenu.prevent="openFolderMenu($event, f)"
       >
@@ -950,15 +856,20 @@ function onBatchMenuSelect(item: MenuItem): void {
       />
     </div>
 
-    <template v-for="(e, i) in childEndpoints" :key="e.id">
+    <!-- 接口列表：每层一个独立 Sortable 容器（行间真实交换让位，见 initListSortable）。
+         文件夹行各自带自己的子容器，不参与接口排序。 -->
+    <div
+      v-if="childEndpoints.length"
+      ref="listEl"
+      class="tree-list"
+      :data-dnd-list="folderId ?? ''"
+    >
+      <template v-for="(e, i) in childEndpoints" :key="e.id">
       <div
         class="tree-row"
         :class="{
           active: store.activeTabId === e.id,
           selected: treeSelection.endpoints.has(e.id),
-          'insert-before': isInsertBefore(e.id),
-          'insert-after': isInsertAfter(e.id),
-          'dragging-src': isDraggingSrc(e.id),
         }"
         role="treeitem"
         :aria-level="level"
@@ -967,7 +878,6 @@ function onBatchMenuSelect(item: MenuItem): void {
         data-dnd-kind="endpoint"
         :data-dnd-id="e.id"
         :data-dnd-index="i"
-        @pointerdown="onRowPointerDown($event, 'endpoint', e.id)"
         @click="onEndpointRowClick(e, i, $event)"
         @contextmenu.prevent="openEndpointMenu($event, e)"
       >
@@ -1003,7 +913,8 @@ function onBatchMenuSelect(item: MenuItem): void {
           </span>
         </template>
       </div>
-    </template>
+      </template>
+    </div>
 
     <EmptyState
       v-if="folderId === null && searchActive && !childFolders.length && !childEndpoints.length"
@@ -1042,20 +953,7 @@ function onBatchMenuSelect(item: MenuItem): void {
       @confirm="doDelete"
     />
 
-  <Teleport to="body">
-    <div
-      v-if="folderId === null && dndState.active && ghostInfo"
-      class="dnd-ghost"
-      :style="{ left: ghostPos.x + 'px', top: ghostPos.y + 'px' }"
-    >
-      <span v-if="ghostInfo.method" class="miyo-method" :class="`miyo-method-${ghostInfo.method.toLowerCase()}`">
-        {{ ghostInfo.method }}
-      </span>
-      <Icon v-else name="folder" :size="13" />
-      <span class="ghost-title">{{ ghostInfo.title }}</span>
-    </div>
-  </Teleport>
-</template>
+  </template>
 
 <style scoped>
 .tree {
@@ -1075,7 +973,9 @@ function onBatchMenuSelect(item: MenuItem): void {
   padding: 3px 8px;
   border-radius: var(--radius-md);
   cursor: default;
-  transition: background var(--dur) var(--ease);
+  transition:
+    background var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 /* ---- 收藏 / 最近访问分组（根实例） ---- */
@@ -1235,22 +1135,44 @@ function onBatchMenuSelect(item: MenuItem): void {
   color: var(--text-2);
   white-space: nowrap;
 }
-/* 拖入文件夹：细虚线描边 + 浅色高亮 */
-.tree-row.dnd-over {
+/* 减少动效偏好：SortableJS 的位移动画由 animation 选项驱动，这里只降行内过渡 */
+@media (prefers-reduced-motion: reduce) {
+  .tree-row {
+    transition: none;
+  }
+}
+
+.tree-list {
+  display: flex;
+  flex-direction: column;
+}
+/* ---- 拖拽排序（SortableJS）----
+   占用位（ghost）：被拖行离开后留在列表里的空槽，作为「松手会插到这里」的落点；
+   SortableJS 会让邻居行实时挪位填补，形成真实交换效果（与参数表格拖动一致）。 */
+.tree-row-ghost {
+  /* 不画内容，只留一块虚化的落位槽：淡 accent 底 + 虚线描边 */
+  opacity: 0.55;
   background: var(--accent-tint);
-  outline: 1px dashed var(--accent);
-  outline-offset: -1px;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  border-radius: var(--radius-md);
 }
-/* 拖拽中的原行淡出（配合浮空小卡片，去掉厚重描边） */
-.tree-row.dragging-src {
-  opacity: 0.35;
+.tree-row-ghost > * {
+  opacity: 0;
 }
-/* 接口间精确插入线：悬停上半 → 上方线；悬停下半 → 下方线 */
-.tree-row.insert-before {
-  border-top: 2px solid var(--accent);
+/* 被抓住的那一行：底色提起 + 投影，明确「拿在手里」 */
+.tree-row-chosen {
+  cursor: grabbing;
 }
-.tree-row.insert-after {
-  border-bottom: 2px solid var(--accent);
+/* 跟随指针的浮层副本（fallbackOnBody 时挂在 body 上）：
+   SortableJS 复制的克隆，这里补上清晰底色与投影，避免发灰糊住列表 */
+.tree-row-dragging {
+  opacity: 1 !important;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated) !important;
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.55),
+    0 0 0 1px var(--accent);
+  cursor: grabbing;
 }
 .tree-row.active .tree-name {
   color: var(--text-1);
@@ -1393,27 +1315,5 @@ function onBatchMenuSelect(item: MenuItem): void {
   bottom: 0;
   width: 1px;
   background: var(--border);
-}
-
-/* 拖拽浮空小卡片：方法标签 + 标题前 5 字符，跟随光标 */
-.dnd-ghost {
-  position: fixed;
-  transform: translate(14px, 18px);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
-  opacity: 0.8;
-  pointer-events: none;
-  z-index: 9999;
-  white-space: nowrap;
-}
-.dnd-ghost .ghost-title {
-  font-size: 12px;
-  color: var(--text-1);
 }
 </style>

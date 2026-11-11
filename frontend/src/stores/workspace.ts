@@ -1513,7 +1513,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return false
     }
     const p = draft.path.trim()
-    if (!p.startsWith('/') && !/^(https?|wss?):\/\//i.test(p)) {
+    // gRPC 端点的 path 是服务端地址（host:port），不是 URI 路径，跳过路径口径校验；
+    // 地址形态由 gRPC 建连时判定（与后端 validate_endpoint_shape 同口径）
+    if (!p) {
+      toast.warning(t('ws.pathMustStartWithSlash'))
+      return false
+    }
+    if (draft.method !== 'GRPC' && !p.startsWith('/') && !/^(https?|wss?):\/\//i.test(p)) {
       toast.warning(t('ws.pathMustStartWithSlash'))
       return false
     }
@@ -2100,6 +2106,44 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await refresh()
   }
 
+  /**
+   * 同文件夹内整体重排（SortableJS 拖拽结束后按 DOM 顺序回写）。
+   * 与 moveEndpoint 的区别：这里是「整层新顺序」而不是「把某一项插到某位」，
+   * 一次算完所有变化项，避免逐项 moveEndpoint 产生 N 次请求与 N 次 refresh。
+   */
+  async function reorderEndpointsInFolder(folderId: string | null, orderedIds: string[]): Promise<void> {
+    const changed: Array<{ id: string; sort_order: number }> = []
+    // 先滤掉不属于该层的 id，再按过滤后的位置编号——
+    // 直接拿原数组下标当 sort_order，首项若是脏 id 会让整层顺序错位一位
+    const members = orderedIds.filter((id) => {
+      const e = endpoints.value.find((x) => x.id === id)
+      return !!e && e.folder_id === folderId
+    })
+    members.forEach((id, index) => {
+      const e = endpoints.value.find((x) => x.id === id)!
+      if (e.sort_order === index) return
+      changed.push({ id, sort_order: index })
+    })
+    if (!changed.length) return
+    // 先本地应用（拖拽松手即刻稳定，不闪回旧顺序）
+    for (const { id, sort_order } of changed) {
+      const e = endpoints.value.find((x) => x.id === id)
+      if (e) e.sort_order = sort_order
+      const draft = drafts.value.get(id)
+      if (draft) draft.sort_order = sort_order
+    }
+    try {
+      await Promise.all(
+        changed.map(({ id }) => {
+          const e = endpoints.value.find((x) => x.id === id)
+          return e ? api.saveEndpoint({ ...e }) : Promise.resolve()
+        }),
+      )
+    } finally {
+      await refresh()
+    }
+  }
+
   async function saveFolder(folder: FolderInput): Promise<void> {
     await api.saveFolder(folder)
     await refresh()
@@ -2565,6 +2609,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     renameEndpoint,
     moveFolder,
     moveEndpoint,
+    reorderEndpointsInFolder,
     saveFolder,
     deleteFolder,
     openCurlDraft,
