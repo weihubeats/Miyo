@@ -114,14 +114,14 @@ async fn seeds_full_fixture_set() {
         .iter()
         .all(|ex| ex.name.contains("小奏技术")));
 
-    // 开放演示：6 个接口；GraphQL 网关：2 个接口
+    // 开放演示：分文件夹的 HTTP 接口 + gRPC 反射演示；GraphQL 网关：2 个接口
     let open_demo = projects
         .iter()
         .find(|p| p.name == "小奏技术 · 开放演示")
         .expect("开放演示项目存在");
     let open_endpoints = repo::list_endpoints(&db, open_demo.id).await.unwrap();
-    // 7 个 HTTP（JSONPlaceholder + 链路演示端点）+ 2 个 gRPC（grpcb.in 反射演示）
-    assert_eq!(open_endpoints.len(), 9);
+    // 22 个 HTTP（JSONPlaceholder 六类资源 + 跨域回显 + 链路演示端点）+ 2 个 gRPC（grpcb.in 反射演示）
+    assert_eq!(open_endpoints.len(), 24);
     assert_eq!(
         open_endpoints
             .iter()
@@ -130,6 +130,29 @@ async fn seeds_full_fixture_set() {
         2,
         "gRPC 演示端点（unary + 服务端流）应存在"
     );
+    // 开放演示按业务域分 5 个文件夹（文章 / 评论 / 用户 / 相册 / 杂项）
+    let open_folders = repo::list_folders(&db, open_demo.id).await.unwrap();
+    assert_eq!(open_folders.len(), 5, "开放演示应有 5 个业务文件夹");
+    let folder_names: Vec<&str> = open_folders.iter().map(|f| f.name.as_str()).collect();
+    for expected in ["文章", "评论", "用户", "相册", "杂项"] {
+        assert!(
+            folder_names.contains(&expected),
+            "开放演示缺少文件夹「{expected}」"
+        );
+    }
+    // 每个业务文件夹都有接口（避免空文件夹）；无文件夹归属的只有链路演示 + gRPC
+    for f in &open_folders {
+        let count = open_endpoints
+            .iter()
+            .filter(|e| e.folder_id == Some(f.id))
+            .count();
+        assert!(count >= 2, "文件夹「{}」至少应有 2 个接口", f.name);
+    }
+    let loose = open_endpoints
+        .iter()
+        .filter(|e| e.folder_id.is_none())
+        .count();
+    assert_eq!(loose, 3, "无文件夹归属：链路演示端点 1 + gRPC 2");
     // 集成场景：链路演示（3 步引用式）+ 内联请求演示（2 步内联，免接口集合）
     let scenarios = repo::list_scenarios(&db, open_demo.id).await.unwrap();
     assert_eq!(scenarios.len(), 2, "开放演示应含 2 条链路演示场景");
@@ -143,13 +166,26 @@ async fn seeds_full_fixture_set() {
         "内联场景每步应自持请求定义"
     );
 
-    // 开放演示含 3 条测试用例（文章分页 / 发布周报 / 不存在文章负向）+ 1 条请求用例
+    // 开放演示含 15 条测试用例（文章 3 + 评论 4 + 用户 4 + 相册 2 + 杂项 2）
     let mut open_case_total = 0usize;
     for e in &open_endpoints {
         open_case_total += repo::list_test_cases(&db, e.id).await.unwrap().len();
     }
-    assert_eq!(open_case_total, 3);
-    // 开放演示文档素材：文章列表挂响应示例（含字段注释）
+    assert_eq!(open_case_total, 15, "开放演示用例数");
+    // 至少覆盖四类分类（正向 / 负向 / 边界值），便于用例管理页分组演示
+    let mut categories = std::collections::HashSet::new();
+    for e in &open_endpoints {
+        for c in repo::list_test_cases(&db, e.id).await.unwrap() {
+            categories.insert(c.category);
+        }
+    }
+    for expected in ["正向", "负向", "边界值"] {
+        assert!(
+            categories.contains(expected),
+            "开放演示缺少分类「{expected}」"
+        );
+    }
+    // 开放演示文档素材：文章列表 / 用户详情挂响应示例（含字段注释）
     let list_posts = open_endpoints
         .iter()
         .find(|e| e.path == "/posts" && e.method == miyo_core::model::HttpMethod::GET)
@@ -158,6 +194,19 @@ async fn seeds_full_fixture_set() {
         .await
         .unwrap()
         .is_empty());
+    for name in ["用户详情", "文章评论", "评论列表", "相册照片", "待办列表"] {
+        let ep = open_endpoints
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("开放演示缺少接口「{name}」"));
+        assert!(
+            !repo::list_response_examples(&db, ep.id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "接口「{name}」应有响应示例（文档页素材）"
+        );
+    }
     let graphql = projects
         .iter()
         .find(|p| p.name == "小奏技术 · GraphQL 网关")

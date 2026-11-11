@@ -102,7 +102,10 @@ describe('EndpointEditor 路径变量缺失提示', () => {
     expect(chips[0]!.text()).toBe('itemId')
 
     await chips[0]!.trigger('click')
-    expect(store.draftOf('ep-pv')?.request.active_tab).toBe('path')
+    // 页签切换是编辑器会话态，不写进请求草稿（见 EndpointEditor.dirty.spec）
+    expect(store.draftOf('ep-pv')?.request.active_tab ?? null).toBeNull()
+    const tabs = wrapper.findComponent({ name: 'Tabs' })
+    expect(tabs.props('modelValue')).toBe('path')
   })
 
   it('变量全部配置 / path 无变量 / gRPC 接口时不提示', async () => {

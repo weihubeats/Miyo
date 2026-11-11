@@ -94,6 +94,68 @@ describe('EndpointEditor：打开接口不误报脏', () => {
     wrapper.unmount()
   })
 
+  /**
+   * 回归（用户实测：「接口已经保存了，为什么左边还有一个小点」）：
+   * active_tab 既是持久化字段又是 isDirty 的比较项，页签 setter 写回草稿时，
+   * 「只是切到 Headers 看一眼」就把接口标记成有改动——保存成功后再点个页签，
+   * 左侧树的小圆点又亮。页签属于查看偏好，不得进入脏检查。
+   */
+  it('点击配置页签不写回草稿、不产生「有改动」（保存后切页签仍是干净的）', async () => {
+    const { wrapper, store, ep } = await mountEditor()
+
+    store.openEndpoint(ep)
+    await nextTick()
+    await nextTick()
+    expect(store.isDirty(ep.id)).toBe(false)
+
+    const draft = store.draftOf(ep.id)!
+    const before = JSON.stringify(draft.request)
+
+    // 用户在配置页签之间来回切（Params → Headers → Body → Examples → Params）
+    const tabs = wrapper.findComponent({ name: 'Tabs' })
+    for (const key of ['headers', 'body', 'examples', 'params']) {
+      tabs.vm.$emit('update:modelValue', key)
+      await nextTick()
+      await nextTick()
+      expect(store.isDirty(ep.id)).toBe(false)
+    }
+
+    // 整个 request 一字未动（页签选择没有混进请求体）
+    expect(JSON.stringify(draft.request)).toBe(before)
+    expect(draft.request.active_tab ?? null).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('已保存 active_tab 的接口：打开后切页签同样不判脏', async () => {
+    setActivePinia(createPinia())
+    const store = useWorkspaceStore()
+    store.project = {
+      id: 'proj-test-1',
+      name: 'P',
+      description: '',
+      variables: {},
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    }
+    const ep = makeDraft({ id: 'ep-2', name: 'ss', method: 'GET', path: '/' })
+    ep.request.active_tab = 'params'
+    store.endpoints = [ep]
+    const wrapper = mount(EndpointEditor, { shallow: true })
+    await nextTick()
+    store.openEndpoint(ep)
+    await nextTick()
+    await nextTick()
+
+    const tabs = wrapper.findComponent({ name: 'Tabs' })
+    tabs.vm.$emit('update:modelValue', 'headers')
+    await nextTick()
+    await nextTick()
+    expect(store.isDirty(ep.id)).toBe(false)
+    // 保存态里的页签记忆不回写、不被抹掉
+    expect(store.draftOf(ep.id)?.request.active_tab).toBe('params')
+    wrapper.unmount()
+  })
+
   it('往返还原即使中途改过 body 内容也整体回到快照（用户语义：改回=没改）', async () => {
     const { wrapper, store, ep } = await mountEditor()
 

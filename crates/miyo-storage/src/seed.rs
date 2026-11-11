@@ -873,24 +873,47 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     }
 
     // ---- 开放演示：真实公网接口（JSONPlaceholder） ----
-    // 收集已保存端点（名称 → 端点），供测试用例 / 请求用例挂载引用
+    // 按业务域分文件夹（编辑器树按文件夹分组、可折叠）：文章 / 评论 / 用户 /
+    // 相册 / 杂项。JSONPlaceholder 的 6 类资源全覆盖（posts / comments /
+    // users / albums / photos / todos），既能演示纯查询，也能演示 POST/PUT/PATCH/DELETE、
+    // 嵌套子资源（/posts/1/comments）、路径变量（/users/{id}）、分页与过滤。
+    let post_folder = folder(&open_demo, None, "文章");
+    let comment_folder = folder(&open_demo, None, "评论");
+    let user_folder = folder(&open_demo, None, "用户");
+    let album_folder = folder(&open_demo, None, "相册");
+    let misc_folder = folder(&open_demo, None, "杂项");
+    for f in [
+        &post_folder,
+        &comment_folder,
+        &user_folder,
+        &album_folder,
+        &misc_folder,
+    ] {
+        repo::save_folder(db, f).await?;
+    }
+
+    // 收集已保存端点（名称 → 端点），供测试用例 / 请求用例 / 场景挂载引用
     let mut open_endpoints: HashMap<String, Endpoint> = HashMap::new();
-    for (i, (name, method, path, desc, status, request)) in [
+    for (i, (folder, name, method, path, desc, status, request)) in [
+        // ---- 文章：CRUD + 嵌套子资源 ----
         (
+            Some(&post_folder),
             "文章列表",
             HttpMethod::GET,
             "/posts",
-            "Query 参数 _limit / _page",
+            "Query 参数 _limit / _page 分页，userId 按作者过滤",
             EndpointStatus::Released,
             RequestSpec {
                 params: vec![
                     kvd("_limit", "5", "返回条数"),
                     kvd("_page", "1", "页码，从 1 开始"),
+                    kvd("userId", "1", "只返回该作者的文章（可留空）"),
                 ],
                 ..RequestSpec::default()
             },
         ),
         (
+            Some(&post_folder),
             "文章详情",
             HttpMethod::GET,
             "/posts/1",
@@ -899,6 +922,16 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             RequestSpec::default(),
         ),
         (
+            Some(&post_folder),
+            "文章评论",
+            HttpMethod::GET,
+            "/posts/1/comments",
+            "嵌套子资源：文章下的全部评论",
+            EndpointStatus::Released,
+            RequestSpec::default(),
+        ),
+        (
+            Some(&post_folder),
             "发布文章",
             HttpMethod::POST,
             "/posts",
@@ -909,6 +942,16 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             ),
         ),
         (
+            Some(&post_folder),
+            "局部更新文章",
+            HttpMethod::PATCH,
+            "/posts/1",
+            "PATCH JSON Body：只提交要改的字段（对比 PUT 整体更新）",
+            EndpointStatus::Developing,
+            json_body(r#"{"title": "小奏技术周报 #43（标题已修订）"}"#),
+        ),
+        (
+            Some(&post_folder),
             "更新文章",
             HttpMethod::PUT,
             "/posts/1",
@@ -919,6 +962,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             ),
         ),
         (
+            Some(&post_folder),
             "删除文章",
             HttpMethod::DELETE,
             "/posts/1",
@@ -926,11 +970,156 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             EndpointStatus::Developing,
             RequestSpec::default(),
         ),
+        // ---- 评论：列表 / 详情 / 按文章过滤 / 提交 ----
         (
+            Some(&comment_folder),
+            "评论列表",
+            HttpMethod::GET,
+            "/comments",
+            "Query 参数 postId 按文章过滤，_limit 限制条数",
+            EndpointStatus::Released,
+            RequestSpec {
+                params: vec![
+                    kvd("postId", "1", "只返回该文章的评论"),
+                    kvd("_limit", "10", "返回条数"),
+                ],
+                ..RequestSpec::default()
+            },
+        ),
+        (
+            Some(&comment_folder),
+            "评论详情",
+            HttpMethod::GET,
+            "/comments/1",
+            "按 id 查询单条评论",
+            EndpointStatus::Released,
+            RequestSpec::default(),
+        ),
+        (
+            Some(&comment_folder),
+            "发表评论",
+            HttpMethod::POST,
+            "/comments",
+            "JSON Body：postId / name / email / body",
+            EndpointStatus::Testing,
+            json_body(
+                r#"{"postId": 1, "name": "奏小雪", "email": "xiaoxue@xiaozou.tech", "body": "文档写得很清楚，已联调通过。"}"#,
+            ),
+        ),
+        // ---- 用户：列表 / 详情 / 嵌套资源 / 改资料 ----
+        (
+            Some(&user_folder),
+            "用户列表",
+            HttpMethod::GET,
+            "/users",
+            "全部用户（含 company / address 嵌套对象）",
+            EndpointStatus::Released,
+            RequestSpec::default(),
+        ),
+        (
+            Some(&user_folder),
             "用户详情",
             HttpMethod::GET,
             "/users/1",
             "嵌套资源示例",
+            EndpointStatus::Released,
+            RequestSpec::default(),
+        ),
+        (
+            Some(&user_folder),
+            "用户文章",
+            HttpMethod::GET,
+            "/users/1/posts",
+            "用户下的文章列表；改路径变量或 ctx 切换目标用户",
+            EndpointStatus::Released,
+            RequestSpec::default(),
+        ),
+        (
+            Some(&user_folder),
+            "用户待办",
+            HttpMethod::GET,
+            "/users/1/todos",
+            "Query 参数 completed 过滤已完成 / 未完成",
+            EndpointStatus::Released,
+            RequestSpec {
+                params: vec![kvd("completed", "false", "true / false，留空返回全部")],
+                ..RequestSpec::default()
+            },
+        ),
+        (
+            Some(&user_folder),
+            "修改用户资料",
+            HttpMethod::PATCH,
+            "/users/1",
+            "PATCH JSON Body：只改联系方式",
+            EndpointStatus::Developing,
+            json_body(r#"{"email": "xiaoxue@xiaozou.tech", "phone": "138-0000-0000"}"#),
+        ),
+        // ---- 相册：相册与照片（大量数据，演示分页） ----
+        (
+            Some(&album_folder),
+            "相册列表",
+            HttpMethod::GET,
+            "/albums",
+            "Query 参数 _limit / userId 过滤",
+            EndpointStatus::Released,
+            RequestSpec {
+                params: vec![
+                    kvd("_limit", "10", "返回条数"),
+                    kvd("userId", "1", "只返回该用户的相册"),
+                ],
+                ..RequestSpec::default()
+            },
+        ),
+        (
+            Some(&album_folder),
+            "相册照片",
+            HttpMethod::GET,
+            "/albums/1/photos",
+            "嵌套子资源：相册下的照片（5000 条数据，适合试分页）",
+            EndpointStatus::Released,
+            RequestSpec {
+                params: vec![kvd("_limit", "20", "返回条数")],
+                ..RequestSpec::default()
+            },
+        ),
+        (
+            Some(&album_folder),
+            "照片详情",
+            HttpMethod::GET,
+            "/photos/1",
+            "按 id 查询单张照片（含缩略图 / 原图地址）",
+            EndpointStatus::Released,
+            RequestSpec::default(),
+        ),
+        // ---- 杂项：待办 + 远端资源（跨域演示） ----
+        (
+            Some(&misc_folder),
+            "待办列表",
+            HttpMethod::GET,
+            "/todos",
+            "Query 参数 completed 过滤",
+            EndpointStatus::Released,
+            RequestSpec {
+                params: vec![kvd("completed", "true", "true / false，留空返回全部")],
+                ..RequestSpec::default()
+            },
+        ),
+        (
+            Some(&misc_folder),
+            "新建待办",
+            HttpMethod::POST,
+            "/todos",
+            "JSON Body：title / completed / userId",
+            EndpointStatus::Testing,
+            json_body(r#"{"title": "补充开放演示接口数据", "completed": false, "userId": 1}"#),
+        ),
+        (
+            Some(&misc_folder),
+            "远端 IP 回显",
+            HttpMethod::GET,
+            "https://httpbin.org/ip",
+            "跨域演示：完整 URL 路径（不走环境前缀），返回请求方公网 IP",
             EndpointStatus::Released,
             RequestSpec::default(),
         ),
@@ -939,7 +1128,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     .enumerate()
     {
         let ep = endpoint(
-            &open_demo, None, name, method, path, desc, status, i as i64, request,
+            &open_demo, folder, name, method, path, desc, status, i as i64, request,
         );
         repo::save_endpoint(db, &ep).await?;
         open_endpoints.insert(name.to_string(), ep);
@@ -1580,7 +1769,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                 address,
                 desc,
                 EndpointStatus::Released,
-                100 + i as i64,
+                200 + i as i64,
                 RequestSpec {
                     headers: vec![kv("x-demo", "miyo")],
                     body: BodySpec::Grpc { spec },
@@ -1610,6 +1799,46 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             "201 已创建",
             201,
             r#"{"userId": 1, "id": 101, "title": "小奏技术周报 #42", "body": "本周动态：gRPC 调试上线"}"#,
+        ),
+        response_example(
+            open_endpoints.get("文章评论").expect("seed 文章评论端点"),
+            "200 成功",
+            200,
+            r#"[{"postId": 1, "id": 1, "name": "id labore ex et quam laborum", "email": "Eliseo@gardner.biz", "body": "laudantium enim quasi est quidem magnam voluptate ipsam eos"}, {"postId": 1, "id": 2, "name": "quo vero reiciendis velit similique earum", "email": "Jayne_Kuhic@sydney.com", "body": "est natus enim nihil est dolore omnis voluptatem numquam"}]"#,
+        ),
+        response_example_docs(
+            open_endpoints.get("评论列表").expect("seed 评论列表端点"),
+            "200 成功",
+            200,
+            r#"[{"postId": 1, "id": 1, "name": "小奏技术 · 首条评论", "email": "xiaoxue@xiaozou.tech", "body": "文档写得很清楚，已联调通过。"}]"#,
+            &[
+                ("/0/postId", "所属文章 ID"),
+                ("/0/email", "评论者邮箱"),
+                ("/0/body", "评论内容"),
+            ],
+        ),
+        response_example_docs(
+            open_endpoints.get("用户详情").expect("seed 用户详情端点"),
+            "200 成功",
+            200,
+            r#"{"id": 1, "name": "Leanne Graham", "username": "Bret", "email": "Sincere@april.biz", "address": {"street": "Kulas Light", "suite": "Apt. 556", "city": "Gwenborough", "zipcode": "92998-3874"}, "phone": "1-770-736-8031 x56442", "website": "hildegard.org", "company": {"name": "Romaguera-Crona", "catchPhrase": "Multi-layered client-server neural-net", "bs": "harness real-time e-markets"}}"#,
+            &[
+                ("/username", "登录名"),
+                ("/address/city", "所在城市"),
+                ("/company/name", "公司名称"),
+            ],
+        ),
+        response_example(
+            open_endpoints.get("相册照片").expect("seed 相册照片端点"),
+            "200 成功",
+            200,
+            r#"[{"albumId": 1, "id": 1, "title": "accusamus beatae ad facilis cum similique qui sunt", "url": "https://via.placeholder.com/600/92c952", "thumbnailUrl": "https://via.placeholder.com/150/92c952"}]"#,
+        ),
+        response_example(
+            open_endpoints.get("待办列表").expect("seed 待办列表端点"),
+            "200 成功",
+            200,
+            r#"[{"userId": 1, "id": 1, "title": "delectus aut autem", "completed": false}, {"userId": 1, "id": 2, "title": "quis ut nam facilis et officia qui", "completed": false}]"#,
         ),
         response_example(
             graphql_endpoints
@@ -1788,6 +2017,153 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             "none",
             "",
         ),
+        // 开放演示扩展：评论 / 用户 / 相册 / 待办（覆盖新增文件夹的分类用例）
+        test_case(
+            open_endpoints.get("文章评论").expect("seed 文章评论端点"),
+            "正向-文章下的评论",
+            "正向",
+            "评论",
+            HttpMethod::GET,
+            "/posts/1/comments",
+            vec![],
+            vec![],
+            "none",
+            "",
+        ),
+        test_case(
+            open_endpoints.get("评论列表").expect("seed 评论列表端点"),
+            "边界值-空文章无评论",
+            "边界值",
+            "评论",
+            HttpMethod::GET,
+            "/comments",
+            vec![kv("postId", "999999")],
+            vec![],
+            "none",
+            "",
+        ),
+        test_case(
+            open_endpoints.get("评论详情").expect("seed 评论详情端点"),
+            "负向-不存在的评论",
+            "负向",
+            "评论",
+            HttpMethod::GET,
+            "/comments/999999",
+            vec![],
+            vec![],
+            "none",
+            "",
+        ),
+        test_case(
+            open_endpoints.get("发表评论").expect("seed 发表评论端点"),
+            "正向-发表小奏技术评论",
+            "正向",
+            "评论",
+            HttpMethod::POST,
+            "/comments",
+            vec![],
+            vec![],
+            "json",
+            r#"{"postId": 1, "name": "奏小雪", "email": "xiaoxue@xiaozou.tech", "body": "文档写得很清楚，已联调通过。"}"#,
+        ),
+        test_case(
+            open_endpoints.get("用户列表").expect("seed 用户列表端点"),
+            "正向-全部用户",
+            "正向",
+            "用户",
+            HttpMethod::GET,
+            "/users",
+            vec![],
+            vec![],
+            "none",
+            "",
+        ),
+        test_case(
+            open_endpoints.get("用户文章").expect("seed 用户文章端点"),
+            "正向-作者的十篇文章",
+            "正向",
+            "用户",
+            HttpMethod::GET,
+            "/users/1/posts",
+            vec![],
+            vec![],
+            "none",
+            "",
+        ),
+        test_case(
+            open_endpoints.get("用户待办").expect("seed 用户待办端点"),
+            "正向-未完成待办",
+            "正向",
+            "用户",
+            HttpMethod::GET,
+            "/users/1/todos",
+            vec![kv("completed", "false")],
+            vec![],
+            "none",
+            "",
+        ),
+        test_case(
+            open_endpoints
+                .get("修改用户资料")
+                .expect("seed 修改用户资料端点"),
+            "正向-修改联系方式",
+            "正向",
+            "用户",
+            HttpMethod::PATCH,
+            "/users/1",
+            vec![],
+            vec![],
+            "json",
+            r#"{"email": "xiaoxue@xiaozou.tech"}"#,
+        ),
+        test_case(
+            open_endpoints.get("相册列表").expect("seed 相册列表端点"),
+            "边界值-单页上限 100",
+            "边界值",
+            "相册",
+            HttpMethod::GET,
+            "/albums",
+            vec![kv("_limit", "100")],
+            vec![],
+            "none",
+            "",
+        ),
+        test_case(
+            open_endpoints.get("相册照片").expect("seed 相册照片端点"),
+            "正向-相册前 20 张照片",
+            "正向",
+            "相册",
+            HttpMethod::GET,
+            "/albums/1/photos",
+            vec![kv("_limit", "20")],
+            vec![],
+            "none",
+            "",
+        ),
+        test_case(
+            open_endpoints.get("待办列表").expect("seed 待办列表端点"),
+            "正向-已完成待办",
+            "正向",
+            "杂项",
+            HttpMethod::GET,
+            "/todos",
+            vec![kv("completed", "true")],
+            vec![],
+            "none",
+            "",
+        ),
+        test_case(
+            open_endpoints.get("新建待办").expect("seed 新建待办端点"),
+            "负向-缺少标题",
+            "负向",
+            "杂项",
+            HttpMethod::POST,
+            "/todos",
+            vec![],
+            vec![],
+            "json",
+            r#"{"completed": false, "userId": 1}"#,
+        ),
         // GraphQL 负向（ZZ 非有效国家代码，country 返回 null）
         test_case(
             graphql_endpoints
@@ -1836,6 +2212,48 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
                 body: BodySpec::Json {
                     raw: r#"{"id": 1, "title": "小奏技术周报", "body": "本周小奏技术动态", "userId": 1}"#.into(),
                 },
+                ..RequestSpec::default()
+            },
+        ),
+        request_example_snap(
+            open_endpoints.get("文章列表").expect("seed 文章列表端点"),
+            "小奏技术·只取作者 1 的前 3 条",
+            RequestSpec {
+                params: vec![kv("userId", "1"), kv("_limit", "3")],
+                ..RequestSpec::default()
+            },
+        ),
+        request_example_snap(
+            open_endpoints.get("文章评论").expect("seed 文章评论端点"),
+            "小奏技术·文章 1 的全部评论",
+            RequestSpec {
+                params: vec![kv("_limit", "50")],
+                ..RequestSpec::default()
+            },
+        ),
+        request_example_snap(
+            open_endpoints.get("发表评论").expect("seed 发表评论端点"),
+            "小奏技术·评论样例",
+            RequestSpec {
+                body: BodySpec::Json {
+                    raw: r#"{"postId": 1, "name": "奏小新", "email": "xinxin@xiaozou.tech", "body": "这条评论由 Miyo 请求用例回填。"}"#.into(),
+                },
+                ..RequestSpec::default()
+            },
+        ),
+        request_example_snap(
+            open_endpoints.get("用户待办").expect("seed 用户待办端点"),
+            "小奏技术·未完成待办",
+            RequestSpec {
+                params: vec![kv("completed", "false")],
+                ..RequestSpec::default()
+            },
+        ),
+        request_example_snap(
+            open_endpoints.get("相册照片").expect("seed 相册照片端点"),
+            "小奏技术·相册前 10 张",
+            RequestSpec {
+                params: vec![kv("_limit", "10")],
                 ..RequestSpec::default()
             },
         ),

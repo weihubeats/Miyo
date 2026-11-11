@@ -240,9 +240,19 @@ const VALID_TABS: readonly ConfigTabKey[] = ['params', 'auth', 'headers', 'body'
 /** 未保存 active_tab 时的智能默认（不写回草稿，避免标记脏）。 */
 const smartTab = ref<ConfigTabKey>('params')
 
+/** 打开接口时的开场页签（由 Method 推导），用于「用户手动切页签后」的还原基准。 */
+const defaultTabForMethod = (m: string | null | undefined): ConfigTabKey =>
+  m === 'GRPC' ? 'grpc' : m && methodNeedsBody(m) ? 'body' : 'params'
+
 /**
- * 配置 Tab：优先读接口保存的 active_tab；未设置（或为已下线 Tab）时按
- * Method 智能默认。用户点击 / 切换 Method 时写回 request.active_tab。
+ * 配置 Tab：优先读接口保存的 active_tab；未设置（或为已下线 Tab）时用
+ * 编辑器会话内的选择，再退到按 Method 的智能默认。
+ *
+ * **点击页签绝不写回草稿**：`active_tab` 既在 RequestSpec 里持久化、又是
+ * `isDirty`（store 的 eq）的比较项之一，写回会让「只是切到 Headers 看看」
+ * 立刻把接口标记成有改动——保存后随便点个页签，左侧树又会冒出小圆点
+ *（用户实测「接口已经保存了，为什么还有小点」）。页签纯属查看偏好，
+ * 只有用户真改 Method 时（applyMethodDefaults 那条路径）才随请求一起落库。
  */
 const activeTab = computed<ConfigTabKey>({
   get: () => {
@@ -251,7 +261,6 @@ const activeTab = computed<ConfigTabKey>({
   },
   set: (tab: ConfigTabKey) => {
     smartTab.value = tab
-    if (draft.value) draft.value.request.active_tab = tab
   },
 })
 
@@ -308,12 +317,7 @@ const configTabs = computed<TabItem[]>(() => {
 watch(
   () => draft.value?.id,
   () => {
-    smartTab.value =
-      draft.value && draft.value.method === 'GRPC'
-        ? 'grpc'
-        : draft.value && methodNeedsBody(draft.value.method)
-          ? 'body'
-          : 'params'
+    smartTab.value = defaultTabForMethod(draft.value?.method)
   },
   { immediate: true },
 )
@@ -344,13 +348,9 @@ watch(
       // 切回上次的方法：整体还原切换前的 request（撤销默认初始化副作用）
       d.request = methodRevert.snapshot
       const restored = d.request.active_tab
-      smartTab.value = (restored && VALID_TABS.includes(restored as ConfigTabKey)
+      smartTab.value = restored && VALID_TABS.includes(restored as ConfigTabKey)
         ? (restored as ConfigTabKey)
-        : m === 'GRPC'
-          ? 'grpc'
-          : methodNeedsBody(m)
-            ? 'body'
-            : 'params')
+        : defaultTabForMethod(m)
       methodRevert = null
       return
     }
