@@ -529,11 +529,6 @@ fn build_history(
     }
 }
 
-/// 按字节上限截断字符串（保证字符边界），返回借用切片。
-///
-/// 上限内原样返回 `&s`（零分配）；超限时返回前缀切片——同样是借用，
-/// 不再像返回 `String` 那样在 `<= max` 分支多做一次整体拷贝。
-
 /// 解析请求超时（毫秒）：接口级 `spec.timeout_ms` 优先，其次全局设置（走缓存），最后默认 300 秒。
 pub(crate) async fn resolve_timeout_ms(spec: &RequestSpec, state: &AppState) -> CommandResult<u64> {
     if let Some(ms) = spec.timeout_ms {

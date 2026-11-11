@@ -514,8 +514,6 @@ fn build_grpc_history(
     }
 }
 
-/// 按字节上限截断（保证字符边界），口径同 `commands::request::byte_truncate`。
-
 #[cfg(test)]
 mod tests {
     use super::*;
