@@ -1260,23 +1260,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.miyo-inline-error {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: var(--miyo-radius-sm);
-  background: var(--miyo-danger-tint);
-  border: 1px solid var(--danger-border);
-}
-
-.miyo-inline-error-text {
-  font-size: 12.5px;
-  color: var(--miyo-danger);
-  word-break: break-all;
-}
-
 /* ---- 项目表单（新建 / 重命名） ---- */
 .form-field {
   display: flex;

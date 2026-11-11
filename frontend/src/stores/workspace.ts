@@ -10,7 +10,7 @@
  * 编辑只改草稿；「保存」调用 save_endpoint 后回写列表并清除脏标记。
  */
 import { defineStore } from 'pinia'
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, ref, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { useMiyoApi } from '../composables/useMiyoApi'
 import { useToast } from '../composables/useToast'
@@ -1246,7 +1246,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       caseRunMeta.value.set(testCase.id, {
         status: result.status ?? 0,
         durationMs: result.duration_ms ?? 0,
-        result,
+        // markRaw：result 是纯展示快照（列表状态列 / 抽屉结果 Tab 只读），
+        // 跳过深层代理省掉大 JSON 的响应式开销。
+        result: markRaw(result),
       })
       void updateCaseStatusLocally(endpointId, testCase.id, status)
       return result
@@ -1373,7 +1375,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       caseRunMeta.value.set(c.id, {
         status: r.status ?? 0,
         durationMs: r.duration_ms ?? 0,
-        result: r,
+        result: markRaw(r),
       })
       void updateCaseStatusLocally(endpointId, c.id, status)
     })

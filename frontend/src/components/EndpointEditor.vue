@@ -18,6 +18,14 @@ import { isDefaultName } from '../stores/locale'
 import { useShortcuts, shortcutDef } from '../composables/useShortcuts'
 
 import { isCurlCommand } from '../utils/url'
+import {
+  insertAtByExecCommand,
+  normalizeCurlCommand,
+  pickPathToken,
+  replaceByExecCommand,
+  setFieldValue,
+  setFieldValueAt,
+} from '../utils/urlBar'
 import { prettyJson } from '../utils/jsonFormat'
 import { methodBadgeTone, methodTextTone } from '../utils/methodTone'
 import { useVarCandidates } from '../composables/useVarCandidates'
@@ -61,7 +69,6 @@ import ToolsDrawer from './ToolsDrawer.vue'
 import VarSuggest from './ui/VarSuggest.vue'
 import type { TabItem } from './ui/Tabs.vue'
 import type {
-  GrpcResponse,
   HttpMethod,
   RequestSpec,
   ResponseExample,
@@ -85,8 +92,6 @@ const EnvironmentManager = lazyComponent(() => import('./EnvironmentManager.vue'
 const DocsPanel = lazyComponent(() => import('./DocsPanel.vue'))
 const TestCasesPanel = lazyComponent(() => import('./TestCasesPanel.vue'))
 
-/** gRPC 响应按接口 id 分桶（口径同 responses：切接口天然隔离）。 */
-const grpcResponses = ref<Map<string, GrpcResponse | null>>(new Map())
 /** 响应体动画锚点（DOM 归宿主持有）。 */
 const flashEl = ref<HTMLElement | null>(null)
 
@@ -149,7 +154,6 @@ const {
   t,
   commitPendingInput,
   buildUrl,
-  grpcResponses,
   flashEl,
 })
 
@@ -454,81 +458,6 @@ function onUrlAcPick(index: number): void {
 /** 地址栏 cURL 粘贴解析中（防重复触发）。 */
 const curlPasting = ref(false)
 
-/**
- * 从「文档片段」里取出路径那一段。
- *
- * 从接口文档 / 聊天 / 终端整段复制时，剪贴板往往不是裸路径，而是「路径 + 名称」「方法 + 路径」
- * 这类带空白的片段（`POST /routes`、`/routes routes`、`api /api/v1/x`）；单行 input 又会把
- * 剪贴板里的换行折成空格（实测：`insertText("a\nb")` → `a b`）。全部照抄就落成 `/routes routes`。
- *
- * 取词规则：
- * 1. 首段是「只剩 origin 的完整地址」（前缀里带了不可见空白被截断，`http://h:1 /routes`）→
- *    与后面的路径段拼回一条完整 URL，别把主机丢掉；
- * 2. 否则取含 `/` 的那一段（路径必含 `/`，标签不会）；
- * 3. 都没有 `/` 时取首段（`routes routes` → `routes`）。
- */
-function pickPathToken(text: string): string {
-  const tokens = text
-    .replace(/[\r\n\t]+/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-  const head = tokens[0] ?? ''
-  if (/^(?:https?|wss?):\/\/[^/]+$/i.test(head)) {
-    const path = tokens.slice(1).find((token) => token.startsWith('/'))
-    if (path) return `${head}${path}`
-  }
-  return tokens.find((token) => token.includes('/')) ?? head
-}
-
-/**
- * 光标处替换当前选区插入：与敲键同一类原生编辑事务，进撤销栈（Cmd+Z 可回退）。
- * 关键：WebKit 的 smart paste 空格只在**原生粘贴**路径生成，insertText 不受影响。
- */
-function insertAtByExecCommand(el: HTMLInputElement, start: number, end: number, text: string): boolean {
-  try {
-    el.setSelectionRange(start, end)
-    return document.execCommand('insertText', false, text)
-  } catch {
-    return false
-  }
-}
-
-/**
- * 整条替换：选中全字段后走原生插入 —— 与直接敲键同一类编辑事务，
- * 替换本身也进撤销栈（Cmd+Z 能回到替换前的内容）。
- */
-function replaceByExecCommand(el: HTMLInputElement, text: string): boolean {
-  try {
-    el.setSelectionRange(0, el.value.length)
-    return document.execCommand('insertText', false, text)
-  } catch {
-    return false
-  }
-}
-
-/** 兜底程序化写值（execCommand 不可用的环境）；程序化写值不进撤销栈，仅保证结果正确。 */
-function setFieldValueAt(el: HTMLInputElement, text: string, caret: number): void {
-  el.value = text
-  try {
-    el.setSelectionRange(caret, caret)
-  } catch {
-    /* 非文本输入（类型限制）：跳过光标定位 */
-  }
-  el.dispatchEvent(new Event('input', { bubbles: true }))
-}
-
-/** 兜底整条替换 = 写值 + 光标到末尾。 */
-function setFieldValue(el: HTMLInputElement, text: string): void {
-  setFieldValueAt(el, text, text.length)
-}
-
-/** 归一化 shell 续行 + 去终端提示符，与 CurlImportDialog 保持一致。 */
-function normalizeCurlCommand(raw: string): string {
-  return raw
-    .replace(/^\s*[$#>]+[ \t]+/, '')
-    .replace(/\\[ \t]*\r?\n/g, ' ')
-    .trim()
-}
 
 /** 地址栏粘贴 cURL 命令 → 解析后回填当前草稿（method / URL / headers / body / auth）。 */
 async function importCurlText(raw: string): Promise<void> {

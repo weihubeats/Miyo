@@ -26,6 +26,7 @@ import TestCaseDrawer from './TestCaseDrawer.vue'
 import TestCaseModal from './TestCaseModal.vue'
 import ExportSmokeDialog from './docs/ExportSmokeDialog.vue'
 import { useToast } from '../composables/useToast'
+import { useCollectionRun } from '../composables/useCollectionRun'
 import { useMiyoApi } from '../composables/useMiyoApi'
 
 const props = defineProps<{ draft: Endpoint | null }>()
@@ -271,38 +272,7 @@ async function onGroupMenuConfirm(item: MenuItem): Promise<void> {
   }
 }
 
-// 分组运行（复用集合运行链路，folder 过滤；可独立取消）
-const groupRun = ref<{ name: string; runId: string; done: number; total: number } | null>(null)
-
-async function runGroup(name: string): Promise<void> {
-  const d = props.draft
-  if (!d || runningAll.value || groupRun.value) return
-  groupRun.value = { name, runId: crypto.randomUUID(), done: 0, total: 0 }
-  try {
-    const r = await store.runAllTestCases(d.id, {
-      runId: groupRun.value.runId,
-      folder: name,
-      onProgress: (done, total) => {
-        if (groupRun.value?.name === name) groupRun.value = { ...groupRun.value, done, total }
-      },
-    })
-    toast[r.success === r.total ? 'success' : 'info'](
-      t('cases.runAllDone', { ok: r.success, total: r.total }),
-    )
-  } catch (err) {
-    toast.error(t('cases.runAllFail'), {
-      message: err instanceof Error ? err.message : String(err),
-    })
-  } finally {
-    if (groupRun.value?.name === name) groupRun.value = null
-  }
-}
-
-function cancelGroupRun(): void {
-  if (!groupRun.value) return
-  void store.cancelAllTestCases(groupRun.value.runId)
-  toast.info(t('cases.cancelling'))
-}
+// 分组运行（复用集合运行链路，folder 过滤；可独立取消）——见 useCollectionRun。
 
 /** 分类计数（全部 (N) + 各分类）：单遍聚合（原来每分类 filter 一遍，O(5N)）。 */
 const counts = computed<Record<FilterKey, number>>(() => {
@@ -741,34 +711,10 @@ async function batchDelete(): Promise<void> {
 }
 
 /** 批量运行：勾选集合并入集合链路（复用 runAllTestCases 的 ids 过滤）。 */
-const batchRunning = ref(false)
 async function batchRun(): Promise<void> {
   const d = props.draft
-  if (!d || !checkedCases.value.length || batchRunning.value || runningAll.value) return
-  batchRunning.value = true
-  const runId = crypto.randomUUID()
-  activeCollectionRunId.value = runId
-  collectionProgress.value = { done: 0, total: checkedCases.value.length }
-  try {
-    const r = await store.runAllTestCases(d.id, {
-      runId,
-      ids: checkedCases.value.map((c) => c.id),
-      onProgress: (done, total) => {
-        collectionProgress.value = { done, total }
-      },
-    })
-    toast[r.success === r.total ? 'success' : 'info'](
-      t('cases.runAllDone', { ok: r.success, total: r.total }),
-    )
-  } catch (err) {
-    toast.error(t('cases.runAllFail'), {
-      message: err instanceof Error ? err.message : String(err),
-    })
-  } finally {
-    if (activeCollectionRunId.value === runId) activeCollectionRunId.value = null
-    collectionProgress.value = null
-    batchRunning.value = false
-  }
+  if (!d) return
+  await runBatch(d.id, checkedCases.value.map((c) => c.id))
 }
 
 /** 批量移动分组（下拉选择目标组；空 = 未分组）。 */
@@ -852,12 +798,15 @@ async function onCaseDrop(
 
 onMounted(initSortables)
 onBeforeUnmount(disposeSortables)
-// 分组结构变化（新建/重命名/过滤切换）后重建 Sortable 实例。
-watch(groups, () => initSortables(), { flush: 'post' })
+// 分组集合变化（新建/重命名/删除组）后重建 Sortable 实例；watch 源用组键
+// 集合而非 groups 引用——过滤词每键入一次 groups 都是新数组，全量销毁重建
+// 全部 Sortable 实例会造成键入卡顿（组元素按 name 键控，DOM 身份不变，
+// 过滤切换不需要重建）。
+const groupKeys = computed(() => groups.value.map((g) => g.name).join('\u0000'))
+watch(groupKeys, () => initSortables(), { flush: 'post' })
 
 // ---------- 运行 ----------
 const runningIds = ref<Set<string>>(new Set())
-const runningAll = ref(false)
 
 async function runOne(c: TestCase): Promise<void> {
   const d = props.draft
@@ -894,48 +843,36 @@ async function runOne(c: TestCase): Promise<void> {
   }
 }
 
-/** 在途集合运行标识（取消按钮持有）。 */
-const activeCollectionRunId = ref<string | null>(null)
-/** 集合运行进度（done/total，已完成数由后端事件推进，此处取整）。 */
-const collectionProgress = ref<{ done: number; total: number } | null>(null)
+// 全量 / 批量 / 分组集合运行：状态与样板收敛在 composables/useCollectionRun。
+const {
+  activeCollectionRunId,
+  collectionProgress,
+  runningAll,
+  batchRunning,
+  groupRun,
+  runAll: runAllCollection,
+  runBatch,
+  runGroup,
+  cancelActive,
+  cancelGroupRun,
+} = useCollectionRun({ store, toast, t })
 
 async function runAll(): Promise<void> {
   const d = props.draft
-  if (!d || runningAll.value) return
-  runningAll.value = true
-  collectionProgress.value = { done: 0, total: store.testCases.get(d.id)?.length ?? 0 }
-  const runId = crypto.randomUUID()
-  activeCollectionRunId.value = runId
-  try {
-    const r = await store.runAllTestCases(d.id, {
-      runId,
-      onProgress: (done, total) => {
-        collectionProgress.value = { done, total }
-      },
-    })
-    if (r.cancelled) {
-      toast.info(t('cases.runCancelled', { ok: r.success, total: r.total }))
-    } else {
-      toast[r.success === r.total ? 'success' : 'info'](
-        t('cases.runAllDone', { ok: r.success, total: r.total }),
-      )
-    }
-  } catch (err) {
-    toast.error(t('cases.runAllFail'), {
-      message: err instanceof Error ? err.message : String(err),
-    })
-  } finally {
-    if (activeCollectionRunId.value === runId) activeCollectionRunId.value = null
-    collectionProgress.value = null
-    runningAll.value = false
-  }
+  if (!d) return
+  await runAllCollection(d.id)
+}
+
+/** 分组运行适配（composable 需要 endpointId；模板只传组名）。 */
+async function onRunGroup(name: string): Promise<void> {
+  const d = props.draft
+  if (!d) return
+  await runGroup(d.id, name)
 }
 
 /** 取消在途集合运行：后端停止领新任务，已完成项保留。 */
 function cancelRunAll(): void {
-  if (!activeCollectionRunId.value) return
-  void store.cancelAllTestCases(activeCollectionRunId.value)
-  toast.info(t('cases.cancelling'))
+  cancelActive()
 }
 
 const STATUS_TONE: Record<TestCase['last_run_status'], string> = {
@@ -1252,7 +1189,7 @@ watch(
                 :size="13"
                 :title="t('cases.runGroup')"
                 :disabled="runningAll || !!groupRun || !g.cases.length"
-                @click="runGroup(g.name)"
+                @click="onRunGroup(g.name)"
               />
               <IconButton
                 name="more-horizontal"

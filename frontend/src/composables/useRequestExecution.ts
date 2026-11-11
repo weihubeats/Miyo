@@ -3,8 +3,9 @@
  *
  * 职责（原 EndpointEditor 82-186 + send/sendGrpc/cancelSend 整段，行为不变）：
  * - **按接口 id 分桶**的全部执行态：在途（sendingMap）/ 响应（responses）/
- *   错误（sendErrors）/ 最近 request_id（lastRequestIds）/ gRPC 响应；
- *   EndpointEditor 单实例常驻，分桶保证切接口不串响应；
+ *   错误（sendErrors）/ 最近 request_id（lastRequestIds）/ gRPC 响应——
+ *   分桶 Map 由 stores/execution.ts 持有（路由往返不丢响应），本组合式
+ *   只做读写编排；
  * - 桶淘汰（RESPONSE_BUCKET_MAX，按插入序淘汰最旧、当前接口除外）；
  * - 「发送中计时」心跳（0.1s tick，仅在途时推进）；
  * - 发送（HTTP / gRPC）/ 取消 / 响应全文加载 / 新响应 flash 动画锚点。
@@ -13,7 +14,9 @@
  * （commitPendingInput）两个回调——它们读写编辑器局部 UI 状态。
  */
 import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import type { useWorkspaceStore } from '../stores/workspace'
+import { useExecutionStore } from '../stores/execution'
 import type { useMiyoApi } from '../composables/useMiyoApi'
 import type { useToast } from '../composables/useToast'
 import type { GrpcResponse, Endpoint, ExecuteResponse } from '../types/miyoApi'
@@ -32,8 +35,6 @@ export interface UseRequestExecutionOptions {
   commitPendingInput: () => void
   /** HTTP 请求 URL 构建（编辑器局部状态：Base URL 临时值等）。 */
   buildUrl: () => string
-  /** gRPC 响应分桶（口径与 HTTP responses 相同）。 */
-  grpcResponses?: Ref<Map<string, GrpcResponse | null>>
   /** 响应体动画锚点（DOM 归宿主持有，与 useEditorSplitter 的锚点同款）。 */
   flashEl: Ref<HTMLElement | null>
 }
@@ -41,7 +42,11 @@ export interface UseRequestExecutionOptions {
 export function useRequestExecution(options: UseRequestExecutionOptions) {
   const { draft, store, api, toast, t, commitPendingInput, buildUrl, flashEl } = options
 
-  const sendingMap = ref<Map<string, { requestId: string; startedAt: number }>>(new Map())
+  // 分桶状态：store 持有（路由往返不丢），storeToRefs 保持 Ref 用法不变。
+  const execution = useExecutionStore()
+  const { sendingMap, responses, sendErrors, lastRequestIds, grpcResponses } =
+    storeToRefs(execution)
+  const evictOldest = execution.evictOldest
 
   /** 当前接口是否在途（逐接口隔离：A 发送中切到 B，B 仍可独立发送）。 */
   const sending = computed(() => (draft.value ? sendingMap.value.has(draft.value.id) : false))
@@ -83,37 +88,16 @@ export function useRequestExecution(options: UseRequestExecutionOptions) {
     el.classList.add('flash')
   }
   /**
-   * 各接口的请求结果按 id 分桶：EndpointEditor 是单实例常驻，若用单个 ref，
-   * 切到另一个接口会看到上一个接口的响应；且请求在途时切换接口，旧接口的
-   * 返回也会落到当前接口上（偶发「A 请求却显示 B 结果」）。按 id 存取后，
-   * 每个接口只显示自己的最后一次结果，天然隔离上述两处错位。
+   * 各接口的请求结果按 id 分桶（Map 在 stores/execution.ts）：切到另一个
+   * 接口只会看到自己的响应；请求在途切走再返回也不错位；路由往返（离开
+   * /workspace 再回来）响应与在途态保留。
    */
-  const responses = ref<Map<string, ExecuteResponse | null>>(new Map())
-  const sendErrors = ref<Map<string, string | null>>(new Map())
   const response = computed<ExecuteResponse | null>(() =>
     draft.value ? (responses.value.get(draft.value.id) ?? null) : null,
   )
   const sendError = computed<string | null>(() =>
     draft.value ? (sendErrors.value.get(draft.value.id) ?? null) : null,
   )
-
-  /**
-   * 结果桶淘汰（响应 / 错误同规格）：EndpointEditor 单实例常驻整个会话，
-   * 每桶持全量响应体（后端上限 20MB），无限累积会拖垮内存与 GC。
-   * 超过上限按 Map 插入序淘汰最旧（当前接口除外）。
-   */
-  const RESPONSE_BUCKET_MAX = 10
-
-  function evictOldest<T>(map: Map<string, T>, keepId: string): void {
-    while (map.size > RESPONSE_BUCKET_MAX) {
-      const oldest = map.keys().next().value
-      if (oldest === undefined || oldest === keepId) break
-      map.delete(oldest)
-    }
-  }
-
-  /** 最近一次发送的 request_id（响应被 IPC 预览截断时按它向 Rust 取全文）。 */
-  const lastRequestIds = ref<Map<string, string>>(new Map())
 
   /** ResponsePanel 全文加载器：按当前接口最近一次 request_id 取被截断的完整正文。 */
   async function loadFullBody(): Promise<string | null> {
@@ -122,8 +106,7 @@ export function useRequestExecution(options: UseRequestExecutionOptions) {
     return rid ? api.getResponseBody(rid) : null
   }
 
-  /** gRPC 响应分桶由宿主持有（口径同 responses），这里只读派生。 */
-  const grpcResponses = options.grpcResponses as Ref<Map<string, GrpcResponse | null>>
+  /** gRPC 响应分桶（stores/execution.ts 持有，口径同 responses），这里只读派生。 */
   const grpcResponse = computed<GrpcResponse | null>(() =>
     draft.value ? (grpcResponses.value.get(draft.value.id) ?? null) : null,
   )

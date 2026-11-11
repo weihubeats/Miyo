@@ -7,7 +7,7 @@
  */
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import ToastHost from './components/ToastHost.vue'
 import ProgressBar from './components/ProgressBar.vue'
@@ -15,6 +15,7 @@ import Brand from './components/Brand.vue'
 import AboutDialog from './components/AboutDialog.vue'
 import ReleaseNotesModal from './components/ReleaseNotesModal.vue'
 import { useToast } from './composables/useToast'
+import { useProgress } from './composables/useProgress'
 import { useLocaleStore } from './stores/locale'
 import { startAutoUpdate, openAboutSignal, openReleaseSignal } from './composables/useAutoUpdate'
 
@@ -22,6 +23,20 @@ const toast = useToast()
 const locale = useLocaleStore()
 const t = locale.t
 const route = useRoute()
+const router = useRouter()
+const routeProgress = useProgress()
+
+// 路由级加载指示：视图全量懒加载（router/index.ts），chunk 首拉期间整页
+// 空白——顶部进度条给反馈（done 在导航确认后触发，含组件挂载前的间隙）。
+router.beforeEach(() => {
+  routeProgress.start()
+})
+router.afterEach(() => {
+  routeProgress.done()
+})
+router.onError(() => {
+  routeProgress.done()
+})
 
 /**
  * 悬浮品牌：仅在无路由匹配时展示。四个正式视图（项目列表 / 工作区 /

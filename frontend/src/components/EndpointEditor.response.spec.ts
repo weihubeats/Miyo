@@ -105,6 +105,28 @@ describe('EndpointEditor：接口响应按 id 隔离', () => {
     expect(errors.errors).toEqual([])
   })
 
+  it('卸载重挂（路由往返）：响应保留，不随组件销毁丢失', async () => {
+    const errors = collectErrors()
+    const { wrapper, store } = await mountEditor()
+
+    store.openEndpoint(endpointA)
+    await nextTick()
+    await sendCurrent(wrapper)
+    expect(wrapper.findComponent(ResponsePanel).props('response').body).toContain('ep-a')
+
+    // 路由往返：组件卸载（分桶状态在 execution store，不随组件销毁）→ 重挂。
+    wrapper.unmount()
+    const remounted = await mountEditor()
+    remounted.store.openEndpoint(endpointA)
+    await nextTick()
+    expect(remounted.wrapper.findComponent(ResponsePanel).exists()).toBe(true)
+    expect(remounted.wrapper.findComponent(ResponsePanel).props('response').body).toContain('ep-a')
+
+    remounted.wrapper.unmount()
+    errors.restore()
+    expect(errors.errors).toEqual([])
+  })
+
   it('A→B 各自发送：各显示自己的响应，切回 A 仍显示 A 的结果', async () => {
     const errors = collectErrors()
     const { wrapper, store } = await mountEditor()
