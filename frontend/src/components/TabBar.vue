@@ -45,11 +45,17 @@ function onTabMouseDown(event: MouseEvent): void {
   }
 }
 
-// ---------- 页签拖拽排序 ----------
-// SortableJS + 落点按 DOM 顺序回写 store（与 ProjectList / ScenarioEditor 同款收口）。
-// filter 挡住关闭钮等交互元素；空标签拖拽期间 click 激活不受影响（fallback 容差）。
+// ---------- 页签横拖滚动 + Alt+拖拽排序 ----------
+// 主操作是「横拖页签条查看被挡住的页签」（浏览器标签栏同款）：默认鼠标拖动
+// 平移滚动区，不再触发重排——此前整条滚动区被 Sortable 接管，用户想横拖时
+// 实际在重排，手感就是「拉不动」（v0.0.57 用户实测）。
+// 排序退到 Alt+拖拽：Sortable 的 filter 在每次拖拽开始时求值，
+// 读 event.altKey 即可让「不按 Alt」的拖拽全部被过滤掉。
 const tabListEl = ref<HTMLElement | null>(null)
 let tabSortable: Sortable | null = null
+
+/** 排序期间松开 Alt 会中途误触发，用按下瞬间的修饰键状态判定更稳。 */
+let altHeldOnPress = false
 
 function initTabSortable(): void {
   if (!tabListEl.value || tabSortable) return
@@ -60,7 +66,14 @@ function initTabSortable(): void {
     fallbackTolerance: 3,
     ghostClass: 'tab-ghost',
     chosenClass: 'tab-chosen',
-    filter: 'button, input, select, textarea',
+    draggable: '.tab[data-tab-id]',
+    // 关闭钮等交互元素永不参与；不按 Alt 时整个页签都被 filter 挡下，
+    // 拖拽交给下面的 pointer 横拖处理。
+    filter: (event: Event) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('button, input, select, textarea')) return true
+      return !altHeldOnPress
+    },
     preventOnFilter: false,
     onEnd: () => {
       const root = tabListEl.value
@@ -77,7 +90,71 @@ onMounted(() => nextTick(initTabSortable))
 onBeforeUnmount(() => {
   tabSortable?.destroy()
   tabSortable = null
+  stopDragPan()
 })
+
+// ---------- 横拖平移：按住页签条鼠标拖动左右滚动 ----------
+/** 超过该位移才认作拖拽，否则当普通点击（切换页签）处理。 */
+const DRAG_THRESHOLD = 4
+
+const panning = ref(false)
+/** active 期间临时关闭页签的过渡动画，拖动跟手才不会拖影。 */
+let panPointerId: number | null = null
+let panStartX = 0
+let panStartScroll = 0
+let panMoved = false
+/** 曾在拖拽中移动过：用于吞掉紧随其后的 click，避免「拖完顺手切了页签」。 */
+let panSwallowClick = false
+
+function onListPointerDown(event: PointerEvent): void {
+  // 只认鼠标左键 / 触控笔 / 触摸；Alt+左键留给排序
+  if (event.button !== 0) return
+  altHeldOnPress = event.altKey
+  if (event.altKey) return
+  const el = tabListEl.value
+  if (!el || el.scrollWidth <= el.clientWidth) return
+  // 关闭钮等交互元素上按下不进入拖拽
+  if ((event.target as HTMLElement | null)?.closest('button, input, select, textarea')) return
+  panPointerId = event.pointerId
+  panStartX = event.clientX
+  panStartScroll = el.scrollLeft
+  panMoved = false
+  panning.value = true
+  el.setPointerCapture(event.pointerId)
+}
+
+function onListPointerMove(event: PointerEvent): void {
+  if (!panning.value || event.pointerId !== panPointerId) return
+  const el = tabListEl.value
+  if (!el) return
+  const dx = event.clientX - panStartX
+  if (!panMoved && Math.abs(dx) < DRAG_THRESHOLD) return
+  panMoved = true
+  el.scrollLeft = panStartScroll - dx
+}
+
+function stopDragPan(): void {
+  const el = tabListEl.value
+  if (panPointerId !== null && el?.hasPointerCapture?.(panPointerId)) {
+    el.releasePointerCapture(panPointerId)
+  }
+  panPointerId = null
+  panning.value = false
+}
+
+function onListPointerUp(event: PointerEvent): void {
+  if (event.pointerId !== panPointerId) return
+  panSwallowClick = panMoved
+  stopDragPan()
+}
+
+/** 拖拽结束时浏览器仍会派发一次 click：吞掉它，避免误切换页签。 */
+function onListClickCapture(event: MouseEvent): void {
+  if (!panSwallowClick) return
+  panSwallowClick = false
+  event.preventDefault()
+  event.stopPropagation()
+}
 
 // ---------- 激活标签滚动到可视区 ----------
 const barEl = ref<HTMLElement | null>(null)
@@ -270,7 +347,19 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
 
 <template>
   <div ref="barEl" class="tab-bar">
-    <div ref="tabListEl" class="tab-scroll" role="tablist" @keydown="onTabListKeydown" @wheel="onTabWheel">
+    <div
+      ref="tabListEl"
+      class="tab-scroll"
+      :class="{ panning }"
+      role="tablist"
+      @keydown="onTabListKeydown"
+      @wheel="onTabWheel"
+      @pointerdown="onListPointerDown"
+      @pointermove="onListPointerMove"
+      @pointerup="onListPointerUp"
+      @pointercancel="onListPointerUp"
+      @click.capture="onListClickCapture"
+    >
       <div
         v-for="tab in tabs"
         :key="tab.id"
@@ -357,6 +446,16 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
   display: none;
 }
 
+/* 横拖平移中：关掉页签过渡动画（跟手不拖影）、禁掉文本选中、
+   光标切成抓手；松手恢复。仅在拖拽进行时生效，常态零影响。 */
+.tab-scroll.panning {
+  cursor: grabbing;
+  user-select: none;
+}
+.tab-scroll.panning .tab {
+  transition: none;
+}
+
 /* 新建「+」/ 管理「⋯」跟在末尾 tab 后面；溢出时吸在右边缘（Chrome 式），永远可见 */
 .tab-scroll > .tt-trigger {
   position: sticky;
@@ -368,6 +467,13 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
   flex-shrink: 0;
   align-self: center;
   margin-bottom: 2px;
+  /* 与右侧「⋯」之间补实底：两枚按钮各自 sticky，中间那条缝若留空，
+     滚过的页签标题会从缝里透出来，看起来像接口名挂在「+」右边
+     （v0.0.57 用户实测）。用同底色 padding 填满这条缝，
+     再用等宽负 margin 抵消，整体占位不变。 */
+  padding-right: 2px;
+  background: var(--bg-panel);
+  border-radius: 6px 0 0 6px;
 }
 
 /* ---- 右侧两个平级动作按钮：+ 新建 / ⋯ 管理 ---- */
@@ -406,11 +512,13 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
 .tab-more {
   color: var(--text-2);
   /* 溢出吸右时要盖住下方滚过的标签，需实底；right:0 + 上方 trigger 的
-     right:30px 让两钮吸右时错开一枚按钮宽度，不再同位重叠 */
+     right:30px 让两钮吸右时错开一枚按钮宽度，不再同位重叠。
+     margin-left:-2px 吃掉与「+」之间的缝隙（由 + 的 padding-right 补位），
+     两钮的实底连成一片，滚过的页签标题无从透出。 */
   position: sticky;
   right: 0;
   z-index: 1;
-  margin-left: 2px;
+  margin-left: -2px;
 }
 .tab-more:hover {
   color: var(--text-1);

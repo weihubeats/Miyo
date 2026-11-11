@@ -423,3 +423,108 @@ describe('TabBar：右键菜单与批量关闭', () => {
     wrapper.unmount()
   })
 })
+
+/**
+ * 横拖平移（v0.0.57 用户实测「页签太多下面的这个下拉拉不了」）：
+ * 整条滚动区原被 SortableJS 接管，横拖实际触发重排。
+ * 现在默认鼠标拖动 = 横向平移，排序退到 Alt+拖拽。
+ */
+describe('TabBar：横拖平移滚动', () => {
+  /** jsdom 无布局：手动伪造「页签溢出」。 */
+  function fakeOverflow(el: HTMLElement): void {
+    Object.defineProperty(el, 'scrollWidth', { value: 2000, configurable: true })
+    Object.defineProperty(el, 'clientWidth', { value: 700, configurable: true })
+  }
+
+  function pointer(el: HTMLElement, type: string, clientX: number, extra: PointerEventInit = {}) {
+    el.dispatchEvent(
+      new PointerEvent(type, { clientX, pointerId: 1, button: 0, bubbles: true, cancelable: true, ...extra }),
+    )
+  }
+
+  it('向左拖动时 scrollLeft 增大（内容跟手左移）', () => {
+    const wrapper = mountBar()
+    const el = document.querySelector('.tab-scroll') as HTMLElement
+    fakeOverflow(el)
+    el.setPointerCapture = vi.fn()
+    el.hasPointerCapture = vi.fn(() => true)
+    el.releasePointerCapture = vi.fn()
+    el.scrollLeft = 100
+
+    pointer(el, 'pointerdown', 500)
+    pointer(el, 'pointermove', 400) // 左移 100px
+
+    expect(el.scrollLeft).toBe(200)
+    wrapper.unmount()
+  })
+
+  it('位移小于阈值视为点击，不平移（避免误触卡住切换）', () => {
+    const wrapper = mountBar()
+    const el = document.querySelector('.tab-scroll') as HTMLElement
+    fakeOverflow(el)
+    el.setPointerCapture = vi.fn()
+    el.hasPointerCapture = vi.fn(() => true)
+    el.releasePointerCapture = vi.fn()
+    el.scrollLeft = 100
+
+    pointer(el, 'pointerdown', 500)
+    pointer(el, 'pointermove', 498) // 仅 2px
+
+    expect(el.scrollLeft).toBe(100)
+    wrapper.unmount()
+  })
+
+  it('按在关闭钮上不进入拖拽', () => {
+    const wrapper = mountBar()
+    const el = document.querySelector('.tab-scroll') as HTMLElement
+    fakeOverflow(el)
+    el.setPointerCapture = vi.fn()
+    el.scrollLeft = 100
+
+    // 光标落在关闭按钮（button）上
+    const closeBtn = document.querySelector('.tab-scroll .tab .tab-close') as HTMLElement
+    closeBtn.dispatchEvent(
+      new PointerEvent('pointerdown', { clientX: 500, pointerId: 1, button: 0, bubbles: true }),
+    )
+    pointer(el, 'pointermove', 300)
+
+    expect(el.scrollLeft).toBe(100)
+    expect(el.setPointerCapture).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('拖拽后紧随的 click 被吞掉，不切换激活页签', () => {
+    const wrapper = mountBar()
+    const el = document.querySelector('.tab-scroll') as HTMLElement
+    fakeOverflow(el)
+    el.setPointerCapture = vi.fn()
+    el.hasPointerCapture = vi.fn(() => true)
+    el.releasePointerCapture = vi.fn()
+    el.scrollLeft = 100
+
+    pointer(el, 'pointerdown', 500)
+    pointer(el, 'pointermove', 300)
+    pointer(el, 'pointerup', 300)
+
+    // 拖拽结束那一下 click：不应落到页签上
+    const first = document.querySelector('.tab-scroll .tab') as HTMLElement
+    first.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    expect(mocked.activeTabId).toBe('t8')
+    wrapper.unmount()
+  })
+
+  it('页签未溢出时不接管拖动（保持原生行为）', () => {
+    const wrapper = mountBar()
+    const el = document.querySelector('.tab-scroll') as HTMLElement
+    // scrollWidth <= clientWidth：不溢出
+    Object.defineProperty(el, 'scrollWidth', { value: 500, configurable: true })
+    Object.defineProperty(el, 'clientWidth', { value: 700, configurable: true })
+    el.setPointerCapture = vi.fn()
+
+    pointer(el, 'pointerdown', 500)
+    pointer(el, 'pointermove', 300)
+
+    expect(el.setPointerCapture).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})
