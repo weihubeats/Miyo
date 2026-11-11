@@ -89,11 +89,100 @@ function onTabClick(projectId: string): void {
 function onClose(projectId: string): void {
   store.closeProjectTab(projectId)
 }
+
+// ---------- 横拖平移：项目标签条溢出后按住左右拖动查看被挡住的标签 ----------
+// 顶栏可用宽度有限（右侧 Docs/Mock/环境/工具组按 min-width:max-content 不压缩），
+// 项目一多 .proj-tabs 就被压窄、后面的项目被挡住。此前只有滚轮与触控板能滚，
+// 鼠标用户没有任何可见入口——看起来就是「拖不动」（v0.0.57 用户实测）。
+// 与 TabBar 同款手势：默认拖 = 平移，指到关闭钮不接管。
+const tabsEl = ref<HTMLElement | null>(null)
+const DRAG_THRESHOLD = 4
+
+const panning = ref(false)
+let panPointerId: number | null = null
+let panStartX = 0
+let panStartScroll = 0
+let panMoved = false
+/** 曾拖拽过：吞掉紧随的 click，避免「拖完顺手切了项目」。 */
+let panSwallowClick = false
+
+function onTabsPointerDown(event: PointerEvent): void {
+  if (event.button !== 0) return
+  const el = tabsEl.value
+  if (!el || el.scrollWidth <= el.clientWidth) return
+  if ((event.target as HTMLElement | null)?.closest('button, input, select, textarea')) return
+  panPointerId = event.pointerId
+  panStartX = event.clientX
+  panStartScroll = el.scrollLeft
+  panMoved = false
+  panning.value = true
+  el.setPointerCapture(event.pointerId)
+  // 捕获失败或指针移出标签条时元素收不到 pointerup，panning 会永久卡住
+  window.addEventListener('pointerup', stopPan)
+  window.addEventListener('pointercancel', stopPan)
+}
+
+function onTabsPointerMove(event: PointerEvent): void {
+  if (!panning.value || event.pointerId !== panPointerId) return
+  const el = tabsEl.value
+  if (!el) return
+  const dx = event.clientX - panStartX
+  if (!panMoved && Math.abs(dx) < DRAG_THRESHOLD) return
+  panMoved = true
+  el.scrollLeft = panStartScroll - dx
+}
+
+function stopPan(): void {
+  const el = tabsEl.value
+  if (panPointerId !== null && el?.hasPointerCapture?.(panPointerId)) {
+    el.releasePointerCapture(panPointerId)
+  }
+  panPointerId = null
+  panning.value = false
+  window.removeEventListener('pointerup', stopPan)
+  window.removeEventListener('pointercancel', stopPan)
+}
+
+function onTabsPointerUp(event: PointerEvent): void {
+  if (event.pointerId !== panPointerId) return
+  panSwallowClick = panMoved
+  stopPan()
+}
+
+/** 拖拽结束时浏览器仍会派一次 click：吞掉它，避免误切项目。 */
+function onTabsClickCapture(event: MouseEvent): void {
+  if (!panSwallowClick) return
+  panSwallowClick = false
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+/**
+ * 竖向滚轮转横向平移：标签条只横滚，鼠标滚轮（deltaY）原生无事可做。
+ * 触控板的横向分量（deltaX 占优）仍走原生滚动，不劫持。
+ */
+function onTabsWheel(event: WheelEvent): void {
+  const el = tabsEl.value
+  if (!el || el.scrollWidth <= el.clientWidth) return
+  if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return
+  event.preventDefault()
+  el.scrollLeft += event.deltaY
+}
 </script>
 
 <template>
   <div class="ptabs">
-    <div class="proj-tabs">
+    <div
+      ref="tabsEl"
+      class="proj-tabs"
+      :class="{ panning }"
+      @pointerdown="onTabsPointerDown"
+      @pointermove="onTabsPointerMove"
+      @pointerup="onTabsPointerUp"
+      @pointercancel="onTabsPointerUp"
+      @click.capture="onTabsClickCapture"
+      @wheel="onTabsWheel"
+    >
       <div
         v-for="tab in store.openProjects"
         :key="tab.id"
@@ -148,13 +237,14 @@ function onClose(projectId: string): void {
 .proj-tabs::-webkit-scrollbar {
   display: none;
 }
-/* 悬停时露出细滚动条，暗示可横滚（默认隐藏保简洁） */
-.proj-tabs:hover {
-  scrollbar-width: thin;
+/* 拖动平移中：切抓手光标、关掉标签过渡（跟手不拖影）、禁文本选中。
+   仅在拖拽进行时生效，常态零影响。 */
+.proj-tabs.panning {
+  cursor: grabbing;
+  user-select: none;
 }
-.proj-tabs:hover::-webkit-scrollbar {
-  display: block;
-  height: 6px;
+.proj-tabs.panning .proj-tab {
+  transition: none;
 }
 
 .proj-tab {
@@ -169,6 +259,9 @@ function onClose(projectId: string): void {
   color: var(--text-2);
   cursor: pointer;
   user-select: none;
+  /* WebKit（Tauri 内核）按住可拖拽元素会启动原生 drag 并派 pointercancel
+   * 掐断平移，表现为「拖着没反应」。标签只承载点击与横拖，不该可拖拽。 */
+  -webkit-user-drag: none;
   transition:
     background var(--dur) var(--ease),
     color var(--dur) var(--ease),
