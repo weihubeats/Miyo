@@ -1261,6 +1261,13 @@ useWindowDrag(topBarEl)
   min-width: 0;
 }
 
+/* 首页顶栏同样绑了窗口拖拽：项目标签区里的按下必须留给标签条自己（横拖平移），
+   否则一按就被 startDragging 接管、指针事件全丢（v0.0.57 用户实测「拖不动」）。 */
+.dash-top :deep(.proj-tabs),
+.dash-top :deep(.proj-tab) {
+  cursor: default;
+}
+
 /* Windows 自绘窗口控制钮贴窗口右缘（抵消顶栏右内边距） */
 .dash-top :deep(.win-controls) {
   margin-right: -16px;

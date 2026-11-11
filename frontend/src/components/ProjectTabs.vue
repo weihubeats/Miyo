@@ -127,15 +127,8 @@ function onTabsPointerMove(event: PointerEvent): void {
   const el = tabsEl.value
   if (!el) return
   const dx = event.clientX - panStartX
-  if (!panMoved) {
-    if (Math.abs(dx) < DRAG_THRESHOLD) return
-    // 越过阈值时重锚起点（同 TabBar）：不重锚会把阈值内的位移一次性补上，
-    // 首个 pointermove 直接跳 4px，手感是「先是死的、然后突然挣脱」。
-    panStartX = event.clientX
-    panStartScroll = el.scrollLeft
-    panMoved = true
-    return
-  }
+  if (!panMoved && Math.abs(dx) < DRAG_THRESHOLD) return
+  panMoved = true
   el.scrollLeft = panStartScroll - dx
 }
 

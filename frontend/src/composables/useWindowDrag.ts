@@ -20,10 +20,17 @@ function win(): TauriWindow {
   return appWindow
 }
 
+/**
+ * 标题栏里的「自管手势」区域：标签条靠 pointer 事件做横向平移，窗口拖拽必须让位。
+ * `data-no-window-drag` 同时用于新组件，避免每个宿主重复列选择器。
+ */
+const NO_DRAG_SELECTOR =
+  'button, input, select, textarea, a, [contenteditable="true"], [data-no-window-drag], .proj-tabs, .tab-scroll'
+
 function onMouseDown(event: MouseEvent): void {
   if (event.button !== 0) return
   const target = event.target as HTMLElement
-  if (target.closest('button, input, select, textarea, a, [contenteditable="true"]')) return
+  if (target.closest(NO_DRAG_SELECTOR)) return
   if (event.detail === 2) {
     void win().toggleMaximize()
   } else {

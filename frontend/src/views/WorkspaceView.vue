@@ -858,6 +858,16 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 
+/* useWindowDrag 只放过 button/input/a 等交互元素：空白处按下会 startDragging，
+   指针随即被窗口管理器接管，页签条的 pointermove 再也收不到——鼠标用户
+   「按下去往右拖，页签一点不动」（v0.0.57 用户实测）。项目标签区内的一切实体
+   （标签条、标签、关闭钮、⋯）都不该拖动窗口：置 cursor 为默认并显式排除。
+   关闭钮是 <button>（本已排除），这里补上标签 div 与标签条本身。 */
+.top-bar .tb-projects,
+.top-bar .tb-projects * {
+  cursor: default;
+}
+
 /* ---- 窄窗回退（<1080px）：侧栏随视口收窄，把宽度让给右侧请求/响应编辑区；
    顶栏允许换行，避免 Docs/Mock/环境/工具组横向溢出（≥1080px 布局不变） ---- */
 @media (max-width: 1080px) {

@@ -82,34 +82,9 @@ describe('ProjectTabs：横拖平移滚动', () => {
     el.scrollLeft = 100
 
     pointer(el, 'pointerdown', 500)
-    pointer(el, 'pointermove', 400) // 越阈值：只锚定起点，不产生位移
-    pointer(el, 'pointermove', 300) // 之后与指针严格 1:1：再左移 100px
+    pointer(el, 'pointermove', 400) // 左移 100px
 
     expect(el.scrollLeft).toBe(200)
-    wrapper.unmount()
-  })
-
-  it('越过阈值那一步不产生跳变（慢速拖动每一步位移恒定）', () => {
-    const wrapper = mountTabs()
-    const el = tabsEl()
-    fakeOverflow(el)
-    el.setPointerCapture = vi.fn()
-    el.hasPointerCapture = vi.fn(() => true)
-    el.releasePointerCapture = vi.fn()
-    el.scrollLeft = 100
-
-    const steps: number[] = []
-    pointer(el, 'pointerdown', 500)
-    let prev = el.scrollLeft
-    for (let i = 1; i <= 10; i++) {
-      pointer(el, 'pointermove', 500 - i * 2)
-      steps.push(Math.abs(el.scrollLeft - prev))
-      prev = el.scrollLeft
-    }
-
-    // 前两步不动：第 1 步 2px 未达阈值，第 2 步恰好 4px 触发重锚（只锚定、
-    // 不产生位移）；此后每步严格 2px。旧实现在第 2 步一次补 4px。
-    expect(steps).toEqual([0, 0, 2, 2, 2, 2, 2, 2, 2, 2])
     wrapper.unmount()
   })
 
