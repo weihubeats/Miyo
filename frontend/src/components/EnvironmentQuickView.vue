@@ -259,7 +259,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .qv {
   position: fixed;
-  z-index: 900;
+  z-index: var(--z-overlay);
   width: 400px;
   max-width: calc(100vw - 16px);
   background: var(--bg-elevated);

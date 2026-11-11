@@ -95,7 +95,7 @@ function onAction(item: ToastItem): void {
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1000;
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   align-items: center;

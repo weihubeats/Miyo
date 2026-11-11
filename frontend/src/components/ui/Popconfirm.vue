@@ -10,6 +10,7 @@
  *   danger=false 时为普通确认（accent 徽章 + 主色确认键）。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { pushEscHandler } from '../../utils/escStack'
 import { useLocaleStore } from '../../stores/locale'
 import Icon from './Icon.vue'
 
@@ -110,23 +111,28 @@ function onDocMouseDown(event: MouseEvent): void {
   close()
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') close()
-}
+/** escStack 卸载函数（打开期间持有）。 */
+let offEsc: (() => void) | null = null
 
 watch(open, (isOpen) => {
   if (isOpen) {
     document.addEventListener('mousedown', onDocMouseDown, true)
-    document.addEventListener('keydown', onKeydown)
+    // ESC 层级仲裁：后开先关（Modal 里的确认气泡按 ESC 只关气泡）。
+    offEsc = pushEscHandler(() => {
+      close()
+      return true
+    })
   } else {
     document.removeEventListener('mousedown', onDocMouseDown, true)
-    document.removeEventListener('keydown', onKeydown)
+    offEsc?.()
+    offEsc = null
   }
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocMouseDown, true)
-  document.removeEventListener('keydown', onKeydown)
+  offEsc?.()
+  offEsc = null
   triggerEl.value?.removeEventListener('click', onTriggerClick, true)
 })
 </script>
@@ -175,7 +181,7 @@ onBeforeUnmount(() => {
 
 .pc-pop {
   position: fixed;
-  z-index: 200;
+  z-index: var(--z-popconfirm);
   width: 288px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);

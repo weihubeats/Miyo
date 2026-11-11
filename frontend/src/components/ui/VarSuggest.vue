@@ -74,7 +74,7 @@ watch(
 <style scoped>
 .vs-pop {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   gap: 2px;

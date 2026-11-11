@@ -15,6 +15,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useLocaleStore } from '../../stores/locale'
+import { pushEscHandler } from '../../utils/escStack'
 import Icon from './Icon.vue'
 
 export interface SelectOption {
@@ -126,6 +127,13 @@ function openPopup(): void {
   open.value = true
   highlight.value = selectedIndex.value
   emit('open')
+  // ESC 层级仲裁兜底：焦点在弹层内部时触发器的本地 handler 收不到，
+  // 由栈处理器关闭弹层（焦点在触发器时本地 handler 已 stopPropagation，
+  // 不会走到这里）。
+  offEsc = pushEscHandler(() => {
+    close()
+    return true
+  })
   // 浮层挂载后按真实高度复测上下翻转（首测发生在 v-if 挂载前，只能用估算）。
   void nextTick(() => {
     if (open.value) measure()
@@ -136,6 +144,8 @@ function close(): void {
   if (!open.value) return
   open.value = false
   emit('close')
+  offEsc?.()
+  offEsc = null
 }
 
 function pick(option: SelectOption): void {
@@ -173,7 +183,11 @@ function onKeydown(event: KeyboardEvent): void {
       openPopup()
     }
   } else if (event.key === 'Escape') {
+    // 仅弹层打开时消费 ESC，并阻止冒泡到 Modal/Drawer 的层级仲裁
+    //（否则按一次 ESC 会连外层弹窗一起关掉）；弹层未关时放行给外层。
+    if (!open.value) return
     event.preventDefault()
+    event.stopPropagation()
     close()
   } else if (event.key === 'Tab') {
     close()
@@ -217,10 +231,15 @@ watch(
   },
 )
 
+/** escStack 卸载函数（弹层打开期间持有）。 */
+let offEsc: (() => void) | null = null
+
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocMouseDown, true)
   window.removeEventListener('scroll', onReposition, true)
   window.removeEventListener('resize', onReposition)
+  offEsc?.()
+  offEsc = null
 })
 
 defineExpose({ close })
@@ -373,7 +392,7 @@ defineExpose({ close })
 
 .cs-pop {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-toast);
   /* 病态超宽内容的兜底：任何情况下不越出视口两侧（与 measure() 的右缘夹取双保险） */
   max-width: calc(100vw - 16px);
   background: var(--bg-elevated);

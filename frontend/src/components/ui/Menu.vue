@@ -10,6 +10,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useLocaleStore } from '../../stores/locale'
 import Icon from './Icon.vue'
 import type { IconName } from './Icon.vue'
+import { pushEscHandler } from '../../utils/escStack'
 
 export interface MenuItem {
   key: string
@@ -130,29 +131,34 @@ function onDocMouseDown(event: MouseEvent): void {
   close()
 }
 
-function onDocKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') close()
-}
+/** escStack 卸载函数（打开期间持有）。 */
+let offEsc: (() => void) | null = null
 
 watch(open, (isOpen) => {
   if (isOpen) {
     document.addEventListener('mousedown', onDocMouseDown, true)
-    document.addEventListener('keydown', onDocKeydown)
     document.addEventListener('scroll', close, true)
     window.addEventListener('resize', close)
+    // ESC 层级仲裁：后开先关（Modal 里的菜单按 ESC 只关菜单）。
+    offEsc = pushEscHandler(() => {
+      close()
+      return true
+    })
   } else {
     document.removeEventListener('mousedown', onDocMouseDown, true)
-    document.removeEventListener('keydown', onDocKeydown)
     document.removeEventListener('scroll', close, true)
     window.removeEventListener('resize', close)
+    offEsc?.()
+    offEsc = null
   }
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocMouseDown, true)
-  document.removeEventListener('keydown', onDocKeydown)
   document.removeEventListener('scroll', close, true)
   window.removeEventListener('resize', close)
+  offEsc?.()
+  offEsc = null
 })
 
 defineExpose({ openAt, close })
@@ -228,7 +234,7 @@ defineExpose({ openAt, close })
 <style scoped>
 .miyo-menu {
   position: fixed;
-  z-index: 300;
+  z-index: var(--z-popover);
   min-width: 176px;
   max-width: 240px;
   padding: 6px;

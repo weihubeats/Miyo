@@ -7,6 +7,7 @@
  */
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { useLocaleStore } from '../../stores/locale'
+import { pushEscHandler } from '../../utils/escStack'
 import IconButton from './IconButton.vue'
 
 const props = withDefaults(
@@ -46,11 +47,7 @@ function focusables(): HTMLElement[] {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    close()
-    return
-  }
+  // ESC 交给 escStack 层级仲裁（子弹层打开时后开先关）；这里只承担 Tab 焦点陷阱。
   if (event.key !== 'Tab') return
   const root = bodyEl.value
   if (!root) return
@@ -76,6 +73,8 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 let lastFocused: HTMLElement | null = null
+/** escStack 卸载函数（打开期间持有）。 */
+let offEsc: (() => void) | null = null
 
 watch(
   () => props.open,
@@ -84,6 +83,10 @@ watch(
       lastFocused = document.activeElement as HTMLElement | null
       document.body.style.overflow = 'hidden'
       document.addEventListener('keydown', onKeydown)
+      offEsc = pushEscHandler(() => {
+        close()
+        return true
+      })
       // 首个可聚焦元素可能随内容异步渲染，先兜底聚焦容器
       setTimeout(() => {
         ;(focusables()[0] ?? bodyEl.value)?.focus()
@@ -91,6 +94,8 @@ watch(
     } else {
       document.body.style.overflow = ''
       document.removeEventListener('keydown', onKeydown)
+      offEsc?.()
+      offEsc = null
       lastFocused?.focus?.()
       lastFocused = null
     }
@@ -100,6 +105,8 @@ watch(
 onBeforeUnmount(() => {
   document.body.style.overflow = ''
   document.removeEventListener('keydown', onKeydown)
+  offEsc?.()
+  offEsc = null
 })
 </script>
 
@@ -134,7 +141,7 @@ onBeforeUnmount(() => {
 .d-mask {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--z-modal);
   display: flex;
   justify-content: flex-end;
   background: var(--mask);

@@ -51,6 +51,7 @@ import {
 import { methodBadgeTone } from '../utils/methodTone'
 import { formatDurationShort } from '../utils/format'
 import { useWindowDrag } from '../composables/useWindowDrag'
+import { storeToRefs } from 'pinia'
 import { useDashboardStore, emptyProjectStats } from '../stores/dashboard'
 import logo from '../assets/miyo-logo.svg'
 import type { Project, ProjectStat, RecentActivity, Team } from '../types/miyoApi'
@@ -67,8 +68,10 @@ const t = locale.t
  * （`<script setup>` 里的 ref 随挂载重建，跨路由切换必须靠这层缓存）。
  */
 const dashboard = useDashboardStore()
-const projects = ref<Project[]>([...(dashboard.projects ?? [])])
-const teams = ref<Team[]>([...(dashboard.teams ?? [])])
+// 单一数据源：列表本体就在 dashboard store（跨路由快照缓存），组件经
+// storeToRefs 直接读写——此前「本地 ref + deep/sync watch 镜像回 store」
+// 的双向同步靠约定维持，漏写一处即漂移。null = 尚未加载过（store 语义）。
+const { projects, teams } = storeToRefs(dashboard)
 
 /** 首页全部计数（接口 / 场景 / 请求 / 成功失败）都出自这一个聚合结果。 */
 const stats = ref<AggregatedProjectStats>(dashboard.stats ?? emptyProjectStats())
@@ -83,7 +86,7 @@ const loadError = ref<string | null>(null)
 const search = ref('')
 
 // ---------- 摘要统计 ----------
-const totalProjects = computed(() => projects.value.length)
+const totalProjects = computed(() => projects.value?.length ?? 0)
 
 const totalApis = computed(() => totalEndpointCount(stats.value.counts))
 
@@ -173,7 +176,7 @@ function activityPath(a: RecentActivity): string {
  * 项目已被删除时给出提示，而不是静默无反应。
  */
 async function enterActivity(a: RecentActivity): Promise<void> {
-  const target = projects.value.find((p) => p.id === a.project_id)
+  const target = projects.value?.find((p) => p.id === a.project_id)
   if (!target) {
     toast.warning(t('projectlist.activityProjectGone'), { message: a.project_name })
     return
@@ -244,8 +247,8 @@ function toggleTeam(teamId: string): void {
 // ---------- 过滤 / 排序 ----------
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return [...projects.value]
-  return projects.value.filter((p) => p.name.toLowerCase().includes(q))
+  if (!q) return [...(projects.value ?? [])]
+  return (projects.value ?? []).filter((p) => p.name.toLowerCase().includes(q))
 })
 
 /** 组内排序：manual 保持数据库顺序（拖拽持久化），其余按所选维度。 */
@@ -268,7 +271,7 @@ const TEAM_ALL = '__all__'
 const teamFilter = ref<string>(TEAM_ALL)
 const teamFilterOptions = computed<SelectOption[]>(() => [
   { value: TEAM_ALL, label: t('projectlist.teamAll') },
-  ...teams.value.map((team) => ({ value: team.id, label: team.name })),
+  ...(teams.value ?? []).map((team) => ({ value: team.id, label: team.name })),
 ])
 
 /** 单团队视角：选中了具体团队（Header 计数文案随视角切换）。 */
@@ -287,7 +290,7 @@ const grouped = computed<TeamGroup[]>(() => {
       ? sorted.value
       : sorted.value.filter((p) => (p.team_id ?? DEFAULT_TEAM_ID) === teamFilter.value)
   const map = new Map<string, TeamGroup>()
-  for (const team of teams.value) {
+  for (const team of teams.value ?? []) {
     if (teamFilter.value === TEAM_ALL || team.id === teamFilter.value) {
       map.set(team.id, { team, projects: [] })
     }
@@ -361,7 +364,7 @@ const resultSummary = computed(() => {
 // ---------- 拖拽排序 ----------
 /** 手动顺序 + 网格视图 + 无搜索过滤时才允许拖拽（列表模式不拖）。 */
 const dragEnabled = computed(
-  () => viewMode.value === 'grid' && sortBy.value === 'manual' && !search.value.trim() && projects.value.length > 1,
+  () => viewMode.value === 'grid' && sortBy.value === 'manual' && !search.value.trim() && (projects.value?.length ?? 0) > 1,
 )
 
 const groupsEl = ref<HTMLElement | null>(null)
@@ -384,7 +387,7 @@ async function onDragEnd(): Promise<void> {
   const ordered: Project[] = []
   const grids = groupsEl.value?.querySelectorAll<HTMLElement>('.team-grid') ?? []
   // id → 项目 的一次建表：卡片数平方级的 find 换成 Map 查找（拖拽重排只有这一个热循环）
-  const byId = new Map(projects.value.map((p) => [p.id, p]))
+  const byId = new Map((projects.value ?? []).map((p) => [p.id, p]))
   for (const grid of grids) {
     for (const el of grid.querySelectorAll<HTMLElement>('[data-project-id]')) {
       const id = el.dataset.projectId
@@ -392,7 +395,7 @@ async function onDragEnd(): Promise<void> {
       if (found) ordered.push(found)
     }
   }
-  if (ordered.length !== projects.value.length) return
+  if (projects.value == null || ordered.length !== projects.value.length) return
   projects.value = ordered
   if (savingOrder.value) return
   savingOrder.value = true
@@ -497,21 +500,8 @@ const statsError = ref(false)
  * 若内存里仍是上一次的完整快照，直接复用并静默刷新——
  * 否则会先渲染骨架屏再切回卡片，视觉上「闪一下」。
  */
-const hasSnapshot = computed(() => projects.value.length > 0 || statsReady.value)
-
-/**
- * 自动同步快照（拖拽排序 / 删除 / 重命名 / 新建都会改 `projects`，
- * 逐个改动点手写提交容易漏；deep 监听一次开销很小）。
- */
-watch(
-  projects,
-  (v) => dashboard.setProjects([...v]),
-  { deep: true, flush: 'sync' },
-)
-watch(
-  teams,
-  (v) => dashboard.setTeams([...v]),
-  { deep: true, flush: 'sync' },
+const hasSnapshot = computed(
+  () => (projects.value?.length ?? 0) > 0 || statsReady.value,
 )
 
 async function load(): Promise<void> {
@@ -590,7 +580,7 @@ async function onTeamsChanged(): Promise<void> {
 }
 
 function onCreated(project: Project): void {
-  projects.value.push(project)
+  projects.value = [...(projects.value ?? []), project]
   patchStat(project.id, { endpoint_count: 0, scenario_count: 0, request_count: 0 })
   // 弹窗里可能行内新建了团队：刷新团队列表让新组立即出现
   api.listTeams().then((list) => (teams.value = list)).catch(() => {})
@@ -671,7 +661,7 @@ const droppedText = ref('')
 
 /** 仪表板导入成功（新项目已创建并激活）：加入本地列表。 */
 function onImported(project: Project): void {
-  projects.value.push(project)
+  projects.value = [...(projects.value ?? []), project]
   patchStat(project.id, { endpoint_count: 0, scenario_count: 0, request_count: 0 })
 }
 
@@ -771,8 +761,7 @@ function openRename(p: Project): void {
 }
 
 function onRenamed(saved: Project): void {
-  const idx = projects.value.findIndex((p) => p.id === saved.id)
-  if (idx !== -1) projects.value[idx] = saved
+  projects.value = (projects.value ?? []).map((p) => (p.id === saved.id ? saved : p))
 }
 
 async function duplicate(p: Project): Promise<void> {
@@ -786,7 +775,7 @@ async function duplicate(p: Project): Promise<void> {
       created_at: now,
       updated_at: now,
     })
-    projects.value.push(copy)
+    projects.value = [...(projects.value ?? []), copy]
     patchStat(copy.id, { endpoint_count: 0, scenario_count: 0, request_count: 0 })
     toast.success(t('projectlist.duplicated'), { message: copy.name })
   } catch (e) {
@@ -802,7 +791,7 @@ function openDelete(p: Project): void {
 }
 
 async function onDeleted(id: string): Promise<void> {
-  projects.value = projects.value.filter((p) => p.id !== id)
+  projects.value = (projects.value ?? []).filter((p) => p.id !== id)
   dropStat(id)
   // 活动里指向已删项目的行同步移除，避免留下点进去「项目已不存在」的死行
   activities.value = activities.value.filter((a) => a.project_id !== id)
@@ -2271,7 +2260,7 @@ useWindowDrag(topBarEl)
 
 /* drag：被拖主体（fallbackClass 克隆挂 body，悬浮感最强） */
 :global(.sortable-drag) {
-  z-index: 999;
+  z-index: var(--z-dropzone);
   border-radius: var(--radius-lg) !important;
   background: rgba(38, 38, 38, 0.95) !important;
   -webkit-backdrop-filter: blur(8px);

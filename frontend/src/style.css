@@ -50,6 +50,15 @@
 
 :root {
   color-scheme: dark;
+  /* ---- 浮层层级阶梯（全仓 z-index 单源；纯等值映射不改变先后） ---- */
+  --z-modal: 100;        /* Modal / Drawer 基线 */
+  --z-drawer: 120;       /* 自绘大抽屉（TestCaseDrawer） */
+  --z-popconfirm: 200;   /* 确认气泡（压过 Modal 内容） */
+  --z-popover: 300;      /* 右键菜单 / Tooltip */
+  --z-tip: 400;          /* 溢出 Tooltip 气泡（指令注入） */
+  --z-overlay: 900;      /* 全局快速预览（EnvironmentQuickView） */
+  --z-dropzone: 999;     /* 首页拖拽导入覆盖层 */
+  --z-toast: 1000;       /* Toast / 下拉弹层 / 变量建议（最顶） */
   /* ---- 色板（app 深埋，panel 全局背景，card 核心输入/输出卡片浮起） ---- */
   --bg-app: #0e0e10;
   --bg-panel: #141416;
@@ -1031,7 +1040,7 @@ body.dragging-dnd {
 /* ---- 溢出 Tooltip 气泡（指令动态注入 body，需全局定义） ---- */
 .miyo-overflow-tip {
   position: fixed;
-  z-index: 400;
+  z-index: var(--z-tip);
   max-width: 320px;
   padding: 4px 10px;
   border-radius: 6px;

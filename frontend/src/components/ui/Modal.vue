@@ -8,6 +8,7 @@
  */
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useLocaleStore } from '../../stores/locale'
+import { pushEscHandler } from '../../utils/escStack'
 import IconButton from './IconButton.vue'
 
 const props = withDefaults(
@@ -65,11 +66,8 @@ function focusables(): HTMLElement[] {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    requestClose()
-    return
-  }
+  // ESC 交给 escStack 层级仲裁（子弹层打开时后开先关，不连关本 Modal）；
+  // 这里只承担 Tab 焦点陷阱。
   if (event.key !== 'Tab') return
   const root = dialogEl.value
   if (!root) return
@@ -97,6 +95,8 @@ function onKeydown(event: KeyboardEvent): void {
 
 /** 关闭时把焦点还给触发元素，避免屏幕阅读器/键盘用户丢失位置。 */
 let lastFocused: HTMLElement | null = null
+/** escStack 卸载函数（打开期间持有）。 */
+let offEsc: (() => void) | null = null
 
 watch(
   () => props.open,
@@ -105,6 +105,10 @@ watch(
       lastFocused = document.activeElement as HTMLElement | null
       document.body.style.overflow = 'hidden'
       document.addEventListener('keydown', onKeydown)
+      offEsc = pushEscHandler(() => {
+        requestClose()
+        return true
+      })
       if (props.autofocus) {
         nextTick(() => {
           focusables()[0]?.focus()
@@ -113,6 +117,8 @@ watch(
     } else {
       document.body.style.overflow = ''
       document.removeEventListener('keydown', onKeydown)
+      offEsc?.()
+      offEsc = null
       lastFocused?.focus?.()
       lastFocused = null
     }
@@ -123,6 +129,8 @@ watch(
 // 会泄漏 document keydown 监听 + body 锁定（Drawer.vue 已有正确示范）。
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
+  offEsc?.()
+  offEsc = null
   if (props.open) document.body.style.overflow = ''
 })
 </script>
@@ -162,7 +170,7 @@ onBeforeUnmount(() => {
 .m-mask {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;

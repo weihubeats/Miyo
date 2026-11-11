@@ -11,7 +11,8 @@
  *   一键「同步自接口」把接口当前配置重灌进用例（显式动作，不静默）；
  * - 底部操作栏 sticky：导出代码 + 立即运行（可取消）｜取消 / 保存修改。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { pushEscHandler } from '../utils/escStack'
 import { useToast } from '../composables/useToast'
 import type {
   AuthSpec,
@@ -37,6 +38,7 @@ import { useMiyoApi } from '../composables/useMiyoApi'
 import AssertionList from './assertion/AssertionList.vue'
 import CodeExportMenu from './CodeExportMenu.vue'
 import CustomSelect from './ui/CustomSelect.vue'
+import Skeleton from './ui/Skeleton.vue'
 import EnvironmentSelector from './EnvironmentSelector.vue'
 import ExtractList from './assertion/ExtractList.vue'
 import Icon from './ui/Icon.vue'
@@ -243,18 +245,34 @@ function discardAndClose(): void {
   emit('update:open', false)
 }
 
-function onDrawerKeydown(e: KeyboardEvent): void {
-  if (e.key !== 'Escape') return
-  const target = e.target as HTMLElement | null
-  // 查找条 / 下拉弹层自己处理 ESC，这里不抢（window/document 上无 closest，直接放行）。
-  if (target && typeof target.closest === 'function' && target.closest('.findbar, .cs-pop')) return
-  if (!props.open) return
-  e.preventDefault()
+// ESC 层级仲裁：抽屉打开时压栈（后开先关——抽屉里的下拉/菜单按 ESC 只关子弹层）。
+// 查找条 / 下拉弹层自己处理 ESC：此时消费事件但不关抽屉（防止穿透关掉更外层弹窗）。
+function escHandler(): boolean {
+  const target = document.activeElement as HTMLElement | null
+  if (target && typeof target.closest === 'function' && target.closest('.findbar, .cs-pop')) {
+    return true
+  }
   attemptClose()
+  return true
 }
 
-onMounted(() => window.addEventListener('keydown', onDrawerKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onDrawerKeydown))
+let offEsc: (() => void) | null = null
+watch(
+  () => props.open,
+  (open) => {
+    offEsc?.()
+    offEsc = null
+    // 打开期间锁背景滚动（与 ui/Modal / ui/Drawer 行为一致）。
+    document.body.style.overflow = open ? 'hidden' : ''
+    if (open) offEsc = pushEscHandler(escHandler)
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => {
+  offEsc?.()
+  offEsc = null
+  document.body.style.overflow = ''
+})
 
 // ---------- 宽度：左缘拖拽（min 560 / max 75vw）+ 全屏 ----------
 const DRAWER_MIN = 560
@@ -807,7 +825,9 @@ const compareResults = computed(() => {
                   </template>
                 </button>
                 <div v-if="historyOpen" class="drw-history-list">
-                  <div v-if="historyLoading" class="drw-history-loading">{{ t('common.loading') }}</div>
+                  <div v-if="historyLoading" class="drw-history-loading">
+                    <Skeleton :lines="3" width="92%" height="14px" />
+                  </div>
                   <p v-else-if="!history.length" class="drw-history-empty">{{ t('caselog.empty') }}</p>
                   <template v-else>
                     <TestCaseRunCompare
@@ -898,7 +918,7 @@ const compareResults = computed(() => {
 .drw-mask {
   position: fixed;
   inset: 0;
-  z-index: 120;
+  z-index: var(--z-drawer);
   background: var(--mask);
   backdrop-filter: blur(2px);
 }

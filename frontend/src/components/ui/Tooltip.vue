@@ -158,7 +158,7 @@ onBeforeUnmount(() => {
 
 .tt-tip {
   position: fixed;
-  z-index: 300;
+  z-index: var(--z-popover);
   max-width: 320px;
   padding: 4px 10px;
   border-radius: 6px;
