@@ -27,13 +27,26 @@ jobs:
           git config --global http.lowSpeedLimit 1000
           git config --global http.lowSpeedTime 30
           git config --global http.postBuffer 524288000
+      # 推 HEAD:refs/heads/main 而不是分支名 main：actions/checkout 取指定 SHA
+      # 后是 detached HEAD，本地不保证存在 refs/heads/main，`git push <url> main`
+      # 会就地报 `src refspec main does not match any`，三次重试全在坏前置上跑、
+      # 根本没发网络请求（2026-11 实测 7 次失败全因此）。
+      # 注意必须写全 refs/heads/main 而不是简写 `HEAD:main`：目标侧不存在的
+      # 分支名简写会让 git 拒绝（实测 "Did you mean 'HEAD:refs/heads/main'"）。
+      # 推 tag 事件时 HEAD 指向 tag 的提交，仍然正确。
       - name: Push main to Gitee
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
+          # token 走环境变量注入的 askpass，不拼进 URL：避免明文写进
+          # .git/config / reflog，也避免失败时被错误输出带进日志。
+          export GIT_ASKPASS="$PWD/.git-askpass.sh"
+          printf '#!/bin/sh\ncase "$1" in *sername*) echo oauth2 ;; *) echo "$GITEE_TOKEN" ;; esac\n' > "$GIT_ASKPASS"
+          chmod +x "$GIT_ASKPASS"
+          export GIT_TERMINAL_PROMPT=0
           for i in 1 2 3; do
             echo "::group::push main (attempt $i)"
-            if git push --force "https://oauth2:${GITEE_TOKEN}@gitee.com/weihubeats/Miyo.git" main; then
+            if git push --force "https://gitee.com/weihubeats/Miyo.git" HEAD:refs/heads/main; then
               echo "::endgroup::"
               exit 0
             fi
@@ -43,13 +56,19 @@ jobs:
           done
           echo "::error::push main failed after 3 attempts"
           exit 1
+      # --tags 默认不带 --force：tag 被重打（发版流程常见）时永远被拒，
+      # 而报错又和网络失败长得一样。显式加 --force 与 main 的镜像语义对齐。
       - name: Push tags to Gitee
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
+          export GIT_ASKPASS="$PWD/.git-askpass.sh"
+          printf '#!/bin/sh\ncase "$1" in *sername*) echo oauth2 ;; *) echo "$GITEE_TOKEN" ;; esac\n' > "$GIT_ASKPASS"
+          chmod +x "$GIT_ASKPASS"
+          export GIT_TERMINAL_PROMPT=0
           for i in 1 2 3; do
             echo "::group::push tags (attempt $i)"
-            if git push --force "https://oauth2:${GITEE_TOKEN}@gitee.com/weihubeats/Miyo.git" --tags; then
+            if git push --force "https://gitee.com/weihubeats/Miyo.git" --tags; then
               echo "::endgroup::"
               exit 0
             fi
