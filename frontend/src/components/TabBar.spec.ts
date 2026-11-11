@@ -527,4 +527,64 @@ describe('TabBar：横拖平移滚动', () => {
     expect(el.setPointerCapture).not.toHaveBeenCalled()
     wrapper.unmount()
   })
+
+  /**
+   * WebKit 会在按住可拖拽元素时启动原生 drag 并派 pointercancel 掐断平移，
+   * 表现为「拖着没反应」。双保险：CSS 禁掉页签的原生拖拽 + 收到 cancel 时复位。
+   */
+  it('pointercancel 后复位，下一次拖动仍能平移（不会卡死）', () => {
+    const wrapper = mountBar()
+    const el = document.querySelector('.tab-scroll') as HTMLElement
+    fakeOverflow(el)
+    el.setPointerCapture = vi.fn()
+    el.hasPointerCapture = vi.fn(() => true)
+    el.releasePointerCapture = vi.fn()
+    el.scrollLeft = 100
+
+    pointer(el, 'pointerdown', 500)
+    pointer(el, 'pointermove', 400)
+    expect(el.scrollLeft).toBe(200)
+
+    // 系统抢断（原生 drag / 切窗口）：平移必须复位
+    pointer(el, 'pointercancel', 400)
+
+    // 第二次拖动仍然生效（panning 没卡在 true）
+    pointer(el, 'pointerdown', 500)
+    pointer(el, 'pointermove', 400)
+    expect(el.scrollLeft).toBe(300)
+    wrapper.unmount()
+  })
+
+  it('pointer 在 window 上抬起也能复位（元素上收不到 pointerup 时不卡死）', async () => {
+    const wrapper = mountBar()
+    const el = document.querySelector('.tab-scroll') as HTMLElement
+    fakeOverflow(el)
+    // 模拟「捕获失败」的真实场景：浏览器没把指针交给元素，元素自己收不到
+    // pointerup，只有 window 上的兜底监听能收到。
+    el.setPointerCapture = vi.fn()
+    el.hasPointerCapture = vi.fn(() => false)
+    el.releasePointerCapture = vi.fn()
+    el.scrollLeft = 100
+
+    pointer(el, 'pointerdown', 500)
+    pointer(el, 'pointermove', 400)
+    expect(el.scrollLeft).toBe(200)
+    await nextTick()
+    // 拖拽中：panning 类在（光标抓手 / 关闭过渡动画）
+    expect(el.classList.contains('panning')).toBe(true)
+
+    // 只派 window 的 pointerup：元素自身没有收到任何结束信号
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+    await nextTick()
+
+    // 兜底生效：panning 复位，不会永久卡在拖拽态
+    expect(el.classList.contains('panning')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('页签样式禁掉 WebKit 原生拖拽（否则拖拽会被 pointercancel 掐断）', () => {
+    const src = readFileSync(join(process.cwd(), 'src/components/TabBar.vue'), 'utf8')
+    const style = src.slice(src.indexOf('<style'))
+    expect(style).toMatch(/\.tab\s*\{[\s\S]*?-webkit-user-drag:\s*none/)
+  })
 })

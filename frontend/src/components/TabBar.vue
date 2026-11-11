@@ -121,6 +121,11 @@ function onListPointerDown(event: PointerEvent): void {
   panMoved = false
   panning.value = true
   el.setPointerCapture(event.pointerId)
+  // 兜底：指针移出页签条后 blur 窗口、系统抢焦点等情况会让 element 上的
+  // pointerup 收不到，panning 卡在 true（点击全部被吞、再也拖不动）。
+  // 挂到 window 一次，任一结束信号都复位。
+  window.addEventListener('pointerup', stopDragPan)
+  window.addEventListener('pointercancel', stopDragPan)
 }
 
 function onListPointerMove(event: PointerEvent): void {
@@ -140,6 +145,9 @@ function stopDragPan(): void {
   }
   panPointerId = null
   panning.value = false
+  // 松手后清掉全局兜底监听，正常路径下由 pointerup 触发一次即可
+  window.removeEventListener('pointerup', stopDragPan)
+  window.removeEventListener('pointercancel', stopDragPan)
 }
 
 function onListPointerUp(event: PointerEvent): void {
@@ -538,6 +546,10 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
   color: var(--text-2);
   cursor: pointer;
   user-select: none;
+  /* WebKit（Tauri 内核）在按住可拖拽元素并移动时会启动原生 drag，
+   * 直接派 pointercancel 掐断横拖——表现为「拖着没反应」「拖一下弹回去」。
+   * 页签条只需要横拖平移，绝不能让页签本身可拖拽（排序走 Alt+拖，由 Sortable 接管）。 */
+  -webkit-user-drag: none;
   white-space: nowrap;
   transition:
     color var(--dur) var(--ease),
