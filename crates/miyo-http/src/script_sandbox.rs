@@ -116,8 +116,11 @@ impl ScriptSandbox {
     pub fn new() -> Result<Self, AppError> {
         let (tx, rx) = channel::<Job>();
         let (init_tx, init_rx) = channel::<Result<(), AppError>>();
+        // native 栈 8MB（默认 2MB）：QuickJS 有 JS 层栈检查，但深递归可能在
+        // 检查生效前冲爆 native 栈直接 abort 整个进程；加大线程栈给检查留余量。
         let join = std::thread::Builder::new()
             .name("miyo-script-sandbox".to_string())
+            .stack_size(8 * 1024 * 1024)
             .spawn(move || sandbox_worker(rx, init_tx))
             .map_err(AppError::Io)?;
         match init_rx.recv() {
@@ -202,6 +205,9 @@ impl SandboxRunner {
     fn init() -> Result<Self, AppError> {
         let runtime = Runtime::new().map_err(init_error)?;
         runtime.set_memory_limit(SCRIPT_MEMORY_LIMIT_BYTES);
+        // JS 层栈上限 1MB：深递归（如 `function f(){f()} f()`）触发 QuickJS
+        // 栈溢出异常而非冲爆 native 栈（进程 abort，2s 中断器救不了 abort）。
+        runtime.set_max_stack_size(1024 * 1024);
         let context = Context::full(&runtime).map_err(init_error)?;
         let pristine_globals = context.with(|ctx| collect_global_keys(&ctx).map_err(init_error))?;
         Ok(SandboxRunner {
@@ -933,6 +939,25 @@ mod tests {
             .unwrap();
         assert_eq!(result.tests.len(), 1);
         assert!(result.tests[0].passed, "全局状态未隔离：{:?}", result.tests);
+    }
+
+    #[tokio::test]
+    async fn deep_recursion_errors_without_aborting_process() {
+        // 深递归：QuickJS JS 层栈上限（1MB）应触发栈溢出异常返回错误，
+        // 而不是冲爆 native 栈直接 abort 进程（此前未设 max_stack_size）。
+        let sandbox = ScriptSandbox::new().unwrap();
+        let result = sandbox
+            .run(base_input("function f() { return f(); } f();"))
+            .await;
+        assert!(result.is_err(), "深递归应返回脚本错误而非成功");
+        // 同一引擎随后仍可正常执行（不是崩溃后重启的假象）。
+        let ok = sandbox
+            .run(base_input(
+                "pm.test('alive', () => pm.expect(1).to.eql(1));",
+            ))
+            .await
+            .unwrap();
+        assert!(ok.tests.iter().all(|t| t.passed));
     }
 
     #[tokio::test]
