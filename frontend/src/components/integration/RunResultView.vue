@@ -85,6 +85,14 @@ const finalText = computed(() => {
 // ---------- 选中步骤 + 失败自动定位 ----------
 const selectedIndex = ref(0)
 
+/**
+ * 响应体视图切换（pretty / raw / tree）。
+ * 必须声明在下面的失败定位 watch 之前：该 watch 是 `immediate: true`，
+ * setup 同步段就会写 `respView.value`，晚声明即 TDZ
+ * （「Cannot access 'respView' before initialization」→ 运行结束切结果视图时崩溃）。
+ */
+const respView = ref<'pretty' | 'raw' | 'tree'>('pretty')
+
 const selected = computed<ScenarioStepResult | null>(() => {
   const r = props.result
   if (!r || !r.results.length) return null
@@ -124,9 +132,10 @@ const failureInfo = computed(() => {
   } else if (r.request_error) {
     labelKey = 'integration.failType.request'
     raw = r.request_error
-  } else if (r.outcomes.some((o) => !o.passed)) {
+  } else if ((r.outcomes ?? []).some((o) => !o.passed)) {
     labelKey = 'integration.failType.assertion'
-    raw = `${r.outcomes.filter((o) => !o.passed).length} / ${r.outcomes.length}`
+    const failed = (r.outcomes ?? []).filter((o) => !o.passed).length
+    raw = `${failed} / ${(r.outcomes ?? []).length}`
   }
   if (!labelKey) return null
   return { labelKey, raw }
@@ -162,8 +171,6 @@ const responseForPanel = computed(() => {
     request: null,
   }
 })
-
-const respView = ref<'pretty' | 'raw' | 'tree'>('pretty')
 
 // ---------- Variables：本步提取 + 全链路池（带来源/引用） ----------
 function maskVar(name: string, value: string): string {
@@ -218,7 +225,7 @@ const logs = computed<LogLine[]>(() => {
   for (const [k, v] of Object.entries(r.extracted ?? {})) {
     out.push({ tone: 'info', text: `${t('integration.logExtracted')} {{${k}}} = ${maskVar(k, v)}` })
   }
-  for (const o of r.outcomes) {
+  for (const o of r.outcomes ?? []) {
     out.push({
       tone: o.passed ? 'ok' : 'fail',
       text: `${o.passed ? '✓' : '✗'} ${o.description}${o.expected != null ? ` · ${t('scenario.outcomeExpected', { v: o.expected })}` : ''}${o.actual != null ? ` · ${t('scenario.outcomeActual', { v: o.actual })}` : ''}${!o.passed && o.reason ? ` — ${o.reason}` : ''}`,
@@ -316,7 +323,7 @@ const varTag = (n: string) => `{{${n}}}`
             <span class="rv-step-meta">
               <span v-if="r.status != null" class="num">HTTP {{ r.status }}</span>
               <span v-if="r.duration_ms != null" class="num">{{ formatDurationShort(r.duration_ms) }}</span>
-              <span v-if="r.outcomes.length" class="num">{{ t('scenario.assertPassed', { n: r.outcomes.filter((o) => o.passed).length, m: r.outcomes.length }) }}</span>
+              <span v-if="r.outcomes?.length" class="num">{{ t('scenario.assertPassed', { n: r.outcomes.filter((o) => o.passed).length, m: r.outcomes.length }) }}</span>
               <span v-if="r.extracted && Object.keys(r.extracted).length" class="num">{{ t('scenario.stepExtractBadge', { n: Object.keys(r.extracted).length }) }}</span>
               <span v-if="(r.loop_runs ?? 1) > 1" class="num">×{{ r.loop_runs }}</span>
             </span>
@@ -369,7 +376,7 @@ const varTag = (n: string) => `{{${n}}}`
 
           <!-- Assertions：逐条明细 -->
           <div v-show="detailTab === 'assertions'" class="rv-pane">
-            <table v-if="selected?.outcomes.length" class="rv-assert-table">
+            <table v-if="selected?.outcomes?.length" class="rv-assert-table">
               <thead>
                 <tr>
                   <th>{{ t('integration.assertNameCol') }}</th>

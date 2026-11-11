@@ -2,7 +2,14 @@
  * methodTone 单测：徽章/文本语义类映射与未知方法兜底。
  */
 import { describe, expect, it } from 'vitest'
-import { METHOD_TEXT_TONE, METHOD_TONE, methodTextTone, methodTone } from './methodTone'
+import {
+  METHOD_BADGE_TONE,
+  METHOD_TEXT_TONE,
+  METHOD_TONE,
+  methodBadgeTone,
+  methodTextTone,
+  methodTone,
+} from './methodTone'
 
 describe('methodTone', () => {
   it('常用方法映射到对应语义工具类', () => {
@@ -16,6 +23,12 @@ describe('methodTone', () => {
   it('未知方法兜底中性灰', () => {
     expect(methodTone('BREW')).toBe(METHOD_TONE.options)
     expect(methodTextTone('BREW')).toBe(METHOD_TEXT_TONE.options)
+  })
+
+  it('缺值兜底中性灰（旧运行历史无 method 字段，不得崩渲染）', () => {
+    expect(methodBadgeTone(undefined)).toBe(METHOD_BADGE_TONE.options)
+    expect(methodBadgeTone(null)).toBe(METHOD_BADGE_TONE.options)
+    expect(methodTone('')).toBe(METHOD_TONE.options)
   })
 
   it('纯文本式只含文字色', () => {

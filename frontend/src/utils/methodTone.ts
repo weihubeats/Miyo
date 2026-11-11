@@ -47,22 +47,23 @@ export const METHOD_TEXT_TONE: Record<string, string> = {
   options: 'text-method-neutral',
 }
 
-function toneOf(map: Record<string, string>, method: string): string {
-  return map[method.toLowerCase()] ?? map.options
+/** method 可空：历史运行快照 / 旧后端可能缺字段，缺值兜底中性灰而非崩渲染。 */
+function toneOf(map: Record<string, string>, method: string | null | undefined): string {
+  return map[(method ?? '').toLowerCase()] ?? map.options
 }
 
 /** 徽章式语义类（未知方法兜底中性灰）。 */
-export function methodTone(method: string): string {
+export function methodTone(method: string | null | undefined): string {
   return toneOf(METHOD_TONE, method)
 }
 
 /** 徽章式语义类（未知方法兜底中性灰）。 */
-export function methodBadgeTone(method: string): string {
+export function methodBadgeTone(method: string | null | undefined): string {
   return toneOf(METHOD_BADGE_TONE, method)
 }
 
 /** 纯文本式语义类（未知方法兜底中性灰）。 */
-export function methodTextTone(method: string): string {
+export function methodTextTone(method: string | null | undefined): string {
   return toneOf(METHOD_TEXT_TONE, method)
 }
 
