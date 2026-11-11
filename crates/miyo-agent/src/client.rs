@@ -244,6 +244,15 @@ impl ControlClient {
         self.get_json(&format!("/agent/runs/{run_id}")).await
     }
 
+    /// 取消在途异步运行（返回 {runId, status: cancelling | already-finished}）。
+    pub async fn cancel_run(&self, run_id: Uuid) -> Result<serde_json::Value, AppError> {
+        self.post_json(
+            &format!("/agent/runs/{run_id}/cancel"),
+            serde_json::json!({}),
+        )
+        .await
+    }
+
     // ---------- 测试用例（AI/MCP：创建 / 查询 / 执行 / 历史） ----------
 
     pub async fn list_test_cases(&self, endpoint_id: Uuid) -> Result<serde_json::Value, AppError> {
@@ -544,6 +553,12 @@ async fn decode<T: serde::de::DeserializeOwned>(res: reqwest::Response) -> Resul
             return Err(match code {
                 "VALIDATION" => AppError::Validation(message.to_string()),
                 "NOT_FOUND" => AppError::NotFound(message.to_string()),
+                // 工具停用 / 鉴权失败：保持语义，MCP 层统一映射为
+                // PERMISSION_DENIED（此前退化为 Connection → INTERNAL，
+                // 同一停用状态报两种错误码）。
+                "TOOL_DISABLED" | "UNAUTHORIZED" => {
+                    AppError::Forbidden(format!("工具不可用：{message}"))
+                }
                 _ => AppError::Connection(format!("[{code}] {message}")),
             });
         }

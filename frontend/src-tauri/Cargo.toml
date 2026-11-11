@@ -14,6 +14,12 @@ homepage = "https://weihubeats.github.io/Miyo/"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# devtools 仅 debug 构建（release 门禁见下方 target 表）：生产窗口不再可唤起
+# DevTools 调用全部 IPC（缩小误操作 / 数据导出面）；tauri.conf.json 的
+# devtools 同步为 false。
+tauri = { version = "2", features = [] }
+
+[target.'cfg(debug_assertions)'.dependencies]
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-updater = "2"

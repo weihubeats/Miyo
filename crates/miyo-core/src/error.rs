@@ -40,11 +40,20 @@ pub enum AppError {
     #[error("not found: {0}")]
     NotFound(String),
 
+    /// 被拒绝（工具停用 / 鉴权失败 / 权限不足）：区别于网络连接失败。
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+
     #[error("openapi error: {0}")]
     OpenApi(String),
 
     #[error("mock error: {0}")]
     Mock(String),
+
+    /// 服务端口绑定失败（Agent 控制面 / Mock 服务起不来）：
+    /// 不再借用 Mock 变体（用户看到 MOCK 错误码却非 Mock 问题）。
+    #[error("port bind error: {0}")]
+    PortBind(String),
 
     #[error("test error: {0}")]
     Test(String),
@@ -128,6 +137,8 @@ impl AppError {
             AppError::Connection(_) => "连接失败：目标拒绝连接或网络不可达".to_string(),
             AppError::Validation(msg) => msg.clone(),
             AppError::NotFound(name) => format!("未找到：{name}"),
+            AppError::Forbidden(msg) => msg.clone(),
+            AppError::PortBind(msg) => msg.clone(),
             AppError::OpenApi(msg) => msg.clone(),
             AppError::Mock(msg) => msg.clone(),
             AppError::Test(msg) => msg.clone(),

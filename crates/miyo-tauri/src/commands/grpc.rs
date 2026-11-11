@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use miyo_core::model::{KeyValue, ProtoFile, RequestHistory};
+use miyo_core::text::byte_truncate;
 use miyo_core::VariableMap;
 use miyo_grpc::{
     acquire_pool, spawn_server_stream, DescriptorPool, GrpcEvent, GrpcInvokeArgs as EngineArgs,
@@ -514,16 +515,6 @@ fn build_grpc_history(
 }
 
 /// 按字节上限截断（保证字符边界），口径同 `commands::request::byte_truncate`。
-fn byte_truncate(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
-}
 
 #[cfg(test)]
 mod tests {

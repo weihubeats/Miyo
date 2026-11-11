@@ -67,6 +67,23 @@ pub fn is_sensitive_key(key: &str) -> bool {
     TOKENS.iter().any(|t| k.contains(t))
 }
 
+/// 变量池脱敏：键名命中敏感词根的值替换为占位符（历史落库 / 内存结果 /
+/// MCP 返回共用；空值不掩码——占位符只该出现在「确有值」的位置）。
+/// 原 miyo-tauri 与 miyo-agent 各一份同逻辑实现，收敛于此。
+pub fn redact_vars(
+    vars: &std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, String> {
+    vars.iter()
+        .map(|(k, v)| {
+            if is_sensitive_key(k) && !v.is_empty() {
+                (k.clone(), PLACEHOLDER.to_string())
+            } else {
+                (k.clone(), v.clone())
+            }
+        })
+        .collect()
+}
+
 /// 脱敏结果。
 #[derive(Debug, Clone)]
 pub struct RedactionReport {

@@ -25,5 +25,9 @@ url = { workspace = true }
 chrono = { workspace = true }
 # 控制面客户端（miyo-mcp 复用）与集成测试共用
 reqwest = { workspace = true }
+# 场景运行的取消令牌 / 总超时 watchdog（CancellationToken::cancel_after）
+tokio-util = { workspace = true }
+# 异步运行任务 panic 兜底（catch_unwind：任务崩溃时状态置 failed 而非卡 running）
+futures = { workspace = true }
 
 [dev-dependencies]

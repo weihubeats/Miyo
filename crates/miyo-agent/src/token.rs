@@ -26,6 +26,10 @@ pub fn load_or_create_token(data_dir: &Path) -> std::io::Result<String> {
     }
 
     let token = uuid::Uuid::new_v4().to_string();
+    // 原子写：先写临时文件再 rename。直写 truncate(true) 在 write_all 中途
+    // 崩溃会留下半截非空 token 文件——下次启动把它当有效 token 复用，与
+    // 控制面/端口文件失配且用户无从排查（rename 在 unix 上原子替换）。
+    let tmp = data_dir.join(format!("{TOKEN_FILE}.tmp"));
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -34,8 +38,10 @@ pub fn load_or_create_token(data_dir: &Path) -> std::io::Result<String> {
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(&path)?;
+            .open(&tmp)?;
         file.write_all(token.as_bytes())?;
+        file.sync_all().ok();
+        std::fs::rename(&tmp, &path)?;
     }
     #[cfg(not(unix))]
     {
@@ -43,8 +49,12 @@ pub fn load_or_create_token(data_dir: &Path) -> std::io::Result<String> {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(&path)?;
+            .open(&tmp)?;
         file.write_all(token.as_bytes())?;
+        std::fs::rename(&tmp, &path).or_else(|_| {
+            // rename 跨设备失败的极端情况：回退直写（尽力而为）。
+            std::fs::write(&path, &token)
+        })?;
     }
     Ok(token)
 }

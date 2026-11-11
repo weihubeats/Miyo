@@ -117,6 +117,13 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Miyo");
+        .build(tauri::generate_context!())
+        .expect("error while building Miyo")
+        .run(|app, event| {
+            // 应用退出：停 Agent 控制面——先取消全部在途异步运行（给后台任务
+            // 落库窗口），再清端口文件（避免残留失效的 agent-port）。
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                tauri::async_runtime::block_on(miyo_tauri::commands::agent::shutdown_on_exit(app));
+            }
+        });
 }

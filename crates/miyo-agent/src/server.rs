@@ -149,6 +149,14 @@ pub const MCP_TOOLS: &[McpToolDef] = &[
         name: "get_test_case_run",
         kind: "read",
     },
+    McpToolDef {
+        name: "analyze_run_failure",
+        kind: "read",
+    },
+    McpToolDef {
+        name: "cancel_run",
+        kind: "write",
+    },
 ];
 
 /// settings 表中「已停用 MCP 工具」的键；值为 JSON 字符串数组。
@@ -193,7 +201,19 @@ pub struct AgentState {
 pub struct RunHandle {
     pub status: Arc<std::sync::Mutex<&'static str>>,
     pub result: Arc<std::sync::Mutex<Option<serde_json::Value>>>,
+    /// 取消令牌：cancel_run 工具 / HTTP 端点触发，引擎在步间与在途请求处
+    /// 响应（返回已完成步骤，cancelled=true，正常落库）。
+    pub cancel: Arc<tokio_util::sync::CancellationToken>,
+    /// 终态时刻（None = 运行中）；注册表 TTL 清理据此淘汰过期条目。
+    pub finished_at: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
 }
+
+/// wait=false 异步运行的最大并发数：超限时拒绝新运行（无上限的 tokio::spawn
+/// 会让持有 token 的调用方把内存与出口连接打满）。
+pub const MAX_CONCURRENT_RUNS: usize = 8;
+/// 终态句柄在内存注册表的保留时长：期间轮询读内存（含步骤摘要形状），
+/// 过期后经 get_run_result 走 DB 兜底（结果已落库，两形状关键字段同义）。
+const RUN_HANDLE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 impl AgentState {
     pub fn new(db: SqlitePool, token: impl Into<String>) -> Self {
@@ -222,6 +242,37 @@ impl AgentState {
     /// 工具是否被停用（[`Self::disabled_tools`] 的单工具版）。
     pub async fn tool_disabled(&self, name: &str) -> bool {
         self.disabled_tools().await.iter().any(|n| n == name)
+    }
+
+    /// 内存注册表中 running 状态的条目数（并发上限判定）。
+    fn running_count(runs: &std::collections::HashMap<String, RunHandle>) -> usize {
+        runs.values()
+            .filter(|h| *h.status.lock().unwrap_or_else(|p| p.into_inner()) == "running")
+            .count()
+    }
+
+    /// 淘汰终态超过 [`RUN_HANDLE_TTL`] 的句柄（插入新运行前顺带清扫，
+    /// 兜底延迟移除任务失效的极端情况）。
+    fn sweep_runs(&self) {
+        let mut runs = self.runs.lock().unwrap_or_else(|p| p.into_inner());
+        runs.retain(|_, h| {
+            if *h.status.lock().unwrap_or_else(|p| p.into_inner()) == "running" {
+                return true;
+            }
+            let finished = h.finished_at.lock().unwrap_or_else(|p| p.into_inner());
+            matches!(&*finished, Some(t) if t.elapsed() < RUN_HANDLE_TTL)
+        });
+    }
+
+    /// 取消全部在途异步运行（应用关闭前调用：给后台任务一个落库窗口，
+    /// 避免运行历史随 runtime drop 一起丢失）。
+    pub fn cancel_all_runs(&self) {
+        let runs = self.runs.lock().unwrap_or_else(|p| p.into_inner());
+        for h in runs.values() {
+            if *h.status.lock().unwrap_or_else(|p| p.into_inner()) == "running" {
+                h.cancel.cancel();
+            }
+        }
     }
 }
 
@@ -406,19 +457,32 @@ const STEP_BODY_LIMIT: usize = 4 * 1024;
 /// 历史中每步响应正文的保留上限（与 Tauri 命令层同口径）。
 const HISTORY_BODY_BYTES: usize = 64 * 1024;
 
-/// 变量池脱敏：键名命中敏感词根的值替换为占位符（历史落库不带明文凭据）。
+/// 变量池脱敏（单源在 [`miyo_sync::redact::redact_vars`]）。
 fn redact_vars(
     vars: &std::collections::HashMap<String, String>,
 ) -> std::collections::HashMap<String, String> {
-    vars.iter()
-        .map(|(k, v)| {
-            if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
-                (k.clone(), miyo_sync::redact::PLACEHOLDER.to_string())
-            } else {
-                (k.clone(), v.clone())
-            }
-        })
-        .collect()
+    miyo_sync::redact::redact_vars(vars)
+}
+
+/// URL query 脱敏：命中敏感键的参数值替换为占位符，其余原样保留
+/// （日志 / 历史落库共用；凭据在 query 的 URL 不落明文）。
+pub(crate) fn redact_url(url: &str) -> String {
+    if let Some((base, query)) = url.split_once('?') {
+        let redacted: Vec<String> = query
+            .split('&')
+            .map(|pair| {
+                let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
+                    format!("{k}={}", miyo_sync::redact::PLACEHOLDER)
+                } else {
+                    pair.to_string()
+                }
+            })
+            .collect();
+        format!("{base}?{}", redacted.join("&"))
+    } else {
+        url.to_string()
+    }
 }
 
 /// 请求快照脱敏（headers / cookies / url query）。
@@ -432,21 +496,7 @@ fn redact_snapshot(snapshot: &mut miyo_http::client::RequestSnapshot) {
     };
     snapshot.headers = snapshot.headers.iter().map(&mask).collect();
     snapshot.cookies = snapshot.cookies.iter().map(&mask).collect();
-    let url = &snapshot.url;
-    if let Some((base, query)) = url.split_once('?') {
-        let redacted: Vec<String> = query
-            .split('&')
-            .map(|pair| {
-                let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-                if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
-                    format!("{k}={}", miyo_sync::redact::PLACEHOLDER)
-                } else {
-                    pair.to_string()
-                }
-            })
-            .collect();
-        snapshot.url = format!("{base}?{}", redacted.join("&"));
-    }
+    snapshot.url = redact_url(&snapshot.url);
 }
 
 /// POST `/agent/endpoints/{id}/execute` 请求体。全部字段可选——缺省即按
@@ -612,7 +662,49 @@ fn token_matches(provided: Option<&str>, expected: &str) -> bool {
     diff == 0
 }
 
+/// Host 头合法性：控制面只服务本机调用。防 DNS rebinding 纵深——恶意网页
+/// 把解析到 127.0.0.1 的自有域名发来时 Host 为攻击者域名，直接拒绝
+///（本机 curl / Agent / MCP 不受影响；保留全部 localhost 测试能力）。
+fn host_allowed(host_header: &str) -> bool {
+    // 去端口：IPv6 形如 [::1]:4110，IPv4/域名形如 127.0.0.1:4110
+    let bare = if let Some(rest) = host_header.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest)
+    } else {
+        host_header
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(host_header)
+    };
+    matches!(
+        bare.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
+}
+
 async fn auth(State(state): State<AgentState>, req: Request, next: Next) -> Response {
+    // Host 校验先于鉴权（rebinding 下 Host 即攻击特征；无 Host 的 HTTP/1.0
+    // 客户端按拒绝处理——本机集成方均为 HTTP/1.1+）。
+    let host_ok = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(host_allowed)
+        .unwrap_or(false);
+    if !host_ok {
+        tracing::warn!(
+            "[agent] 非法 Host 请求：{} {}",
+            req.method(),
+            req.uri().path()
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ApiErrorBody {
+                code: "FORBIDDEN".into(),
+                message: "控制面仅接受本机访问（Host 须为 127.0.0.1 / localhost / ::1）".into(),
+            }),
+        )
+            .into_response();
+    }
     let provided = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -988,14 +1080,12 @@ async fn save_scenario_script_handler(
 
 /// UTF-8 安全截断（多字节字符按 char boundary 回退）。
 fn truncate_utf8(s: &str, max_bytes: usize) -> (String, bool) {
-    if s.len() <= max_bytes {
-        return (s.to_string(), false);
-    }
-    let mut end = max_bytes;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    (s[..end].to_string(), true)
+    // 截断逻辑单源在 miyo-core::text（与 Tauri 命令层同口径）。
+    let truncated = s.len() > max_bytes;
+    (
+        miyo_core::text::byte_truncate(s, max_bytes).to_string(),
+        truncated,
+    )
 }
 
 /// 路径变量代入（镜像前端 `applyPathVars`）：长 key 先替换，`{{k}}` 与 `{k}`
@@ -1188,9 +1278,11 @@ async fn execute_endpoint_handler(
         .map(|(_, v)| v.clone())
         .unwrap_or_default();
     let (body, truncated) = truncate_utf8(&resp.body_text(), EXEC_BODY_LIMIT);
+    // 日志记脱敏后的 URL：凭据在 query（?access_token=…）时不落明文日志。
     tracing::info!(
-        "[agent] send_endpoint：{} {url} → {}（{}ms）",
+        "[agent] send_endpoint：{} {} → {}（{}ms）",
         ep.method.as_str(),
+        redact_url(&url),
         resp.status,
         resp.duration_ms
     );
@@ -1225,9 +1317,21 @@ async fn run_scenario_handler(
     if !req.wait {
         // 前置校验场景存在（fail fast，不建出注定失败的运行）。
         let _scenario = repo::get_scenario(&state.db, id).await.map_err(api_error)?;
+        state.sweep_runs();
+        // 并发上限：在途 wait=false 运行数超限即拒绝（资源保护，非功能限制）。
+        {
+            let runs = state.runs.lock().unwrap_or_else(|p| p.into_inner());
+            if AgentState::running_count(&runs) >= MAX_CONCURRENT_RUNS {
+                return Err(api_error(miyo_core::AppError::Validation(format!(
+                    "并发场景运行已达上限（{MAX_CONCURRENT_RUNS}），请等待现有运行完成或取消后再试"
+                ))));
+            }
+        }
         let handle = RunHandle {
             status: Arc::new(std::sync::Mutex::new("running")),
             result: Arc::new(std::sync::Mutex::new(None)),
+            cancel: Arc::new(tokio_util::sync::CancellationToken::new()),
+            finished_at: Arc::new(std::sync::Mutex::new(None)),
         };
         state
             .runs
@@ -1237,20 +1341,55 @@ async fn run_scenario_handler(
         let state_c = state.clone();
         let run_id_c = run_id.clone();
         tokio::spawn(async move {
-            let outcome = execute_scenario(&state_c, id, req, &run_id_c).await;
+            // panic 兜底：任务崩溃时置 failed（否则状态永久卡 running 且
+            // 条目成为永久泄漏；AssertUnwindSafe 跨越 state/req 的所有权）。
+            let outcome = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
+                execute_scenario(&state_c, id, req, &run_id_c, Some(handle.cancel.clone())),
+            ))
+            .await;
             let mut st = handle.status.lock().unwrap_or_else(|p| p.into_inner());
             match outcome {
-                Ok(result) => {
+                Ok(Ok(result)) => {
+                    // 内存结果与落库路径同口径：变量池脱敏（此前内存路径
+                    // 把未脱敏变量明文直接回给轮询方）。
+                    let mut v = serde_json::to_value(&result).unwrap_or(serde_json::Value::Null);
+                    if let Some(obj) = v.as_object_mut() {
+                        if let Some(vars) = obj.get_mut("variables") {
+                            let map: std::collections::HashMap<String, String> =
+                                serde_json::from_value(vars.take()).unwrap_or_default();
+                            *vars = serde_json::to_value(redact_vars(&map))
+                                .unwrap_or(serde_json::Value::Null);
+                        }
+                    }
                     *st = "completed";
-                    *handle.result.lock().unwrap_or_else(|p| p.into_inner()) =
-                        Some(serde_json::to_value(result).unwrap_or(serde_json::Value::Null));
+                    *handle.result.lock().unwrap_or_else(|p| p.into_inner()) = Some(v);
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     *st = "failed";
                     *handle.result.lock().unwrap_or_else(|p| p.into_inner()) =
                         Some(serde_json::json!({ "error": e.user_message() }));
                 }
+                Err(_panic) => {
+                    *st = "failed";
+                    *handle.result.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some(serde_json::json!({ "error": "运行任务异常终止（内部错误）" }));
+                }
             }
+            drop(st);
+            *handle.finished_at.lock().unwrap_or_else(|p| p.into_inner()) =
+                Some(std::time::Instant::now());
+            // TTL 后移除：注册表不随长会话无限增长（期间轮询读内存，
+            // 过期后 get_run_result 走 DB 兜底）。
+            let state_s = state_c.clone();
+            let run_id_s = run_id_c.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(RUN_HANDLE_TTL).await;
+                state_s
+                    .runs
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&run_id_s);
+            });
         });
         return Ok(Json(serde_json::json!({
             "runId": run_id,
@@ -1260,7 +1399,7 @@ async fn run_scenario_handler(
         })));
     }
 
-    let result = execute_scenario(&state, id, req, &run_id)
+    let result = execute_scenario(&state, id, req, &run_id, None)
         .await
         .map_err(api_error)?;
     Ok(Json(
@@ -1268,13 +1407,21 @@ async fn run_scenario_handler(
     ))
 }
 
+/// 场景级总超时：到点自动触发取消令牌，runner 返回已完成的部分结果并按
+/// cancelled 落库——防失控循环占住 worker（单步 300s × 循环轮数无上界时
+/// 理论可跑数小时）。正常完成后撤销 watchdog。
+const SCENARIO_TOTAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
 /// 执行场景（同步核心）：物化步骤 → 串行运行（条件/循环/并行按配置）→
 /// 落运行历史（响应正文 64KB 截断保留，run_id 即历史行 id）。
+/// `cancel`：外部取消令牌（异步运行的注册表句柄；None = 内部新建，
+/// 仅服务总超时 watchdog）。
 async fn execute_scenario(
     state: &AgentState,
     scenario_id: uuid::Uuid,
     req: RunScenarioRequest,
     run_id: &str,
+    cancel: Option<Arc<tokio_util::sync::CancellationToken>>,
 ) -> Result<RunScenarioResult, miyo_core::AppError> {
     let scenario = repo::get_scenario(&state.db, scenario_id).await?;
     let vars = merged_variables(
@@ -1431,12 +1578,24 @@ async fn execute_scenario(
         .timeout_ms
         .or(global_timeout_ms(&state.db).await)
         .unwrap_or(miyo_http::client::DEFAULT_TIMEOUT_MS);
+    let cancel_token =
+        cancel.unwrap_or_else(|| Arc::new(tokio_util::sync::CancellationToken::new()));
     let options = miyo_test::runner::ScenarioOptions {
         timeout_ms: Some(timeout_ms),
-        cancel: None,
+        cancel: Some((*cancel_token).clone()),
         stop_on_failure: req.stop_on_failure,
     };
+    // 总超时 watchdog：到点自动 cancel（runner 返回已完成步骤并落库），
+    // 正常完成后撤销。
+    let watchdog = tokio::spawn({
+        let token = cancel_token.clone();
+        async move {
+            tokio::time::sleep(SCENARIO_TOTAL_TIMEOUT).await;
+            token.cancel();
+        }
+    });
     let result = miyo_test::runner::run_scenario(steps, &vars, &options, None).await;
+    watchdog.abort();
 
     let enabled_steps = scenario.steps.iter().filter(|s| s.enabled).count();
     let mut step_results = Vec::with_capacity(result.results.len());
@@ -1698,6 +1857,7 @@ pub fn build_router(state: AgentState) -> Router {
             get(validate_scenario_handler),
         )
         .route("/agent/runs/{id}", get(get_run_result_handler))
+        .route("/agent/runs/{id}/cancel", post(cancel_run_handler))
         .route("/agent/runs/{id}/steps/{index}", get(get_run_step_handler))
         .route("/agent/runs/{id}/analysis", get(analyze_run_handler))
         .route(
@@ -1733,6 +1893,9 @@ pub fn build_router(state: AgentState) -> Router {
 /// 正在运行的 Agent 服务句柄。
 pub struct AgentServer {
     pub port: u16,
+    /// 持有共享状态引用：停止时先取消全部在途异步运行，给后台任务一个
+    /// 落库窗口（否则运行历史随 runtime drop 一起丢失）。
+    state: AgentState,
     shutdown: tokio::sync::oneshot::Sender<()>,
     handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -1742,8 +1905,9 @@ impl AgentServer {
         format!("http://127.0.0.1:{}", self.port)
     }
 
-    /// 停止服务（幂等）。
+    /// 停止服务（幂等）：先取消全部在途运行，再等 HTTP 服务退出。
     pub async fn stop(mut self) {
+        self.state.cancel_all_runs();
         let _ = self.shutdown.send(());
         if let Some(h) = self.handle.take() {
             let _ = h.await;
@@ -1783,11 +1947,12 @@ pub async fn start_at(
         tracing::info!("[agent] Agent 控制面已启动：http://127.0.0.1:{port}");
         return Ok(AgentServer {
             port,
+            state,
             shutdown: tx,
             handle: Some(handle),
         });
     }
-    Err(miyo_core::AppError::Mock(format!(
+    Err(miyo_core::AppError::PortBind(format!(
         "端口 {}~{} 均被占用，无法启动 Agent 控制面",
         preferred_port,
         preferred_port + (max_tries - 1)
@@ -2049,8 +2214,11 @@ async fn environment_detail(env: miyo_core::model::Environment) -> EnvironmentDe
         .iter()
         .filter(|v| v.enabled)
         .map(|v| {
-            let sensitive = v.sensitive.unwrap_or(false);
-            let value = if sensitive {
+            // 双保险：显式 sensitive 标记 或 键名命中敏感词根（与落库脱敏
+            // 同口径）都视为敏感——用户漏勾选的真实凭据不明文回给 AI。
+            let sensitive =
+                v.sensitive.unwrap_or(false) || miyo_sync::redact::is_sensitive_key(&v.key);
+            let value = if sensitive && !v.effective_value().is_empty() {
                 miyo_sync::redact::PLACEHOLDER.to_string()
             } else {
                 v.effective_value().to_string()
@@ -2215,11 +2383,10 @@ async fn delete_scenario_handler(
     AxumPath(id): AxumPath<uuid::Uuid>,
 ) -> ApiResult<DeleteScenarioResult> {
     ensure_tool_enabled(&state, "delete_scenario").await?;
-    // 先取历史条数（删除后不可再查）。
-    let runs = repo::list_scenario_runs(&state.db, id, 10_000)
+    // 先取历史条数（删除后不可再查）：COUNT(*) 免把全部历史 JSON 拉进内存。
+    let deleted_runs = repo::count_scenario_runs(&state.db, id)
         .await
         .map_err(api_error)?;
-    let deleted_runs = runs.len() as i64;
     repo::delete_scenario(&state.db, id)
         .await
         .map_err(api_error)?;
@@ -3008,7 +3175,7 @@ async fn run_test_case_handler(
             resp.history_truncated = true;
         }
         if let Some(req_snapshot) = resp.request.as_mut() {
-            redact_agent_snapshot(req_snapshot);
+            redact_snapshot(req_snapshot);
         }
     }
     let record = miyo_core::model::TestCaseRun {
@@ -3106,39 +3273,54 @@ pub struct RunsQuery {
     pub limit: Option<i64>,
 }
 
-/// 用例历史的请求快照脱敏（与 scenarios.rs 的 redact_request_snapshot 同口径）。
-fn redact_agent_snapshot(snapshot: &mut miyo_http::client::RequestSnapshot) {
-    for (k, v) in snapshot.headers.iter_mut() {
-        if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
-            *v = miyo_sync::redact::PLACEHOLDER.to_string();
-        }
-    }
-    for (k, v) in snapshot.cookies.iter_mut() {
-        if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
-            *v = miyo_sync::redact::PLACEHOLDER.to_string();
-        }
-    }
-    // URL query 脱敏
-    if let Some(idx) = snapshot.url.find('?') {
-        let (base, query) = snapshot.url.split_at(idx);
-        let redacted: Vec<String> = query[1..]
-            .split('&')
-            .map(|pair| {
-                let Some((k, v)) = pair.split_once('=') else {
-                    return pair.to_string();
-                };
-                if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
-                    format!("{k}={}", miyo_sync::redact::PLACEHOLDER)
-                } else {
-                    pair.to_string()
-                }
-            })
-            .collect();
-        snapshot.url = format!("{base}?{}", redacted.join("&"));
-    }
-}
-
 // ---------- 运行结果查询 ----------
+
+/// POST `/agent/runs/{id}/cancel`：取消在途异步运行（cancel_run 工具的
+/// HTTP 路径）。引擎在步间与在途请求处响应取消，返回已完成步骤并按
+/// cancelled=true 落库；已结束 / 不存在的运行给出明确状态（幂等友好）。
+async fn cancel_run_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<serde_json::Value> {
+    ensure_tool_enabled(&state, "cancel_run").await?;
+    let handle = {
+        let runs = state.runs.lock().unwrap_or_else(|p| p.into_inner());
+        runs.get(&id.to_string()).cloned()
+    };
+    let Some(h) = handle else {
+        // 不在内存：已落库 / 已过期 / 未知。查 DB 给出可判定状态。
+        let exists = repo::get_scenario_run(&state.db, id)
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+        if exists {
+            return Ok(Json(serde_json::json!({
+                "runId": id.to_string(),
+                "status": "already-finished",
+                "message": "该运行已结束，无需取消",
+            })));
+        }
+        return Err(api_error(miyo_core::AppError::NotFound(format!(
+            "运行（{id}）不存在"
+        ))));
+    };
+    let status = *h.status.lock().unwrap_or_else(|p| p.into_inner());
+    if status != "running" {
+        return Ok(Json(serde_json::json!({
+            "runId": id.to_string(),
+            "status": status,
+            "message": "该运行已结束，无需取消",
+        })));
+    }
+    h.cancel.cancel();
+    tracing::info!("[agent] run {id} 取消请求已受理");
+    Ok(Json(serde_json::json!({
+        "runId": id.to_string(),
+        "status": "cancelling",
+        "hint": "引擎将在当前请求中止后返回已完成步骤（cancelled=true），可用 GET /agent/runs/{runId} 轮询终态",
+    })))
+}
 
 /// GET `/agent/runs/{id}`：运行状态与摘要（内存注册表优先，落库后走 DB）。
 ///
@@ -3887,6 +4069,310 @@ mod tests {
         let runs = repo::list_scenario_runs(&db, scenario.id, 5).await.unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].ok_count, 2);
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn get_environment_masks_unmarked_sensitive_keys() {
+        let (url, token, db, _state) = spawn_test_server().await;
+        let project = repo::create_project(&db, "环境脱敏", "").await.unwrap();
+        let env = miyo_core::model::Environment {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            name: "prod".into(),
+            base_url: "http://x".into(),
+            variables: vec![
+                // 未勾选 sensitive，但键名命中敏感词根 → 也必须脱敏
+                miyo_core::model::EnvironmentVariable {
+                    key: "api_key".into(),
+                    remote_value: "sk-plain-secret".into(),
+                    local_value: String::new(),
+                    enabled: true,
+                    local_override: None,
+                    sensitive: None,
+                    description: None,
+                },
+                // 显式标记 sensitive → 脱敏
+                miyo_core::model::EnvironmentVariable {
+                    key: "pass".into(),
+                    remote_value: "hunter2".into(),
+                    local_value: String::new(),
+                    enabled: true,
+                    local_override: None,
+                    sensitive: Some(true),
+                    description: None,
+                },
+                // 普通变量 → 原样
+                miyo_core::model::EnvironmentVariable {
+                    key: "region".into(),
+                    remote_value: "cn-north".into(),
+                    local_value: String::new(),
+                    enabled: true,
+                    local_override: None,
+                    sensitive: None,
+                    description: None,
+                },
+            ],
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_environment(&db, &env).await.unwrap();
+
+        let res = client()
+            .get(format!("{url}/agent/environments/{}", env.id))
+            .header("Authorization", &format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: serde_json::Value = res.json().await.unwrap();
+        let vars = body["variables"].as_array().unwrap();
+        let find = |k: &str| {
+            vars.iter()
+                .find(|v| v["key"] == k)
+                .unwrap_or_else(|| panic!("缺变量 {k}"))
+                .clone()
+        };
+        let api_key = find("api_key");
+        assert_eq!(
+            api_key["value"],
+            miyo_sync::redact::PLACEHOLDER,
+            "键名命中敏感词根（未标记）也必须脱敏"
+        );
+        assert_eq!(api_key["sensitive"], true);
+        assert_eq!(find("pass")["value"], miyo_sync::redact::PLACEHOLDER);
+        assert_eq!(find("region")["value"], "cn-north", "普通变量保留原值");
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn auth_rejects_non_local_host_header() {
+        let (url, token, _db, _state) = spawn_test_server().await;
+        let client = client();
+        let base = |host: String| {
+            client
+                .get(format!("{url}/agent/health"))
+                .header("Authorization", &format!("Bearer {token}"))
+                .header("Host", host)
+        };
+        // 合法 Host：放行
+        for ok in [
+            "127.0.0.1",
+            "localhost",
+            "[::1]",
+            "127.0.0.1:4010",
+            "LOCALHOST",
+        ] {
+            let res = base(ok.to_string()).send().await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK, "Host {ok} 应放行");
+        }
+        // 攻击者域名（DNS rebinding 特征）：拒绝
+        for bad in ["evil.example.com", "internal.corp:80"] {
+            let res = base(bad.to_string()).send().await.unwrap();
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "Host {bad} 应拒绝");
+            let body: serde_json::Value = res.json().await.unwrap();
+            assert_eq!(body["code"], "FORBIDDEN");
+        }
+        _db.close().await;
+    }
+
+    #[test]
+    fn redact_url_masks_sensitive_query() {
+        use miyo_sync::redact::PLACEHOLDER;
+        assert_eq!(
+            redact_url("https://x.com/api?access_token=abc&page=2"),
+            format!("https://x.com/api?access_token={PLACEHOLDER}&page=2")
+        );
+        // 无 query 原样返回；非敏感参数不动
+        assert_eq!(redact_url("https://x.com/api"), "https://x.com/api");
+        assert_eq!(
+            redact_url("https://x.com/api?page=2&size=10"),
+            "https://x.com/api?page=2&size=10"
+        );
+    }
+
+    /// 手工构造注册表句柄（取消 / 并发上限测试用）。
+    fn running_handle() -> RunHandle {
+        RunHandle {
+            status: Arc::new(std::sync::Mutex::new("running")),
+            result: Arc::new(std::sync::Mutex::new(None)),
+            cancel: Arc::new(tokio_util::sync::CancellationToken::new()),
+            finished_at: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_run_endpoint_cancels_and_reports_states() {
+        let (url, token, db, state) = spawn_test_server().await;
+        // 在途运行：取消受理 + 令牌触发
+        let handle = running_handle();
+        let run_id = uuid::Uuid::new_v4();
+        state
+            .runs
+            .lock()
+            .unwrap()
+            .insert(run_id.to_string(), handle.clone());
+        let res = client()
+            .post(format!("{url}/agent/runs/{run_id}/cancel"))
+            .header("Authorization", &format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(body["status"], "cancelling");
+        assert!(handle.cancel.is_cancelled());
+
+        // 已结束的运行：幂等返回 already-finished（令牌不再触发也无妨）
+        *handle.status.lock().unwrap() = "completed";
+        let res = client()
+            .post(format!("{url}/agent/runs/{run_id}/cancel"))
+            .header("Authorization", &format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(body["status"], "completed");
+
+        // 未知运行：404
+        let res = client()
+            .post(format!("{url}/agent/runs/{}/cancel", uuid::Uuid::new_v4()))
+            .header("Authorization", &format!("Bearer {token}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn run_scenario_async_rejects_when_concurrent_cap_reached() {
+        let (url, token, db, state) = spawn_test_server().await;
+        let upstream = spawn_upstream().await;
+        let project = repo::create_project(&db, "并发上限", "").await.unwrap();
+        let mut with_base = repo::get_project(&db, project.id).await.unwrap();
+        with_base
+            .variables
+            .insert("base_url".into(), upstream.clone());
+        repo::save_project(&db, &with_base).await.unwrap();
+        let order = make_endpoint(project.id, "下单", "GET", "/orders");
+        repo::save_endpoint(&db, &order).await.unwrap();
+        let scenario = Scenario {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            name: "占位场景".into(),
+            description: String::new(),
+            category: String::new(),
+            sort_order: 0,
+            steps: vec![miyo_core::model::ScenarioStep {
+                endpoint_id: Some(order.id),
+                enabled: true,
+                extract: serde_json::json!([]),
+                assertions: serde_json::json!([]),
+                ..Default::default()
+            }],
+            script: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_scenario(&db, &scenario).await.unwrap();
+
+        // 占满并发额度
+        for i in 0..MAX_CONCURRENT_RUNS {
+            state
+                .runs
+                .lock()
+                .unwrap()
+                .insert(format!("busy-{i}"), running_handle());
+        }
+        let res = client()
+            .post(format!("{url}/agent/scenarios/{}/run", scenario.id))
+            .header("Authorization", &format!("Bearer {token}"))
+            .json(&serde_json::json!({ "wait": false }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(body["code"], "VALIDATION");
+        assert!(body["message"].as_str().unwrap().contains("并发"));
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn run_scenario_async_redacts_memory_result_variables() {
+        let (url, token, db, _state) = spawn_test_server().await;
+        let upstream = spawn_upstream().await;
+        let project = repo::create_project(&db, "内存脱敏", "").await.unwrap();
+        let mut with_base = repo::get_project(&db, project.id).await.unwrap();
+        with_base
+            .variables
+            .insert("base_url".into(), upstream.clone());
+        repo::save_project(&db, &with_base).await.unwrap();
+        let order = make_endpoint(project.id, "下单", "GET", "/orders");
+        repo::save_endpoint(&db, &order).await.unwrap();
+        let scenario = Scenario {
+            id: uuid::Uuid::new_v4(),
+            project_id: project.id,
+            name: "异步脱敏".into(),
+            description: String::new(),
+            category: String::new(),
+            sort_order: 0,
+            steps: vec![miyo_core::model::ScenarioStep {
+                endpoint_id: Some(order.id),
+                enabled: true,
+                extract: serde_json::json!([]),
+                assertions: serde_json::json!([]),
+                ..Default::default()
+            }],
+            script: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_scenario(&db, &scenario).await.unwrap();
+
+        // wait=false 异步运行：注入敏感变量，完成后内存结果必须脱敏
+        let res = client()
+            .post(format!("{url}/agent/scenarios/{}/run", scenario.id))
+            .header("Authorization", &format!("Bearer {token}"))
+            .json(&serde_json::json!({
+                "wait": false,
+                "variables": { "apiToken": "sk-secret-123", "plainNote": "可读" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let started: serde_json::Value = res.json().await.unwrap();
+        let run_id = started["runId"].as_str().unwrap().to_string();
+
+        // 轮询到终态（最长 ~10s；回显上游即时响应，通常一两轮内完成）
+        let mut final_body: Option<serde_json::Value> = None;
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let poll = client()
+                .get(format!("{url}/agent/runs/{run_id}"))
+                .header("Authorization", &format!("Bearer {token}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(poll.status(), StatusCode::OK);
+            let body: serde_json::Value = poll.json().await.unwrap();
+            if body["status"] != "running" {
+                final_body = Some(body);
+                break;
+            }
+        }
+        let body = final_body.expect("异步运行应在超时前完成");
+        assert_eq!(body["status"], "completed", "最终态：{body}");
+        assert_eq!(body["passed"], 1);
+        assert_eq!(
+            body["variables"]["apiToken"],
+            miyo_sync::redact::PLACEHOLDER,
+            "内存结果的敏感变量必须脱敏"
+        );
+        assert_eq!(body["variables"]["plainNote"], "可读", "非敏感变量保留");
         db.close().await;
     }
 

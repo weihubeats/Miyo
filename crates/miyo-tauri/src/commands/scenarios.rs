@@ -393,15 +393,33 @@ pub async fn list_scenario_summaries(
     project_id: Uuid,
 ) -> CommandResult<Vec<ScenarioLibraryItem>> {
     let scenarios = repo::list_scenarios(&state.db, project_id).await?;
-    let mut items = Vec::with_capacity(scenarios.len());
-    for scenario in scenarios {
-        let last_run = repo::list_scenario_runs(&state.db, scenario.id, 1)
-            .await
-            .ok()
-            .and_then(|runs| runs.into_iter().next())
-            .map(ScenarioRunSummary::from_record);
-        items.push(ScenarioLibraryItem { scenario, last_run });
-    }
+    // 一次 SQL 批量取每场景最近一次运行摘要（替代逐场景 N+1 全量 JSON 查询）。
+    let latest: HashMap<Uuid, repo::ScenarioRunSummaryRow> =
+        repo::latest_run_summaries_for_project(&state.db, project_id)
+            .await?
+            .into_iter()
+            .filter_map(|r| {
+                let sid = Uuid::parse_str(&r.scenario_id).ok()?;
+                Some((sid, r))
+            })
+            .collect();
+    let items = scenarios
+        .into_iter()
+        .map(|scenario| {
+            let last_run = latest.get(&scenario.id).map(|r| ScenarioRunSummary {
+                id: r.id.clone(),
+                finished_at: r.finished_at,
+                duration_ms: r.duration_ms,
+                total_steps: r.total_steps,
+                ok_count: r.ok_count,
+                fail_count: r.fail_count,
+                skipped_count: r.skipped_count,
+                cancelled: r.cancelled,
+                stopped_on_failure: r.stopped_on_failure,
+            });
+            ScenarioLibraryItem { scenario, last_run }
+        })
+        .collect();
     Ok(items)
 }
 
@@ -449,18 +467,10 @@ pub(crate) fn redact_request_snapshot(snapshot: &mut miyo_http::client::RequestS
     snapshot.url = crate::commands::request::redact_url_query(&snapshot.url);
 }
 
-/// 变量池脱敏：键名命中敏感词根的值替换为占位符（历史 / meta 中的变量
-/// 快照不落明文凭据）。
+/// 变量池脱敏（单源在 [`miyo_sync::redact::redact_vars`]；历史 / meta 中的
+/// 变量快照不落明文凭据）。
 pub(crate) fn redact_vars(vars: &HashMap<String, String>) -> HashMap<String, String> {
-    vars.iter()
-        .map(|(k, v)| {
-            if is_sensitive_key(k) && !v.is_empty() {
-                (k.clone(), PLACEHOLDER.to_string())
-            } else {
-                (k.clone(), v.clone())
-            }
-        })
-        .collect()
+    miyo_sync::redact::redact_vars(vars)
 }
 
 /// 运行完成后落历史：响应正文 64KB 截断保留（可回看），请求快照与变量池
@@ -566,10 +576,22 @@ pub async fn list_scenario_runs(
     scenario_id: Uuid,
     limit: Option<i64>,
 ) -> CommandResult<Vec<ScenarioRunSummary>> {
-    let runs = repo::list_scenario_runs(&state.db, scenario_id, limit.unwrap_or(20)).await?;
+    // 摘要查询：列表 IPC 只回计数，不读大 JSON 列（详情走 get_scenario_run）。
+    let runs =
+        repo::list_scenario_run_summaries(&state.db, scenario_id, limit.unwrap_or(20)).await?;
     Ok(runs
         .into_iter()
-        .map(ScenarioRunSummary::from_record)
+        .map(|r| ScenarioRunSummary {
+            id: r.id,
+            finished_at: r.finished_at,
+            duration_ms: r.duration_ms,
+            total_steps: r.total_steps,
+            ok_count: r.ok_count,
+            fail_count: r.fail_count,
+            skipped_count: r.skipped_count,
+            cancelled: r.cancelled,
+            stopped_on_failure: r.stopped_on_failure,
+        })
         .collect())
 }
 

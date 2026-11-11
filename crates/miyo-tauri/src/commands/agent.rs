@@ -105,6 +105,14 @@ pub async fn agent_stop(state: State<'_, AppState>) -> CommandResult<()> {
     Ok(())
 }
 
+/// 应用退出时的 Agent 清理（应用壳 `RunEvent::ExitRequested` 调用；幂等）：
+/// 停控制面（取消全部在途异步运行，给后台任务落库窗口）+ 清端口文件。
+pub async fn shutdown_on_exit(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let mut guard = state.agent.write().await;
+    stop_locked(&mut guard).await;
+}
+
 /// 查询 Agent 控制面状态与令牌文件位置。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn agent_status(state: State<'_, AppState>) -> CommandResult<AgentStatusInfo> {

@@ -318,6 +318,5 @@ pub(crate) async fn persist_test_case_run(
         // 历史链路 fail-open：DB 故障不打断运行结果返回。
         let _ = &e;
         tracing::warn!("[persist_test_case_run] 落历史失败：{e}");
-        return;
     }
 }

@@ -185,6 +185,9 @@ fn tool_fail(ctx: &str, e: &AppError) -> ToolFailure {
         AppError::NotFound(_) => refine(format!("{ctx}_NOT_FOUND"), &e.user_message()),
         AppError::Validation(_) => refine(format!("{ctx}_VALIDATION_FAILED"), &e.user_message()),
         AppError::Cancelled(_) => "RUN_CANCELLED".to_string(),
+        // 工具停用 / 鉴权失败：统一权限语义（HTTP 层 TOOL_DISABLED 经
+        // client decode 映射为 Forbidden；此前退化为 INTERNAL）。
+        AppError::Forbidden(_) => "PERMISSION_DENIED".to_string(),
         _ => "INTERNAL".to_string(),
     };
     ToolFailure {
@@ -586,6 +589,17 @@ fn tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "cancel_run",
+            "description": "取消一个正在运行的场景（run_scenario wait=false 返回的 runId）。引擎在当前请求中止后返回已完成步骤（cancelled=true）并落历史；已结束的运行返回 already-finished（无需取消）。长场景跑错目标或用户要求停止时使用。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "runId": { "type": "string", "description": "运行 UUID（run_scenario wait=false 返回）" }
+                },
+                "required": ["runId"]
+            }
+        }),
+        json!({
             "name": "agent_info",
             "description": "返回 Miyo Agent 控制面连接信息（地址与令牌文件路径），供需要直接发 HTTP 的场景使用。",
             "inputSchema": { "type": "object", "properties": {} }
@@ -835,7 +849,7 @@ fn validate_tool_call(params: &Value) -> Result<(), (i64, String)> {
             index_arg(&args, "index")?;
             Ok(())
         }
-        "get_run_result" | "analyze_run_failure" | "get_test_case_run" => {
+        "get_run_result" | "analyze_run_failure" | "get_test_case_run" | "cancel_run" => {
             uuid_req(&args, "runId")?;
             Ok(())
         }
@@ -1373,11 +1387,21 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, Tool
             )
             .expect("序列化失败")
         }
+        "cancel_run" => {
+            let run_id = uuid_req(&args, "runId")?;
+            serde_json::to_value(
+                client
+                    .cancel_run(run_id)
+                    .await
+                    .map_err(|e| tool_fail("RUN", &e))?,
+            )
+            .expect("序列化失败")
+        }
         "agent_info" => json!({
             "address": client.base(),
             "tokenPath": miyo_agent::token::token_path(&miyo_agent::default_data_dir()),
             "auth": "Authorization: Bearer <token 文件内容>",
-            "docs": "POST /agent/curl | GET /agent/projects | GET /agent/endpoints/:projectId（支持 name/method/folderId/limit/offset 过滤）| GET /agent/endpoints/:id/detail | POST /agent/endpoints/:id/execute | GET /agent/environments?projectId= | GET /agent/environments/:id | GET /agent/scenarios?projectId= | POST /agent/scenarios（完整 steps）| GET /agent/scenarios/:id | PUT /agent/scenarios/:id | DELETE /agent/scenarios/:id | POST /agent/scenarios/:id/steps | PUT/DELETE /agent/scenarios/:id/steps/:index | GET /agent/scenarios/:id/validate | POST /agent/scenarios/:id/run（wait=false 异步）| GET /agent/runs/:id | GET /agent/runs/:id/steps/:index | GET /agent/runs/:id/analysis | PUT /agent/scenarios/:id/script"
+            "docs": "POST /agent/curl | GET /agent/projects | GET /agent/endpoints/:projectId（支持 name/method/folderId/limit/offset 过滤）| GET /agent/endpoints/:id/detail | POST /agent/endpoints/:id/execute | GET /agent/environments?projectId= | GET /agent/environments/:id | GET /agent/scenarios?projectId= | POST /agent/scenarios（完整 steps）| GET /agent/scenarios/:id | PUT /agent/scenarios/:id | DELETE /agent/scenarios/:id | POST /agent/scenarios/:id/steps | PUT/DELETE /agent/scenarios/:id/steps/:index | GET /agent/scenarios/:id/validate | POST /agent/scenarios/:id/run（wait=false 异步）| GET /agent/runs/:id | POST /agent/runs/:id/cancel | GET /agent/runs/:id/steps/:index | GET /agent/runs/:id/analysis | PUT /agent/scenarios/:id/script"
         }),
         other => {
             return Err(ToolFailure::new(
@@ -1437,18 +1461,9 @@ fn index_arg(args: &Value, key: &str) -> Result<(), (i64, String)> {
     }
 }
 
-/// 极简 percent-encode（query 值：保留字母数字与 -_.~，其余转 %XX）。
+/// percent-encode（query 值；复用 url crate，与 miyo-agent 客户端同源）。
 fn urlencoding_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
 fn opt_uuid_arg(args: &Value, key: &str) -> Result<Option<Uuid>, String> {
@@ -1485,6 +1500,40 @@ mod tests {
     use axum::extract::Query;
     use miyo_agent::server::{build_router, AgentState};
     use miyo_storage::db::init_db;
+
+    /// 防漂移：tools/list 的每个工具都必须在 MCP_TOOLS 注册表中，反之亦然。
+    /// 注册表缺项 → 设置页看不到、无法停用（权限管理缺口）；定义缺项 →
+    /// tools/list 漏工具。新增工具时两边同步加。
+    #[test]
+    fn tool_definitions_cover_registry() {
+        let names: Vec<String> = tool_definitions()
+            .into_iter()
+            .map(|d| d["name"].as_str().expect("工具定义缺 name").to_string())
+            .collect();
+        let registry: Vec<String> = miyo_agent::server::MCP_TOOLS
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        assert_eq!(
+            names.len(),
+            registry.len(),
+            "tools/list（{}）与 MCP_TOOLS（{}）数量不一致",
+            names.len(),
+            registry.len()
+        );
+        for n in &names {
+            assert!(
+                registry.contains(n),
+                "工具 {n} 有 tools/list 定义但未注册 MCP_TOOLS（设置页不可见、不可停用）"
+            );
+        }
+        for n in &registry {
+            assert!(
+                names.contains(n),
+                "工具 {n} 已注册 MCP_TOOLS 但 tools/list 缺定义"
+            );
+        }
+    }
 
     /// 启动临时控制面并构造指向它的 connect 闭包。
     fn test_connect(

@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use miyo_core::model::{HttpMethod, KeyValue, RequestHistory, RequestSpec};
 use miyo_core::render_spec;
+pub(crate) use miyo_core::text::byte_truncate;
 use miyo_core::VariableMap;
 use miyo_http::client::{HttpResponseData, RequestSnapshot};
 use miyo_storage::repository as repo;
@@ -532,16 +533,6 @@ fn build_history(
 ///
 /// 上限内原样返回 `&s`（零分配）；超限时返回前缀切片——同样是借用，
 /// 不再像返回 `String` 那样在 `<= max` 分支多做一次整体拷贝。
-pub(crate) fn byte_truncate(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
-}
 
 /// 解析请求超时（毫秒）：接口级 `spec.timeout_ms` 优先，其次全局设置（走缓存），最后默认 300 秒。
 pub(crate) async fn resolve_timeout_ms(spec: &RequestSpec, state: &AppState) -> CommandResult<u64> {

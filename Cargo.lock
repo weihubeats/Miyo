@@ -1540,6 +1540,7 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "chrono",
+ "futures",
  "jsonpath-rust",
  "miyo-core",
  "miyo-http",
@@ -1551,6 +1552,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
  "uuid",
@@ -1678,6 +1680,7 @@ dependencies = [
  "miyo-storage",
  "serde_json",
  "tokio",
+ "url",
  "uuid",
 ]
 
