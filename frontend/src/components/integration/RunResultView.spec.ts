@@ -197,3 +197,101 @@ describe('运行结果视图：运行结束自动切换', () => {
     wrapper.unmount()
   })
 })
+
+// ---------- 引擎升级：时间线 phase 分组（Setup / 主 / Teardown） ----------
+
+
+function phaseRow(phase: string | null, name: string, stepIndex: number | null) {
+  return {
+    endpoint_id: `${name}-id`,
+    endpoint_name: name,
+    method: 'GET',
+    path: '/x',
+    ok: true,
+    status: 200,
+    duration_ms: 1,
+    outcomes: [],
+    extracted: {},
+    step_index: stepIndex,
+    step_status: 'success' as const,
+    cancelled: false,
+    phase,
+    started_at: null,
+    retry_log: [],
+  }
+}
+
+const phaseResult: ScenarioRunResult = {
+  results: [
+    phaseRow('setup', '创建用户', 0),
+    phaseRow(null, '主步骤', 0),
+    phaseRow('teardown', '清理用户', 0),
+  ],
+  cancelled: false,
+  stopped_on_failure: false,
+  variables: {},
+} as unknown as ScenarioRunResult
+
+describe('RunResultView 时间线 phase 分组', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('Setup / Teardown 行分组渲染 + 主步骤不含 phase 行', () => {
+    const wrapper = mount(RunResultView, {
+      props: {
+        scenarioName: '生命周期',
+        runId: 'r-1',
+        running: false,
+        startedAt: null,
+        finishedAt: null,
+        result: phaseResult,
+        varChain: [],
+      },
+      global: {
+        stubs: {
+          IconButton: true,
+          Icon: true,
+          Modal: true,
+          CustomSelect: true,
+        },
+      },
+    })
+    const text = wrapper.text()
+    expect(text).toContain('创建用户')
+    expect(text).toContain('主步骤')
+    expect(text).toContain('清理用户')
+    // 阶段标头（Setup / Teardown）出现
+    expect(wrapper.findAll('.rv-phase-head').length).toBe(2)
+    // 时间线共 3 行（phase 行全部呈现，但选中映射平铺不越界）
+    expect(wrapper.findAll('.rv-step').length).toBe(3)
+    wrapper.unmount()
+  })
+
+  it('旧结果（无 phase 字段）不渲染阶段标头', () => {
+    const legacy: ScenarioRunResult = {
+      results: [phaseRow(null, '主步骤', 0)],
+      cancelled: false,
+      stopped_on_failure: false,
+      variables: {},
+    } as unknown as ScenarioRunResult
+    const wrapper = mount(RunResultView, {
+      props: {
+        scenarioName: '旧',
+        runId: 'r-2',
+        running: false,
+        startedAt: null,
+        finishedAt: null,
+        result: legacy,
+        varChain: [],
+      },
+      global: {
+        stubs: { IconButton: true, Icon: true, Modal: true, CustomSelect: true },
+      },
+    })
+    expect(wrapper.findAll('.rv-phase-head').length).toBe(0)
+    expect(wrapper.findAll('.rv-step').length).toBe(1)
+    wrapper.unmount()
+  })
+})
+

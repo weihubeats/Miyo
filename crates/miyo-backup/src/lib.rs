@@ -463,6 +463,10 @@ mod tests {
             updated_at: Utc::now(),
         };
         let scenario = Scenario {
+            setup: Vec::new(),
+            teardown: Vec::new(),
+            teardown_enabled: true,
+            data_sets: Vec::new(),
             id: Uuid::new_v4(),
             project_id: project.id,
             name: "登录链路".into(),

@@ -381,6 +381,7 @@ pub async fn run_scenario_json(text: &str, opts: &ScenarioRunOptions) -> Result<
                 r#loop,
                 wait_ms,
                 parallel,
+                retry: None,
             });
             continue;
         };
@@ -427,6 +428,7 @@ pub async fn run_scenario_json(text: &str, opts: &ScenarioRunOptions) -> Result<
             r#loop,
             wait_ms,
             parallel,
+            retry: None,
         });
     }
 

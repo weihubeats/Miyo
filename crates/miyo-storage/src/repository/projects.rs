@@ -285,6 +285,10 @@ mod tests {
             save_scenario(
                 &db,
                 &Scenario {
+                    setup: Vec::new(),
+                    teardown: Vec::new(),
+                    teardown_enabled: true,
+                    data_sets: Vec::new(),
                     id: Uuid::new_v4(),
                     project_id: busy.id,
                     name: name.into(),

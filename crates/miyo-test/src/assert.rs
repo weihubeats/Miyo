@@ -270,6 +270,11 @@ pub fn compare_values(op: &str, actual: Option<Value>, expected: &Value) -> Resu
 
 /// 执行单条断言。
 pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&Value>) -> Outcome {
+    // JSON Schema 断言：expected = JSON Schema 对象，path = JSONPath 定位
+    // 校验目标（缺省整个 body）。错误输出明确到 JSON 路径（$.data.orderId）。
+    if a.r#type == "json_schema" {
+        return evaluate_json_schema(a, resp, body_value);
+    }
     let description = describe(a);
     let op = a.op.as_deref().unwrap_or("eq");
     let expected_value = a.expected.clone().unwrap_or(Value::Null);
@@ -290,6 +295,106 @@ pub fn evaluate(a: &AssertionSpec, resp: &HttpResponseData, body_value: Option<&
         outcome.actual = Some(v_to_text(&actual));
     }
     outcome
+}
+
+/// JSON Schema 断言（type = json_schema）。
+///
+/// - `path`：JSONPath（如 `$.data`），缺省校验整个 body；路径未命中 → 失败
+///   并给出路径；
+/// - `expected`：JSON Schema 对象（draft 2020-12 子集，jsonschema crate 求值）；
+/// - 失败原因逐条列出：`$.data.orderId: "abc" is not of type "integer"` 形式
+///   （instance pointer 转 `$.` 路径，数组下标 [n]）。
+fn evaluate_json_schema(
+    a: &AssertionSpec,
+    resp: &HttpResponseData,
+    body_value: Option<&Value>,
+) -> Outcome {
+    let description = describe(a);
+    let path = a.path.as_deref().unwrap_or("$").trim();
+    let Some(schema) = a.expected.as_ref().filter(|v| v.is_object()) else {
+        return Outcome::fail(
+            description,
+            "JSON Schema 断言需要 expected 为 Schema 对象".into(),
+        );
+    };
+    // body 未预解析时就地解析（失败 = 非 JSON body → 目标未命中）。
+    let parsed = body_value
+        .cloned()
+        .or_else(|| serde_json::from_str(&resp.body_text()).ok());
+    let Some(target) = (if path == "$" {
+        parsed.clone()
+    } else {
+        parsed
+            .as_ref()
+            .and_then(|b| crate::extract::extract_body_json_typed(Some(b), path))
+    }) else {
+        return Outcome::fail(
+            description,
+            format!("校验目标未命中：{path}（响应体缺失或路径无匹配）"),
+        )
+        .with_actual(Some(body_value.map(|b| b.to_string()).unwrap_or_default()));
+    };
+    // validator_for 编译 + iter_errors 取**全部**违规（每条带 instance path）。
+    // required 类错误路径指向父对象 → 追加缺失字段名（$.data.status 而非 $.data）。
+    let errors: Vec<String> = match jsonschema::validator_for(schema) {
+        Ok(validator) => validator
+            .iter_errors(&target)
+            .map(|e| {
+                let mut json_path = pointer_to_json_path(path, e.instance_path().as_str());
+                if let jsonschema::error::ValidationErrorKind::Required { property } = e.kind() {
+                    if let Some(name) = property.as_str() {
+                        if !json_path.ends_with(&format!(".{name}")) {
+                            json_path.push('.');
+                            json_path.push_str(name);
+                        }
+                    }
+                }
+                format!("{json_path}: {e}")
+            })
+            .collect(),
+        Err(e) => vec![format!("Schema 编译失败：{e}")],
+    };
+    if errors.is_empty() {
+        Outcome::pass(description)
+    } else {
+        let mut o = Outcome::fail(
+            description,
+            format!(
+                "Schema 校验失败 {} 处：{}",
+                errors.len(),
+                errors.first().map(String::as_str).unwrap_or("")
+            ),
+        );
+        o.actual = Some(target.to_string());
+        o.reason = Some(errors.join("；"));
+        o
+    }
+}
+
+/// JSON Pointer（/data/orderId 或 /items/0/id）→ JSONPath（$.data.orderId /
+/// $.items[0].id），与断言 path 前缀拼接。
+fn pointer_to_json_path(base: &str, pointer: &str) -> String {
+    if pointer.is_empty() || pointer == "/" {
+        return base.to_string();
+    }
+    let mut out = base.trim_end_matches('.').to_string();
+    for seg in pointer.trim_start_matches('/').split('/') {
+        let seg = seg.replace("~1", "/").replace("~0", "~");
+        if seg.chars().all(|c| c.is_ascii_digit()) && !seg.is_empty() {
+            out.push_str(&format!("[{seg}]"));
+        } else {
+            out.push('.');
+            out.push_str(&seg);
+        }
+    }
+    out
+}
+
+impl Outcome {
+    fn with_actual(mut self, actual: Option<String>) -> Self {
+        self.actual = actual;
+        self
+    }
 }
 
 /// JS 沙箱断言（type = javascript）：`expected` 为脚本代码，在
@@ -351,64 +456,147 @@ pub async fn evaluate_javascript(a: &AssertionSpec, resp: &HttpResponseData) -> 
     }
 }
 
-/// JS 断言端到端：真沙箱执行（pass / fail / 超时保护由沙箱自身测试覆盖）。
-#[tokio::test]
-async fn javascript_assertion_pass_and_fail() {
-    use bytes::Bytes;
-    let resp = HttpResponseData {
-        status: 200,
-        headers: vec![("Content-Type".into(), "application/json".into())],
-        body: Bytes::from(r#"{"code":0,"data":{"amount":88.5}}"#.to_string()),
-        duration_ms: 12.0,
-        size_bytes: 34,
-        cookies: Vec::new(),
-        truncated: false,
-        request: None,
-    };
-    // pm.test 风格：通过
-    let a = AssertionSpec {
-        name: Some("业务码".into()),
-        r#type: "javascript".into(),
-        path: None,
-        op: None,
-        expected: Some(serde_json::json!(
-            "const j = pm.response.json(); pm.test('code=0', () => j.code === 0);"
-        )),
-    };
-    assert!(evaluate_javascript(&a, &resp).await.passed);
-    // assert() 便捷风格：失败带原因
-    let bad = AssertionSpec {
-        name: Some("金额".into()),
-        r#type: "javascript".into(),
-        path: None,
-        op: None,
-        expected: Some(serde_json::json!(
-            "const j = pm.response.json(); assert(j.data.amount > 100, '金额不足')"
-        )),
-    };
-    let outcome = evaluate_javascript(&bad, &resp).await;
-    assert!(!outcome.passed);
-    assert!(outcome
-        .reason
-        .as_deref()
-        .unwrap_or_default()
-        .contains("金额不足"));
-    // 空代码：直接失败
-    let empty = AssertionSpec {
-        name: None,
-        r#type: "javascript".into(),
-        path: None,
-        op: None,
-        expected: Some(serde_json::json!("  ")),
-    };
-    assert!(!evaluate_javascript(&empty, &resp).await.passed);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
     use serde_json::json;
+    use tokio_util::bytes::Bytes;
+
+    fn schema_resp(body: &str) -> HttpResponseData {
+        HttpResponseData {
+            status: 200,
+            headers: vec![("Content-Type".into(), "application/json".into())],
+            body: Bytes::from(body.to_string()),
+            duration_ms: 5.0,
+            size_bytes: body.len(),
+            cookies: Vec::new(),
+            truncated: false,
+            request: None,
+        }
+    }
+
+    #[test]
+    fn json_schema_assertion_pass_fail_and_paths() {
+        let resp = schema_resp(r#"{"code":0,"data":{"orderId":"A1","amount":10.5,"items":["x"]}}"#);
+        // 通过：类型 / 必填 / 枚举 / 数组
+        let ok = AssertionSpec {
+            name: Some("订单结构".into()),
+            r#type: "json_schema".into(),
+            path: Some("$.data".into()),
+            op: None,
+            expected: Some(serde_json::json!({
+                "type": "object",
+                "required": ["orderId", "amount"],
+                "properties": {
+                    "orderId": { "type": "string" },
+                    "amount": { "type": "number", "minimum": 0 },
+                    "status": { "enum": ["PAID", "NEW"] }
+                }
+            })),
+        };
+        let ok_out = evaluate(&ok, &resp, None);
+        assert!(ok_out.passed, "合法载荷应通过：{:?}", ok_out.reason);
+
+        // 失败：错误路径明确（$.data.orderId）+ 嵌套 / 数组 / additionalProperties
+        let bad = AssertionSpec {
+            name: None,
+            r#type: "json_schema".into(),
+            path: Some("$.data".into()),
+            op: None,
+            expected: Some(serde_json::json!({
+                "type": "object",
+                "required": ["orderId", "status"],
+                "properties": {
+                    "orderId": { "type": "integer" },
+                    "items": { "type": "array", "items": { "type": "integer" } }
+                },
+                "additionalProperties": false
+            })),
+        };
+        let outcome = evaluate(&bad, &resp, None);
+        assert!(!outcome.passed);
+        let reason = outcome.reason.as_deref().unwrap_or_default();
+        assert!(
+            reason.contains("$.data.orderId"),
+            "错误必须带 JSON 路径：{reason}"
+        );
+        assert!(reason.contains("$.data.items[0]"), "数组下标路径：{reason}");
+        assert!(reason.contains("$.data.status"), "必填缺失路径：{reason}");
+
+        // 路径未命中 → 失败带路径
+        let miss = AssertionSpec {
+            name: None,
+            r#type: "json_schema".into(),
+            path: Some("$.nope".into()),
+            op: None,
+            expected: Some(serde_json::json!({ "type": "object" })),
+        };
+        let o = evaluate(&miss, &resp, None);
+        assert!(!o.passed && o.reason.as_deref().unwrap_or_default().contains("$.nope"));
+
+        // 非对象 Schema → 失败
+        let bad_spec = AssertionSpec {
+            name: None,
+            r#type: "json_schema".into(),
+            path: None,
+            op: None,
+            expected: Some(serde_json::json!("not-a-schema")),
+        };
+        assert!(!evaluate(&bad_spec, &resp, None).passed);
+    }
+
+    /// JS 断言端到端：真沙箱执行（pass / fail / 超时保护由沙箱自身测试覆盖）。
+    #[tokio::test]
+    async fn javascript_assertion_pass_and_fail() {
+        use tokio_util::bytes::Bytes;
+        let resp = HttpResponseData {
+            status: 200,
+            headers: vec![("Content-Type".into(), "application/json".into())],
+            body: Bytes::from(r#"{"code":0,"data":{"amount":88.5}}"#.to_string()),
+            duration_ms: 12.0,
+            size_bytes: 34,
+            cookies: Vec::new(),
+            truncated: false,
+            request: None,
+        };
+        // pm.test 风格：通过
+        let a = AssertionSpec {
+            name: Some("业务码".into()),
+            r#type: "javascript".into(),
+            path: None,
+            op: None,
+            expected: Some(serde_json::json!(
+                "const j = pm.response.json(); pm.test('code=0', () => j.code === 0);"
+            )),
+        };
+        assert!(evaluate_javascript(&a, &resp).await.passed);
+        // assert() 便捷风格：失败带原因
+        let bad = AssertionSpec {
+            name: Some("金额".into()),
+            r#type: "javascript".into(),
+            path: None,
+            op: None,
+            expected: Some(serde_json::json!(
+                "const j = pm.response.json(); assert(j.data.amount > 100, '金额不足')"
+            )),
+        };
+        let outcome = evaluate_javascript(&bad, &resp).await;
+        assert!(!outcome.passed);
+        assert!(outcome
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("金额不足"));
+        // 空代码：直接失败
+        let empty = AssertionSpec {
+            name: None,
+            r#type: "javascript".into(),
+            path: None,
+            op: None,
+            expected: Some(serde_json::json!("  ")),
+        };
+        assert!(!evaluate_javascript(&empty, &resp).await.passed);
+    }
 
     fn make_resp(
         status: u16,

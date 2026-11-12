@@ -104,6 +104,31 @@ pub struct EndpointResult {
     /// 循环步骤的已执行轮数（>1 时前端展示「×N」；非循环 / 单次为 None）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_runs: Option<u32>,
+    /// 执行阶段：None = 主步骤；"setup" / "teardown" = 生命周期步骤
+    ///（随主结果一并落库，前端按阶段分组展示；旧历史行缺省 = 主步骤）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    /// 步骤开始执行时刻（RFC3339；结果增强：请求时间追踪。旧历史行缺省）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    /// 重试日志（显式配置重试且发生重试时非空；最终结果 = 最后一次尝试）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retry_log: Vec<RetryAttempt>,
+}
+
+/// 一次重试尝试的记录（结果增强：重试追踪）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RetryAttempt {
+    /// 尝试序号（1-based；1 = 首次发送）。
+    pub attempt: u32,
+    /// 该次尝试的 HTTP 状态码（网络失败为 None）。
+    pub status: Option<u16>,
+    /// 该次尝试的错误（请求级）。
+    pub error: Option<String>,
+    /// 重试前等待毫秒（首次尝试为 0）。
+    pub delay_ms: u64,
+    /// 该次尝试耗时毫秒。
+    pub duration_ms: Option<f64>,
 }
 
 /// 场景步骤执行状态常量（`EndpointResult.step_status`）。
@@ -140,6 +165,9 @@ impl EndpointResult {
             step_status: None,
             blocked_reason: None,
             loop_runs: None,
+            phase: None,
+            started_at: None,
+            retry_log: Vec::new(),
         }
     }
 
@@ -250,6 +278,9 @@ async fn run_one(
                 step_status: None,
                 blocked_reason: None,
                 loop_runs: None,
+                phase: None,
+                started_at: None,
+                retry_log: Vec::new(),
             },
             None,
         );
@@ -359,6 +390,9 @@ async fn run_one_core(
             step_status: None,
             blocked_reason: None,
             loop_runs: None,
+            phase: None,
+            started_at: None,
+            retry_log: Vec::new(),
         },
         Some(resp),
     )
@@ -503,6 +537,9 @@ pub struct ScenarioStepInput {
     /// 与相邻 parallel 步骤成批并发（≥2 连续标记才成批）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub parallel: bool,
+    /// 步骤重试策略（显式配置才启用；None = 不重试）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<miyo_core::model::StepRetry>,
 }
 
 /// 场景进度快照（回调参数）。
@@ -521,6 +558,28 @@ pub struct ScenarioProgress<'a> {
     pub step: Option<&'a EndpointResult>,
     /// 本步渲染后实际发出的 URL（进入本步时已可确定）。
     pub url: Option<&'a str>,
+    /// 执行阶段（"main" = 主步骤；"setup" / "teardown" = 生命周期——
+    /// done / total 按该阶段内位次计）。生命周期实时进度由
+    /// [`run_scenario_lifecycle`] 的 setup / teardown 阶段回调发出。
+    pub phase: &'a str,
+}
+
+impl<'a> ScenarioProgress<'a> {
+    /// 主步骤进度（phase = "main"；既有调用方的简写）。
+    fn main(
+        done: usize,
+        total: usize,
+        step: Option<&'a EndpointResult>,
+        url: Option<&'a str>,
+    ) -> Self {
+        ScenarioProgress {
+            done,
+            total,
+            step,
+            url,
+            phase: "main",
+        }
+    }
 }
 
 /// 场景运行选项。
@@ -551,6 +610,14 @@ pub struct ScenarioRunResult {
     /// `"第 2 步：{{payableAmount}} 未定义"`。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Setup 步骤结果（生命周期；主步骤之前执行，提取产物流入主步骤）。
+    /// 失败 → 主步骤全部 skipped（Teardown 仍执行）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub setup_results: Vec<EndpointResult>,
+    /// Teardown 步骤结果（生命周期；主步骤结束后执行——失败 / 超时 / 取消
+    /// 时尽可能执行）。清理失败单独记录，不影响主步骤成败统计。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub teardown_results: Vec<EndpointResult>,
 }
 
 /// 一次运行共享的可变执行状态（runtime / 类型层 / 丢失变量 / 最近状态码）。
@@ -602,6 +669,9 @@ fn skipped_result(step: &ScenarioStepInput, idx: usize, reason: &str) -> Endpoin
         step_status: Some(step_status::SKIPPED.to_string()),
         blocked_reason: None,
         loop_runs: None,
+        phase: None,
+        started_at: None,
+        retry_log: Vec::new(),
     }
 }
 
@@ -625,6 +695,9 @@ fn blocked_result(step: &ScenarioStepInput, idx: usize, reason: String) -> Endpo
         step_status: Some(step_status::BLOCKED.to_string()),
         blocked_reason: Some(reason),
         loop_runs: None,
+        phase: None,
+        started_at: None,
+        retry_log: Vec::new(),
     }
 }
 
@@ -1010,6 +1083,8 @@ async fn execute_step(
         }
     }
 
+    // 结果增强：步骤开始执行时刻（含等待 / 条件求值前的墙钟起点）。
+    let started_at = chrono::Utc::now().to_rfc3339();
     // ---- 循环（count / while）或单次发送 ----
     let loop_cfg = step.r#loop.clone().filter(|l| l.is_valid());
     if let Some(bad) = &step.r#loop {
@@ -1048,7 +1123,19 @@ async fn execute_step(
                 }
             }
         }
-        let r = send_round(step, pos, shared, options, Some(emit_enter)).await;
+        let (mut r, retry_log) = match &step.retry {
+            Some(retry) => {
+                let (r, log) =
+                    send_with_retry(step, pos, shared, options, emit_enter, retry.clone()).await;
+                (r, log)
+            }
+            None => (
+                send_round(step, pos, shared, options, Some(emit_enter)).await,
+                Vec::new(),
+            ),
+        };
+        r.started_at = Some(started_at.clone());
+        r.retry_log = retry_log;
         rounds += 1;
         let round_failed = !r.ok && !r.cancelled;
         let round_cancelled = r.cancelled;
@@ -1111,6 +1198,98 @@ async fn execute_step(
     result
 }
 
+/// 确定性配置错误前缀（发送前的 scheme 校验失败）：不参与重试——
+/// 重试网络错误策略只针对传输层抖动，配置错误重试必然同样失败。
+const NON_RETRYABLE_ERR_PREFIX: &str = "URL 仅支持";
+
+/// 传输层失败是否可重试：状态码命中白名单，或（无状态码的）网络错误且
+/// 策略允许；取消与断言失败（2xx 语义失败）绝不重试。
+fn is_retryable(retry: &miyo_core::model::StepRetry, r: &EndpointResult) -> bool {
+    if r.cancelled {
+        return false;
+    }
+    if r.request_error
+        .as_deref()
+        .is_some_and(|e| e.starts_with(NON_RETRYABLE_ERR_PREFIX))
+    {
+        return false;
+    }
+    match r.status {
+        Some(st) => retry.retry_on_status.contains(&st),
+        None => retry.retry_on_network && r.request_error.is_some(),
+    }
+}
+
+/// 带重试的发送：按策略重发传输层失败（状态码白名单 / 网络错误），
+/// 每次尝试记入重试日志；最终结果 = 最后一次尝试（最终失败原因即其
+/// request_error）。等待期间被取消则放弃剩余尝试（返回取消结果）。
+async fn send_with_retry(
+    step: &ScenarioStepInput,
+    pos: usize,
+    shared: &SharedRunState,
+    options: &ScenarioOptions,
+    emit_enter: &(dyn Fn(String) + Send + Sync),
+    retry: miyo_core::model::StepRetry,
+) -> (EndpointResult, Vec<RetryAttempt>) {
+    let retry = retry.sanitized();
+    let attempts = retry.effective_attempts();
+    let mut log: Vec<RetryAttempt> = Vec::new();
+    let mut n: u32 = 0;
+    loop {
+        n += 1;
+        let started = std::time::Instant::now();
+        let r = send_round(step, pos, shared, options, Some(emit_enter)).await;
+        if n >= attempts || !is_retryable(&retry, &r) {
+            return (r, log);
+        }
+        let delay = retry.delay_ms(n);
+        log.push(RetryAttempt {
+            attempt: n,
+            status: r.status,
+            error: r.request_error.clone(),
+            delay_ms: delay,
+            duration_ms: Some(started.elapsed().as_secs_f64() * 1000.0),
+        });
+        if !sleep_cancellable(delay, options.cancel.as_ref()).await {
+            return (r, log);
+        }
+    }
+}
+
+/// 写操作步骤 + 重试策略 → 注入步骤级幂等键（`Idempotency-Key`）：
+/// 同一步骤的全部重试尝试共用一键（幂等重试不重复执行业务），跨步骤 /
+/// 跨运行互不相同。已有显式 Idempotency-Key 不覆盖。
+///
+/// **有副作用操作不配置重试就绝不重发**——本函数只在 retry 显式存在时生效。
+pub fn apply_retry_idempotency(steps: &mut [ScenarioStepInput], key_prefix: &str) {
+    for (idx, step) in steps.iter_mut().enumerate() {
+        let Some(retry) = &step.retry else {
+            continue;
+        };
+        if retry.max_attempts <= 1 {
+            continue;
+        }
+        let is_write = ["POST", "PUT", "PATCH", "DELETE"]
+            .contains(&step.endpoint.method.as_str().to_uppercase().as_str());
+        if !is_write {
+            continue;
+        }
+        let has_key = step
+            .spec_template
+            .headers
+            .iter()
+            .any(|h| h.enabled && h.key.eq_ignore_ascii_case("Idempotency-Key"));
+        if !has_key {
+            step.spec_template
+                .headers
+                .push(miyo_core::model::KeyValue::new(
+                    "Idempotency-Key",
+                    format!("{key_prefix}-{idx}"),
+                ));
+        }
+    }
+}
+
 /// 并发上限：单批并行步数（写操作场景默认谨慎，压测另有专用通道）。
 const PARALLEL_BATCH_CAP: usize = 8;
 
@@ -1135,6 +1314,63 @@ pub async fn run_scenario(
     options: &ScenarioOptions,
     progress: Option<&(dyn Fn(ScenarioProgress<'_>) + Send + Sync)>,
 ) -> ScenarioRunResult {
+    run_scenario_lifecycle(
+        &ScenarioLifecycle::empty(),
+        steps,
+        base_vars,
+        options,
+        progress,
+    )
+    .await
+}
+
+/// 场景生命周期：Setup / Teardown 步骤（形状与主步骤一致）。
+///
+/// - Setup 在主步骤**之前**执行，提取产物（变量）流入主步骤——
+///   「创建测试用户 → 执行 → 清理」的生命周期闭环；
+/// - Setup 失败 → 主步骤全部 skipped（依赖产物缺失），Teardown 仍执行；
+/// - Teardown 在主步骤结束后执行：普通失败 / 失败即停 / 取消都尽可能执行
+///   （独立取消令牌，主运行的取消不中止清理）；清理失败单独记录
+///   （teardown_results），不影响主步骤成败统计；清理写操作自动注入
+///   幂等键防重复清理副作用；
+/// - `teardown_enabled = false` 关闭自动清理。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScenarioLifecycle<'a> {
+    pub setup: &'a [ScenarioStepInput],
+    pub teardown: &'a [ScenarioStepInput],
+    pub teardown_enabled: bool,
+}
+
+impl<'a> ScenarioLifecycle<'a> {
+    pub fn empty() -> Self {
+        ScenarioLifecycle {
+            setup: &[],
+            teardown: &[],
+            teardown_enabled: false,
+        }
+    }
+}
+
+/// 单阶段（setup / 主步骤 / teardown）的执行产出。
+struct PhaseOutcome {
+    results: Vec<EndpointResult>,
+    vars_snapshots: Vec<HashMap<String, String>>,
+    cancelled: bool,
+    stopped_on_failure: bool,
+}
+
+/// 运行场景（完整生命周期）：Setup → 主步骤 → Teardown。
+///
+/// `run_scenario` 即本函数的空生命周期形态（行为与历史版本完全一致）。
+/// 进度回调只反映**主步骤**（total = 主步骤数）；Setup / Teardown 的结果
+/// 随返回值交付，不发进度事件（历史面板按 phase 分组展示）。
+pub async fn run_scenario_lifecycle(
+    lifecycle: &ScenarioLifecycle<'_>,
+    steps: Vec<ScenarioStepInput>,
+    base_vars: &HashMap<String, String>,
+    options: &ScenarioOptions,
+    progress: Option<&(dyn Fn(ScenarioProgress<'_>) + Send + Sync)>,
+) -> ScenarioRunResult {
     let total = steps.len();
     let warnings = undefined_var_warnings(&steps, base_vars);
     // runtime 以环境静态变量为底，提取值按步覆盖（runtime 优先级更高）。
@@ -1144,6 +1380,114 @@ pub async fn run_scenario(
         lost: AsyncMutex::new(std::collections::HashSet::new()),
         last_status: AsyncMutex::new(None),
     });
+
+    // ---- Setup：失败 → 主步骤全部 skipped（Teardown 仍执行）----
+    // 阶段实时进度：done/total 按本阶段位次，phase = "setup"（前端按
+    // phase 分组渲染生命周期行）。
+    let setup_progress = |idx: usize, total: usize, step: Option<&EndpointResult>| {
+        if let Some(cb) = progress {
+            cb(ScenarioProgress {
+                done: idx,
+                total,
+                step,
+                url: None,
+                phase: "setup",
+            });
+        }
+    };
+    let mut setup_results: Vec<EndpointResult> = Vec::new();
+    let mut setup_failed = false;
+    for (idx, step) in lifecycle.setup.iter().enumerate() {
+        setup_progress(idx, lifecycle.setup.len(), None);
+        let enter_cb = |_: String| {};
+        let mut r = execute_step(step, idx, &shared, options, &enter_cb).await;
+        r.step_index = Some(idx);
+        r.phase = Some("setup".into());
+        if !r.ok && !r.cancelled {
+            setup_failed = true;
+        }
+        setup_progress(idx + 1, lifecycle.setup.len(), Some(&r));
+        setup_results.push(r);
+    }
+
+    // ---- 主步骤：Setup 失败时全部 skipped（Blocked 语义：依赖产物缺失）----
+    let main = if setup_failed {
+        PhaseOutcome {
+            results: steps
+                .iter()
+                .enumerate()
+                .map(|(idx, s)| skipped_result(s, idx, "setup 失败，未执行"))
+                .collect(),
+            vars_snapshots: Vec::new(),
+            cancelled: false,
+            stopped_on_failure: false,
+        }
+    } else {
+        run_steps_phase(&steps, &shared, options, progress).await
+    };
+    let _ = total;
+
+    // ---- Teardown：独立取消令牌——主运行的失败 / 超时 / 取消不中止清理；
+    // 不因清理失败中断后续清理（stop_on_failure = false）。----
+    let mut teardown_results: Vec<EndpointResult> = Vec::new();
+    if lifecycle.teardown_enabled && !lifecycle.teardown.is_empty() {
+        let teardown_opts = ScenarioOptions {
+            timeout_ms: options.timeout_ms,
+            cancel: Some(tokio_util::sync::CancellationToken::new()),
+            stop_on_failure: false,
+        };
+        let teardown_total = lifecycle.teardown.len();
+        for (idx, step) in lifecycle.teardown.iter().enumerate() {
+            if let Some(cb) = progress {
+                cb(ScenarioProgress {
+                    done: idx,
+                    total: teardown_total,
+                    step: None,
+                    url: None,
+                    phase: "teardown",
+                });
+            }
+            let enter_cb = |_: String| {};
+            let mut r = execute_step(step, idx, &shared, &teardown_opts, &enter_cb).await;
+            r.step_index = Some(idx);
+            r.phase = Some("teardown".into());
+            if let Some(cb) = progress {
+                cb(ScenarioProgress {
+                    done: idx + 1,
+                    total: teardown_total,
+                    step: Some(&r),
+                    url: None,
+                    phase: "teardown",
+                });
+            }
+            teardown_results.push(r);
+        }
+    }
+
+    // 全阶段结束后回收共享状态（Arc 独占：各 phase 的克隆已随作用域释放）。
+    let final_vars = std::sync::Arc::try_unwrap(shared)
+        .map(|s| s.runtime.into_inner())
+        .unwrap_or_default();
+    ScenarioRunResult {
+        results: main.results,
+        cancelled: main.cancelled,
+        stopped_on_failure: main.stopped_on_failure,
+        variables: final_vars,
+        vars_snapshots: main.vars_snapshots,
+        warnings,
+        setup_results,
+        teardown_results,
+    }
+}
+
+/// 主步骤执行（原 `run_scenario` 主体）：串行 + 并行批 + 取消 + 失败即停。
+async fn run_steps_phase(
+    steps: &[ScenarioStepInput],
+    shared: &std::sync::Arc<SharedRunState>,
+    options: &ScenarioOptions,
+    progress: Option<&(dyn Fn(ScenarioProgress<'_>) + Send + Sync)>,
+) -> PhaseOutcome {
+    let total = steps.len();
     let mut results: Vec<EndpointResult> = Vec::with_capacity(total);
     let mut vars_snapshots = Vec::with_capacity(total);
     let mut cancelled = false;
@@ -1155,12 +1499,7 @@ pub async fn run_scenario(
             let done = results.len() + 1;
             results.push($result);
             if let Some(cb) = progress {
-                cb(ScenarioProgress {
-                    done,
-                    total,
-                    step: results.last(),
-                    url: None,
-                });
+                cb(ScenarioProgress::main(done, total, results.last(), None));
             }
             let _ = $step;
         }};
@@ -1226,12 +1565,7 @@ pub async fn run_scenario(
                         BatchMsg::Enter { pos, url } => {
                             batch_entered.insert(pos);
                             if let Some(cb) = progress {
-                                cb(ScenarioProgress {
-                                    done: pos,
-                                    total,
-                                    step: None,
-                                    url: Some(&url),
-                                });
+                                cb(ScenarioProgress::main(pos, total, None, Some(&url)));
                             }
                         }
                         BatchMsg::Done { pos, result } => {
@@ -1281,15 +1615,10 @@ pub async fn run_scenario(
         vars_snapshots.push(shared.runtime.lock().await.clone());
         let enter_cb = |url: String| {
             if let Some(cb) = progress {
-                cb(ScenarioProgress {
-                    done: idx,
-                    total,
-                    step: None,
-                    url: Some(&url),
-                });
+                cb(ScenarioProgress::main(idx, total, None, Some(&url)));
             }
         };
-        let r = execute_step(step, idx, &shared, options, &enter_cb).await;
+        let r = execute_step(step, idx, shared, options, &enter_cb).await;
         let failed = !r.ok && !r.cancelled;
         push_row!(step, r);
         // 取消优先于失败即停：在途请求被中止的步骤 ok = false 但非真实失败，
@@ -1318,18 +1647,168 @@ pub async fn run_scenario(
         }
     }
 
-    // 此时批任务已全部回收（rx 关闭即全部 Done），Arc 应独占；防御性兜底空表。
-    let final_vars = std::sync::Arc::try_unwrap(shared)
-        .map(|s| s.runtime.into_inner())
-        .unwrap_or_default();
-    ScenarioRunResult {
+    PhaseOutcome {
         results,
+        vars_snapshots,
         cancelled,
         stopped_on_failure,
-        variables: final_vars,
-        vars_snapshots,
-        warnings,
     }
+}
+
+// ---------- 数据驱动 / 环境矩阵：多行独立执行 ----------
+
+/// 矩阵的一行（一组数据或一个环境）。
+///
+/// `key` 稳定标识（数据集 id / 环境 id），`label` 为展示名，`vars` 为该行
+/// 注入的基础变量（**每行独立变量池**：行间零污染，提取产物不跨行）。
+#[derive(Debug, Clone)]
+pub struct MatrixRow {
+    pub key: String,
+    pub label: String,
+    pub vars: HashMap<String, String>,
+}
+
+/// 矩阵单行结果。
+#[derive(Debug)]
+pub struct MatrixRowResult {
+    pub key: String,
+    pub label: String,
+    pub result: ScenarioRunResult,
+}
+
+/// 矩阵执行：同一场景 × N 行数据 / N 个环境，**串行逐行**独立执行。
+///
+/// - 每行以 `row.vars` 为基础变量重建全新执行上下文（步骤模板经
+///   `steps_builder` 每行重建，渲染占位保持未解析）——行间变量零污染；
+/// - 行内生命周期（setup / teardown / 重试）与单场景运行完全一致；
+/// - 串行执行：可预测的资源占用与取消语义（取消令牌跨行生效——
+///   用户取消整个矩阵而非单行）；
+/// - `row_progress` 报告（行位次, 行总数）；行内步骤进度不外发
+///   （矩阵运行的行粒度即够用，逐步实时渲染属于单场景运行）。
+pub async fn run_scenario_matrix(
+    steps_builder: &(dyn Fn() -> Vec<ScenarioStepInput> + Send + Sync),
+    rows: &[MatrixRow],
+    lifecycle: &ScenarioLifecycle<'_>,
+    options: &ScenarioOptions,
+    row_progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+) -> Vec<MatrixRowResult> {
+    run_scenario_matrix_concurrency(steps_builder, rows, lifecycle, options, row_progress, 1).await
+}
+
+/// 矩阵执行（可并行）：`concurrency` = 同时在途行数（1 = 串行；行间变量
+/// 隔离与并行度无关——每行独立上下文）。取消令牌跨行生效：取消即不再
+/// 启动新行。结果按行序回填（与输入对齐），进度按完成数报告。
+pub async fn run_scenario_matrix_concurrency(
+    steps_builder: &(dyn Fn() -> Vec<ScenarioStepInput> + Send + Sync),
+    rows: &[MatrixRow],
+    lifecycle: &ScenarioLifecycle<'_>,
+    options: &ScenarioOptions,
+    row_progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+    concurrency: usize,
+) -> Vec<MatrixRowResult> {
+    let total = rows.len();
+    let cap = concurrency.clamp(1, 16).min(total.max(1));
+    if cap <= 1 {
+        let mut out = Vec::with_capacity(total);
+        for (idx, row) in rows.iter().enumerate() {
+            if options.cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+                break;
+            }
+            let result =
+                run_scenario_lifecycle(lifecycle, steps_builder(), &row.vars, options, None).await;
+            out.push(MatrixRowResult {
+                key: row.key.clone(),
+                label: row.label.clone(),
+                result,
+            });
+            if let Some(cb) = row_progress {
+                cb(idx + 1, total);
+            }
+        }
+        return out;
+    }
+    // 并行：固定 worker 池领行 + mpsc 回传（与 run_collection 同款骨架）。
+    // 引用全部 Arc 化（worker 为 'static 任务）：步骤每行重建一次后随 Arc 下发，
+    // 生命周期切片由 owned Vec 重建。
+    let all_steps: std::sync::Arc<Vec<Vec<ScenarioStepInput>>> =
+        std::sync::Arc::new(rows.iter().map(|_| steps_builder()).collect());
+    let setup_arc: std::sync::Arc<Vec<ScenarioStepInput>> =
+        std::sync::Arc::new(lifecycle.setup.to_vec());
+    let teardown_arc: std::sync::Arc<Vec<ScenarioStepInput>> =
+        std::sync::Arc::new(lifecycle.teardown.to_vec());
+    let teardown_enabled = lifecycle.teardown_enabled;
+    let options_owned = options.clone();
+    let rows_arc = std::sync::Arc::new(rows.to_vec());
+    let next = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (tx, mut rx) = mpsc::channel::<(usize, MatrixRowResult)>(cap * 2);
+    let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(cap));
+    for _ in 0..cap {
+        let all_steps = all_steps.clone();
+        let setup_arc = setup_arc.clone();
+        let teardown_arc = teardown_arc.clone();
+        let rows_c = rows_arc.clone();
+        let next_c = next.clone();
+        let tx_c = tx.clone();
+        let cancel = options_owned.cancel.clone();
+        let options_c = options_owned.clone();
+        let permits_c = permits.clone();
+        tokio::spawn(async move {
+            loop {
+                if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+                    break;
+                }
+                let idx = next_c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if idx >= rows_c.len() {
+                    break;
+                }
+                let row = &rows_c[idx];
+                let permit = permits_c.clone();
+                let _permit = match permit.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+                let lc = ScenarioLifecycle {
+                    setup: &setup_arc,
+                    teardown: &teardown_arc,
+                    teardown_enabled,
+                };
+                let result = run_scenario_lifecycle(
+                    &lc,
+                    all_steps[idx].clone(),
+                    &row.vars,
+                    &options_c,
+                    None,
+                )
+                .await;
+                drop(_permit);
+                if tx_c
+                    .send((
+                        idx,
+                        MatrixRowResult {
+                            key: row.key.clone(),
+                            label: row.label.clone(),
+                            result,
+                        },
+                    ))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+    }
+    drop(tx);
+    let mut ordered: Vec<Option<MatrixRowResult>> = (0..total).map(|_| None).collect();
+    let mut done = 0usize;
+    while let Some((idx, row_result)) = rx.recv().await {
+        ordered[idx] = Some(row_result);
+        done += 1;
+        if let Some(cb) = row_progress {
+            cb(done, total);
+        }
+    }
+    ordered.into_iter().flatten().collect()
 }
 
 /// 按目录排序执行顺序：文件夹排序在前，文件夹内按接口 sort_order。

@@ -36,6 +36,34 @@ fn make_ep(name: &str, method: HttpMethod, path: &str, tests: serde_json::Value)
     }
 }
 
+/// 独立的「前 N 次 503」上游（每测试专用实例：计数器为实例级 State，
+/// 不与并发测试共享进程级状态）。
+async fn spawn_flaky_server(fail_times: usize) -> SocketAddr {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route(
+        "/flaky",
+        get(
+            move |axum::extract::State(c): axum::extract::State<Arc<AtomicUsize>>| async move {
+                if c.fetch_add(1, Ordering::SeqCst) < fail_times {
+                    StatusCode::SERVICE_UNAVAILABLE
+                } else {
+                    StatusCode::OK
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app.with_state(counter).into_make_service())
+            .await
+            .unwrap();
+    });
+    addr
+}
+
 async fn spawn_server() -> SocketAddr {
     let app = Router::new()
         .route(
@@ -57,6 +85,37 @@ async fn spawn_server() -> SocketAddr {
                 tokio::time::sleep(Duration::from_millis(120)).await;
                 axum::Json(json!({"ok": true}))
             }),
+        )
+        // 会失败的接口（setup 失败场景；显式断言 status=200 才算失败用例）。
+        .route("/boom", get(|| async { StatusCode::INTERNAL_SERVER_ERROR }))
+        // GET 回显（生命周期 / 矩阵测试；POST /echo 的 GET 版）。
+        .route(
+            "/greet",
+            get(|q: Query<HashMap<String, String>>| async move {
+                axum::Json(json!({
+                    "uid": q.get("uid").cloned().unwrap_or_default(),
+                    "env": q.get("env").cloned().unwrap_or_default(),
+                }))
+            }),
+        )
+        // 专用 POST 支付（幂等键回显）。
+        .route(
+            "/pay",
+            post(|headers: axum::http::HeaderMap| async move {
+                let key = headers
+                    .get("Idempotency-Key")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                axum::Json(json!({ "paid": true, "key": key }))
+            }),
+        )
+        .route(
+            "/orders/{id}",
+            axum::routing::delete(
+                |axum::extract::Path(id): axum::extract::Path<String>| async move {
+                    axum::Json(json!({ "deleted": id }))
+                },
+            ),
         );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -254,6 +313,7 @@ async fn scenario_chain_flows_extracted_vars() {
                 op: Some("eq".into()),
                 expected: Some(json!(200)),
             }],
+            retry: None,
         },
         ScenarioStepInput {
             enabled: true,
@@ -272,6 +332,7 @@ async fn scenario_chain_flows_extracted_vars() {
                 op: Some("eq".into()),
                 expected: Some(json!("tok-9")),
             }],
+            retry: None,
         },
     ];
     let mut base_vars = HashMap::new();
@@ -347,6 +408,7 @@ async fn scenario_stops_on_failure() {
                 op: Some("eq".into()),
                 expected: Some(json!(201)),
             }],
+            retry: None,
         },
         ScenarioStepInput {
             enabled: true,
@@ -358,6 +420,7 @@ async fn scenario_stops_on_failure() {
             url_template: format!("{base}/echo"),
             spec_template: RequestSpec::default(),
             extract: vec![],
+            retry: None,
             assertions: vec![],
         },
     ];
@@ -487,6 +550,7 @@ async fn scenario_ecommerce_flow_with_typed_vars() {
             url_template: format!("{base}/shop/orders"),
             spec_template: RequestSpec::default(),
             extract: vec![extract("orderNo", "$.orderNo"), extract("payToken", "$.payToken")],
+                retry: None,
             assertions: vec![assert_status(200)],
         },
         ScenarioStepInput {
@@ -499,6 +563,7 @@ async fn scenario_ecommerce_flow_with_typed_vars() {
             url_template: format!("{base}/shop/pay-preview?orderNo={{{{orderNo}}}}&payToken={{{{payToken}}}}"),
             spec_template: RequestSpec::default(),
             extract: vec![extract("payableAmount", "$.payableAmount")],
+                retry: None,
             assertions: vec![assert_status(200)],
         },
         ScenarioStepInput {
@@ -527,6 +592,7 @@ async fn scenario_ecommerce_flow_with_typed_vars() {
                     expected: Some(json!("PAID")),
                 },
             ],
+            retry: None,
         },
     ];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -596,6 +662,7 @@ async fn scenario_blocks_on_missing_upstream_var() {
             url_template: format!("{base}/shop/orders"),
             spec_template: RequestSpec::default(),
             extract: vec![extract("orderNo", "$.orderNo")],
+            retry: None,
             assertions: vec![assert_status(200)],
         },
         ScenarioStepInput {
@@ -614,6 +681,7 @@ async fn scenario_blocks_on_missing_upstream_var() {
             url_template: format!("{base}/shop/pay-preview?payToken=bad"),
             spec_template: RequestSpec::default(),
             extract: vec![extract("payableAmount", "$.payableAmount")],
+            retry: None,
             assertions: vec![assert_status(200)],
         },
         ScenarioStepInput {
@@ -636,6 +704,7 @@ async fn scenario_blocks_on_missing_upstream_var() {
                 ..Default::default()
             },
             extract: vec![],
+            retry: None,
             assertions: vec![],
         },
     ];
@@ -691,6 +760,7 @@ async fn scenario_reports_disabled_and_early_stop_as_skipped() {
             url_template: format!("{base}/shop/pay-preview"),
             spec_template: RequestSpec::default(),
             extract: vec![],
+            retry: None,
             assertions: vec![],
         },
         ScenarioStepInput {
@@ -709,6 +779,7 @@ async fn scenario_reports_disabled_and_early_stop_as_skipped() {
             url_template: format!("{base}/shop/pay-preview"),
             spec_template: RequestSpec::default(),
             extract: vec![],
+            retry: None,
             assertions: vec![assert_status(200)],
         },
         ScenarioStepInput {
@@ -726,6 +797,7 @@ async fn scenario_reports_disabled_and_early_stop_as_skipped() {
             url_template: format!("{base}/shop/pay-preview"),
             spec_template: RequestSpec::default(),
             extract: vec![],
+            retry: None,
             assertions: vec![],
         },
     ];
@@ -762,6 +834,7 @@ async fn scenario_rejects_non_http_scheme() {
         url_template: "file:///etc/passwd".to_string(),
         spec_template: RequestSpec::default(),
         extract: vec![],
+        retry: None,
         assertions: vec![],
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -793,6 +866,7 @@ async fn scenario_warns_undefined_vars() {
         url_template: format!("{base}/shop/pay-preview?orderNo={{{{nope}}}}"),
         spec_template: RequestSpec::default(),
         extract: vec![],
+        retry: None,
         assertions: vec![],
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -824,6 +898,7 @@ async fn scenario_runs_have_isolated_contexts() {
             url_template: format!("{base}/shop/orders"),
             spec_template: RequestSpec::default(),
             extract: vec![extract("orderNo", "$.orderNo")],
+            retry: None,
             assertions: vec![],
         }]
     };
@@ -883,11 +958,13 @@ async fn scenario_condition_skips_step() {
         ScenarioStepInput {
             enabled: true,
             condition: Some(var_cond("paid", "eq", json!("true"))),
+            retry: None,
             ..mk_get(format!("{base}/shop/pay-preview"))
         },
         ScenarioStepInput {
             enabled: true,
             condition: Some(var_cond("paid", "neq", json!("true"))),
+            retry: None,
             ..mk_get(format!(
                 "{base}/shop/pay-preview?orderNo=SO-1&payToken=pt-9"
             ))
@@ -901,6 +978,7 @@ async fn scenario_condition_skips_step() {
                 op: "eq".into(),
                 value: Some(json!(200)),
             }),
+            retry: None,
             ..mk_get(format!("{base}/shop/pay-preview"))
         },
     ];
@@ -935,6 +1013,7 @@ fn mk_get(url: String) -> ScenarioStepInput {
         r#loop: None,
         wait_ms: None,
         parallel: false,
+        retry: None,
     }
 }
 
@@ -970,6 +1049,7 @@ async fn scenario_count_loop_runs_n_rounds() {
         }),
         extract: vec![extract("n", "$.n")],
         assertions: vec![assert_status(200)],
+        retry: None,
         ..mk_get(format!("{base}/ping"))
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -1014,6 +1094,7 @@ async fn scenario_while_loop_polls_until_condition() {
         }),
         extract: vec![extract("paid", "$.paid")],
         assertions: vec![assert_status(200)],
+        retry: None,
         ..mk_get(format!("{base}/status"))
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -1048,6 +1129,7 @@ async fn scenario_while_loop_max_reached_fails() {
         }),
         extract: vec![extract("paid", "$.paid")],
         assertions: vec![assert_status(200)],
+        retry: None,
         ..mk_get(format!("{base}/status"))
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -1098,6 +1180,7 @@ async fn scenario_while_loop_response_body_condition() {
             interval_ms: None,
         }),
         assertions: vec![assert_status(200)],
+        retry: None,
         ..mk_get(format!("{base}/status"))
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -1130,6 +1213,7 @@ async fn scenario_while_loop_response_status_condition() {
             interval_ms: None,
         }),
         assertions: vec![assert_status(200)],
+        retry: None,
         ..mk_get(format!("{base}/ok"))
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -1148,6 +1232,7 @@ async fn scenario_wait_ms_sleeps_before_send() {
     let steps = vec![ScenarioStepInput {
         enabled: true,
         wait_ms: Some(120),
+        retry: None,
         ..mk_get(format!("{base}/shop/pay-preview"))
     }];
     let started = std::time::Instant::now();
@@ -1191,18 +1276,21 @@ async fn scenario_parallel_batch_runs_concurrently() {
             enabled: true,
             parallel: true,
             extract: vec![extract("va", "$.v")],
+            retry: None,
             ..mk_get(format!("{base}/slow-a"))
         },
         ScenarioStepInput {
             enabled: true,
             parallel: true,
             extract: vec![extract("vb", "$.v")],
+            retry: None,
             ..mk_get(format!("{base}/slow-b"))
         },
         // 非并行步骤收尾（串行依赖语义不变）。
         ScenarioStepInput {
             enabled: true,
             extract: vec![extract("vf", "$.v")],
+            retry: None,
             ..mk_get(format!("{base}/fast"))
         },
     ];
@@ -1274,6 +1362,7 @@ async fn perf_smoke_100_steps_large_var_pool() {
                 op: Some("eq".into()),
                 expected: Some(json!(201)), // /echo 返回 CREATED
             }],
+            retry: None,
         });
     }
 
@@ -1304,4 +1393,326 @@ async fn perf_smoke_100_steps_large_var_pool() {
         elapsed.as_secs() < 30,
         "100 步大变量池耗时异常：{elapsed:?}"
     );
+}
+
+// ---------- 集成测试引擎升级：步骤重试 / 生命周期 / 数据驱动矩阵 ----------
+
+use miyo_core::model::StepRetry;
+use miyo_test::runner::{
+    run_scenario_lifecycle, run_scenario_matrix, run_scenario_matrix_concurrency, MatrixRow,
+    ScenarioLifecycle,
+};
+
+/// GET 步骤（可覆盖重试策略）。
+fn mk_step(url: String, retry: Option<StepRetry>) -> ScenarioStepInput {
+    ScenarioStepInput {
+        retry,
+        ..mk_get(url)
+    }
+}
+
+/// 带显式状态断言的 GET 步骤（无断言时任意状态码都算 ok——引擎既有契约）。
+fn mk_step_assert_2xx(url: String, retry: Option<StepRetry>) -> ScenarioStepInput {
+    let mut st = mk_step(url, retry);
+    st.assertions = vec![AssertionSpec {
+        name: None,
+        r#type: "status".into(),
+        path: None,
+        op: Some("eq".into()),
+        expected: Some(json!(200)),
+    }];
+    st
+}
+
+#[tokio::test]
+async fn step_retry_succeeds_after_transient_failures_with_log() {
+    let addr = spawn_flaky_server(2).await;
+    let steps = vec![mk_step(
+        format!("http://{addr}/flaky"),
+        Some(StepRetry {
+            max_attempts: 3,
+            interval_ms: 10,
+            exponential: false,
+            retry_on_status: vec![503],
+            retry_on_network: false,
+        }),
+    )];
+    let r = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+    let step = &r.results[0];
+    assert!(step.ok, "第三次尝试应成功");
+    assert_eq!(step.retry_log.len(), 2, "两次 503 记入重试日志");
+    assert_eq!(step.retry_log[0].status, Some(503));
+    assert_eq!(step.retry_log[0].attempt, 1);
+    assert!(step.started_at.is_some(), "结果增强：请求时间随行");
+}
+
+#[tokio::test]
+async fn step_retry_gives_up_and_keeps_final_error() {
+    let addr = spawn_flaky_server(usize::MAX).await;
+    let steps = vec![mk_step_assert_2xx(
+        format!("http://{addr}/flaky"),
+        Some(StepRetry {
+            max_attempts: 2,
+            interval_ms: 10,
+            exponential: false,
+            retry_on_status: vec![503],
+            retry_on_network: false,
+        }),
+    )];
+    let r = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+    let step = &r.results[0];
+    assert!(!step.ok, "重试耗尽应失败");
+    assert_eq!(step.retry_log.len(), 1, "max_attempts=2 → 仅 1 次重试");
+    assert_eq!(step.retry_log[0].status, Some(503));
+    assert_eq!(step.status, Some(503), "最终失败原因 = 最后一次尝试");
+}
+
+#[tokio::test]
+async fn no_retry_without_explicit_config() {
+    let addr = spawn_flaky_server(usize::MAX).await;
+    let steps = vec![mk_step_assert_2xx(format!("http://{addr}/flaky"), None)];
+    let r = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
+    assert!(!r.results[0].ok);
+    assert!(r.results[0].retry_log.is_empty(), "无重试日志");
+}
+
+#[tokio::test]
+async fn retry_write_step_injects_shared_idempotency_key() {
+    let addr = spawn_server().await;
+    // POST + 重试：写操作自动注入幂等键（GET 不注入）。
+    let mut post_step = mk_step(
+        format!("http://{addr}/pay"),
+        Some(StepRetry {
+            max_attempts: 3,
+            interval_ms: 5,
+            exponential: false,
+            retry_on_status: vec![503],
+            retry_on_network: false,
+        }),
+    );
+    post_step.endpoint = make_ep("支付", HttpMethod::POST, "/pay", serde_json::Value::Null);
+    let mut steps = vec![post_step];
+    miyo_test::runner::apply_retry_idempotency(&mut steps, "run-1");
+    let key = steps[0]
+        .spec_template
+        .headers
+        .iter()
+        .find(|h| h.key.eq_ignore_ascii_case("Idempotency-Key"))
+        .expect("写操作 + 重试必须注入幂等键");
+    assert!(
+        key.value.starts_with("run-1-"),
+        "幂等键绑定运行标识：{}",
+        key.value
+    );
+
+    let mut gets = vec![mk_step(
+        "http://x/get".into(),
+        Some(StepRetry {
+            max_attempts: 3,
+            interval_ms: 5,
+            exponential: false,
+            retry_on_status: vec![503],
+            retry_on_network: false,
+        }),
+    )];
+    miyo_test::runner::apply_retry_idempotency(&mut gets, "run-1");
+    assert!(
+        !gets[0]
+            .spec_template
+            .headers
+            .iter()
+            .any(|h| h.key.eq_ignore_ascii_case("Idempotency-Key")),
+        "GET 无副作用不注入幂等键"
+    );
+}
+
+#[tokio::test]
+async fn lifecycle_setup_teardown_and_isolation() {
+    let addr = spawn_server().await;
+    let base = format!("http://{addr}");
+    let mut setup = vec![mk_step(format!("{base}/greet?env=t&uid=42"), None)];
+    setup[0].extract = vec![ExtractSpec {
+        name: "uid".into(),
+        from: "body".into(),
+        path: "$.uid".into(),
+    }];
+    let main = vec![mk_step(format!("{base}/greet?env=p&uid={{{{uid}}}}"), None)];
+    let mut teardown = vec![mk_step(format!("{base}/orders/{{{{uid}}}}"), None)];
+    teardown[0].endpoint = make_ep(
+        "清理订单",
+        HttpMethod::DELETE,
+        "/orders/:id",
+        serde_json::Value::Null,
+    );
+
+    let lc = ScenarioLifecycle {
+        setup: &setup,
+        teardown: &teardown,
+        teardown_enabled: true,
+    };
+    let r = run_scenario_lifecycle(
+        &lc,
+        main.clone(),
+        &HashMap::new(),
+        &ScenarioOptions::default(),
+        None,
+    )
+    .await;
+    assert_eq!(r.setup_results.len(), 1);
+    assert!(
+        r.setup_results[0].ok,
+        "{:?}",
+        r.setup_results[0].request_error
+    );
+    assert_eq!(r.setup_results[0].phase.as_deref(), Some("setup"));
+    assert!(
+        r.results[0]
+            .response
+            .as_ref()
+            .unwrap()
+            .body
+            .contains("\"uid\":\"42\""),
+        "主步骤应引用 setup 提取的变量"
+    );
+    assert_eq!(r.teardown_results.len(), 1, "teardown 应执行");
+    assert_eq!(r.teardown_results[0].phase.as_deref(), Some("teardown"));
+    assert!(
+        r.teardown_results[0]
+            .response
+            .as_ref()
+            .unwrap()
+            .body
+            .contains("\"deleted\":\"42\""),
+        "清理目标使用链路变量：{:?} url={:?} err={:?}",
+        r.teardown_results[0]
+            .response
+            .as_ref()
+            .map(|x| x.body.clone()),
+        r.teardown_results[0].url,
+        r.teardown_results[0].request_error,
+    );
+
+    // teardown_enabled = false → 不自动清理。
+    let lc_off = ScenarioLifecycle {
+        teardown_enabled: false,
+        ..lc
+    };
+    let r2 = run_scenario_lifecycle(
+        &lc_off,
+        main,
+        &HashMap::new(),
+        &ScenarioOptions::default(),
+        None,
+    )
+    .await;
+    assert!(r2.teardown_results.is_empty());
+}
+
+#[tokio::test]
+async fn lifecycle_setup_failure_skips_main_but_runs_teardown() {
+    let addr = spawn_server().await;
+    let base = format!("http://{addr}");
+    let setup = vec![mk_step_assert_2xx(format!("{base}/boom"), None)];
+    let main = vec![mk_step(format!("{base}/greet?env=x&uid=1"), None)];
+    let mut teardown = vec![mk_step(format!("{base}/orders/9"), None)];
+    teardown[0].endpoint = make_ep(
+        "清理订单",
+        HttpMethod::DELETE,
+        "/orders/:id",
+        serde_json::Value::Null,
+    );
+    let lc = ScenarioLifecycle {
+        setup: &setup,
+        teardown: &teardown,
+        teardown_enabled: true,
+    };
+    let r = run_scenario_lifecycle(
+        &lc,
+        main,
+        &HashMap::new(),
+        &ScenarioOptions::default(),
+        None,
+    )
+    .await;
+    assert!(!r.setup_results[0].ok, "setup 应失败（500 + 显式断言）");
+    // 主步骤全部 skipped（依赖产物缺失），不算取消 / 失败即停。
+    assert_eq!(r.results[0].step_status.as_deref(), Some("skipped"));
+    assert!(!r.cancelled && !r.stopped_on_failure);
+    // teardown 仍然执行（失败也要清理）。
+    assert_eq!(r.teardown_results.len(), 1);
+    assert!(r.teardown_results[0].ok);
+}
+
+#[tokio::test]
+async fn matrix_rows_are_isolated_and_complete() {
+    let addr = spawn_server().await;
+    let base = format!("http://{addr}");
+    let build = || vec![mk_step(format!("{base}/greet?env=m&uid={{{{uid}}}}"), None)];
+    let rows = vec![
+        MatrixRow {
+            key: "d1".into(),
+            label: "数据组 1".into(),
+            vars: [("uid".to_string(), "1".to_string())].into(),
+        },
+        MatrixRow {
+            key: "d2".into(),
+            label: "数据组 2".into(),
+            vars: [("uid".to_string(), "2".to_string())].into(),
+        },
+    ];
+    let out = run_scenario_matrix(
+        &build,
+        &rows,
+        &ScenarioLifecycle::empty(),
+        &ScenarioOptions::default(),
+        None,
+    )
+    .await;
+    assert_eq!(out.len(), 2);
+    for (i, row) in out.iter().enumerate() {
+        assert!(row.result.results[0].ok, "行 {i} 应成功");
+        let body = &row.result.results[0].response.as_ref().unwrap().body;
+        let want = format!("\"uid\":\"{}\"", i + 1);
+        assert!(body.contains(&want), "行 {i} 应用自己的数据：{body}");
+    }
+    assert!(
+        !out[0].result.results[0]
+            .response
+            .as_ref()
+            .unwrap()
+            .body
+            .contains("\"uid\":\"2\""),
+        "行间变量零污染"
+    );
+}
+
+#[tokio::test]
+async fn matrix_parallel_rows_isolated_and_ordered() {
+    let addr = spawn_server().await;
+    let base = format!("http://{addr}");
+    let rows: Vec<MatrixRow> = (0..4)
+        .map(|i| MatrixRow {
+            key: format!("k{i}"),
+            label: format!("行{i}"),
+            vars: [("uid".to_string(), i.to_string())].into(),
+        })
+        .collect();
+    let out = run_scenario_matrix_concurrency(
+        &|| vec![mk_step(format!("{base}/greet?env=p&uid={{{{uid}}}}"), None)],
+        &rows,
+        &ScenarioLifecycle::empty(),
+        &ScenarioOptions::default(),
+        None,
+        2,
+    )
+    .await;
+    assert_eq!(out.len(), 4, "并行不丢行");
+    for (i, row) in out.iter().enumerate() {
+        assert!(row.result.results[0].ok);
+        let body = &row.result.results[0].response.as_ref().unwrap().body;
+        assert!(
+            body.contains(&format!("\"uid\":\"{}\"", i)),
+            "行 {i} 数据隔离：{body}"
+        );
+    }
 }

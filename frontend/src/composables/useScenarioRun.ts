@@ -27,12 +27,23 @@ import type {
   ScenarioStepResult,
   StepCondition,
   StepLoop,
+  StepRetry,
 } from '../types/miyoApi'
 import { formatDateTime } from '../utils/dateTime'
 import type { MenuItem } from '../components/ui/Menu.vue'
 
 /** 菜单打开能力（宿主持有 Menu 实例；组合式不依赖组件实例类型）。 */
 export type MenuOpener = (anchor: HTMLElement, items: MenuItem[]) => void
+
+/** 生命周期运行入参元素（与 runScenario.steps 元素形状一致）。 */
+export type ApiLifecycleStep = {
+  endpoint: Endpoint
+  url: string
+  enabled: boolean
+  extract: unknown
+  assertions: unknown
+  retry?: StepRetry | null
+}
 
 /** 步骤执行状态 tone（六态 + 运行中/等待两个过程态）。 */
 export type StepTone = 'ok' | 'fail' | 'skip' | 'run' | 'wait' | 'cancel' | 'blocked'
@@ -64,6 +75,8 @@ export interface BuiltRunStep {
   loop?: StepLoop | null
   wait_ms?: number | null
   parallel?: boolean
+  /** 步骤重试策略（显式配置才启用；透传给引擎）。 */
+  retry?: StepRetry | null
 }
 
 export interface UseScenarioRunOptions {
@@ -84,6 +97,12 @@ export interface UseScenarioRunOptions {
   save: () => Promise<boolean>
   /** 历史菜单打开回调（Menu.openAt 的绑定；实例归宿主持有）。 */
   openMenuAt: MenuOpener
+  /** 生命周期：Setup / Teardown 运行入参（宿主从场景配置物化；缺省空）。
+   *  形状与 steps 元素一致（引擎按同一物化路径处理）。 */
+  lifecycleSetup?: () => BuiltRunStep[] | unknown[]
+  lifecycleTeardown?: () => BuiltRunStep[] | unknown[]
+  /** 自动清理开关（宿主读场景 teardown_enabled；缺省 true）。 */
+  lifecycleTeardownEnabled?: () => boolean
 }
 
 /** 场景进度事件载荷（后端 `miyo:scenario-progress`，每步发两次：
@@ -96,11 +115,33 @@ export interface ScenarioProgressEvent {
   url?: string | null
   /** 该步已结束时的结果（进入时缺省）。 */
   result?: ScenarioRunResult['results'][number] | null
+  /** 执行阶段（main 缺省；setup / teardown = 生命周期实时进度，done/total
+   *  按该阶段内位次计）。 */
+  phase?: string | null
 }
 
 export function useScenarioRun(options: UseScenarioRunOptions) {
-  const { store, api, toast, t, scenario, scenarioId, buildRunSteps, dirty, save, openMenuAt } =
-    options
+  const {
+    store,
+    api,
+    toast,
+    t,
+    scenario,
+    scenarioId,
+    buildRunSteps,
+    dirty,
+    save,
+    openMenuAt,
+    lifecycleSetup,
+    lifecycleTeardown,
+    lifecycleTeardownEnabled,
+  } = options
+
+  /** 生命周期运行入参（宿主未提供时为空——旧宿主 / 测试兼容）。 */
+  const lifecycleSetupPayload = () =>
+    lifecycleSetup?.() ?? []
+  const lifecycleTeardownPayload = () =>
+    lifecycleTeardown?.() ?? []
 
   // ---------- 运行状态 ----------
   const stopOnFailure = ref(true)
@@ -122,6 +163,16 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
   /** 接收进度事件（由宿主组件转发 `miyo:scenario-progress`）。 */
   function applyProgressEvent(p: ScenarioProgressEvent): void {
     if (!runId.value || p.runId !== runId.value) return
+    // 生命周期实时进度（phase = setup / teardown）：结果按阶段内位次进
+    // lifecycleRows，不与主步骤位次混合。
+    if (p.phase && p.phase !== 'main') {
+      const bucket = p.phase === 'setup' ? 'setup' : 'teardown'
+      const rowList = [...lifecycleRows.value[bucket]]
+      rowList.length = Math.max(rowList.length, p.done)
+      if (p.result) rowList[p.done - 1] = p.result
+      lifecycleRows.value = { ...lifecycleRows.value, [bucket]: rowList }
+      return
+    }
     progress.value = { done: p.done, total: p.total || progress.value.total }
     if (p.result) {
       const stepIdx = p.result.step_index ?? p.done - 1
@@ -247,6 +298,12 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
    * 执行的初始变量来源，仅实时运行有，历史回看无）。 */
   const varsSnapshots = ref<Record<string, string>[]>([])
 
+  /** 生命周期结果行（历史回看：setup / teardown；实时运行随 runResult 分离）。 */
+  const lifecycleRows = ref<{ setup: ScenarioStepResult[]; teardown: ScenarioStepResult[] }>({
+    setup: [],
+    teardown: [],
+  })
+
   /** 运行历史列表（新→旧；场景切换后刷新）。 */
   const runHistory = ref<ScenarioRunSummary[]>([])
 
@@ -269,42 +326,95 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     }
   }
 
-  /** 重开场景恢复最近一次运行（历史能力；无历史时保持空态）。 */
-  async function restoreLatestRun(scenarioIdAtLoad: string): Promise<void> {
-    const latest = runHistory.value[0]
-    if (!latest || scenarioId !== scenarioIdAtLoad) return
+  // ---------- 历史恢复（竞态防护） ----------
+  /**
+   * 恢复请求序号 + 卸载标记：历史详情是异步 IPC，快速连点 / 挂载期两条
+   * 恢复路径（直达 runId + 最近一次）并发时，慢响应不得覆盖新选择；
+   * 组件卸载后回调不得再写状态。restoreLoading 只反映「最新一次」请求。
+   */
+  let restoreSeq = 0
+  let disposed = false
+  const restoreLoading = ref(false)
+
+  /** 宿主在 onBeforeUnmount 调用：此后所有在途恢复回调全部失效。 */
+  function dispose(): void {
+    disposed = true
+    restoreSeq++
+    restoreLoading.value = false
+  }
+
+  /** 恢复结果：applied = 已应用；stale = 已有更新的选择 / 已卸载 / 已开跑；
+   *  missing = 运行历史不存在（已被清理）。 */
+  type RestoreOutcome =
+    | { status: 'applied'; detail: ScenarioRunDetail }
+    | { status: 'stale' }
+    | { status: 'missing' }
+
+  /** 单一恢复入口（直达 runId / 历史菜单 / 最近一次共用）：
+   *  序号仲裁——只有最新一次恢复能落状态。 */
+  async function restoreRun(runIdToRestore: string): Promise<RestoreOutcome> {
+    if (running.value || disposed || !runIdToRestore) return { status: 'stale' }
+    const seq = ++restoreSeq
+    restoreLoading.value = true
     try {
-      const detail = await api.getScenarioRun(latest.id)
-      if (!detail || scenarioId !== scenarioIdAtLoad) return
+      const detail = await api.getScenarioRun(runIdToRestore)
+      // 运行中不接受回填（runId 被历史覆盖会吞实时进度事件）；卸载 /
+      // 更新选择已发起 → 本次结果丢弃。
+      if (disposed || running.value || seq !== restoreSeq) return { status: 'stale' }
+      if (!detail) return { status: 'missing' }
       applyHistoryDetail(detail)
+      return { status: 'applied', detail }
     } catch {
-      // 历史恢复失败静默：面板保持空态，不打扰首次编辑。
+      // 请求失败视为缺失（历史可能已被清理）；不影响后续恢复。
+      return { status: 'missing' }
+    } finally {
+      if (seq === restoreSeq && !disposed) restoreLoading.value = false
     }
+  }
+
+  /** 重开场景恢复最近一次运行（历史能力；无历史时保持空态）。 */
+  async function restoreLatestRun(): Promise<void> {
+    const latest = runHistory.value[0]
+    if (!latest || disposed || running.value) return
+    // 静默恢复：失败 / 过期都不打扰首次编辑。
+    await restoreRun(latest.id)
   }
 
   function applyHistoryDetail(detail: ScenarioRunDetail): void {
     // 运行中不接受历史回填：runId 被历史覆盖会让实时进度事件全部被过滤
     // （面板「卡死」直到运行结束）。运行中的历史选择在 onHistorySelect 拦截，
     // 此处兜底（pendingRunId 直达 / 恢复路径不会在运行中触发）。
-    if (running.value) return
+    if (running.value || disposed) return
+    // 生命周期行（setup / teardown）不映射步骤卡：主步骤按 phase 缺省过滤；
+    // 生命周期行单独暴露供结果面板分组展示。
+    lifecycleRows.value = {
+      setup: detail.results.filter((r) => r.phase === 'setup'),
+      teardown: detail.results.filter((r) => r.phase === 'teardown'),
+    }
     runResult.value = {
-      results: detail.results,
+      results: detail.results.filter((r) => !r.phase),
       cancelled: detail.cancelled,
       stopped_on_failure: detail.stopped_on_failure,
       variables: detail.variables,
     }
-    // 结果自带链路位次（step_index），按位映射到步骤卡。
-    runStepIndexes.value = detail.results.map((r) => r.step_index ?? -1)
+    // 结果自带链路位次（step_index），按位映射到步骤卡——**只映射主步骤**
+    //（与 runResult.results 同源过滤；phase 行位次独立，不进步骤卡映射）。
+    const mainResults = detail.results.filter((r) => !r.phase)
+    runStepIndexes.value = mainResults.map((r) => r.step_index ?? -1)
     runId.value = detail.id
-    progress.value = { done: detail.results.length, total: detail.total_steps }
+    progress.value = { done: mainResults.length, total: detail.total_steps }
     currentRunAt.value = detail.finished_at
     currentRunStartedAt.value = detail.meta?.startedAt ?? null
     runMeta.value = detail.meta ?? null
     runIsHistory.value = true
     reportOpen.value = true
     respOpenRows.value = new Set()
-    // 历史结果无 runtime 快照：重跑失败步骤不可用（不提供假按钮）。
-    varsSnapshots.value = []
+    // 历史恢复：meta.varsSnapshots（v2 落库，敏感值为占位符）→ 重跑失败
+    // 步骤可用；旧行缺省为空（不提供假按钮）。
+    varsSnapshots.value =
+      ((detail.meta?.varsSnapshots as Record<string, string>[] | undefined) ?? []).map(
+        (m) => ({ ...m }),
+      )
   }
 
   function openHistoryMenu(e: MouseEvent): void {
@@ -325,31 +435,71 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
           }
         })
       : [{ key: 'empty', label: t('integration.historyEmpty'), disabled: true }]
+    // 报告导出（HTML / JUnit XML）：由宿主经 onHistorySelect 分发处理。
+    if (runHistory.value.length) {
+      items.push({ key: 'export-report-html', label: t('integration.reportHtml'), icon: 'download' })
+      items.push({ key: 'export-report-junit', label: t('integration.reportJunit'), icon: 'download' })
+    }
     openMenuAt(e.currentTarget as HTMLElement, items)
   }
 
-  async function onHistorySelect(item: MenuItem): Promise<void> {
+  /**
+   * 导出测试报告（HTML / JUnit XML）：纳入全部已加载的运行历史，
+   * 内容自包含（可直接归档 / CI 消费）；落盘由宿主回调完成。
+   */
+  function exportReport(
+    writeTextFile: (path: string, contents: string) => Promise<void>,
+  ): (format: 'html' | 'junit_xml') => Promise<void> {
+    return async (format) => {
+      if (!scenario.value || !runHistory.value.length) return
+      try {
+        const { content, suggestedName } = await api.exportScenarioReport({
+          scenarioId,
+          scenarioName: scenario.value.name,
+          runIds: runHistory.value.map((r) => r.id),
+          format,
+        })
+        await writeTextFile(suggestedName, content)
+        toast.success(t('integration.reportExported'), { message: suggestedName })
+      } catch (err) {
+        toast.error(t('integration.reportExportFail'), {
+          message: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+  }
+
+  async function onHistorySelect(
+    item: MenuItem,
+    hooks?: { writeTextFile: (path: string, contents: string) => Promise<void> },
+  ): Promise<void> {
+    // 报告导出项（历史菜单尾部分组）。
+    if (item.key === 'export-report-html' || item.key === 'export-report-junit') {
+      if (!hooks?.writeTextFile) return
+      await exportReport(hooks.writeTextFile)(
+        item.key === 'export-report-html' ? 'html' : 'junit_xml',
+      )
+      return
+    }
     if (running.value) {
       toast.info(t('integration.historyLockedWhileRunning'))
       return
     }
-    try {
-      const detail = await api.getScenarioRun(item.key)
-      if (!detail) {
-        toast.warning(t('integration.historyMissing'))
-        await loadHistory()
-        return
-      }
-      applyHistoryDetail(detail)
-    } catch (err) {
-      toast.error(t('integration.runStartFail'), {
-        message: err instanceof Error ? err.message : String(err),
-      })
+    const outcome = await restoreRun(item.key)
+    if (outcome.status === 'missing') {
+      toast.warning(t('integration.historyMissing'))
+      await loadHistory()
+      return
+    }
+    if (outcome.status === 'stale') {
+      // 已有更新的选择 / 已开跑 / 已卸载：迟到响应静默丢弃（不覆盖新状态）。
+      return
     }
   }
 
   // ---------- 运行 ----------
   function resetRunState(built: BuiltRunStep[]): void {
+    lifecycleRows.value = { setup: [], teardown: [] }
     runResult.value = null
     runStepIndexes.value = built.map((b) => b.index)
     respOpenRows.value = new Set()
@@ -409,6 +559,9 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
         stopOnFailure: stopOnFailure.value,
         runId: runId.value,
         scenarioId,
+        setup: lifecycleSetupPayload() as ApiLifecycleStep[],
+        teardown: lifecycleTeardownPayload() as ApiLifecycleStep[],
+        teardownEnabled: lifecycleTeardownEnabled?.() ?? true,
       })
       finishRun(result, built)
     } catch (err) {
@@ -510,8 +663,9 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
 
   /** 是否存在可重跑的失败步骤（实时结果 + 有快照 + 步骤仍可构建）。 */
   const rerunAvailable = computed(() => {
-    if (running.value || runIsHistory.value || !runResult.value || !varsSnapshots.value.length)
-      return false
+    if (running.value || !runResult.value || !varsSnapshots.value.length) return false
+    // 历史回看：meta.varsSnapshots（v2 落库，敏感值已脱敏）提供恢复上下文。
+    if (runIsHistory.value) return true
     return rerunPositions().length > 0
   })
 
@@ -725,6 +879,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     resultByStepIndex,
     // 结果面板
     reportOpen,
+    lifecycleRows,
     runIsHistory,
     currentRunAt,
     currentRunStartedAt,
@@ -735,6 +890,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     applyHistoryDetail,
     openHistoryMenu,
     onHistorySelect,
+    exportReport,
     respOpenRows,
     toggleRespRow,
     fullBodyLoader,
@@ -750,5 +906,9 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     runMeta,
     rerunHistoryAvailable,
     rerunFromHistory,
+    // 历史恢复（竞态防护）
+    restoreRun,
+    restoreLoading,
+    dispose,
   }
 }

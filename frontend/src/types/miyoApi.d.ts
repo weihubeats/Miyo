@@ -287,8 +287,31 @@ export interface ProxyTestResult {
 /** MCP 工具启停状态（Rust `McpToolStatus`，get/set_mcp_tools 命令）。 */
 export interface McpToolStatus {
   name: string
-  /** read = 只读信息；write = 会落库。 */
+  /** 兼容字段：read_only → "read"，其余 → "write"。 */
   kind: 'read' | 'write'
+  /** 细分权限等级（read / write / execute / network_execute / destructive）。 */
+  permission:
+    | 'read'
+    | 'write'
+    | 'execute'
+    | 'network_execute'
+    | 'destructive'
+  /** 业务模块（project / endpoint / environment / scenario / test_case / run / system）。 */
+  module: string
+  /** 短标题。 */
+  title: string
+  enabled: boolean
+}
+
+/** MCP 权限等级状态（Rust `McpPermissionStatus`，get_mcp_permissions 命令）。 */
+export interface McpPermissionStatus {
+  level: 'read' | 'write' | 'execute' | 'network_execute' | 'destructive'
+  label: string
+  description: string
+  /** 该等级下的工具数。 */
+  toolCount: number
+  /** 高风险等级：默认关闭，启用必须用户明确确认。 */
+  highRisk: boolean
   enabled: boolean
 }
 
@@ -363,6 +386,32 @@ export interface StepLoop {
 
 /** 场景步骤：引用接口（endpoint_id 有值）或内联请求（request 有值）+ 步骤级提取 / 断言
  *  + 执行控制（条件 / 循环 / 等待 / 并行）。 */
+/** 步骤重试策略（Rust `StepRetry`；显式配置才启用，None = 不重试）。 */
+export interface StepRetry {
+  /** 最大尝试次数（含首次，1..=10）。 */
+  max_attempts: number
+  /** 重试间隔毫秒（指数退避时为首 interval）。 */
+  interval_ms?: number
+  /** 指数退避：第 n 次延迟 = interval × 2^(n-1)，上限 30s。 */
+  exponential?: boolean
+  /** 可重试 HTTP 状态码（如 [502,503,504]）。 */
+  retry_on_status?: number[]
+  /** 网络错误是否重试。 */
+  retry_on_network?: boolean
+}
+
+/** 数据驱动的一组数据集（Rust `DataSet`）。 */
+export interface DataSet {
+  id: string
+  name: string
+  source:
+    | { kind: 'inline'; rows: Record<string, unknown>[] }
+    | { kind: 'json'; text: string }
+    | { kind: 'csv'; text: string }
+    | { kind: 'environment' }
+  sort_order?: number
+}
+
 export interface ScenarioStep {
   /** 引用式步骤的接口 id；内联步骤为 null。 */
   endpoint_id: string | null
@@ -386,6 +435,8 @@ export interface ScenarioStep {
   /** 引用式步骤的请求参数覆盖（键：url/params/headers/path_variables/body；
    *  未覆盖项沿用接口当前配置；按 key 合并，body 整体替换）。 */
   overrides?: StepOverrides | null
+  /** 步骤重试策略（显式配置才启用；缺省 = 不重试）。 */
+  retry?: StepRetry | null
 }
 
 /** 引用式步骤的请求参数覆盖。 */
@@ -410,6 +461,14 @@ export interface Scenario {
   steps: ScenarioStep[]
   /** 自定义脚本（脚本视图编辑后持久化）；缺省 = 未自定义，视图实时由 steps 生成。 */
   script?: string | null
+  /** Setup 步骤（主步骤之前执行；失败 → 主步骤跳过，teardown 仍执行）。 */
+  setup?: ScenarioStep[]
+  /** Teardown 步骤（失败 / 超时 / 取消时尽可能执行；写操作自动幂等键）。 */
+  teardown?: ScenarioStep[]
+  /** 自动清理开关（false = 不自动执行 teardown；缺省 true）。 */
+  teardown_enabled?: boolean
+  /** 数据驱动数据集（多组数据独立执行、变量隔离）。 */
+  data_sets?: DataSet[]
   created_at: string
   updated_at: string
 }
@@ -507,6 +566,33 @@ export interface ScenarioStepResult {
   blocked_reason?: string | null
   /** 循环步骤的已执行轮数（>1 时展示 ×N；非循环 / 单次缺省）。 */
   loop_runs?: number | null
+  /** 执行阶段（main 缺省；setup / teardown = 生命周期行）。 */
+  phase?: string | null
+  /** 步骤开始时刻（RFC3339；旧后端缺失）。 */
+  started_at?: string | null
+  /** 重试日志（attempt: 状态/错误；无重试为空）。 */
+  retry_log?: string[]
+}
+
+/** 矩阵运行的单行结果（Rust `MatrixRowOutcome`）。 */
+export interface MatrixRowOutcome {
+  key: string
+  label: string
+  /** 该行运行历史 id（getScenarioRun 可查详情）。 */
+  runId: string
+  ok: boolean
+  okCount: number
+  failCount: number
+  skippedCount: number
+  durationMs?: number | null
+}
+
+/** 矩阵运行汇总（Rust `MatrixRunOutcome`；数据驱动 / 环境矩阵共用）。 */
+export interface MatrixRunOutcome {
+  groupId: string
+  total: number
+  okRows: number
+  rows: MatrixRowOutcome[]
 }
 
 /** 步骤执行状态（六态；结果行与徽章共用）。 */
@@ -529,6 +615,9 @@ export interface ScenarioRunResult {
   vars_snapshots?: Record<string, string>[]
   /** 运行前预检警告（未定义变量按字面量发送的提示；旧后端缺失）。 */
   warnings?: string[]
+  /** 生命周期：Setup 步骤结果（实时运行随 IPC 下发；历史走 results 的 phase 行）。 */
+  setup_results?: ScenarioStepResult[]
+  teardown_results?: ScenarioStepResult[]
 }
 
 /** 场景运行历史（Rust `ScenarioRunSummary`；命令层已剥 results/variables 正文）。 */
@@ -569,6 +658,19 @@ export interface ScenarioRunMeta {
   /** 初始变量（敏感值已脱敏）。 */
   initialVars: Record<string, string>
   warnings: string[]
+  /** 失败恢复上下文（v2：每步执行前的 runtime 快照，敏感值脱敏；旧行缺省）。 */
+  varsSnapshots?: Record<string, string>[]
+  /** 生命周期摘要（v2：setup / teardown 步数与清理是否全部成功）。 */
+  lifecycle?: { setupCount: number; teardownCount: number; teardownOk: boolean }
+  /** 矩阵行标注（数据驱动 / 环境矩阵；单场景运行缺省）。 */
+  matrix?: {
+    kind: string
+    key: string
+    label: string
+    index: number
+    total: number
+    groupId: string
+  }
 }
 
 /** 场景运行历史详情（Rust `ScenarioRunDetail`；results 与实时运行同形，

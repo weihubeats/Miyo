@@ -206,7 +206,19 @@ impl TestSpec {
         if value.is_null() {
             return Ok(TestSpec::default());
         }
-        serde_json::from_value(value.clone()).map_err(|e| format!("测试配置解析失败：{e}"))
+        // 内层字段 null 归一为缺省（referenced 场景步骤的缺省形状是
+        // extract/assertions = Null；serde 对显式 null 不吃 default）。
+        let mut normalized = value.clone();
+        if normalized["extract"].is_null() {
+            normalized["extract"] = serde_json::json!([]);
+        }
+        if normalized["assertions"].is_null() {
+            normalized["assertions"] = serde_json::json!([]);
+        }
+        if normalized["pre_request"].is_null() {
+            normalized["pre_request"] = serde_json::json!([]);
+        }
+        serde_json::from_value(normalized).map_err(|e| format!("测试配置解析失败：{e}"))
     }
 
     pub fn to_value(&self) -> serde_json::Value {

@@ -21,6 +21,7 @@ tokio-util = "0.7"
 tracing = { workspace = true }
 regex = { workspace = true }
 jsonpath-rust = { workspace = true }
+jsonschema = { version = "0.61", default-features = false, features = ["resolve-file"] }
 
 [dev-dependencies]
 axum = { workspace = true }

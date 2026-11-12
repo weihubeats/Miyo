@@ -26,6 +26,15 @@ pub async fn get_setting(db: &SqlitePool, key: &str) -> Result<Option<String>> {
     Ok(row.map(|r| r.0))
 }
 
+/// 删除单键（恢复「未配置」语义：读取方走默认值兜底）。
+pub async fn delete_setting(db: &SqlitePool, key: &str) -> Result<()> {
+    sqlx::query("DELETE FROM settings WHERE key = ?")
+        .bind(key)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
 /// 批量读取多个键的设置（一次 `WHERE key IN (...)` 查询）。
 ///
 /// 缺失的键不进返回表；SQLite 变量数上限按 500 分片。

@@ -44,4 +44,6 @@ export interface EditorStep {
   parallel: boolean
   /** 引用式步骤的请求参数覆盖（None = 沿用接口配置）。 */
   overrides: StepOverrides | null
+  /** 步骤重试策略（显式配置才启用；null = 不重试）。 */
+  retry: import('../../types/miyoApi').StepRetry | null
 }

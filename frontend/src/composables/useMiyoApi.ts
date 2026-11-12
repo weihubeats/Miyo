@@ -57,6 +57,7 @@ import type {
   Project,
   ProjectStat,
   RecentActivity,
+  McpPermissionStatus,
   McpToolStatus,
   ProxyTestResult,
   TlsSettings,
@@ -85,6 +86,8 @@ import type {
   TestCase,
   ScenarioAssertionRule,
   ScenarioExtractRule,
+  StepRetry,
+  MatrixRunOutcome,
   TestCaseRun,
   TestCaseStatus,
 } from '../types/miyoApi'
@@ -413,6 +416,7 @@ export function useMiyoApi() {
       loop?: StepLoop | null
       wait_ms?: number | null
       parallel?: boolean
+      retry?: StepRetry | null
     }[]
     environmentId?: string | null
     stopOnFailure: boolean
@@ -421,7 +425,66 @@ export function useMiyoApi() {
     scenarioId?: string | null
     /** 初始变量（重跑失败步骤：传前次运行的 runtime 快照重建链路上下文）。 */
     initialVars?: Record<string, string> | null
+    /** 生命周期：setup / teardown 步骤（形状同 steps）。 */
+    setup?: {
+      endpoint: Endpoint
+      url: string
+      enabled: boolean
+      extract: unknown
+      assertions: unknown
+      retry?: StepRetry | null
+    }[]
+    teardown?: {
+      endpoint: Endpoint
+      url: string
+      enabled: boolean
+      extract: unknown
+      assertions: unknown
+      retry?: StepRetry | null
+    }[]
+    /** 自动清理开关（缺省 true）。 */
+    teardownEnabled?: boolean
   }) => run(() => call<ScenarioRunResult>('run_scenario', { args }))
+
+  /**
+   * 矩阵运行（数据驱动 / 环境矩阵）：同一场景 × N 行独立执行（每行变量
+   * 池隔离），逐行落历史（meta.matrix + groupId），返回逐行汇总。
+   */
+  const runScenarioMatrix = (args: {
+    steps: {
+      endpoint: Endpoint
+      url: string
+      enabled: boolean
+      extract: unknown
+      assertions: unknown
+      condition?: StepCondition | null
+      loop?: StepLoop | null
+      wait_ms?: number | null
+      parallel?: boolean
+      retry?: StepRetry | null
+    }[]
+    setup?: unknown[]
+    teardown?: unknown[]
+    teardownEnabled?: boolean
+    rows: {
+      key: string
+      label: string
+      environmentId?: string | null
+      vars?: Record<string, string> | null
+    }[]
+    stopOnFailure?: boolean
+    groupId: string
+    scenarioId?: string | null
+    environmentId?: string | null
+  }) => run(() => call<MatrixRunOutcome>('run_scenario_matrix', { args }))
+
+  /** 导出场景测试报告（HTML / JUnit XML / 统计 JSON）。 */
+  const exportScenarioReport = (args: {
+    scenarioId: string
+    scenarioName: string
+    runIds: string[]
+    format: 'html' | 'junit_xml' | 'json'
+  }) => run(() => call<{ content: string; suggestedName: string }>('export_scenario_report', args))
 
   const cancelScenarioRun = (runId: string) =>
     run(() => call<boolean>('cancel_scenario_run', { runId }))
@@ -510,6 +573,26 @@ export function useMiyoApi() {
 
   const setMcpToolEnabled = (args: { name: string; enabled: boolean }) =>
     run(() => call<void>('set_mcp_tool_enabled', args))
+
+  /** MCP 权限等级矩阵（read/write/execute/network_execute/destructive）。 */
+  const getMcpPermissions = () => run(() => call<McpPermissionStatus[]>('get_mcp_permissions'))
+
+  /** 自定义敏感字段规则（脱敏单源；保存后进程内立即生效）。 */
+  const getSensitivePatterns = () => run(() => call<string[]>('get_sensitive_patterns'))
+
+  const setSensitivePatterns = (patterns: string[]) =>
+    run(() => call<void>('set_sensitive_patterns', { patterns }))
+
+  /**
+   * 保存权限等级启用集。启用任一高风险等级（network_execute / destructive）
+   * 必须传 acknowledgeHighRisk: true（用户在设置页明确确认后由 UI 传入）。
+   */
+  const setMcpPermissions = (args: { levels: string[]; acknowledgeHighRisk?: boolean }) =>
+    run(() =>
+      call<void>('set_mcp_permissions', {
+        levels: args.levels,
+        acknowledgeHighRisk: args.acknowledgeHighRisk ?? false,
+      }))
 
   // ---------- 自增序列 ----------
   const listSeqCounters = () => run(() => call<SeqCounter[]>('list_seq_counters'))
@@ -838,6 +921,8 @@ export function useMiyoApi() {
     saveScenario,
     deleteScenario,
     runScenario,
+    runScenarioMatrix,
+    exportScenarioReport,
     cancelScenarioRun,
     listScenarioRuns,
     getScenarioRun,
@@ -863,6 +948,10 @@ export function useMiyoApi() {
     setTlsSettings,
     getMcpTools,
     setMcpToolEnabled,
+    getMcpPermissions,
+    setMcpPermissions,
+    getSensitivePatterns,
+    setSensitivePatterns,
     getHttpTimeoutMs,
     setHttpTimeoutMs,
     listSeqCounters,

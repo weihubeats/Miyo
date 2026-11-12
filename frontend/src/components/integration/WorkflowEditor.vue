@@ -36,6 +36,7 @@ import { envColorClass, mergedVariableMap } from '../../utils/environment'
 import { applyPathVars } from '../../utils/pathVariables'
 import { methodBadgeTone } from '../../utils/methodTone'
 import { generateScenarioScript, type ScriptAuth, type ScriptStep } from '../../utils/scenarioScript'
+import { EXPORT_PLACEHOLDER, isSensitiveKeyName, redactJsonText, redactUrlQuery } from '../../utils/exportRedact'
 import { parseScenarioScript, ScriptParseError } from '../../utils/scenarioScriptParse'
 import { copyText } from '../../utils/clipboard'
 import CustomSelect from '../ui/CustomSelect.vue'
@@ -133,6 +134,7 @@ const draftSnapshot = (): string =>
       waitMs: s.waitMs,
       parallel: s.parallel,
       overrides: s.overrides,
+      retry: s.retry,
     })),
     script: scriptDraft.value,
   })
@@ -214,6 +216,7 @@ function stepToEditor(s: ScenarioStep): EditorStep {
     loop: (s.loop as StepLoop | null | undefined) ?? null,
     waitMs: s.wait_ms ?? null,
     parallel: s.parallel ?? false,
+    retry: (s.retry as import('../../types/miyoApi').StepRetry | null | undefined) ?? null,
     overrides: (s.overrides as StepOverrides | null | undefined) ?? null,
   }
 }
@@ -341,6 +344,7 @@ function addInlineStep(): void {
     waitMs: null,
     parallel: false,
     overrides: null,
+    retry: null,
   })
   selectStep(steps.value[steps.value.length - 1]!)
 }
@@ -360,6 +364,7 @@ function addRefStep(ep: Endpoint): void {
     waitMs: null,
     parallel: false,
     overrides: null,
+    retry: null,
   })
   selectStep(steps.value[steps.value.length - 1]!)
 }
@@ -435,6 +440,7 @@ const detailTabs: TabItem[] = [
   { key: 'extract', label: t('integration.tabExtract') },
   { key: 'assert', label: t('integration.tabAssert') },
   { key: 'vars', label: t('integration.tabVars') },
+  { key: 'lifecycle', label: t('integration.lifecycleTab') },
 ]
 const detailTab = ref('request')
 
@@ -492,6 +498,17 @@ const loopMaxText = numBridge(
   () => selectedStep.value?.loop?.max_loops ?? null,
   (v) => { if (selectedStep.value?.loop) selectedStep.value.loop.max_loops = v },
 )
+const retryStatusText = computed({
+  get: () => (selectedStep.value?.retry?.retry_on_status ?? []).join(','),
+  set: (v: string) => {
+    if (!selectedStep.value?.retry) return
+    selectedStep.value.retry.retry_on_status = v
+      .split(/[,\s]+/)
+      .map((x) => Number.parseInt(x, 10))
+      .filter((n) => Number.isFinite(n) && n >= 100 && n <= 599)
+  },
+})
+
 const loopIntervalText = numBridge(
   () => selectedStep.value?.loop?.interval_ms ?? null,
   (v) => { if (selectedStep.value?.loop) selectedStep.value.loop.interval_ms = v },
@@ -652,12 +669,56 @@ function edgeVarsLabel(e: { vars: string[]; externalVars: string[] }): { shown: 
 }
 
 // ---------- 运行（useScenarioRun + 物化） ----------
+/** 生命周期步骤 → 运行入参（形状与 steps 元素一致；引用式步骤物化为内联）。 */
+function lifecycleStepsPayload(phase: 'setup' | 'teardown') {
+  const sc = scenario.value
+  if (!sc) return []
+  return (sc[phase] ?? [])
+    .map((st, i) => {
+      if (st.request) {
+        return {
+          endpoint: {
+            id: st.request.url,
+            project_id: '',
+            folder_id: null,
+            name: st.name || `${phase}-${i + 1}`,
+            method: st.request.method as Endpoint['method'],
+            path: st.request.url,
+            description: '',
+            status: 'developing' as const,
+            sort_order: 0,
+            request: st.request.spec,
+            created_at: '',
+            updated_at: '',
+          },
+          url: st.request.url,
+          enabled: st.enabled,
+          extract: st.extract ?? [],
+          assertions: st.assertions ?? [],
+          retry: st.retry ?? null,
+        }
+      }
+      const ep = workspace.endpoints.find((e) => e.id === st.endpoint_id)
+      if (!ep) return null
+      return {
+        endpoint: ep,
+        url: `{{base_url}}${ep.path.startsWith('/') ? ep.path : `/${ep.path}`}`,
+        enabled: st.enabled,
+        extract: st.extract ?? [],
+        assertions: st.assertions ?? [],
+        retry: st.retry ?? null,
+      }
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
+}
+
 function buildOneRunStep(s: EditorStep): BuiltRunStep | null {
   if (!s.enabled) return null
   if (s.kind === 'inline') {
     const name = s.name.trim() || t('integration.stepUntitled', { n: steps.value.indexOf(s) + 1 })
     const spec = JSON.parse(JSON.stringify(s.inline.spec))
     return {
+      retry: s.retry,
       index: steps.value.indexOf(s),
       endpoint: {
         id: s.key,
@@ -750,6 +811,153 @@ function openEndpointMenu(anchor: HTMLElement): void {
   )
 }
 
+// ---------- 生命周期（setup / teardown）与数据集（数据驱动）编辑 ----------
+const lifecycleTab = ref<'setup' | 'teardown' | 'datasets'>('setup')
+const lifecycleText = ref('')
+const lifecycleError = ref<string | null>(null)
+
+function lifecycleJson(): string {
+  const sc = scenario.value
+  if (!sc) return '[]'
+  if (lifecycleTab.value === 'datasets') return JSON.stringify(sc.data_sets ?? [], null, 2)
+  return JSON.stringify(sc[lifecycleTab.value] ?? [], null, 2)
+}
+
+watch([lifecycleTab, scenario], () => {
+  lifecycleText.value = lifecycleJson()
+  lifecycleError.value = null
+})
+
+// ---------- 数据集结构化编辑桥（datasets 数组的原地增删改） ----------
+const dsIndex = ref(0) // 当前编辑的数据集位次
+const dsCurrent = computed(() => scenario.value?.data_sets?.[dsIndex.value] ?? null)
+
+function addDataSet(): void {
+  const sc = scenario.value
+  if (!sc) return
+  const ds: import('../../types/miyoApi').DataSet = {
+    id: crypto.randomUUID(),
+    name: t('integration.dsAdd', { n: (sc.data_sets?.length ?? 0) + 1 }),
+    source: { kind: 'inline', rows: [{}] },
+    sort_order: sc.data_sets?.length ?? 0,
+  }
+  sc.data_sets = [...(sc.data_sets ?? []), ds]
+  dsIndex.value = (sc.data_sets?.length ?? 1) - 1
+}
+
+function removeDataSet(): void {
+  const sc = scenario.value
+  if (!sc?.data_sets?.length) return
+  sc.data_sets = sc.data_sets.filter((_, i) => i !== dsIndex.value)
+  dsIndex.value = Math.min(dsIndex.value, (sc.data_sets?.length ?? 1) - 1)
+}
+
+const dsName = computed({
+  get: () => dsCurrent.value?.name ?? '',
+  set: (v: string) => {
+    if (dsCurrent.value) dsCurrent.value.name = v
+  },
+})
+
+const dsKind = computed(() => dsCurrent.value?.source.kind ?? 'inline')
+
+const dsKindOptions = [
+  { value: 'inline', label: t('integration.dsKindInline') },
+  { value: 'json', label: t('integration.dsKindJson') },
+  { value: 'csv', label: t('integration.dsKindCsv') },
+  { value: 'environment', label: t('integration.dsKindEnv') },
+]
+
+function setDsKind(kind: string | number): void {
+  const ds = dsCurrent.value
+  if (!ds) return
+  if (kind === 'inline') ds.source = { kind: 'inline', rows: [] }
+  else if (kind === 'json') ds.source = { kind: 'json', text: '' }
+  else if (kind === 'csv') ds.source = { kind: 'csv', text: '' }
+  else ds.source = { kind: 'environment' }
+}
+
+/** inline 行编辑：增删行 + 键值对编辑（扁平字符串化）。 */
+const dsRows = computed(() => {
+  const src = dsCurrent.value?.source
+  return src && 'rows' in src ? src.rows : []
+})
+
+function addRow(): void {
+  const ds = dsCurrent.value
+  if (!ds || ds.source.kind !== 'inline') return
+  ds.source.rows = [...ds.source.rows, {}]
+}
+
+function removeRow(i: number): void {
+  const ds = dsCurrent.value
+  if (!ds || ds.source.kind !== 'inline') return
+  ds.source.rows = ds.source.rows.filter((_, k) => k !== i)
+}
+
+/** 行键值对（扁平 view：entry key 可编辑——新增键用 addRowKey(row, oldKey?)）。 */
+function rowEntries(row: Record<string, unknown>): [string, string][] {
+  return Object.entries(row).map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)])
+}
+
+function rowSetKey(row: Record<string, unknown>, oldKey: string, newKey: string): void {
+  const trimmed = newKey.trim()
+  if (!trimmed || trimmed === oldKey) return
+  const entries = Object.entries(row).map(([k, v]) =>
+    k === oldKey ? [trimmed, v] : [k, v],
+  )
+  for (const key of Object.keys(row)) delete row[key]
+  Object.assign(row, Object.fromEntries(entries))
+}
+
+function rowSetValue(row: Record<string, unknown>, key: string, value: string): void {
+  row[key] = value
+}
+
+function rowRemoveKey(row: Record<string, unknown>, key: string): void {
+  delete row[key]
+}
+
+function rowAddKey(row: Record<string, unknown>): void {
+  let k = 'field'
+  let n = 1
+  while (k in row) k = `field${++n}`
+  row[k] = ''
+}
+
+const dsText = computed({
+  get: () => {
+    const src = dsCurrent.value?.source
+    if (src && 'text' in src) return src.text
+    return ''
+  },
+  set: (text: string) => {
+    const ds = dsCurrent.value
+    if (!ds) return
+    if (ds.source.kind === 'json') ds.source = { kind: 'json', text }
+    else if (ds.source.kind === 'csv') ds.source = { kind: 'csv', text }
+  },
+})
+
+/** 解析并写回场景对象（保存走既有 save 链路；解析失败不动数据）。 */
+function applyLifecycleText(): boolean {
+  const sc = scenario.value
+  if (!sc) return false
+  try {
+    const parsed: unknown = JSON.parse(lifecycleText.value)
+    if (lifecycleTab.value === 'datasets') {
+      sc.data_sets = parsed as Scenario['data_sets']
+    } else {
+      sc[lifecycleTab.value] = parsed as ScenarioStep[]
+    }
+    lifecycleError.value = null
+    return true
+  } catch (err) {
+    lifecycleError.value = err instanceof Error ? err.message : String(err)
+    return false
+  }
+}
+
 const run = useScenarioRun({
   store: workspace,
   api,
@@ -761,6 +969,9 @@ const run = useScenarioRun({
   dirty,
   save,
   openMenuAt,
+  lifecycleSetup: () => lifecycleStepsPayload('setup'),
+  lifecycleTeardown: () => lifecycleStepsPayload('teardown'),
+  lifecycleTeardownEnabled: () => scenario.value?.teardown_enabled ?? true,
 })
 
 // ---------- 写操作确认（副作用提示） ----------
@@ -890,25 +1101,21 @@ onMounted(async () => {
   await load()
   // 先加载历史列表，再恢复最近一次运行：restoreLatestRun 读 runHistory[0]，
   // 并行调用时列表尚未返回必然空跑（恢复功能整体失效）。
-  void run
-    .loadHistory()
-    .then(() => run.restoreLatestRun(props.scenarioId))
-  // 列表「执行历史」直达：加载指定运行并进入结果视图。
+  void run.loadHistory().then(() => run.restoreLatestRun())
+  // 列表「执行历史」直达：加载指定运行并进入结果视图（与最近一次恢复
+  // 共用恢复序号：只有最新一次请求能落状态，乱序返回不互相覆盖）。
   const pending = store.takePendingRun()
   if (pending) {
-    try {
-      const detail = await api.getScenarioRun(pending)
-      if (detail && scenario.value?.id === props.scenarioId) {
-        run.applyHistoryDetail(detail)
-        viewMode.value = 'result'
-      }
-    } catch {
-      // 历史可能已被清理：保持编辑态
+    const outcome = await run.restoreRun(pending)
+    if (outcome.status === 'applied') {
+      viewMode.value = 'result'
     }
   }
 })
 onBeforeUnmount(() => {
   disposed = true
+  // 组合式内的在途恢复请求随之失效（卸载后不再写状态）。
+  run.dispose()
   unlisten?.()
   unlisten = null
   sortInstance?.destroy()
@@ -968,42 +1175,78 @@ watch(
 )
 
 /** 历史菜单选中 → 打开该次运行的结果视图。 */
+/** 报告落盘：目录选择一次 + 建议文件名写入（历史菜单导出项的宿主回调）。 */
+const reportWriteHook = async (suggestedName: string, content: string): Promise<void> => {
+  const dir = await openDialog({ directory: true, title: t('integration.reportExport') })
+  if (!dir || Array.isArray(dir)) throw new Error('cancelled')
+  const path = await join(dir, suggestedName)
+  await api.writeTextFile(path, content)
+}
+
 async function onHistorySelect(item: MenuItem): Promise<void> {
-  await run.onHistorySelect(item)
+  await run.onHistorySelect(item, { writeTextFile: reportWriteHook })
   if (run.runIsHistory.value) viewMode.value = 'result'
 }
 
-function toScriptSteps(): ScriptStep[] {
+/**
+ * 步骤 → 脚本入参。`redact`（导出用）= 敏感值以占位符生成：
+ * 真实 Token / 密码不写入导出的 .mjs（脚本会离开本机）；应用内
+ * scriptDraft 保持明文（用户可见可改，随场景保存属本地资产）。
+ */
+function toScriptSteps(redact = false): ScriptStep[] {
+  const redactKv = (items: { key: string; value: string }[]) =>
+    redact
+      ? items.map((kv) =>
+          isSensitiveKeyName(kv.key) && kv.value ? { ...kv, value: EXPORT_PLACEHOLDER } : kv,
+        )
+      : items
+  const redactAuth = <T extends { kind: string; token?: string; password?: string; value?: string; key?: string }>(
+    a: T | null,
+  ): T | null =>
+    redact && a
+      ? ({
+          ...a,
+          ...(a.token !== undefined && a.token ? { token: EXPORT_PLACEHOLDER } : {}),
+          ...(a.password !== undefined && a.password ? { password: EXPORT_PLACEHOLDER } : {}),
+          ...(a.value !== undefined && a.value ? { value: EXPORT_PLACEHOLDER } : {}),
+        } as T)
+      : a
+  const redactBodyRaw = (raw: string | null) => (redact && raw ? redactJsonText(raw) : raw)
+  const redactUrl = (u: string) => (redact ? redactUrlQuery(u) : u)
+
   return steps.value.map((s) => {
     const ep = s.kind === 'ref' ? endpointOf(s) : null
     if (s.kind === 'inline') {
       const body = s.inline.spec.body
       const kind = body.mode
-      const enabledHeaders = s.inline.spec.headers
-        .filter((h) => h.enabled)
-        .map((h) => ({ key: h.key, value: h.value }))
+      const enabledHeaders = redactKv(
+        s.inline.spec.headers.filter((h) => h.enabled).map((h) => ({ key: h.key, value: h.value })),
+      )
       const auth = staticAuth(s.inline.spec.auth)
       return {
         name: stepTitle(s),
         method: s.inline.method,
-        url: s.inline.url,
-        params: s.inline.spec.params.filter((p) => p.enabled).map((p) => ({ key: p.key, value: p.value })),
+        url: redactUrl(s.inline.url),
+        params: redactKv(
+          s.inline.spec.params.filter((p) => p.enabled).map((p) => ({ key: p.key, value: p.value })),
+        ),
         headers: enabledHeaders,
-        auth: auth?.auth ?? null,
+        auth: redactAuth(auth?.auth ?? null),
         authUnsupported: auth?.unsupported ?? null,
         body:
           body.mode === 'json' || body.mode === 'text'
-            ? body.raw
+            ? redactBodyRaw(body.raw)
             : body.mode === 'graphql'
               ? body.spec.query
               : null,
-        bodyFields:
-          body.mode === 'urlencoded' || body.mode === 'multipart'
+        bodyFields: redactKv(
+          (body.mode === 'urlencoded' || body.mode === 'multipart'
             ? body.fields.filter((f) => f.enabled).map((f) => ({ key: f.key, value: f.value }))
-            : [],
+            : []) as { key: string; value: string }[],
+        ),
         bodyFileFields:
           body.mode === 'multipart' ? body.fields.filter((f) => f.value_type === 'file_path').map((f) => f.key) : [],
-        bodyVariables: body.mode === 'graphql' ? body.spec.variables : '',
+        bodyVariables: body.mode === 'graphql' ? (redact ? redactJsonText(body.spec.variables) : body.spec.variables) : '',
         bodyPath: body.mode === 'binary' ? body.path : '',
         bodyKind: kind === 'none' ? 'none' : (kind as ScriptStep['bodyKind']),
         condition: s.condition,
@@ -1031,24 +1274,26 @@ function toScriptSteps(): ScriptStep[] {
     return {
       name: stepTitle(s),
       method: ep.method,
-      url: urlTemplateFor(ep),
-      params: ep.request.params.filter((p) => p.enabled).map((p) => ({ key: p.key, value: p.value })),
-      headers: ep.request.headers.filter((h) => h.enabled).map((h) => ({ key: h.key, value: h.value })),
-      auth: auth?.auth ?? null,
+      url: redactUrl(urlTemplateFor(ep)),
+      params: redactKv(ep.request.params.filter((p) => p.enabled).map((p) => ({ key: p.key, value: p.value }))),
+      headers: redactKv(ep.request.headers.filter((h) => h.enabled).map((h) => ({ key: h.key, value: h.value }))),
+      auth: redactAuth(auth?.auth ?? null),
       authUnsupported: auth?.unsupported ?? null,
       body:
         body.mode === 'json' || body.mode === 'text'
-          ? body.raw
+          ? redactBodyRaw(body.raw)
           : body.mode === 'graphql'
             ? body.spec.query
             : null,
-      bodyFields:
-        body.mode === 'urlencoded' || body.mode === 'multipart'
+      bodyFields: redactKv(
+        (body.mode === 'urlencoded' || body.mode === 'multipart'
           ? body.fields.filter((f) => f.enabled).map((f) => ({ key: f.key, value: f.value }))
-          : [],
+          : []) as { key: string; value: string }[],
+      ),
       bodyFileFields:
         body.mode === 'multipart' ? body.fields.filter((f) => f.value_type === 'file_path').map((f) => f.key) : [],
-      bodyVariables: body.mode === 'graphql' ? body.spec.variables : '',
+      bodyVariables:
+        body.mode === 'graphql' ? (redact ? redactJsonText(body.spec.variables) : body.spec.variables) : '',
       bodyPath: body.mode === 'binary' ? body.path : '',
       bodyKind: body.mode === 'none' ? 'none' : (body.mode as ScriptStep['bodyKind']),
       condition: s.condition,
@@ -1101,8 +1346,8 @@ const mergedVars = computed(() =>
 )
 const envBaseUrlValue = computed(() => mergedVars.value['base_url'] ?? '')
 
-function generateScriptText(): string {
-  return generateScenarioScript(name.value.trim() || t('integration.newName'), toScriptSteps(), {
+function generateScriptText(redact = false): string {
+  return generateScenarioScript(name.value.trim() || t('integration.newName'), toScriptSteps(redact), {
     base: envBaseUrlValue.value,
     stopOnFailure: run.stopOnFailure.value,
     envDefaults: Object.fromEntries(
@@ -1159,6 +1404,7 @@ function applyScriptToSteps(): void {
         waitMs: null,
         parallel: false,
         overrides: null,
+    retry: null,
         assertions: p.assertions.map((a) => ({
           name: a.name ?? '',
           type: a.type ?? 'status',
@@ -1203,7 +1449,9 @@ async function exportScript(): Promise<void> {
     if (!dir || Array.isArray(dir)) return
     const base = (name.value.trim() || t('integration.newName')).replace(/[\\/:*?"<>|\s]+/g, '_') || 'scenario'
     const path = await join(dir, `${base}.mjs`)
-    await api.writeTextFile(path, scriptDraft.value)
+    // 导出用脱敏再生成（不用 scriptDraft 原文）：真实凭证不写入 .mjs，
+    // 敏感值以占位符出现，接手方按提示回填。
+    await api.writeTextFile(path, generateScriptText(true))
     toast.success(t('scenario.scriptExported'), { message: path })
   } catch (err) {
     toast.error(t('scenario.scriptExportFail'), {
@@ -1898,6 +2146,65 @@ function runStepMethod(pos: number): string {
                 </div>
                 <p class="wf-ctrl-hint">{{ t('integration.waitHint') }}</p>
                 <p class="wf-ctrl-hint">{{ t('integration.parallelHint') }}</p>
+
+                <!-- 步骤重试策略（显式配置才启用；副作用步骤自动幂等键） -->
+                <div class="wf-ctrl-block">
+                  <div class="wf-ctrl-head">
+                    <span class="wf-ctrl-label">{{ t('integration.retryTitle') }}</span>
+                    <button
+                      v-if="!selectedStep.retry"
+                      class="miyo-btn miyo-btn-sm"
+                      type="button"
+                      @click="selectedStep.retry = { max_attempts: 3, interval_ms: 500, exponential: false, retry_on_status: [502, 503, 504], retry_on_network: true }"
+                    >
+                      <Icon name="plus" :size="12" /> {{ t('integration.retryAdd') }}
+                    </button>
+                    <IconButton
+                      v-else
+                      name="trash"
+                      :size="13"
+                      :title="t('common.delete')"
+                      @click="selectedStep.retry = null"
+                    />
+                  </div>
+                  <p class="wf-ctrl-hint">{{ t('integration.retryHint') }}</p>
+                  <div v-if="selectedStep.retry" class="wf-rule-row wf-retry-grid">
+                    <label class="wf-ctrl-check">
+                      <input
+                        v-model.number="selectedStep.retry.max_attempts"
+                        type="number"
+                        min="1"
+                        max="10"
+                        class="miyo-input"
+                      />
+                      <span>{{ t('integration.retryAttempts') }}</span>
+                    </label>
+                    <label class="wf-ctrl-check">
+                      <input
+                        v-model.number="selectedStep.retry.interval_ms"
+                        type="number"
+                        min="0"
+                        class="miyo-input"
+                      />
+                      <span>{{ t('integration.retryInterval') }}</span>
+                    </label>
+                    <label class="wf-ctrl-check">
+                      <input v-model="selectedStep.retry.exponential" type="checkbox" />
+                      <span>{{ t('integration.retryExponential') }}</span>
+                    </label>
+                    <label class="wf-ctrl-check">
+                      <input v-model="selectedStep.retry.retry_on_network" type="checkbox" />
+                      <span>{{ t('integration.retryNetwork') }}</span>
+                    </label>
+                    <input
+                      v-model="retryStatusText"
+                      class="miyo-input"
+                      type="text"
+                      spellcheck="false"
+                      :placeholder="t('integration.retryStatusPh')"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
             <ExtractList
@@ -1916,6 +2223,154 @@ function runStepMethod(pos: number): string {
               :runtime-vars="run.runResult.value?.variables ?? null"
               @locate="locateStep"
             />
+
+            <!-- 生命周期 + 数据集（数据驱动）：setup/teardown JSON 编辑 +
+                 数据集结构化编辑（名称 / 源类型 / 行表格），保存走既有链路 -->
+            <div v-if="detailTab === 'lifecycle'" class="wf-lifecycle">
+              <div class="wf-ctrl-head">
+                <CustomSelect
+                  :model-value="lifecycleTab"
+                  :options="[
+                    { value: 'setup', label: t('integration.lifecycleSetup') },
+                    { value: 'teardown', label: t('integration.lifecycleTeardown') },
+                    { value: 'datasets', label: t('integration.lifecycleDatasets') },
+                  ]"
+                  size="sm"
+                  :pop-min-width="130"
+                  @update:model-value="(v) => (lifecycleTab = String(v ?? 'setup') as 'setup' | 'teardown' | 'datasets')"
+                />
+                <label
+                  v-if="lifecycleTab !== 'datasets' && scenario"
+                  class="wf-ctrl-check"
+                >
+                  <input v-model="scenario.teardown_enabled" type="checkbox" />
+                  <span>{{ t('integration.lifecycleAutoClean') }}</span>
+                </label>
+              </div>
+
+              <!-- 数据集结构化编辑 -->
+              <template v-if="lifecycleTab === 'datasets'">
+                <p class="wf-ctrl-hint">{{ t('integration.dsHint') }}</p>
+                <div class="wf-ds-list">
+                  <button
+                    v-for="(ds, i) in scenario?.data_sets ?? []"
+                    :key="ds.id"
+                    type="button"
+                    class="wf-ds-chip"
+                    :class="{ active: i === dsIndex }"
+                    @click="dsIndex = i"
+                  >
+                    {{ ds.name || `#${i + 1}` }}
+                  </button>
+                  <button type="button" class="miyo-btn miyo-btn-sm" @click="addDataSet">
+                    <Icon name="plus" :size="12" /> {{ t('integration.dsAdd') }}
+                  </button>
+                  <IconButton
+                    v-if="scenario?.data_sets?.length"
+                    name="trash"
+                    :size="13"
+                    :title="t('common.delete')"
+                    @click="removeDataSet"
+                  />
+                </div>
+                <template v-if="dsCurrent">
+                  <div class="wf-rule-row mt-3">
+                    <input
+                      v-model="dsName"
+                      class="miyo-input wf-rule-name"
+                      type="text"
+                      :placeholder="t('integration.dsNamePh')"
+                      spellcheck="false"
+                    />
+                    <CustomSelect
+                      class="wf-ctrl-src"
+                      :model-value="dsKind"
+                      :options="dsKindOptions"
+                      size="sm"
+                      :pop-min-width="120"
+                      @update:model-value="setDsKind"
+                    />
+                  </div>
+
+                  <!-- inline：行表格（键值对编辑） -->
+                  <div v-if="dsKind === 'inline'" class="wf-ds-rows">
+                    <div
+                      v-for="(row, ri) in dsRows"
+                      :key="ri"
+                      class="wf-ds-row"
+                    >
+                      <div class="flex flex-col gap-1">
+                        <div
+                          v-for="[k, v] in rowEntries(row)"
+                          :key="k"
+                          class="flex items-center gap-1.5"
+                        >
+                          <input
+                            class="miyo-input wf-ds-key"
+                            :value="k"
+                            type="text"
+                            spellcheck="false"
+                            :placeholder="t('integration.dsKeyPh')"
+                            @change="rowSetKey(row, k, ($event.target as HTMLInputElement).value)"
+                          />
+                          <input
+                            class="miyo-input wf-ds-val"
+                            :value="v"
+                            type="text"
+                            spellcheck="false"
+                            @input="rowSetValue(row, k, ($event.target as HTMLInputElement).value)"
+                          />
+                          <IconButton
+                            name="trash"
+                            :size="12"
+                            :title="t('common.delete')"
+                            @click="rowRemoveKey(row, k)"
+                          />
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <IconButton name="plus" :size="12" :title="t('integration.dsAddKey')" @click="rowAddKey(row)" />
+                        <IconButton name="trash" :size="12" :title="t('integration.dsRemoveRow')" @click="removeRow(ri)" />
+                      </div>
+                    </div>
+                    <button type="button" class="miyo-btn miyo-btn-sm" @click="addRow">
+                      <Icon name="plus" :size="12" /> {{ t('integration.dsAddRow') }}
+                    </button>
+                  </div>
+
+                  <!-- json / csv：文本域 -->
+                  <textarea
+                    v-else-if="dsKind !== 'environment'"
+                    v-model="dsText"
+                    class="miyo-input wf-lifecycle-json"
+                    rows="8"
+                    spellcheck="false"
+                    :placeholder="dsKind === 'json' ? t('integration.dsJsonPh') : t('integration.dsCsvPh')"
+                  />
+                  <p v-else class="wf-ctrl-hint">{{ t('integration.dsEnvHint') }}</p>
+                </template>
+              </template>
+
+              <!-- setup / teardown：JSON 编辑（保存走既有链路） -->
+              <template v-else>
+                <p class="wf-ctrl-hint">{{ t('integration.lifecycleHint') }}</p>
+                <textarea
+                  v-model="lifecycleText"
+                  class="miyo-input wf-lifecycle-json"
+                  rows="12"
+                  spellcheck="false"
+                />
+                <p v-if="lifecycleError" class="wf-lifecycle-error">{{ lifecycleError }}</p>
+                <div class="wf-lifecycle-actions">
+                  <button type="button" class="miyo-btn miyo-btn-sm" @click="lifecycleText = lifecycleJson()">
+                    {{ t('integration.lifecycleReload') }}
+                  </button>
+                  <button type="button" class="miyo-btn miyo-btn-sm" @click="applyLifecycleText()">
+                    {{ t('integration.lifecycleApply') }}
+                  </button>
+                </div>
+              </template>
+            </div>
           </div>
         </template>
         <div v-else class="wf-detail-placeholder">
@@ -2654,6 +3109,53 @@ function runStepMethod(pos: number): string {
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-2);
+}
+
+.wf-ds-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wf-ds-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--bg-hover);
+}
+
+.wf-ds-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.wf-ds-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+}
+
+.wf-ds-key {
+  width: 120px;
+  font-family: var(--font-mono);
+}
+
+.wf-ds-val {
+  flex: 1;
+}
+
+.wf-retry-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .wf-ctrl-hint {

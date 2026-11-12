@@ -1093,6 +1093,10 @@ async fn scenario_run_history_roundtrip_and_prune() {
 
     let project = repo::create_project(&db, "场景历史", "").await.unwrap();
     let scenario = miyo_core::model::Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
         id: Uuid::new_v4(),
         project_id: project.id,
         name: "登录链路".into(),
@@ -1148,6 +1152,10 @@ async fn list_scenario_run_summaries_matches_details() {
     let db = pool().await;
     let project = repo::create_project(&db, "摘要列表", "").await.unwrap();
     let scenario = miyo_core::model::Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
         id: Uuid::new_v4(),
         project_id: project.id,
         name: "摘要列表场景".into(),
@@ -1192,6 +1200,10 @@ async fn latest_run_summaries_for_project_one_row_per_scenario() {
     let mut scenarios = Vec::new();
     for name in ["场景A", "场景B", "场景C"] {
         let s = miyo_core::model::Scenario {
+            setup: Vec::new(),
+            teardown: Vec::new(),
+            teardown_enabled: true,
+            data_sets: Vec::new(),
             id: Uuid::new_v4(),
             project_id: project.id,
             name: name.into(),
@@ -1208,6 +1220,10 @@ async fn latest_run_summaries_for_project_one_row_per_scenario() {
     }
     // 其他项目的场景（隔离校验）
     let foreign = miyo_core::model::Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
         id: Uuid::new_v4(),
         project_id: other.id,
         name: "别家的".into(),

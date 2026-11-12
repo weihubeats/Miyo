@@ -1151,6 +1151,10 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     repo::save_endpoint(db, &chain_ep).await?;
     let now = Utc::now();
     let scenario = Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
         id: Uuid::new_v4(),
         project_id: open_demo.id,
         name: "文章链路：详情 → 该作者的文章 → 作者详情".into(),
@@ -1324,6 +1328,10 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     }
 
     let shop_scenario = Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
         id: Uuid::new_v4(),
         project_id: shop_project.id,
         name: "电商主流程：下单 → 支付预览 → 支付".into(),
@@ -1384,6 +1392,10 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     // 场景 A：鉴权链路 —— 登录提取 token，下一步经 Bearer {{token}} 认证。
     let now = Utc::now();
     let auth_scenario = Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
         id: Uuid::new_v4(),
         project_id: users.id,
         name: "用户鉴权链路：登录 → 携带 Token 查当前用户".into(),
@@ -1422,6 +1434,10 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     // 场景 B：条件分支演示 —— 上一步提取的 role 决定删除步骤是否执行。
     let now = Utc::now();
     let condition_scenario = Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
         id: Uuid::new_v4(),
         project_id: users.id,
         name: "管理员操作链路：角色校验 → 删除用户（条件执行）".into(),
@@ -1472,6 +1488,10 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     // 场景 C：内联请求演示 —— 步骤自持请求定义，不依赖接口集合。
     let now = Utc::now();
     let inline_scenario = Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
         id: Uuid::new_v4(),
         project_id: open_demo.id,
         name: "内联请求链路：查询文章 → 查作者（免接口集合）".into(),
@@ -1546,6 +1566,10 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     // 场景 D：while 轮询演示 —— 支付后轮询订单状态直到 PAID。
     let now = Utc::now();
     let poll_scenario = Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
         id: Uuid::new_v4(),
         project_id: shop_project.id,
         name: "订单状态轮询：下单 → 支付 → 轮询直到 PAID（while 演示）".into(),
@@ -1610,6 +1634,10 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     // 场景 E：条件查询演示 —— 预览金额超过阈值才查发票。
     let now = Utc::now();
     let invoice_scenario = Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
         id: Uuid::new_v4(),
         project_id: shop_project.id,
         name: "发票按需查询：预览金额 > 100 才查发票（条件演示）".into(),

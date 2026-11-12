@@ -125,7 +125,7 @@ describe('useScenarioRun 历史恢复', () => {
     })
     // 模拟挂载链路：列表先行，恢复随后（WorkflowEditor 的 .then 串联）。
     await run.loadHistory()
-    await run.restoreLatestRun('sc-1')
+    await run.restoreLatestRun()
     expect(api.getScenarioRun).toHaveBeenCalledWith('r-old') // 列表首项（新→旧）
     expect(run.runIsHistory.value).toBe(true)
     expect(run.runId.value).toBe('r-old')
@@ -138,7 +138,7 @@ describe('useScenarioRun 历史恢复', () => {
       getScenarioRun: vi.fn(async (id: string) => detail(id)),
     })
     await run.loadHistory()
-    await run.restoreLatestRun('sc-1')
+    await run.restoreLatestRun()
     expect(run.runIsHistory.value).toBe(false)
     expect(run.runResult.value).toBeNull()
   })

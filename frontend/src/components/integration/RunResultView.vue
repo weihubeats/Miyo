@@ -93,10 +93,41 @@ const selectedIndex = ref(0)
  */
 const respView = ref<'pretty' | 'raw' | 'tree'>('pretty')
 
-const selected = computed<ScenarioStepResult | null>(() => {
+/**
+ * 时间线分组：主步骤 + 生命周期（setup / teardown）。
+ * 实时运行的生命周期结果在独立字段；历史运行的 results_json 里以
+ * phase 标注合并——两种来源统一在这里聚合。
+ */
+const timelineGroups = computed(() => {
   const r = props.result
-  if (!r || !r.results.length) return null
-  return r.results[Math.min(selectedIndex.value, r.results.length - 1)] ?? null
+  if (!r) return []
+  const setup = r.results.filter((x) => x.phase === 'setup')
+  const teardown = r.results.filter((x) => x.phase === 'teardown')
+  const main = r.results.filter((x) => !x.phase)
+  const liveSetup = (r.setup_results?.length ?? 0) > 0 ? r.setup_results! : setup
+  const liveTeardown = (r.teardown_results?.length ?? 0) > 0 ? r.teardown_results! : teardown
+  const groups: { label: string | null; rows: ScenarioStepResult[]; offset: number }[] = []
+  let offset = 0
+  if (liveSetup.length) {
+    groups.push({ label: t('integration.phaseSetup'), rows: liveSetup, offset })
+    offset += liveSetup.length
+  }
+  groups.push({ label: null, rows: main, offset })
+  offset += main.length
+  if (liveTeardown.length) {
+    groups.push({ label: t('integration.phaseTeardown'), rows: liveTeardown, offset })
+  }
+  return groups
+})
+
+const flatRows = computed<ScenarioStepResult[]>(() =>
+  timelineGroups.value.flatMap((g) => g.rows),
+)
+
+const selected = computed<ScenarioStepResult | null>(() => {
+  const rows = flatRows.value
+  if (!rows.length) return null
+  return rows[Math.min(selectedIndex.value, rows.length - 1)] ?? null
 })
 
 /** 失败自动定位：新结果到达时选中第一个失败步（无失败选第 0 步）。 */
@@ -104,10 +135,16 @@ watch(
   () => props.result,
   (r) => {
     if (!r) return
-    const failIdx = r.results.findIndex(
+    // 失败定位在主步骤（phase 缺省）内的位次 + 生命周期行偏移。
+    const setupN =
+      (r.setup_results?.length ?? 0) > 0
+        ? r.setup_results!.length
+        : r.results.filter((x) => x.phase === 'setup').length
+    const main = r.results.filter((x) => !x.phase)
+    const failIdx = main.findIndex(
       (x) => x.step_status === 'failed' || (x.step_status !== 'success' && !x.ok && !x.cancelled),
     )
-    selectedIndex.value = failIdx === -1 ? 0 : failIdx
+    selectedIndex.value = setupN + (failIdx === -1 ? 0 : failIdx)
     respView.value = 'pretty'
   },
   { immediate: true },
@@ -303,32 +340,36 @@ const varTag = (n: string) => `{{${n}}}`
     <div class="rv-body" v-if="result">
       <!-- ===== 左侧执行时间线 ===== -->
       <aside class="rv-timeline">
-        <button
-          v-for="(r, i) in result.results"
-          :key="i"
-          class="rv-step"
-          :class="{ selected: selectedIndex === i }"
-          type="button"
-          @click="selectedIndex = i"
-        >
-          <span class="rv-step-rail" :class="toneClass(r)" aria-hidden="true"></span>
-          <span class="rv-step-main">
-            <span class="rv-step-head">
-              <span class="num rv-step-no">{{ i + 1 }}</span>
-              <span class="rv-step-method" :class="methodBadgeTone(r.method)">{{ r.method }}</span>
-              <span class="rv-step-name" :title="r.endpoint_name">{{ r.endpoint_name }}</span>
-              <span class="rv-step-status" :class="toneClass(r)">{{ t(STEP_TEXT[toneClass(r)]) }}</span>
+        <template v-for="(group, gi) in timelineGroups" :key="gi">
+          <div v-if="group.label" class="rv-phase-head">{{ group.label }}</div>
+          <button
+            v-for="(r, i) in group.rows"
+            :key="`${gi}-${i}`"
+            class="rv-step"
+            :class="{ selected: selectedIndex === group.offset + i }"
+            type="button"
+            @click="selectedIndex = group.offset + i"
+          >
+            <span class="rv-step-rail" :class="toneClass(r)" aria-hidden="true"></span>
+            <span class="rv-step-main">
+              <span class="rv-step-head">
+                <span class="num rv-step-no">{{ group.offset + i + 1 }}</span>
+                <span class="rv-step-method" :class="methodBadgeTone(r.method)">{{ r.method }}</span>
+                <span class="rv-step-name" :title="r.endpoint_name">{{ r.endpoint_name }}</span>
+                <span class="rv-step-status" :class="toneClass(r)">{{ t(STEP_TEXT[toneClass(r)]) }}</span>
+              </span>
+              <span class="rv-step-url" :title="r.url ?? r.path">{{ r.url ?? r.path }}</span>
+              <span class="rv-step-meta">
+                <span v-if="r.status != null" class="num">HTTP {{ r.status }}</span>
+                <span v-if="r.duration_ms != null" class="num">{{ formatDurationShort(r.duration_ms) }}</span>
+                <span v-if="(r.retry_log?.length ?? 0) > 0" class="num">{{ t('integration.retriedBadge', { n: r.retry_log!.length }) }}</span>
+                <span v-if="r.outcomes?.length" class="num">{{ t('scenario.assertPassed', { n: r.outcomes.filter((o) => o.passed).length, m: r.outcomes.length }) }}</span>
+                <span v-if="r.extracted && Object.keys(r.extracted).length" class="num">{{ t('scenario.stepExtractBadge', { n: Object.keys(r.extracted).length }) }}</span>
+                <span v-if="(r.loop_runs ?? 1) > 1" class="num">×{{ r.loop_runs }}</span>
+              </span>
             </span>
-            <span class="rv-step-url" :title="r.url ?? r.path">{{ r.url ?? r.path }}</span>
-            <span class="rv-step-meta">
-              <span v-if="r.status != null" class="num">HTTP {{ r.status }}</span>
-              <span v-if="r.duration_ms != null" class="num">{{ formatDurationShort(r.duration_ms) }}</span>
-              <span v-if="r.outcomes?.length" class="num">{{ t('scenario.assertPassed', { n: r.outcomes.filter((o) => o.passed).length, m: r.outcomes.length }) }}</span>
-              <span v-if="r.extracted && Object.keys(r.extracted).length" class="num">{{ t('scenario.stepExtractBadge', { n: Object.keys(r.extracted).length }) }}</span>
-              <span v-if="(r.loop_runs ?? 1) > 1" class="num">×{{ r.loop_runs }}</span>
-            </span>
-          </span>
-        </button>
+          </button>
+        </template>
       </aside>
 
       <!-- ===== 右侧详情 ===== -->
@@ -661,6 +702,15 @@ const varTag = (n: string) => `{{${n}}}`
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+.rv-phase-head {
+  padding: 6px 10px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
 }
 
 .rv-step-no {

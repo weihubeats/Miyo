@@ -16,6 +16,9 @@ struct ScenarioRow {
     sort_order: i64,
     steps_json: String,
     script: Option<String>,
+    setup_json: String,
+    teardown_json: String,
+    data_sets_json: String,
     created_at: String,
     updated_at: String,
 }
@@ -23,6 +26,33 @@ struct ScenarioRow {
 impl ScenarioRow {
     fn into_model(self) -> Result<Scenario> {
         let steps: Vec<ScenarioStep> = serde_json::from_str(&self.steps_json).unwrap_or_default();
+        // 生命周期 / 数据驱动字段：解析失败回退默认（旧数据 / 手改库容错）。
+        let parse_or_default = |raw: &str, _what: &str| -> serde_json::Value {
+            serde_json::from_str(raw).unwrap_or(serde_json::Value::Null)
+        };
+        // teardown 列存包装对象 {"enabled": bool, "steps": [...]}（防重复
+        // 清理 / 自动清理开关随步骤一并落库）；旧形状（裸数组）视为启用。
+        let teardown_wrap: serde_json::Value = parse_or_default(&self.teardown_json, "teardown");
+        let (teardown, teardown_enabled) = if teardown_wrap.is_array() {
+            (
+                serde_json::from_value::<Vec<ScenarioStep>>(teardown_wrap).unwrap_or_default(),
+                true,
+            )
+        } else {
+            (
+                serde_json::from_value::<Vec<ScenarioStep>>(
+                    teardown_wrap
+                        .get("steps")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .unwrap_or_default(),
+                teardown_wrap
+                    .get("enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+            )
+        };
         Ok(Scenario {
             id: super::rows::parse_uuid(&self.id)?,
             project_id: super::rows::parse_uuid(&self.project_id)?,
@@ -33,6 +63,12 @@ impl ScenarioRow {
             steps,
             // 空串归一为未自定义。
             script: self.script.filter(|s| !s.trim().is_empty()),
+            setup: serde_json::from_value(parse_or_default(&self.setup_json, "setup"))
+                .unwrap_or_default(),
+            teardown,
+            teardown_enabled,
+            data_sets: serde_json::from_value(parse_or_default(&self.data_sets_json, "数据集"))
+                .unwrap_or_default(),
             created_at: super::rows::parse_time(&self.created_at)?,
             updated_at: super::rows::parse_time(&self.updated_at)?,
         })
@@ -40,7 +76,7 @@ impl ScenarioRow {
 }
 
 const SCENARIO_COLUMNS: &str =
-    "id, project_id, name, description, category, sort_order, steps_json, script, created_at, updated_at";
+    "id, project_id, name, description, category, sort_order, steps_json, script, setup_json, teardown_json, data_sets_json, created_at, updated_at";
 
 /// 列出项目的全部场景（编排序 → 名称序）。
 pub async fn list_scenarios(db: &SqlitePool, project_id: Uuid) -> Result<Vec<Scenario>> {
@@ -69,9 +105,18 @@ pub async fn get_scenario(db: &SqlitePool, scenario_id: Uuid) -> Result<Scenario
 pub async fn save_scenario(db: &SqlitePool, scenario: &Scenario) -> Result<()> {
     let steps_json = serde_json::to_string(&scenario.steps)
         .map_err(|e| AppError::Validation(format!("场景步骤序列化失败：{e}")))?;
+    let setup_json = serde_json::to_string(&scenario.setup)
+        .map_err(|e| AppError::Validation(format!("setup 步骤序列化失败：{e}")))?;
+    let teardown_json = serde_json::to_string(&serde_json::json!({
+        "enabled": scenario.teardown_enabled,
+        "steps": scenario.teardown,
+    }))
+    .map_err(|e| AppError::Validation(format!("teardown 步骤序列化失败：{e}")))?;
+    let data_sets_json = serde_json::to_string(&scenario.data_sets)
+        .map_err(|e| AppError::Validation(format!("数据集序列化失败：{e}")))?;
     sqlx::query(
-        "INSERT INTO scenarios (id, project_id, name, description, category, sort_order, steps_json, script, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO scenarios (id, project_id, name, description, category, sort_order, steps_json, script, setup_json, teardown_json, data_sets_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            description = excluded.description,
@@ -79,6 +124,9 @@ pub async fn save_scenario(db: &SqlitePool, scenario: &Scenario) -> Result<()> {
            sort_order = excluded.sort_order,
            steps_json = excluded.steps_json,
            script = excluded.script,
+           setup_json = excluded.setup_json,
+           teardown_json = excluded.teardown_json,
+           data_sets_json = excluded.data_sets_json,
            updated_at = excluded.updated_at",
     )
     .bind(scenario.id.to_string())
@@ -89,6 +137,9 @@ pub async fn save_scenario(db: &SqlitePool, scenario: &Scenario) -> Result<()> {
     .bind(scenario.sort_order)
     .bind(&steps_json)
     .bind(scenario.script.as_deref().filter(|s| !s.trim().is_empty()))
+    .bind(&setup_json)
+    .bind(&teardown_json)
+    .bind(&data_sets_json)
     .bind(scenario.created_at.to_rfc3339())
     .bind(scenario.updated_at.to_rfc3339())
     .execute(db)
@@ -164,6 +215,10 @@ mod tests {
 
     fn make_scenario(project_id: Uuid) -> Scenario {
         Scenario {
+            setup: Vec::new(),
+            teardown: Vec::new(),
+            teardown_enabled: true,
+            data_sets: Vec::new(),
             id: Uuid::new_v4(),
             project_id,
             name: "登录后查订单".into(),

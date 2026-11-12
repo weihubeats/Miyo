@@ -707,6 +707,204 @@ pub struct ScenarioInlineRequest {
     pub spec: RequestSpec,
 }
 
+/// 步骤重试策略：**显式配置才启用**——无默认重试。
+///
+/// 副作用操作（POST / 支付 / 创建订单）不配置重试就绝不重发；配置了重试的
+/// 写操作步骤，执行期自动注入步骤级幂等键（`Idempotency-Key`，同一步骤的
+/// 全部尝试共用一键），配合服务端幂等实现「重试不重复执行业务」。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StepRetry {
+    /// 最大尝试次数（含首次；1..=10）。
+    pub max_attempts: u32,
+    /// 重试间隔毫秒（0..=60_000；指数退避时为首 interval）。
+    #[serde(default)]
+    pub interval_ms: u64,
+    /// 指数退避：第 n 次重试延迟 = interval_ms × 2^(n-1)，上限 30s。
+    #[serde(default)]
+    pub exponential: bool,
+    /// 可重试的 HTTP 状态码（如 [502, 503, 504]；2xx / 断言失败不在此列）。
+    #[serde(default)]
+    pub retry_on_status: Vec<u16>,
+    /// 网络错误（连接失败 / 超时 / DNS）是否重试。
+    #[serde(default)]
+    pub retry_on_network: bool,
+}
+
+impl StepRetry {
+    pub const MAX_ATTEMPTS: u32 = 10;
+    pub const MAX_INTERVAL_MS: u64 = 60_000;
+    /// 指数退避的单次延迟上限。
+    pub const MAX_BACKOFF_MS: u64 = 30_000;
+
+    /// 收钳到安全范围（执行 / 校验共用）。
+    pub fn sanitized(mut self) -> Self {
+        self.max_attempts = self.max_attempts.clamp(1, Self::MAX_ATTEMPTS);
+        self.interval_ms = self.interval_ms.min(Self::MAX_INTERVAL_MS);
+        self.retry_on_status.retain(|s| (100..=599).contains(s));
+        self
+    }
+
+    /// 第 `attempt` 次重试（1-based）前的等待毫秒。
+    pub fn delay_ms(&self, retry_no: u32) -> u64 {
+        if !self.exponential || self.interval_ms == 0 {
+            return self.interval_ms;
+        }
+        let shift = retry_no.saturating_sub(1).min(16);
+        self.interval_ms
+            .saturating_mul(1u64 << shift)
+            .min(Self::MAX_BACKOFF_MS)
+    }
+
+    /// 是否合法可执行（max_attempts > 1 才有重试语义）。
+    pub fn effective_attempts(&self) -> u32 {
+        self.max_attempts.clamp(1, Self::MAX_ATTEMPTS)
+    }
+}
+
+/// 数据驱动测试的数据集来源。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DataSetSource {
+    /// 手动配置：行内联（对象数组，每行即一组变量）。
+    Inline { rows: Vec<serde_json::Value> },
+    /// JSON 文本（顶层数组，每元素一组变量）。
+    Json { text: String },
+    /// CSV 文本（首行表头；逗号分隔，双引号转义）。
+    Csv { text: String },
+    /// 环境变量表作为唯一一行数据（键 → 值）。
+    Environment,
+}
+
+/// 数据驱动测试的一组数据集。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DataSet {
+    pub id: Uuid,
+    #[serde(default)]
+    pub name: String,
+    pub source: DataSetSource,
+    /// 组内排序。
+    #[serde(default)]
+    pub sort_order: i64,
+}
+
+impl DataSet {
+    /// 解析数据集为变量行（每行 = 一组独立执行的变量注入；键值均字符串化）。
+    /// JSON / CSV 解析失败返回空（调用方报校验错误），不静默造行。
+    pub fn rows(&self) -> Result<Vec<std::collections::HashMap<String, String>>, String> {
+        fn row_map(v: &serde_json::Value) -> std::collections::HashMap<String, String> {
+            match v {
+                serde_json::Value::Object(map) => map
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            match v {
+                                serde_json::Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            },
+                        )
+                    })
+                    .collect(),
+                _ => std::collections::HashMap::new(),
+            }
+        }
+        match &self.source {
+            DataSetSource::Inline { rows } => Ok(rows.iter().map(row_map).collect()),
+            DataSetSource::Json { text } => {
+                let parsed: serde_json::Value = serde_json::from_str(text)
+                    .map_err(|e| format!("数据集「{}」JSON 解析失败：{e}", self.name))?;
+                let arr = parsed
+                    .as_array()
+                    .ok_or_else(|| format!("数据集「{}」顶层必须是数组", self.name))?;
+                Ok(arr.iter().map(row_map).collect())
+            }
+            DataSetSource::Csv { text } => parse_csv_rows(text)
+                .ok_or_else(|| format!("数据集「{}」CSV 解析失败（首行需为表头）", self.name)),
+            DataSetSource::Environment => Ok(Vec::new()),
+        }
+    }
+}
+
+/// CSV 解析（RFC 4180）：首行表头，逗号分隔，双引号包裹转义，
+/// **引号内换行 / 逗号**作为字段内容（跨行记录按引号状态切分）。
+/// 解析失败（无表头 / 列数不齐）返回 None。
+pub fn parse_csv_rows(text: &str) -> Option<Vec<std::collections::HashMap<String, String>>> {
+    /// 全文状态机切分为记录（每记录 = Vec<字段>；引号内逗号 / 换行是内容）。
+    fn split_records(text: &str) -> Vec<Vec<String>> {
+        let mut records: Vec<Vec<String>> = vec![Vec::new()];
+        let mut cur = String::new();
+        let mut in_quotes = false;
+        // 刚关闭引号后又出现 `"`：RFC 4180 转义对（""）的收尾——重新进入
+        // 引号态（`say ""hi""` → say "hi"）。
+        let mut just_closed = false;
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
+            if in_quotes {
+                if c == '"' {
+                    if chars.peek() == Some(&'"') {
+                        cur.push('"');
+                        chars.next();
+                    } else {
+                        in_quotes = false;
+                    }
+                } else {
+                    cur.push(c);
+                }
+            } else if c == '"' && (cur.is_empty() || just_closed) {
+                just_closed = false;
+                in_quotes = true;
+            } else if c == ',' {
+                just_closed = false;
+                if let Some(last) = records.last_mut() {
+                    last.push(std::mem::take(&mut cur));
+                }
+            } else if c == '\n' || c == '\r' {
+                just_closed = false;
+                // \r\n 成对时只切一次（裸 \r 同样按行结束）。
+                if c == '\r' && chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                if let Some(last) = records.last_mut() {
+                    last.push(std::mem::take(&mut cur));
+                }
+                records.push(Vec::new());
+            } else {
+                just_closed = false;
+                cur.push(c);
+            }
+        }
+        if !cur.is_empty() || records.last().is_some_and(|r| !r.is_empty()) {
+            if let Some(last) = records.last_mut() {
+                last.push(cur);
+            }
+        }
+        records
+            .into_iter()
+            .filter(|r| !r.is_empty() && !(r.len() == 1 && r[0].trim().is_empty()))
+            .collect()
+    }
+    let mut records = split_records(text);
+    if records.is_empty() {
+        return None;
+    }
+    let header: Vec<String> = records
+        .remove(0)
+        .into_iter()
+        .map(|h| h.trim().to_string())
+        .collect();
+    if header.is_empty() || header.iter().any(|h| h.is_empty()) {
+        return None;
+    }
+    let mut rows = Vec::new();
+    for cells in records {
+        if cells.len() != header.len() {
+            return None;
+        }
+        rows.push(header.iter().cloned().zip(cells).collect());
+    }
+    Some(rows)
+}
+
 /// 场景步骤：引用一个接口（`request = None`）或内联请求（`request = Some`）
 /// + 步骤级提取 / 断言。
 ///
@@ -748,6 +946,9 @@ pub struct ScenarioStep {
     /// path_variables / body）——未覆盖的项沿用接口当前配置。内联步骤忽略。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overrides: Option<serde_json::Value>,
+    /// 步骤重试策略（显式配置才启用；None = 不重试）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<StepRetry>,
 }
 
 impl Default for ScenarioStep {
@@ -764,6 +965,7 @@ impl Default for ScenarioStep {
             wait_ms: None,
             parallel: false,
             overrides: None,
+            retry: None,
         }
     }
 }
@@ -806,6 +1008,19 @@ pub struct Scenario {
     /// 脚本视图实时由 steps 生成。手动步骤始终是执行真源。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script: Option<String>,
+    /// Setup 步骤（主步骤之前执行；失败 → 主步骤全部跳过，Teardown 仍执行）。
+    #[serde(default)]
+    pub setup: Vec<ScenarioStep>,
+    /// Teardown 步骤（主步骤结束后执行；失败 / 超时 / 取消时尽可能执行；
+    /// 写操作自动注入幂等键防重复清理副作用）。
+    #[serde(default)]
+    pub teardown: Vec<ScenarioStep>,
+    /// Teardown 自动清理开关（false = 不自动执行 Teardown，需手动触发）。
+    #[serde(default = "default_true")]
+    pub teardown_enabled: bool,
+    /// 数据驱动测试的数据集（多组数据独立执行、变量隔离）。
+    #[serde(default)]
+    pub data_sets: Vec<DataSet>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -1284,6 +1499,25 @@ pub struct WsMessageRecord {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn csv_quoted_newlines_and_commas() {
+        // RFC 4180：引号内双引号转义为 ""（`say ""hi""` → say "hi"）。
+        let text = "name,note\n\"a,b\",\"line1\nline2\"\nc,\"say \"\"hi\"\"\"";
+        let rows = match parse_csv_rows(text) {
+            Some(r) => r,
+            None => panic!("parse failed for: {text:?}"),
+        };
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["name"], "a,b");
+        assert_eq!(rows[0]["note"], "line1\nline2");
+        assert_eq!(rows[1]["note"], "say \"hi\"");
+        // 列数不齐 → None
+        assert!(parse_csv_rows("a,b\n1\n").is_none());
+        // CRLF
+        let crlf = parse_csv_rows("k,v\r\n1,x\r\n").unwrap();
+        assert_eq!(crlf[0]["k"], "1");
+    }
+
     use super::*;
 
     #[test]

@@ -34,6 +34,10 @@ const detailA = ref<ScenarioRunDetail | null>(null)
 const detailB = ref<ScenarioRunDetail | null>(null)
 const loading = ref(false)
 
+/** 加载序号：快速切换下拉 / 弹窗关闭后，迟到响应不得覆盖新状态
+ * （旧详情与选择代次错位）；loading 只反映最新一次加载。 */
+let detailSeq = 0
+
 async function loadRuns(): Promise<void> {
   if (!open.value) return
   try {
@@ -46,7 +50,13 @@ async function loadRuns(): Promise<void> {
 }
 
 watch(open, (v) => {
-  if (v) void loadRuns()
+  if (v) {
+    void loadRuns()
+  } else {
+    // 关闭即作废在途加载：迟到的 getScenarioRun 不再 setState。
+    detailSeq++
+    loading.value = false
+  }
 })
 
 watch([runAId, runBId], () => {
@@ -54,16 +64,22 @@ watch([runAId, runBId], () => {
 })
 
 async function loadDetails(): Promise<void> {
+  const seq = ++detailSeq
   loading.value = true
   try {
-    detailA.value = runAId.value ? await api.getScenarioRun(runAId.value) : null
-    detailB.value = runBId.value ? await api.getScenarioRun(runBId.value) : null
+    const a = runAId.value ? await api.getScenarioRun(runAId.value) : null
+    const b = runBId.value ? await api.getScenarioRun(runBId.value) : null
+    // 两次请求并行在途时，只有最新一次选择可以落状态（乱序丢弃）。
+    if (seq !== detailSeq || !open.value) return
+    detailA.value = a
+    detailB.value = b
   } catch (err) {
+    if (seq !== detailSeq || !open.value) return
     toast.error(t('integration.historyMissing'), {
       message: err instanceof Error ? err.message : String(err),
     })
   } finally {
-    loading.value = false
+    if (seq === detailSeq) loading.value = false
   }
 }
 
