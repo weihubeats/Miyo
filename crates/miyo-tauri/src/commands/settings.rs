@@ -214,6 +214,45 @@ pub async fn apply_saved_proxy(db: &sqlx::SqlitePool) {
     }
 }
 
+// ---------- 自定义敏感字段规则（脱敏单源 miyo_core::sensitive 的自定义词根） ----------
+
+/// settings 表中「自定义敏感键规则」键；值为 JSON 字符串数组（子串匹配，
+/// 大小写不敏感）。命中规则的键在所有脱敏路径（MCP / Agent 返回、历史
+/// 落库、导出）都视为敏感。
+pub const SENSITIVE_PATTERNS_KEY: &str = "sensitive_key_patterns";
+
+/// 读取自定义敏感规则（设置页回显）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_sensitive_patterns(state: State<'_, AppState>) -> CommandResult<Vec<String>> {
+    let raw = repo::get_setting(&state.db, SENSITIVE_PATTERNS_KEY).await?;
+    Ok(raw
+        .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
+        .unwrap_or_default())
+}
+
+/// 保存自定义敏感规则并立即生效（进程内注册表刷新，无需重启；
+/// 空白条目忽略）。规则集为空 = 仅用内建词根。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn set_sensitive_patterns(
+    state: State<'_, AppState>,
+    patterns: Vec<String>,
+) -> CommandResult<()> {
+    miyo_core::sensitive::set_custom_sensitive_patterns(patterns.clone());
+    let json = serde_json::to_string(&patterns)
+        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+    repo::set_setting(&state.db, SENSITIVE_PATTERNS_KEY, &json).await?;
+    Ok(())
+}
+
+/// 启动时从 settings 表加载自定义敏感规则（随 apply_saved_proxy 一起调用）。
+pub async fn apply_saved_sensitive_patterns(db: &sqlx::SqlitePool) {
+    if let Ok(Some(raw)) = repo::get_setting(db, SENSITIVE_PATTERNS_KEY).await {
+        if let Ok(patterns) = serde_json::from_str::<Vec<String>>(&raw) {
+            miyo_core::sensitive::set_custom_sensitive_patterns(patterns);
+        }
+    }
+}
+
 /// 当前生效的数据目录（miyo.db / master.key / logs / snapshots 所在）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_data_dir() -> CommandResult<String> {

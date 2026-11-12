@@ -44,6 +44,10 @@ impl ControlClient {
         ControlClient {
             http: Client::builder()
                 .timeout(Duration::from_secs(15))
+                // 控制面地址固定本机（端口文件 / 探测段），跟随重定向纯属
+                // 攻击面：307 会把 POST 体（含 Bearer 头重发）带到重定向目标。
+                // 一律不跟随，异常 3xx 走 decode 的「请求失败」语义。
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("reqwest Client 构建失败"),
             base: base.into().trim_end_matches('/').to_string(),
@@ -83,24 +87,43 @@ impl ControlClient {
         &self.base
     }
 
-    /// 存活探针。
+    /// 存活探针（challenge-proof 发现协议）：
+    /// **不携带 Bearer**——随机 challenge 换 `sha256(token||challenge)` 证明，
+    /// 验证通过才算发现真控制面。4110~4129 段的恶意监听者既收不到 token，
+    /// 也无法伪造证明（ discovery 阶段零凭据暴露）。
     pub async fn health(&self) -> Result<(), AppError> {
+        let challenge = miyo_sign::random_nonce_hex(16);
         let res = self
             .http
-            .get(format!("{}/agent/health", self.base))
+            .get(format!(
+                "{}/agent/health?challenge={}",
+                self.base, challenge
+            ))
             .timeout(PROBE_TIMEOUT)
-            .header("Authorization", self.auth())
             .send()
             .await
             .map_err(AppError::from_reqwest)?;
-        if res.status().is_success() {
-            Ok(())
-        } else {
-            Err(AppError::Connection(format!(
+        if !res.status().is_success() {
+            return Err(AppError::Connection(format!(
                 "/agent/health 返回 {}",
                 res.status()
-            )))
+            )));
         }
+        let body: serde_json::Value = res.json().await.map_err(AppError::from_reqwest)?;
+        let proof = body["proof"]
+            .as_str()
+            .ok_or_else(|| AppError::Connection("存活探针缺少证明（非 Miyo 控制面？）".into()))?;
+        let expected = miyo_sign::sha256_hex(
+            format!("{}{}", self.token, challenge)
+                .into_bytes()
+                .as_slice(),
+        );
+        if proof != expected {
+            return Err(AppError::Connection(
+                "存活探针证明不匹配（目标端口疑似伪装控制面）".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// 导入 cURL 为接口。
@@ -356,6 +379,23 @@ impl ControlClient {
         self.get_json("/agent/tools").await
     }
 
+    /// Agent 上下文快照（get_context 工具 / miyo://context 资源的数据源）。
+    pub async fn get_context(&self) -> Result<serde_json::Value, AppError> {
+        self.get_json("/agent/context").await
+    }
+
+    /// 长任务进度（done/total；无在途进度 → 404 语义错误）。
+    pub async fn get_run_progress(&self, run_id: Uuid) -> Result<serde_json::Value, AppError> {
+        self.get_json(&format!("/agent/runs/{run_id}/progress"))
+            .await
+    }
+
+    /// 任意 GET 端点的原始 JSON（MCP Resources 读取通道：权限与脱敏由
+    /// 控制面对应端点负责，本方法只做透传）。
+    pub async fn get_raw_json(&self, path: &str) -> Result<serde_json::Value, AppError> {
+        self.get_json(path).await
+    }
+
     /// 新建场景：endpointIds 顺序引用，或 steps 完整定义（引擎或 AI 方言）。
     pub async fn create_scenario(
         &self,
@@ -542,10 +582,25 @@ impl ControlClient {
 }
 
 /// 非 2xx → 解析 `{code,message}` 转语义化错误；2xx → 反序列化目标类型。
-async fn decode<T: serde::de::DeserializeOwned>(res: reqwest::Response) -> Result<T, AppError> {
+///
+/// 错误体读取上限 64KB：异常 / 恶意服务端返回的超大错误体不进内存
+///（正常控制面错误体是 `{code,message}` 两行 JSON）。
+async fn decode<T: serde::de::DeserializeOwned>(mut res: reqwest::Response) -> Result<T, AppError> {
+    const ERROR_BODY_LIMIT: usize = 64 * 1024;
     let status = res.status();
     if !status.is_success() {
-        let text = res.text().await.unwrap_or_default();
+        // 流式读取并截断：恶意 / 异常服务端的超大错误体不整体进内存。
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = res.chunk().await.map_err(AppError::from_reqwest)? {
+            let room = ERROR_BODY_LIMIT - buf.len();
+            if room == 0 {
+                break;
+            }
+            let take = chunk.len().min(room);
+            buf.extend_from_slice(&chunk[..take]);
+        }
+        let mut text = String::from_utf8_lossy(&buf).to_string();
+        text = miyo_core::sensitive::redact_message_urls(&text);
         // 服务端错误体形如 {code, message}
         if let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) {
             let code = body["code"].as_str().unwrap_or("INTERNAL");
@@ -559,6 +614,9 @@ async fn decode<T: serde::de::DeserializeOwned>(res: reqwest::Response) -> Resul
                 "TOOL_DISABLED" | "UNAUTHORIZED" => {
                     AppError::Forbidden(format!("工具不可用：{message}"))
                 }
+                // 权限拒绝走 Forbidden：user_message 原样透传具体原因
+                //（Connection 变体的 user_message 是固定文案，会吞掉等级说明）。
+                "PERMISSION_DENIED" => AppError::Forbidden(message.to_string()),
                 _ => AppError::Connection(format!("[{code}] {message}")),
             });
         }

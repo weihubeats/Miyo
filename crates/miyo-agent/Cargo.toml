@@ -9,6 +9,7 @@ homepage = "https://weihubeats.github.io/Miyo/"
 
 [dependencies]
 miyo-core = { path = "../miyo-core" }
+miyo-sign = { path = "../miyo-sign" }
 miyo-storage = { path = "../miyo-storage" }
 miyo-test = { path = "../miyo-test" }
 miyo-sync = { path = "../miyo-sync" }

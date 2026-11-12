@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-export-scenario-report"
+description = "Enables the export_scenario_report command without any pre-configured scope."
+commands.allow = ["export_scenario_report"]
+
+[[permission]]
+identifier = "deny-export-scenario-report"
+description = "Denies the export_scenario_report command without any pre-configured scope."
+commands.deny = ["export_scenario_report"]

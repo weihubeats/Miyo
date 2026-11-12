@@ -10,8 +10,10 @@ import { computed, onMounted, ref } from 'vue'
 import { useMiyoApi } from '../../composables/useMiyoApi'
 import { useToast } from '../../composables/useToast'
 import { useLocaleStore } from '../../stores/locale'
-import type { McpToolStatus } from '../../types/miyoApi'
+import type { McpPermissionStatus, McpToolStatus } from '../../types/miyoApi'
 import CustomNumberInput from '../ui/CustomNumberInput.vue'
+import Modal from '../ui/Modal.vue'
+import Icon from '../ui/Icon.vue'
 
 const api = useMiyoApi()
 const toast = useToast()
@@ -49,9 +51,28 @@ async function loadMcpStatus(): Promise<void> {
   }
 }
 
-/** 启停开关：先应用（启动失败不落盘）再刷新状态。 */
+/**
+ * 启停开关：首次启用先展示权限说明（用户确认后才真正开启——MCP 会把
+ * 项目数据暴露给 AI，高风险权限默认关闭）；先应用（启动失败不落盘）再刷新状态。
+ */
+const permExplainOpen = ref(false)
 async function toggleMcp(): Promise<void> {
   const next = !mcpEnabled.value
+  if (next) {
+    // 首次启用 → 权限说明确认（确认后真正调用 setMcpEnabled）。
+    permExplainOpen.value = true
+    return
+  }
+  await applyMcpEnabled(false)
+}
+
+/** 用户确认权限说明后真正启用。 */
+async function confirmPermExplain(): Promise<void> {
+  permExplainOpen.value = false
+  await applyMcpEnabled(true)
+}
+
+async function applyMcpEnabled(next: boolean): Promise<void> {
   mcpBusy.value = true
   try {
     await api.setMcpEnabled(next)
@@ -92,6 +113,123 @@ async function saveMcpPort(port: number): Promise<void> {
   }
 }
 
+// ---------- MCP 权限等级（read/write/execute 默认启用；高风险需确认） ----------
+const mcpPerms = ref<McpPermissionStatus[]>([])
+const mcpPermBusy = ref(false)
+/** 待确认启用的高风险等级（确认对话框数据）。 */
+const pendingHighRisk = ref<McpPermissionStatus | null>(null)
+/** 对话框开关的 computed 包装（关闭 = 放弃启用）。 */
+const pendingHighRiskConfirm = computed({
+  get: () => pendingHighRisk.value !== null,
+  set: (v: boolean) => {
+    if (!v) pendingHighRisk.value = null
+  },
+})
+const pendingHighRiskLabel = computed(() =>
+  pendingHighRisk.value ? permDesc(pendingHighRisk.value.level) : '',
+)
+
+/** 等级说明走 i18n（后端 description 仅兜底）。 */
+const permDesc = (level: string): string => {
+  const key = `settings.mcpPermLevel.${level}`
+  const translated = t(key)
+  return translated === key ? (mcpPerms.value.find((x) => x.level === level)?.description ?? '') : translated
+}
+
+async function loadMcpPermissions(): Promise<void> {
+  try {
+    mcpPerms.value = await api.getMcpPermissions()
+  } catch {
+    mcpPerms.value = []
+  }
+}
+
+async function toggleMcpPerm(perm: McpPermissionStatus): Promise<void> {
+  const next = !perm.enabled
+  if (next && perm.highRisk) {
+    // 高风险等级：必须用户在对话框中明确确认才启用。
+    pendingHighRisk.value = perm
+    return
+  }
+  const enabled = mcpPerms.value.filter((x) => x.enabled).map((x) => x.level)
+  await savePermissions(
+    next ? Array.from(new Set([...enabled, perm.level])) : enabled.filter((l) => l !== perm.level),
+  )
+}
+
+/** 用户确认启用高风险等级。 */
+async function confirmHighRisk(): Promise<void> {
+  const perm = pendingHighRisk.value
+  pendingHighRisk.value = null
+  if (!perm) return
+  await savePermissions(
+    Array.from(new Set([...mcpPerms.value.filter((x) => x.enabled).map((x) => x.level), perm.level])),
+    true,
+  )
+}
+
+async function savePermissions(levels: string[], acknowledgeHighRisk = false): Promise<void> {
+  mcpPermBusy.value = true
+  try {
+    await api.setMcpPermissions({ levels, acknowledgeHighRisk })
+    await loadMcpPermissions()
+  } catch (err) {
+    toast.error(t('settings.mcpPermSaveFail'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+    await loadMcpPermissions()
+  } finally {
+    mcpPermBusy.value = false
+  }
+}
+
+// ---------- 自定义敏感字段规则（脱敏单源） ----------
+const sensitivePatterns = ref<string[]>([])
+const newPattern = ref('')
+const patternsBusy = ref(false)
+
+async function loadSensitivePatterns(): Promise<void> {
+  try {
+    sensitivePatterns.value = await api.getSensitivePatterns()
+  } catch {
+    sensitivePatterns.value = []
+  }
+}
+
+async function addPattern(): Promise<void> {
+  const v = newPattern.value.trim()
+  if (!v || sensitivePatterns.value.includes(v)) {
+    newPattern.value = ''
+    return
+  }
+  patternsBusy.value = true
+  try {
+    await api.setSensitivePatterns([...sensitivePatterns.value, v])
+    sensitivePatterns.value = await api.getSensitivePatterns()
+    newPattern.value = ''
+  } catch (err) {
+    toast.error(t('settings.patternSaveFail'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  } finally {
+    patternsBusy.value = false
+  }
+}
+
+async function removePattern(pattern: string): Promise<void> {
+  patternsBusy.value = true
+  try {
+    await api.setSensitivePatterns(sensitivePatterns.value.filter((p) => p !== pattern))
+    sensitivePatterns.value = await api.getSensitivePatterns()
+  } catch (err) {
+    toast.error(t('settings.patternSaveFail'), {
+      message: err instanceof Error ? err.message : String(err),
+    })
+  } finally {
+    patternsBusy.value = false
+  }
+}
+
 // ---------- MCP 工具权限 ----------
 const mcpTools = ref<McpToolStatus[]>([])
 const mcpToolBusy = ref<string | null>(null)
@@ -113,6 +251,8 @@ async function toggleMcpTool(tool: McpToolStatus): Promise<void> {
 
 onMounted(() => {
   void loadMcpStatus()
+  void loadMcpPermissions()
+  void loadSensitivePatterns()
   // 工具清单随页签自行加载（原为父级弹窗打开时预取；拆出后首访本页签时拉取）
   void api
     .getMcpTools()
@@ -175,6 +315,97 @@ onMounted(() => {
             @change="saveMcpPort"
           />
         </div>
+      </div>
+
+      <!-- 权限等级：read/write/execute 默认启用；高风险（真实网络请求 / 删除）需明确确认 -->
+      <div class="mt-5 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
+        <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.mcpPermTitle') }}</div>
+        <p class="mt-0.5 mb-4 text-xs text-zinc-600 dark:text-zinc-400">
+          {{ t('settings.mcpPermDesc') }}
+        </p>
+        <div class="flex flex-col gap-2">
+          <div
+            v-for="perm in mcpPerms"
+            :key="perm.level"
+            class="flex items-center justify-between gap-4 rounded-lg border px-3.5 py-2.5"
+            :class="perm.highRisk && perm.enabled
+              ? 'border-amber-300 bg-amber-50/60 dark:border-amber-500/30 dark:bg-amber-500/[0.06]'
+              : 'border-zinc-200/70 dark:border-white/[0.06]'"
+          >
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-zinc-900 dark:text-zinc-100">{{ permDesc(perm.level) }}</span>
+                <code class="font-mono text-xxs text-zinc-500 dark:text-zinc-400">{{ perm.level }}</code>
+                <span
+                  v-if="perm.highRisk"
+                  class="rounded px-1.5 py-0.5 text-xxs font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
+                >{{ t('settings.mcpPermHighRisk') }}</span>
+              </div>
+              <p class="mt-0.5 text-xxs text-zinc-600 dark:text-zinc-400">
+                {{ t('settings.mcpPermToolCount', { n: perm.toolCount }) }}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="perm.enabled"
+              :aria-label="permDesc(perm.level)"
+              :disabled="mcpPermBusy"
+              class="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
+              :class="perm.enabled ? 'bg-purple-500' : 'border border-zinc-300 bg-zinc-200 dark:border-white/10 dark:bg-white/10'"
+              @click="toggleMcpPerm(perm)"
+            >
+              <span
+                class="absolute top-1/2 h-[16px] w-[16px] -translate-y-1/2 rounded-full bg-white shadow transition-all duration-150"
+                :class="perm.enabled ? 'left-[21px]' : 'left-[2px]'"
+              />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 自定义敏感字段规则：脱敏单源的自定义词根（MCP 返回 / 导出全生效） -->
+      <div class="mt-5 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
+        <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.patternTitle') }}</div>
+        <p class="mt-0.5 mb-3 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settings.patternDesc') }}</p>
+        <div class="flex items-center gap-2">
+          <input
+            v-model="newPattern"
+            class="miyo-input flex-1"
+            type="text"
+            spellcheck="false"
+            :placeholder="t('settings.patternPh')"
+            :disabled="patternsBusy"
+            @keydown.enter="addPattern"
+          />
+          <button
+            type="button"
+            class="miyo-btn miyo-btn-sm shrink-0"
+            :disabled="patternsBusy || !newPattern.trim()"
+            @click="addPattern"
+          >
+            {{ t('common.add') }}
+          </button>
+        </div>
+        <div v-if="sensitivePatterns.length" class="mt-3 flex flex-wrap gap-1.5">
+          <span
+            v-for="p in sensitivePatterns"
+            :key="p"
+            class="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 font-mono text-xxs text-zinc-700 dark:bg-white/[0.06] dark:text-zinc-300"
+          >
+            {{ p }}
+            <button
+              type="button"
+              class="text-zinc-400 hover:text-red-500"
+              :aria-label="t('common.delete')"
+              :disabled="patternsBusy"
+              @click="removePattern(p)"
+            >
+              ×
+            </button>
+          </span>
+        </div>
+        <p v-else class="mt-3 text-xxs text-zinc-500 dark:text-zinc-400">{{ t('settings.patternEmpty') }}</p>
       </div>
 
       <!-- 工具权限：逐个停用 MCP 工具，停用后 AI 不可见且控制面拒绝调用 -->
@@ -247,4 +478,60 @@ onMounted(() => {
       </div>
   </div>
 </div>
+
+<!-- 首次启用：权限说明（确认后才真正开启 MCP） -->
+<Modal v-model:open="permExplainOpen" :title="t('settings.mcpPermFirstTitle')" width="480px">
+  <div class="flex flex-col gap-3 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+    <p>{{ t('settings.mcpPermFirstBody') }}</p>
+    <ul class="flex flex-col gap-1.5 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900/60">
+      <li v-for="perm in mcpPerms" :key="perm.level" class="flex items-start gap-1.5">
+        <Icon
+          name="dot"
+          class="mt-1 h-3 w-3 shrink-0"
+          :class="perm.highRisk ? 'text-amber-500' : 'text-purple-500'"
+        />
+        <span>
+          <span class="font-medium">{{ permDesc(perm.level) }}</span>
+          <span class="text-zinc-500 dark:text-zinc-400">
+            — {{ perm.highRisk ? t('settings.mcpPermFirstHighRisk') : t('settings.mcpPermFirstDefault') }}
+          </span>
+        </span>
+      </li>
+    </ul>
+  </div>
+  <template #footer>
+    <button
+      type="button"
+      class="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-white/5"
+      @click="permExplainOpen = false"
+    >{{ t('common.cancel') }}</button>
+    <button
+      type="button"
+      class="rounded-lg bg-purple-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-500/90"
+      @click="confirmPermExplain"
+    >{{ t('settings.mcpPermFirstConfirm') }}</button>
+  </template>
+</Modal>
+
+<!-- 高风险等级启用确认 -->
+<Modal v-model:open="pendingHighRiskConfirm" :title="t('settings.mcpPermRiskTitle')" width="440px">
+  <div class="flex flex-col gap-3 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+    <p>{{ t('settings.mcpPermRiskBody', { level: pendingHighRiskLabel }) }}</p>
+    <p class="rounded-lg bg-amber-50 p-3 text-amber-700 dark:bg-amber-500/[0.08] dark:text-amber-400">
+      {{ t('settings.mcpPermRiskWarn') }}
+    </p>
+  </div>
+  <template #footer>
+    <button
+      type="button"
+      class="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-white/5"
+      @click="pendingHighRiskConfirm = false"
+    >{{ t('common.cancel') }}</button>
+    <button
+      type="button"
+      class="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600"
+      @click="confirmHighRisk"
+    >{{ t('settings.mcpPermRiskConfirm') }}</button>
+  </template>
+</Modal>
 </template>

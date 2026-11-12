@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-run-scenario-matrix"
+description = "Enables the run_scenario_matrix command without any pre-configured scope."
+commands.allow = ["run_scenario_matrix"]
+
+[[permission]]
+identifier = "deny-run-scenario-matrix"
+description = "Denies the run_scenario_matrix command without any pre-configured scope."
+commands.deny = ["run_scenario_matrix"]

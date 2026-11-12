@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-set-mcp-permissions"
+description = "Enables the set_mcp_permissions command without any pre-configured scope."
+commands.allow = ["set_mcp_permissions"]
+
+[[permission]]
+identifier = "deny-set-mcp-permissions"
+description = "Denies the set_mcp_permissions command without any pre-configured scope."
+commands.deny = ["set_mcp_permissions"]

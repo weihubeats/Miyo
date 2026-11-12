@@ -24,3 +24,4 @@ url = { workspace = true }
 axum = { workspace = true }
 miyo-storage = { path = "../miyo-storage" }
 chrono = { workspace = true }
+sqlx = { workspace = true }

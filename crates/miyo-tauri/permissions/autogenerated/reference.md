@@ -43,6 +43,12 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-oauth-access-token`
 - `allow-oauth-fetch-token`
 - `allow-get-tls-settings`
+- `allow-get-sensitive-patterns`
+- `allow-set-sensitive-patterns`
+- `allow-get-mcp-permissions`
+- `allow-set-mcp-permissions`
+- `allow-run-scenario-matrix`
+- `allow-export-scenario-report`
 - `allow-set-tls-settings`
 - `allow-get-mcp-tools`
 - `allow-set-mcp-tool-enabled`
@@ -1100,6 +1106,32 @@ Denies the export_openapi command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-export-scenario-report`
+
+</td>
+<td>
+
+Enables the export_scenario_report command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-export-scenario-report`
+
+</td>
+<td>
+
+Denies the export_scenario_report command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-export-smoke-docs`
 
 </td>
@@ -1412,6 +1444,32 @@ Denies the get_mcp_enabled command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-get-mcp-permissions`
+
+</td>
+<td>
+
+Enables the get_mcp_permissions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-get-mcp-permissions`
+
+</td>
+<td>
+
+Denies the get_mcp_permissions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-get-mcp-port`
 
 </td>
@@ -1535,6 +1593,32 @@ Enables the get_scenario_run command without any pre-configured scope.
 <td>
 
 Denies the get_scenario_run command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-get-sensitive-patterns`
+
+</td>
+<td>
+
+Enables the get_sensitive_patterns command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-get-sensitive-patterns`
+
+</td>
+<td>
+
+Denies the get_sensitive_patterns command without any pre-configured scope.
 
 </td>
 </tr>
@@ -2764,6 +2848,32 @@ Denies the run_scenario command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-run-scenario-matrix`
+
+</td>
+<td>
+
+Enables the run_scenario_matrix command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-run-scenario-matrix`
+
+</td>
+<td>
+
+Denies the run_scenario_matrix command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-save-endpoint`
 
 </td>
@@ -3258,6 +3368,32 @@ Denies the set_mcp_enabled command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-set-mcp-permissions`
+
+</td>
+<td>
+
+Enables the set_mcp_permissions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-set-mcp-permissions`
+
+</td>
+<td>
+
+Denies the set_mcp_permissions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-set-mcp-port`
 
 </td>
@@ -3303,6 +3439,32 @@ Enables the set_mcp_tool_enabled command without any pre-configured scope.
 <td>
 
 Denies the set_mcp_tool_enabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-set-sensitive-patterns`
+
+</td>
+<td>
+
+Enables the set_sensitive_patterns command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-set-sensitive-patterns`
+
+</td>
+<td>
+
+Denies the set_sensitive_patterns command without any pre-configured scope.
 
 </td>
 </tr>

@@ -1,7 +1,14 @@
-//! MCP 协议处理：JSON-RPC 分发 + 工具定义 + 工具调用。
+//! MCP 协议处理：JSON-RPC 分发 + 工具定义 + 工具调用 + Resources + Prompts。
 //!
-//! 只实现 server 必需的最小集：`initialize` / `ping` / `tools/list` /
-//! `tools/call`（+ 未知方法 -32601）。协议版本回显客户端请求值，兼容性最好。
+//! 实现的 server 方法集（协议版本 2025-06-18，回显客户端请求值保证兼容）：
+//! - `initialize` / `ping` / `tools/list` / `tools/call`
+//! - `resources/list` / `resources/read`（项目 / 接口 / 环境 / 场景 / 运行历史）
+//! - `prompts/list` / `prompts/get`（接口测试 / 场景编排 / 失败分析模板）
+//! - 通知：`notifications/tools/list_changed`（工具启停轮询）、
+//!   `notifications/progress`（长任务进度，客户端 progressToken 触发）
+//!
+//! 工具定义单源在 `miyo_agent::registry`（元数据 + Schema + 权限 + 注解）；
+//! 本文件只做协议分发，不再持有工具清单。
 
 use miyo_agent::ControlClient;
 use miyo_core::AppError;
@@ -33,15 +40,34 @@ async fn cached_client() -> Result<ControlClient, AppError> {
 }
 
 /// 处理一行请求：复用进程级缓存的控制面连接（失效时自动重新发现）。
-pub async fn handle_line_discover(line: &str) -> Option<String> {
+/// 返回全部输出行（响应 + 通知）。
+pub async fn handle_line_discover(line: &str) -> Vec<String> {
     handle_line_with(line, || Box::pin(cached_client())).await
 }
 
+/// 处理一行请求：返回**全部输出行**（响应 + 处理期间产生的通知，如
+/// notifications/progress；顺序：通知在前、响应在最后）。
 pub(crate) async fn handle_line_with(
     line: &str,
     connect: impl FnOnce() -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
     >,
+) -> Vec<String> {
+    // 期间收集的通知（progress 等）；响应始终是最后一行。
+    let mut extra: Vec<String> = Vec::new();
+    let response = handle_one(line, connect, &mut extra).await;
+    if let Some(resp) = response {
+        extra.push(resp);
+    }
+    extra
+}
+
+async fn handle_one(
+    line: &str,
+    connect: impl FnOnce() -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+    >,
+    extra: &mut Vec<String>,
 ) -> Option<String> {
     let msg: Value = serde_json::from_str(line).ok()?;
     let id = msg.get("id").cloned();
@@ -71,6 +97,29 @@ pub(crate) async fn handle_line_with(
             };
             Ok(json!({ "tools": defs }))
         }
+        "resources/list" => match connect().await {
+            Err(e) => Err(tool_error(&e.user_message())),
+            Ok(_) => Ok(resources_list()),
+        },
+        "resources/read" => {
+            let uri = params["uri"].as_str().unwrap_or_default().to_string();
+            if uri.is_empty() {
+                Err((-32602, "缺少必填参数 uri".to_string()))
+            } else {
+                match connect().await {
+                    Err(e) => Err(tool_error(&e.user_message())),
+                    Ok(client) => match resource_read(&client, &uri).await {
+                        Ok(content) => Ok(json!({ "contents": [content] })),
+                        Err(f) => Err(jsonrpc_error(&f.code, &f.message)),
+                    },
+                }
+            }
+        }
+        "prompts/list" => Ok(prompts_list()),
+        "prompts/get" => match prompts_get(&params) {
+            Ok(p) => Ok(p),
+            Err(message) => Err((-32602, message)),
+        },
         // 先校验工具与参数，全部通过才建立控制面连接——缺参 / 未知工具
         // 这类注定失败的调用不该付一次连接往返（也不该把连接错误盖过
         // 更贴近调用方的 -32602 参数错误）。
@@ -80,7 +129,7 @@ pub(crate) async fn handle_line_with(
             // AI 可解析 {success:false, error:{code,message,details}}）。
             Ok(()) => match connect().await {
                 Err(e) => Err(tool_error(&e.user_message())),
-                Ok(client) => match call_tool(&client, &params).await {
+                Ok(client) => match call_tool(&client, &params, extra).await {
                     Ok(result) => Ok(result),
                     Err(f) => Ok(tool_result(
                         fail_envelope(&f.code, &f.message, f.details),
@@ -107,7 +156,13 @@ pub(crate) async fn handle_line_with(
 fn initialize_result(params: &Value) -> Value {
     json!({
         "protocolVersion": params["protocolVersion"].as_str().unwrap_or(DEFAULT_PROTOCOL_VERSION),
-        "capabilities": { "tools": { "listChanged": false } },
+        // 协议能力（2025-06-18 核心集）：工具列表变更通知 + Resources + Prompts。
+        // 进度通知无需声明能力（客户端以 _meta.progressToken 逐请求触发）。
+        "capabilities": {
+            "tools": { "listChanged": true },
+            "resources": {},
+            "prompts": {}
+        },
         "serverInfo": { "name": "miyo-mcp", "version": env!("CARGO_PKG_VERSION") }
     })
 }
@@ -199,412 +254,253 @@ fn tool_fail(ctx: &str, e: &AppError) -> ToolFailure {
 
 // ---------- 工具定义 ----------
 
+/// tools/list 的完整定义。单源：`miyo_agent::registry`（元数据 + 描述 +
+/// Schema + 注解），本函数只做透传——新增工具无需改这里。
 fn tool_definitions() -> Vec<Value> {
-    vec![
-        json!({
-            "name": "save_curl",
-            "description": "把一条 cURL 命令解析并保存为 Miyo 接口（API 调试工具中的可编辑接口）。URL 拆为 base_url + 路径 + 查询参数；返回 endpointId。多个项目时必须传 projectId。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "command": { "type": "string", "description": "完整 cURL 命令字符串" },
-                    "name": { "type": "string", "description": "可选，接口名称；缺省从 URL 路径推导" },
-                    "projectId": { "type": "string", "description": "可选，目标项目 UUID；缺省时唯一项目自动选中、零项目自动创建" },
-                    "folderId": { "type": "string", "description": "可选，归属文件夹 UUID" }
-                },
-                "required": ["command"]
+    miyo_agent::registry::tool_definitions_json()
+}
+
+/// 标准 JSON-RPC 错误（协议层失败：工具停用 / 权限拒绝在 content 信封里，
+/// 这里承载资源不存在等请求级失败）。
+fn jsonrpc_error(code: &str, message: &str) -> (i64, String) {
+    let rpc_code = match code {
+        "NOT_FOUND" | "TOOL_NOT_FOUND" => -32602,
+        "PERMISSION_DENIED" | "TOOL_DISABLED" => -32000,
+        _ => -32000,
+    };
+    (rpc_code, format!("[{code}] {message}"))
+}
+
+// ---------- Resources（项目 / 接口 / 环境 / 场景 / 运行历史） ----------
+
+/// 资源清单：具体资源（projects / context）+ URI 模板（项目子资源 / 环境 /
+/// 运行）。读取走既有控制面端点——权限（read）与数据脱敏由服务端统一负责。
+fn resources_list() -> Value {
+    json!({
+        "resources": [
+            {
+                "uri": "miyo://context",
+                "name": "Agent 上下文快照",
+                "description": "当前项目 / 当前环境 / 接口与环境清单摘要 / 场景清单 / 最近一次运行（变量与敏感值已脱敏；不含请求规格明细）",
+                "mimeType": "application/json"
+            },
+            {
+                "uri": "miyo://projects",
+                "name": "全部项目",
+                "description": "Miyo 中全部项目（id / 名称 / 描述 / 变量，敏感变量已脱敏）",
+                "mimeType": "application/json"
             }
-        }),
-        json!({
-            "name": "list_projects",
-            "description": "列出 Miyo 中全部项目（id / 名称 / 描述 / 变量）。",
-            "inputSchema": { "type": "object", "properties": {} }
-        }),
-        json!({
-            "name": "list_endpoints",
-            "description": "列出指定项目下的接口（方法 / 路径 / 名称 / 请求规格）。支持按名称子串（匹配名称或路径）、HTTP 方法、所属分组过滤，支持分页；全缺省时返回全量（与旧版兼容）。创建场景前用它了解项目里有哪些接口。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "projectId": { "type": "string", "description": "项目 UUID（先调 list_projects 获取）" },
-                    "name": { "type": "string", "description": "可选，名称/路径子串过滤（大小写不敏感）" },
-                    "method": { "type": "string", "description": "可选，HTTP 方法过滤（GET/POST/…，大小写不敏感）" },
-                    "folderId": { "type": "string", "description": "可选，分组 UUID 过滤" },
-                    "limit": { "type": "number", "description": "可选，分页条数（配合 offset；缺省全量）" },
-                    "offset": { "type": "number", "description": "可选，分页偏移（缺省 0）" }
-                },
-                "required": ["projectId"]
+        ],
+        "resourceTemplates": [
+            {
+                "uriTemplate": "miyo://projects/{projectId}/endpoints",
+                "name": "项目接口清单",
+                "description": "指定项目下的接口（方法 / 路径 / 名称 / 请求规格，认证与敏感头已脱敏）",
+                "mimeType": "application/json"
+            },
+            {
+                "uriTemplate": "miyo://projects/{projectId}/environments",
+                "name": "项目环境清单",
+                "description": "指定项目的执行环境（名称 / Base URL / 启用变量数）",
+                "mimeType": "application/json"
+            },
+            {
+                "uriTemplate": "miyo://projects/{projectId}/scenarios",
+                "name": "项目场景清单",
+                "description": "指定项目的集成测试场景摘要（步骤数 / 最近运行）",
+                "mimeType": "application/json"
+            },
+            {
+                "uriTemplate": "miyo://environments/{environmentId}",
+                "name": "环境详情",
+                "description": "环境 Base URL 与启用变量（敏感值已脱敏为占位符）",
+                "mimeType": "application/json"
+            },
+            {
+                "uriTemplate": "miyo://runs/{runId}",
+                "name": "场景运行结果",
+                "description": "一次场景运行的结果摘要与分步状态（响应正文不含全文）",
+                "mimeType": "application/json"
             }
-        }),
-        json!({
-            "name": "get_endpoint",
-            "description": "读取单个接口的完整定义（方法 / 路径 / 请求头 / 参数 / Body / 认证形态），调用 send_endpoint 前先看它。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "endpointId": { "type": "string", "description": "接口 UUID（list_endpoints / save_curl 返回）" }
-                },
-                "required": ["endpointId"]
-            }
-        }),
-        json!({
-            "name": "send_endpoint",
-            "description": "发送一次真实 HTTP 请求（链式调用的核心工具）。按 Miyo 中已保存接口的当前配置执行，支持覆盖：url（完整地址）、headers、query、body（请求体原文）、variables（额外变量，渲染进 {{var}} 占位）。返回完整响应（状态码 / 耗时 / 正文，超 64KB 截断）。典型链路：调用下单接口 → 从响应正文提取订单号 → 用 variables/body 把订单号传给支付预览接口 → 再调支付接口。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "endpointId": { "type": "string", "description": "接口 UUID（list_endpoints / save_curl 返回）" },
-                    "url": { "type": "string", "description": "可选，覆盖完整 URL 模板（支持 {{var}} 占位）" },
-                    "headers": { "type": "object", "description": "可选，追加/覆盖请求头 {\"名\": \"值\"}", "additionalProperties": { "type": "string" } },
-                    "query": { "type": "object", "description": "可选，追加/覆盖 query 参数", "additionalProperties": { "type": "string" } },
-                    "body": { "type": "string", "description": "可选，覆盖请求体原文（Json/Text 原位替换；其余类型降级为 text）" },
-                    "variables": { "type": "object", "description": "可选，额外变量注入（优先级最高），如 {\"orderId\": \"A1024\"}", "additionalProperties": { "type": "string" } },
-                    "environmentId": { "type": "string", "description": "可选，环境 UUID（缺省用全局+项目变量）" },
-                    "timeoutMs": { "type": "number", "description": "可选，本次请求超时毫秒（缺省 接口级→全局设置→300s）" }
-                },
-                "required": ["endpointId"]
-            }
-        }),
-        json!({
-            "name": "run_scenario",
-            "description": "运行集成测试场景：按步骤顺序执行，条件/循环/并行按配置生效，前一步提取的链路变量自动传入后续步骤，逐步执行断言并落运行历史。返回 runId 与每步摘要（状态码/断言/提取值/响应预览）。长场景建议 wait=false 拿 runId 后用 get_run_result 轮询。生产环境或含写操作（POST/PUT/DELETE）的场景先经用户确认，建议带幂等键（如 Idempotency-Key 请求头）防重复下单。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scenarioId": { "type": "string", "description": "场景 UUID（list_scenarios 返回）" },
-                    "environmentId": { "type": "string", "description": "可选，环境 UUID（缺省用全局+项目变量；生产环境先经用户确认）" },
-                    "stopOnFailure": { "type": "boolean", "description": "可选，失败即停（默认 true）" },
-                    "variables": { "type": "object", "description": "可选，初始变量注入（优先级最高）", "additionalProperties": { "type": "string" } },
-                    "autoIdempotency": { "type": "boolean", "description": "可选，true 时为写操作步骤自动补 Idempotency-Key 头（键 = runId-步骤位次，重试不重复执行业务）——AI 重试或不确定幂等性时建议开启" },
-                    "wait": { "type": "boolean", "description": "可选，true（默认）同步等待完整结果；false 立即返回 runId，用 get_run_result 轮询" }
-                },
-                "required": ["scenarioId"]
-            }
-        }),
-        json!({
-            "name": "list_scenarios",
-            "description": "列出 Miyo 中的集成测试场景（接口链路）。返回 id / 名称 / 描述 / 步骤数 / 是否已有自定义脚本。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "projectId": { "type": "string", "description": "可选，项目 UUID；缺省时仅一个项目自动选中" }
+        ]
+    })
+}
+
+/// 资源读取：URI → 控制面端点。未知 URI → NOT_FOUND（资源不在服务端
+/// 白名单内一律拒绝，不做自由路径拼接）。
+async fn resource_read(client: &ControlClient, uri: &str) -> Result<Value, ToolFailure> {
+    let payload = match uri.strip_prefix("miyo://") {
+        Some("context") => client
+            .get_context()
+            .await
+            .map_err(|e| tool_fail("CONTEXT", &e))?,
+        Some("projects") => serde_json::to_value(
+            client
+                .list_projects()
+                .await
+                .map_err(|e| tool_fail("PROJECT", &e))?,
+        )
+        .unwrap_or(Value::Null),
+        Some(rest) if rest.starts_with("projects/") => {
+            let rest = &rest["projects/".len()..];
+            let (project_id, sub) = rest
+                .split_once('/')
+                .ok_or_else(|| ToolFailure::new("NOT_FOUND", format!("资源 URI 不完整：{uri}")))?;
+            let project_id: Uuid = project_id.parse().map_err(|_| {
+                ToolFailure::new("VALIDATION_FAILED", "projectId 不是合法 UUID".to_string())
+            })?;
+            match sub {
+                "endpoints" => serde_json::to_value(
+                    client
+                        .list_endpoints(project_id)
+                        .await
+                        .map_err(|e| tool_fail("ENDPOINT", &e))?,
+                )
+                .unwrap_or(Value::Null),
+                "environments" => serde_json::to_value(
+                    client
+                        .list_environments(Some(project_id))
+                        .await
+                        .map_err(|e| tool_fail("ENVIRONMENT", &e))?,
+                )
+                .unwrap_or(Value::Null),
+                "scenarios" => serde_json::to_value(
+                    client
+                        .list_scenarios(Some(project_id))
+                        .await
+                        .map_err(|e| tool_fail("SCENARIO", &e))?,
+                )
+                .unwrap_or(Value::Null),
+                _ => {
+                    return Err(ToolFailure::new(
+                        "NOT_FOUND",
+                        format!("未知资源子路径：{sub}"),
+                    ))
                 }
             }
-        }),
-        json!({
-            "name": "create_scenario",
-            "description": "新建集成测试场景。两种步骤来源：① steps 完整定义（推荐）——每步含内联请求或接口引用、变量提取（extractors 或 extract）、断言（source/operator 形状自动翻译）、执行条件/循环，顺序即数组顺序；② endpointIds 顺序引用（仅建骨架，无提取/断言）。返回 scenarioId。推荐工作流：list_endpoints → get_endpoint 看清参数与响应 → create_scenario（steps 一步到位）→ validate_scenario → run_scenario。接口信息不足时先问用户，不要编造字段。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string", "description": "场景名称（不可为空）" },
-                    "projectId": { "type": "string", "description": "可选，目标项目 UUID；缺省时仅一个项目自动选中" },
-                    "description": { "type": "string", "description": "可选，场景说明" },
-                    "category": { "type": "string", "description": "可选，分类标签" },
-                    "endpointIds": { "type": "array", "items": { "type": "string" }, "description": "可选，按顺序引用的接口 UUID（无提取/断言的骨架）" },
-                    "steps": {
-                        "type": "array",
-                        "description": "可选，完整步骤数组（优先于 endpointIds）。每步：{\"name\":\"步骤名\",\"request\":{\"method\":\"POST\",\"url\":\"{{base_url}}/path\",\"spec\":{}}} 或 {\"endpointId\":\"UUID\",\"extractors\":[{\"name\":\"orderNo\",\"source\":\"response.body\",\"expression\":\"$.data.orderNo\"}],\"assertions\":[{\"source\":\"response.status\",\"operator\":\"equals\",\"expected\":200},{\"source\":\"response.body\",\"expression\":\"$.data.status\",\"operator\":\"equals\",\"expected\":\"SUCCESS\"}],\"condition\":{\"source\":\"var\",\"name\":\"paid\",\"op\":\"exists\"},\"loop\":{\"mode\":\"while\",\"while_condition\":{...},\"max_loops\":10,\"interval_ms\":500},\"waitMs\":0,\"parallel\":false}。URL/Body 里用 {{变量名}} 引用前一步提取的值。",
-                        "items": { "type": "object" }
-                    }
-                },
-                "required": ["name"]
+        }
+        Some(rest) if rest.starts_with("environments/") => {
+            let env_id: Uuid = rest["environments/".len()..].parse().map_err(|_| {
+                ToolFailure::new(
+                    "VALIDATION_FAILED",
+                    "environmentId 不是合法 UUID".to_string(),
+                )
+            })?;
+            serde_json::to_value(
+                client
+                    .get_environment(env_id)
+                    .await
+                    .map_err(|e| tool_fail("ENVIRONMENT", &e))?,
+            )
+            .unwrap_or(Value::Null)
+        }
+        Some(rest) if rest.starts_with("runs/") => {
+            let run_id: Uuid = rest["runs/".len()..].parse().map_err(|_| {
+                ToolFailure::new("VALIDATION_FAILED", "runId 不是合法 UUID".to_string())
+            })?;
+            client
+                .get_run_result(run_id)
+                .await
+                .map_err(|e| tool_fail("RUN", &e))?
+        }
+        _ => {
+            return Err(ToolFailure::new(
+                "NOT_FOUND",
+                format!("未知资源：{uri}（可用清单见 resources/list）"),
+            ))
+        }
+    };
+    Ok(json!({
+        "uri": uri,
+        "mimeType": "application/json",
+        "text": serde_json::to_string_pretty(&payload).unwrap_or_default(),
+    }))
+}
+
+// ---------- Prompts（标准化测试 / 编排 / 分析模板） ----------
+
+/// Prompt 模板清单（纯文本生成，不读项目数据——无数据泄露面）。
+fn prompts_list() -> Value {
+    json!({
+        "prompts": [
+            {
+                "name": "design-api-tests",
+                "description": "为指定接口设计测试用例（正向 / 负向 / 边界值 / 安全性），并可直接创建为 Miyo 测试用例",
+                "arguments": [
+                    { "name": "endpointId", "description": "接口 UUID（list_endpoints 获取）", "required": true }
+                ]
+            },
+            {
+                "name": "author-scenario",
+                "description": "编排一个集成测试场景（接口链路 + 变量提取 + 断言），创建后先校验再运行",
+                "arguments": [
+                    { "name": "goal", "description": "业务目标描述（如「下单后用订单号支付」）", "required": true },
+                    { "name": "projectId", "description": "可选，项目 UUID（缺省用当前唯一 / 激活项目）", "required": false }
+                ]
+            },
+            {
+                "name": "analyze-failure",
+                "description": "分析一次场景运行的失败原因，给出可执行的修复建议",
+                "arguments": [
+                    { "name": "runId", "description": "运行 UUID（run_scenario / get_run_result 返回）", "required": true }
+                ]
             }
-        }),
-        json!({
-            "name": "get_scenario",
-            "description": "读取集成测试场景的完整上下文，用于编写或修改场景脚本（Node fetch 风格）：每一步引用接口的当前配置（方法 / 路径 / 请求规格）、提取规则与断言、链路变量（前步提取、后步引用）、项目变量（含 base_url 兜底地址）与当前自定义脚本。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scenarioId": { "type": "string", "description": "场景 UUID（先调 list_scenarios 获取）" }
-                },
-                "required": ["scenarioId"]
+        ]
+    })
+}
+
+/// prompts/get：模板展开为 user 消息。参数缺失 / 未知 prompt → -32602。
+fn prompts_get(params: &Value) -> Result<Value, String> {
+    let name = params["name"].as_str().unwrap_or_default();
+    let arg = |k: &str| {
+        params["arguments"][k]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    let text = match name {
+        "design-api-tests" => {
+            let endpoint_id = arg("endpointId");
+            if endpoint_id.is_empty() {
+                return Err("缺少必填参数 endpointId".to_string());
             }
-        }),
-        json!({
-            "name": "save_scenario_script",
-            "description": "写入集成测试场景的自定义脚本（覆盖保存）。脚本为 Node 18+ 原生 fetch 风格（顶层 await），链路变量直接用前步提取的变量名引用；传空字符串表示清除自定义、回到由手动步骤实时生成。应用内运行始终以手动步骤为准，脚本用于复制 / CI 导出。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scenarioId": { "type": "string", "description": "场景 UUID" },
-                    "script": { "type": "string", "description": "脚本全文（空字符串 = 清除自定义）" }
-                },
-                "required": ["scenarioId", "script"]
+            format!(
+                "请为 Miyo 中的接口（endpointId={endpoint_id}）设计测试用例。步骤：\n                 1. 用 get_endpoint 读取接口定义（方法 / 路径 / 参数 / Body 形态）；\n                 2. 用 list_test_cases 查看已有用例，避免重复；\n                 3. 设计覆盖：正向（合法输入 → 预期 2xx 与关键字段断言）、负向（缺参 / 非法值 → 预期 4xx）、边界值（空串 / 超长 / 极值）、安全性（未授权 → 预期 401/403）；\n                 4. 每条用例给出：name、category（正向/负向/边界值/安全性/其他）、request 快照与断言；\n                 5. 与我确认后用 create_test_case 逐条创建（创建是落库操作，未经确认不要执行）。\n                 不要编造接口没有的字段；信息不足先提问。"
+            )
+        }
+        "author-scenario" => {
+            let goal = arg("goal");
+            if goal.is_empty() {
+                return Err("缺少必填参数 goal".to_string());
             }
-        }),
-        json!({
-            "name": "list_environments",
-            "description": "列出项目的执行环境（名称 / Base URL / 启用变量数）。场景执行前用它确认目标环境；生产命名的环境执行前必须经用户确认。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "projectId": { "type": "string", "description": "可选，项目 UUID；缺省时仅一个项目自动选中" }
-                }
+            let project_id = arg("projectId");
+            let project_hint = if project_id.is_empty() {
+                "用 list_projects / get_context 确认目标项目".to_string()
+            } else {
+                format!("目标项目 projectId={project_id}")
+            };
+            format!(
+                "请把以下业务目标编排为 Miyo 集成测试场景：{goal}\n\n                 步骤：\n                 1. {project_hint}；\n                 2. 用 list_endpoints 列出可用接口，选出链路所需的接口并逐个 get_endpoint 了解参数与响应形态；\n                 3. 用 create_scenario 一次创建完整 steps：每步含内联请求或接口引用、变量提取（extractors）、断言（source/operator 形状）；前一步提取的值在后续步骤用 {{{{变量名}}}} 引用；\n                 4. 用 validate_scenario 校验（变量引用 / 断言 / 写操作清单），不通过则修复；\n                 5. 运行前向我确认目标环境（生产环境必须显式确认）；写操作场景建议开 autoIdempotency。"
+            )
+        }
+        "analyze-failure" => {
+            let run_id = arg("runId");
+            if run_id.is_empty() {
+                return Err("缺少必填参数 runId".to_string());
             }
-        }),
-        json!({
-            "name": "get_environment",
-            "description": "读取环境详情：Base URL 与全部启用变量（敏感变量的值已脱敏为占位符，不可读出明文）。用于确认 {{变量}} 引用是否在环境中可用。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "environmentId": { "type": "string", "description": "环境 UUID（list_environments 返回）" }
-                },
-                "required": ["environmentId"]
-            }
-        }),
-        json!({
-            "name": "update_scenario",
-            "description": "更新场景：名称 / 描述 / 分类按需覆盖；steps 提供时整体替换全部步骤（形状同 create_scenario 的 steps，支持 AI 方言）。字段缺省保留原值。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scenarioId": { "type": "string", "description": "场景 UUID" },
-                    "name": { "type": "string", "description": "可选，新名称" },
-                    "description": { "type": "string", "description": "可选，新描述" },
-                    "category": { "type": "string", "description": "可选，新分类" },
-                    "steps": { "type": "array", "items": { "type": "object" }, "description": "可选，整体替换的步骤数组（形状同 create_scenario.steps）" }
-                },
-                "required": ["scenarioId"]
-            }
-        }),
-        json!({
-            "name": "delete_scenario",
-            "description": "删除场景（不可恢复）。运行历史随场景一并删除，响应中 deletedRuns 为被删历史条数——如需保留历史请先告知用户确认。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scenarioId": { "type": "string", "description": "场景 UUID" }
-                },
-                "required": ["scenarioId"]
-            }
-        }),
-        json!({
-            "name": "add_scenario_step",
-            "description": "向场景追加一个步骤（index 缺省追加到末尾）。步骤形状同 create_scenario 的 steps 元素（支持 AI 方言：extractors + source/operator 断言）。用于逐步构建或修改场景，免整场景重发。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scenarioId": { "type": "string", "description": "场景 UUID" },
-                    "step": { "type": "object", "description": "步骤定义（同 create_scenario.steps 元素）" },
-                    "index": { "type": "number", "description": "可选，插入位次（0-based；缺省 = 末尾）" }
-                },
-                "required": ["scenarioId", "step"]
-            }
-        }),
-        json!({
-            "name": "update_scenario_step",
-            "description": "替换场景中指定位次的步骤（完整定义，形状同 create_scenario.steps 元素）。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scenarioId": { "type": "string", "description": "场景 UUID" },
-                    "index": { "type": "number", "description": "步骤位次（0-based）" },
-                    "step": { "type": "object", "description": "新步骤定义" }
-                },
-                "required": ["scenarioId", "index", "step"]
-            }
-        }),
-        json!({
-            "name": "delete_scenario_step",
-            "description": "删除场景中指定位次的步骤（其后步骤前移）。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scenarioId": { "type": "string", "description": "场景 UUID" },
-                    "index": { "type": "number", "description": "步骤位次（0-based）" }
-                },
-                "required": ["scenarioId", "index"]
-            }
-        }),
-        json!({
-            "name": "validate_scenario",
-            "description": "运行前校验场景：项目/接口/环境存在性、步骤配置完整性、变量引用分析（缺失/先引用后定义）、提取与断言表达式合法性、条件/循环配置、写操作步骤清单（副作用提示）。返回结构化 issues（可多条）。执行 run_scenario 前必须先校验通过；校验不通过不要绕过，缺接口信息时先询问用户。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "scenarioId": { "type": "string", "description": "场景 UUID" },
-                    "environmentId": { "type": "string", "description": "可选，按指定环境校验变量可用性" },
-                    "runtimeVariables": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "可选，运行期将经 run_scenario 的 variables 注入的变量名（如每次运行传唯一订单号/幂等键）——这些引用不再报 VARIABLE_NOT_FOUND"
-                    }
-                },
-                "required": ["scenarioId"]
-            }
-        }),
-        json!({
-            "name": "get_run_result",
-            "description": "获取场景执行结果摘要：runId / 状态（running/completed/failed/unknown）/ 汇总（通过/失败/跳过步数、耗时）与每步摘要（状态码/断言通过数/提取值——不含响应正文）。run_scenario 传 wait=false 后用它轮询；completed 后用 get_step_result 看单步详情，用 analyze_run_failure 分析失败。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "runId": { "type": "string", "description": "运行 UUID（run_scenario 返回）" }
-                },
-                "required": ["runId"]
-            }
-        }),
-        json!({
-            "name": "get_step_result",
-            "description": "获取场景运行中单个步骤的完整详情：实际请求（URL/方法/头/Body 快照）、完整响应（状态码/头/正文，超 64KB 截断）、变量提取结果、逐条断言（预期值/实际值/失败原因）。避免一次性拉全部响应，按需逐步查看。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "runId": { "type": "string", "description": "运行 UUID" },
-                    "stepIndex": { "type": "number", "description": "步骤位次（0-based，get_run_result 摘要中的 index）" }
-                },
-                "required": ["runId", "stepIndex"]
-            }
-        }),
-        json!({
-            "name": "list_test_cases",
-            "description": "列出接口的测试用例（名称/分组/分类/最近执行状态与断言通过数）。先 get_endpoint 看接口，再列它的用例。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "endpointId": { "type": "string", "description": "接口 UUID" }
-                },
-                "required": ["endpointId"]
-            }
-        }),
-        json!({
-            "name": "get_test_case",
-            "description": "获取测试用例完整定义：请求快照（方法/路径/路径变量/Params/Headers/Body/认证/超时）、断言规则、变量提取规则、最近执行状态。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "caseId": { "type": "string", "description": "测试用例 UUID" }
-                },
-                "required": ["caseId"]
-            }
-        }),
-        json!({
-            "name": "create_test_case",
-            "description": "创建测试用例（保存为一个可重复执行的请求快照 + 断言 + 提取）。request.method/urlPath 必填；assertions/extractors 为引擎方言数组（断言 type: status/jsonpath/header/body/response_time_ms/length/graphql_errors/javascript；提取 from: body/header/cookie/body_regex）。会落库（副作用）。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "endpointId": { "type": "string", "description": "归属接口 UUID（request_id）" },
-                    "name": { "type": "string", "description": "用例名" },
-                    "category": { "type": "string", "description": "分组：正向/负向/边界值/安全性/其他", "enum": ["正向", "负向", "边界值", "安全性", "其他"] },
-                    "folder": { "type": "string", "description": "可选，自由文件夹名（空 = 未分组）" },
-                    "request": {
-                        "type": "object",
-                        "description": "请求快照：{method, urlPath, pathVariables?, params?, headers?, bodyType?, bodyContent?, auth?, timeoutMs?, disableCookies?}",
-                        "properties": {
-                            "method": { "type": "string" },
-                            "urlPath": { "type": "string", "description": "相对路径（配合环境 base_url）或完整 URL；{var} 路径变量随 pathVariables 赋值" },
-                            "params": { "type": "array", "items": { "type": "object", "properties": { "key": {"type":"string"}, "value": {"type":"string"}, "enabled": {"type":"boolean"} } } },
-                            "headers": { "type": "array", "items": { "type": "object", "properties": { "key": {"type":"string"}, "value": {"type":"string"}, "enabled": {"type":"boolean"} } } },
-                            "pathVariables": { "type": "array", "items": { "type": "object", "properties": { "key": {"type":"string"}, "value": {"type":"string"} } } },
-                            "bodyType": { "type": "string", "enum": ["none","json","raw","urlencoded","form-data","graphql","binary"] },
-                            "bodyContent": { "type": "string", "description": "json/raw 为文本；urlencoded/form-data 为 KV 数组的 JSON 字符串" },
-                            "auth": { "type": "object", "description": "可选，AuthSpec（如 {type:'bearer', token:'…'}）——属敏感信息，仅用户显式提供时写入" },
-                            "timeoutMs": { "type": "number" },
-                            "disableCookies": { "type": "boolean" }
-                        },
-                        "required": ["method", "urlPath"]
-                    },
-                    "assertions": { "type": "array", "items": { "type": "object", "properties": { "name": {"type":"string"}, "type": {"type":"string"}, "path": {"type":"string"}, "op": {"type":"string"}, "expected": {} } } },
-                    "extractors": { "type": "array", "items": { "type": "object", "properties": { "name": {"type":"string"}, "from": {"type":"string"}, "path": {"type":"string"} } } }
-                },
-                "required": ["endpointId", "name", "request"]
-            }
-        }),
-        json!({
-            "name": "update_test_case",
-            "description": "整体更新测试用例（字段覆盖语义；会落库）。结构同 create_test_case。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "caseId": { "type": "string" },
-                    "name": { "type": "string" },
-                    "category": { "type": "string" },
-                    "folder": { "type": "string" },
-                    "request": { "type": "object", "description": "同 create_test_case 的 request" },
-                    "assertions": { "type": "array" },
-                    "extractors": { "type": "array" }
-                },
-                "required": ["caseId"]
-            }
-        }),
-        json!({
-            "name": "delete_test_case",
-            "description": "删除测试用例（不可恢复，执行历史级联删除）。删除前必须与用户确认。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "caseId": { "type": "string" }
-                },
-                "required": ["caseId"]
-            }
-        }),
-        json!({
-            "name": "run_test_case",
-            "description": "执行一个测试用例（真实发送请求）：返回结构化结果（状态码/耗时/逐条断言 expected/actual/passed/reason/提取值/响应快照摘要），并落执行历史。写操作（POST/PUT/PATCH/DELETE）执行前必须与用户确认目标环境。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "caseId": { "type": "string", "description": "测试用例 UUID" },
-                    "environmentId": { "type": "string", "description": "可选，指定执行环境（缺省用项目默认环境）" }
-                },
-                "required": ["caseId"]
-            }
-        }),
-        json!({
-            "name": "list_test_case_runs",
-            "description": "列出测试用例的执行历史（新→旧：时间/状态/耗时/断言通过数）。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "caseId": { "type": "string" },
-                    "limit": { "type": "number", "description": "可选，1-200，默认 50" }
-                },
-                "required": ["caseId"]
-            }
-        }),
-        json!({
-            "name": "get_test_case_run",
-            "description": "获取一次用例执行的完整详情（请求快照/响应/逐条断言/提取值）。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "runId": { "type": "string", "description": "执行历史 UUID（run_test_case 或 list_test_case_runs 返回）" }
-                },
-                "required": ["runId"]
-            }
-        }),
-        json!({
-            "name": "analyze_run_failure",
-            "description": "分析场景运行的失败步骤：结合请求/响应/断言/提取情况，按规则分类错误类型（请求错误/断言失败/依赖阻断/取消）并给出可能原因与建议。输出为启发式推测而非确定结论，修复前请结合 get_step_result 的原始响应核对。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "runId": { "type": "string", "description": "运行 UUID" }
-                },
-                "required": ["runId"]
-            }
-        }),
-        json!({
-            "name": "cancel_run",
-            "description": "取消一个正在运行的场景（run_scenario wait=false 返回的 runId）。引擎在当前请求中止后返回已完成步骤（cancelled=true）并落历史；已结束的运行返回 already-finished（无需取消）。长场景跑错目标或用户要求停止时使用。",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "runId": { "type": "string", "description": "运行 UUID（run_scenario wait=false 返回）" }
-                },
-                "required": ["runId"]
-            }
-        }),
-        json!({
-            "name": "agent_info",
-            "description": "返回 Miyo Agent 控制面连接信息（地址与令牌文件路径），供需要直接发 HTTP 的场景使用。",
-            "inputSchema": { "type": "object", "properties": {} }
-        }),
-    ]
+            format!(
+                "请分析 Miyo 场景运行（runId={run_id}）的失败原因。步骤：\n                 1. 用 get_run_result 获取整体结果（哪几步失败 / cancelled / blocked）；\n                 2. 用 analyze_run_failure 得到规则化归因（错误类型 / 可能原因 / 建议）；\n                 3. 对关键失败步用 get_step_result 核对原始请求与响应（断言 expected vs actual）；\n                 4. 输出：结论（根因推断）+ 证据（具体步骤与字段）+ 可执行修复建议（区分「场景配置问题」与「被测服务问题」）。\n                 analyze_run_failure 的输出是启发式推测，必须用原始响应验证后再下结论。"
+            )
+        }
+        other => return Err(format!("未知 prompt：{other}")),
+    };
+    Ok(json!({
+        "description": "Miyo 标准化工作流模板",
+        "messages": [
+            { "role": "user", "content": { "type": "text", "text": text } }
+        ]
+    }))
 }
 
 // ---------- 工具调用 ----------
@@ -711,7 +607,7 @@ fn validate_tool_call(params: &Value) -> Result<(), (i64, String)> {
             opt_uuid_arg(&args, "folderId").map_err(|e| ToolFailure::new("INVALID_ARGUMENT", e))?;
             Ok(())
         }
-        "list_projects" | "agent_info" => Ok(()),
+        "list_projects" | "agent_info" | "get_context" => Ok(()),
         "list_endpoints" => {
             str_arg(&args, "projectId")
                 .ok_or_else(|| (-32602, "缺少必填参数 projectId".to_string()))?
@@ -896,8 +792,19 @@ fn validate_tool_call(params: &Value) -> Result<(), (i64, String)> {
     }
 }
 
-async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, ToolFailure> {
+async fn call_tool(
+    client: &ControlClient,
+    params: &Value,
+    extra: &mut Vec<String>,
+) -> Result<Value, ToolFailure> {
     let name = params["name"].as_str().unwrap_or_default();
+    // 注册表兜底：未注册工具在协议层即拒绝（与 tools/list 单源一致）。
+    let Some(meta) = miyo_agent::registry::tool_meta(name) else {
+        return Err(ToolFailure::new(
+            "TOOL_NOT_FOUND",
+            format!("未注册的 MCP 工具：{name}"),
+        ));
+    };
     // 服务端兜底之外的第一道拦截：停用的工具调用即报错（响应 isError）。
     if let Ok(states) = client.list_tool_states().await {
         if let Some(s) = states.iter().find(|s| s.name == name) {
@@ -910,6 +817,13 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, Tool
         }
     }
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
+    // 并发控制：注册表 concurrent=false 的工具按名串行（防 read-modify-write
+    // 交错覆盖，如 save_scenario_script / update_* 系列）。
+    let _serial = if meta.concurrent {
+        None
+    } else {
+        Some(serial_gate(name).await)
+    };
     let value: Value = match name {
         "save_curl" => {
             let command = str_arg(&args, "command").ok_or_else(|| {
@@ -1012,8 +926,21 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, Tool
             if let Some(v) = args.get("autoIdempotency").and_then(|v| v.as_bool()) {
                 payload["autoIdempotency"] = serde_json::json!(v);
             }
+            // 数据驱动：多组数据独立执行（每组变量隔离、独立落历史、
+            // 响应为逐行汇总——raw 形状，见下方 dataSets 分支）。
+            if let Some(ds) = args.get("dataSets").filter(|v| v.is_array()) {
+                payload["dataSets"] = ds.clone();
+            }
             let wait = args.get("wait").and_then(|v| v.as_bool()).unwrap_or(true);
             payload["wait"] = serde_json::json!(wait);
+            // 进度通知：客户端带 _meta.progressToken 时，运行期间轮询
+            // /agent/runs/{id}/progress 并转发 notifications/progress。
+            let progress_token = params["_meta"]["progressToken"].clone();
+            let run_id_owned = uuid::Uuid::new_v4();
+            let notify_progress = !progress_token.is_null();
+            if notify_progress {
+                payload["runId"] = serde_json::json!(run_id_owned.to_string());
+            }
             if !wait {
                 // 异步：立即返回 runId（JSON 形状与同步不同），原样透传。
                 let raw = client
@@ -1022,13 +949,50 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, Tool
                     .map_err(|e| tool_fail("SCENARIO", &e))?;
                 return Ok(tool_result(ok_envelope(raw), false));
             }
-            serde_json::to_value(
+            // dataSets 数据驱动：响应为逐行汇总（非 RunScenarioResult 形状），
+            // 走 raw 通道透传；进度轮询不适用（响应即全部行）。
+            if payload
+                .get("dataSets")
+                .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty()))
+            {
+                let raw = client
+                    .run_scenario_raw(scenario_id, payload)
+                    .await
+                    .map_err(|e| tool_fail("SCENARIO", &e))?;
+                return Ok(tool_result(ok_envelope(raw), false));
+            }
+            // 同步等待：起进度轮询任务（客户端给了 progressToken 才有输出），
+            // 轮询通知经 channel 收集，主调用返回后并入 extra 输出行。
+            let (progress_task, progress_rx) = if notify_progress {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+                (
+                    Some(spawn_progress_poller(
+                        client.clone(),
+                        run_id_owned,
+                        progress_token,
+                        tx,
+                    )),
+                    Some(rx),
+                )
+            } else {
+                (None, None)
+            };
+            let result = serde_json::to_value(
                 client
                     .run_scenario(scenario_id, payload)
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .expect("序列化失败");
+            if let Some(task) = progress_task {
+                task.abort();
+            }
+            if let Some(mut rx) = progress_rx {
+                while let Ok(line) = rx.try_recv() {
+                    extra.push(line);
+                }
+            }
+            result
         }
         "list_scenarios" => {
             let project_id = opt_uuid_arg(&args, "projectId")
@@ -1397,6 +1361,13 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, Tool
             )
             .expect("序列化失败")
         }
+        "get_context" => serde_json::to_value(
+            client
+                .get_context()
+                .await
+                .map_err(|e| tool_fail("CONTEXT", &e))?,
+        )
+        .expect("序列化失败"),
         "agent_info" => json!({
             "address": client.base(),
             "tokenPath": miyo_agent::token::token_path(&miyo_agent::default_data_dir()),
@@ -1405,8 +1376,8 @@ async fn call_tool(client: &ControlClient, params: &Value) -> Result<Value, Tool
         }),
         other => {
             return Err(ToolFailure::new(
-                "UNKNOWN_TOOL",
-                format!("未知工具：{other}"),
+                "TOOL_NOT_FOUND",
+                format!("未注册的 MCP 工具：{other}"),
             ))
         }
     };
@@ -1494,6 +1465,99 @@ fn uuid_list_arg(args: &Value, key: &str) -> Result<Vec<Uuid>, String> {
     }
 }
 
+// ---------- 并发控制 / 进度通知 ----------
+
+/// 非并发工具（注册表 concurrent=false）的按名串行闸：同名工具调用互斥，
+/// 防 read-modify-write 交错互相覆盖；不同工具互不影响。
+static SERIAL_GATES: tokio::sync::Mutex<
+    Option<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+> = tokio::sync::Mutex::const_new(None);
+
+async fn serial_gate(name: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    let gate = {
+        let mut map = SERIAL_GATES.lock().await;
+        map.get_or_insert_with(std::collections::HashMap::new)
+            .entry(name.to_string())
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    gate.lock_owned().await
+}
+
+/// 进度轮询任务：每 1.5s 查一次 /agent/runs/{id}/progress，变化即发
+/// notifications/progress 行到 channel；主调用返回时 abort（上限约 15 分钟，
+/// 防服务端异常时无限轮询）。
+fn spawn_progress_poller(
+    client: ControlClient,
+    run_id: Uuid,
+    token: Value,
+    tx: tokio::sync::mpsc::UnboundedSender<String>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut last: Option<(u64, u64)> = None;
+        for _ in 0..600 {
+            if tx.is_closed() {
+                return;
+            }
+            if let Ok(v) = client.get_run_progress(run_id).await {
+                let done = v["done"].as_u64().unwrap_or(0);
+                let total = v["total"].as_u64().unwrap_or(0);
+                if Some((done, total)) != last {
+                    last = Some((done, total));
+                    let note = json!({
+                        "jsonrpc": "2.0",
+                        "method": "notifications/progress",
+                        "params": {
+                            "progressToken": token,
+                            "progress": done,
+                            "total": total,
+                            "message": format!("场景执行中：{done}/{total}"),
+                        },
+                    });
+                    if tx.send(note.to_string()).is_err() {
+                        return;
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        }
+    })
+}
+
+/// 工具启停变更轮询：每 15s 拉一次 /agent/tools，(name, enabled) 集合变化
+/// 即输出 notifications/tools/list_changed（由 main 写 stdout）。
+/// 通知只在首次 initialize 之后由 main 启动（协议要求）。
+pub fn spawn_list_changed_poller(notify: impl Fn(String) + Send + 'static) {
+    tokio::spawn(async move {
+        let mut last: Option<String> = None;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            let client = match cached_client().await {
+                Ok(c) => c,
+                Err(_) => continue, // 控制面未就绪：下个周期重试
+            };
+            let Ok(states) = client.list_tool_states().await else {
+                continue;
+            };
+            // 稳定序列化（按名排序）后比对。
+            let mut snapshot: Vec<(String, bool)> =
+                states.iter().map(|s| (s.name.clone(), s.enabled)).collect();
+            snapshot.sort();
+            let snapshot = serde_json::to_string(&snapshot).unwrap_or_default();
+            if last.is_some() && last.as_deref() != Some(snapshot.as_str()) {
+                notify(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "method": "notifications/tools/list_changed",
+                    })
+                    .to_string(),
+                );
+            }
+            last = Some(snapshot);
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1555,7 +1619,7 @@ mod tests {
             || unreachable!(),
         )
         .await
-        .unwrap();
+        .remove(0);
         assert!(reply.contains("\"protocolVersion\":\"2024-11-05\""));
         assert!(reply.contains("miyo-mcp"));
 
@@ -1569,7 +1633,7 @@ mod tests {
                 >
         })
         .await
-        .unwrap();
+        .remove(0);
         for tool in [
             "save_curl",
             "list_projects",
@@ -1594,17 +1658,17 @@ mod tests {
             || unreachable!(),
         )
         .await;
-        assert!(reply.is_none());
+        assert!(reply.is_empty());
     }
 
     #[tokio::test]
     async fn unknown_request_is_method_not_found() {
         let reply = handle_line_with(
-            r#"{"jsonrpc":"2.0","id":9,"method":"resources/list"}"#,
+            r#"{"jsonrpc":"2.0","id":9,"method":"sampling/createMessage"}"#,
             || unreachable!(),
         )
         .await
-        .unwrap();
+        .remove(0);
         assert!(reply.contains("-32601"));
     }
 
@@ -1625,7 +1689,7 @@ mod tests {
                         "arguments": { "command": "curl https://api.example.com/users?full=1" } }
         })
         .to_string();
-        let reply = handle_line_with(&line, connect).await.unwrap();
+        let reply = handle_line_with(&line, connect).await.remove(0);
         let parsed: Value = serde_json::from_str(&reply).unwrap();
         let text = parsed["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("endpointId"), "{reply}");
@@ -1640,7 +1704,7 @@ mod tests {
         .to_string();
         let reply = handle_line_with(&bad, || unreachable!("参数校验应先于连接失败"))
             .await
-            .unwrap();
+            .remove(0);
         assert!(reply.contains("-32602"), "{reply}");
     }
 
@@ -1679,7 +1743,7 @@ mod tests {
             connect,
         )
         .await
-        .unwrap();
+        .remove(0);
         // 按工具名字段断言（描述文案里会提到其他工具名，子串会误判）
         assert!(
             !reply.contains("\"name\":\"save_curl\""),
@@ -1694,7 +1758,7 @@ mod tests {
                         "arguments": { "command": "curl https://api.example.com/x" } }
         })
         .to_string();
-        let reply = handle_line_with(&line, connect).await.unwrap();
+        let reply = handle_line_with(&line, connect).await.remove(0);
         // 停用工具：MCP isError 结果 + 信封 PERMISSION_DENIED（AI 可解析）。
         assert!(
             reply.contains("PERMISSION_DENIED")
@@ -1716,8 +1780,144 @@ mod tests {
             connect,
         )
         .await
-        .unwrap();
+        .remove(0);
         assert!(reply.contains("save_curl"), "{reply}");
+    }
+
+    /// dataSets 数据驱动端到端：MCP tools/call（stdio 层）→ 控制面 → 引擎。
+    /// 两组数据独立执行 / 逐行汇总 / 行间提取零污染 / 每组独立落历史。
+    #[tokio::test]
+    async fn run_scenario_data_sets_via_mcp() {
+        use miyo_core::model::{Endpoint, EndpointStatus, HttpMethod, RequestSpec, Scenario};
+        use miyo_storage::repository as repo;
+
+        // 本地回显上游：/users/{id} → {"userId": id}
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let app = axum::Router::new().route(
+                "/users/{id}",
+                axum::routing::get(
+                    |axum::extract::Path(id): axum::extract::Path<String>| async move {
+                        axum::Json(serde_json::json!({ "userId": id }))
+                    },
+                ),
+            );
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let dir = std::env::temp_dir().join(format!("miyo-mcp-ds-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = init_db(&dir.join("t.db")).await.unwrap();
+        let project = repo::create_project(&db, "数据驱动", "").await.unwrap();
+        let mut with_base = repo::get_project(&db, project.id).await.unwrap();
+        with_base
+            .variables
+            .insert("base_url".into(), format!("http://{upstream}"));
+        repo::save_project(&db, &with_base).await.unwrap();
+
+        let users = Endpoint {
+            id: Uuid::new_v4(),
+            project_id: project.id,
+            folder_id: None,
+            name: "用户".into(),
+            method: HttpMethod::GET,
+            path: "/users/{{uid}}".into(),
+            description: String::new(),
+            status: EndpointStatus::Developing,
+            sort_order: 0,
+            request: RequestSpec::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_endpoint(&db, &users).await.unwrap();
+        let scenario = Scenario {
+            setup: Vec::new(),
+            teardown: Vec::new(),
+            teardown_enabled: true,
+            data_sets: Vec::new(),
+            id: Uuid::new_v4(),
+            project_id: project.id,
+            name: "多组用户".into(),
+            description: String::new(),
+            category: String::new(),
+            sort_order: 0,
+            steps: vec![miyo_core::model::ScenarioStep {
+                endpoint_id: Some(users.id),
+                enabled: true,
+                extract: serde_json::json!([{ "name": "userId", "from": "body", "path": "$.userId" }]),
+                assertions: serde_json::json!([]),
+                retry: None,
+                ..Default::default()
+            }],
+            script: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_scenario(&db, &scenario).await.unwrap();
+
+        let state = AgentState::new(db.clone(), "tok");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_router(state)).await });
+        let connect = move || {
+            let url = format!("http://{addr}");
+            Box::pin(async move { Ok(ControlClient::new(url, "tok")) })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+                >
+        };
+
+        let line = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "run_scenario",
+                        "arguments": {
+                            "scenarioId": scenario.id.to_string(),
+                            "dataSets": [
+                                { "name": "组1", "vars": { "uid": "1" } },
+                                { "name": "组2", "vars": { "uid": "2" } }
+                            ]
+                        } }
+        })
+        .to_string();
+        let reply = handle_line_with(&line, connect).await.remove(0);
+        let parsed: Value = serde_json::from_str(&reply).unwrap();
+        let text = parsed["result"]["content"][0]["text"].as_str().unwrap();
+        let body: Value = serde_json::from_str(text).unwrap();
+        eprintln!(
+            "BODY={}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
+        assert_eq!(body["success"], true, "{reply}");
+        assert_eq!(body["data"]["kind"], "data-driven");
+        assert_eq!(body["data"]["total"], 2);
+        assert_eq!(body["data"]["okRows"], 2);
+        let rows = body["data"]["rows"].as_array().unwrap();
+        assert_eq!(
+            rows[0]["steps"][0]["extracted"]["userId"], "1",
+            "行 1 提取自己的数据（隔离）"
+        );
+        assert_eq!(rows[1]["steps"][0]["extracted"]["userId"], "2");
+
+        // 两组各落一条历史（runId 对应历史行）。
+        let run1 = rows[0]["runId"].as_str().unwrap();
+        let runs = repo::list_scenario_runs(&db, scenario.id, 10)
+            .await
+            .unwrap();
+        assert_eq!(runs.len(), 2);
+        assert!(runs.iter().any(|r| r.id.to_string() == run1));
+        // meta.matrix 标注（与 Tauri 侧同形状：{"matrix": {...}} 包装）。
+        let meta1: Value = serde_json::from_str(
+            runs.iter()
+                .find(|r| r.id.to_string() == run1)
+                .unwrap()
+                .meta_json
+                .as_deref()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(meta1["matrix"]["kind"], "data");
+        assert_eq!(meta1["matrix"]["label"], "组1");
     }
 
     #[tokio::test]
@@ -1770,7 +1970,7 @@ mod tests {
             } }
         })
         .to_string();
-        let reply = handle_line_with(&line, connect).await.unwrap();
+        let reply = handle_line_with(&line, connect).await.remove(0);
         let parsed: Value = serde_json::from_str(&reply).unwrap();
         let text = parsed["result"]["content"][0]["text"].as_str().unwrap();
         let body: Value = serde_json::from_str(text).unwrap();
@@ -1796,7 +1996,7 @@ mod tests {
             "params": { "name": "create_scenario", "arguments": { "name": "空场景" } }
         })
         .to_string();
-        let reply = handle_line_with(&line, connect).await.unwrap();
+        let reply = handle_line_with(&line, connect).await.remove(0);
         let parsed: Value = serde_json::from_str(&reply).unwrap();
         let body: Value =
             serde_json::from_str(parsed["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
@@ -1815,7 +2015,7 @@ mod tests {
                 "params": { "name": "create_scenario", "arguments": args }
             })
             .to_string();
-            let reply = handle_line_with(&line, connect).await.unwrap();
+            let reply = handle_line_with(&line, connect).await.remove(0);
             assert!(reply.contains("-32602"), "应拒绝 {args}：{reply}");
         }
 
@@ -1827,7 +2027,7 @@ mod tests {
             } }
         })
         .to_string();
-        let reply = handle_line_with(&line, connect).await.unwrap();
+        let reply = handle_line_with(&line, connect).await.remove(0);
         // 引用不存在接口：业务失败 → isError 结果 + 信封（ENDPOINT_NOT_FOUND）。
         assert!(
             reply.contains("isError\":true") && reply.contains("ENDPOINT_NOT_FOUND"),
@@ -1863,6 +2063,10 @@ mod tests {
         };
         repo::save_endpoint(&db, &ep).await.unwrap();
         let scenario = Scenario {
+            setup: Vec::new(),
+            teardown: Vec::new(),
+            teardown_enabled: true,
+            data_sets: Vec::new(),
             id: uuid::Uuid::new_v4(),
             project_id: project.id,
             name: "链路演示".into(),
@@ -1904,7 +2108,7 @@ mod tests {
             "params": { "name": "list_scenarios", "arguments": {} }
         })
         .to_string();
-        let reply = handle_line_with(&line, connect).await.unwrap();
+        let reply = handle_line_with(&line, connect).await.remove(0);
         assert!(
             reply.contains("链路演示") && reply.contains("hasCustomScript"),
             "{reply}"
@@ -1917,7 +2121,7 @@ mod tests {
                         "arguments": { "scenarioId": scenario.id.to_string() } }
         })
         .to_string();
-        let reply = handle_line_with(&line, connect).await.unwrap();
+        let reply = handle_line_with(&line, connect).await.remove(0);
         assert!(
             reply.contains("chainVariables") && reply.contains("userId"),
             "{reply}"
@@ -1932,7 +2136,7 @@ mod tests {
                                        "script": "const BASE = 'https://x';" } }
         })
         .to_string();
-        let reply = handle_line_with(&line, connect).await.unwrap();
+        let reply = handle_line_with(&line, connect).await.remove(0);
         assert!(reply.contains("scriptSet"), "{reply}");
         let stored = repo::get_scenario(&db, scenario.id).await.unwrap();
         assert_eq!(stored.script.as_deref(), Some("const BASE = 'https://x';"));
@@ -1946,7 +2150,7 @@ mod tests {
         .to_string();
         let reply = handle_line_with(&bad, || unreachable!("参数校验应先于连接失败"))
             .await
-            .unwrap();
+            .remove(0);
         assert!(reply.contains("-32602"), "{reply}");
     }
 
@@ -2044,7 +2248,7 @@ mod tests {
                 "params": { "name": name, "arguments": args }
             })
             .to_string();
-            let reply = handle_line_with(&line, connect).await.unwrap();
+            let reply = handle_line_with(&line, connect).await.remove(0);
             let parsed: Value = serde_json::from_str(&reply).unwrap();
             let text = parsed["result"]["content"][0]["text"]
                 .as_str()
@@ -2467,5 +2671,405 @@ mod tests {
         assert_eq!(env["data"]["steps"].as_array().unwrap().len(), 3);
 
         db.close().await;
+    }
+
+    // ---------- P0 MCP 升级：注册完整性 / 权限 / Resources / Prompts / 并发 ----------
+
+    /// 注册表元数据 ↔ tools/list 定义 1:1（注解 / Schema / 描述齐全）。
+    #[test]
+    fn registry_metadata_matches_definitions() {
+        let defs = tool_definitions();
+        let meta = miyo_agent::registry::all_tool_meta();
+        assert_eq!(defs.len(), meta.len());
+        for d in &defs {
+            let name = d["name"].as_str().unwrap();
+            let m = miyo_agent::registry::tool_meta(name)
+                .unwrap_or_else(|| panic!("tools/list 多出未注册工具：{name}"));
+            assert_eq!(d["annotations"]["readOnlyHint"], m.read_only, "{name}");
+            assert_eq!(d["annotations"]["destructiveHint"], m.destructive, "{name}");
+            assert_eq!(d["annotations"]["openWorldHint"], m.open_world, "{name}");
+            assert_eq!(d["x-miyo"]["permission"], m.permission.as_str(), "{name}");
+            assert_eq!(d["inputSchema"]["type"], "object", "{name}");
+            assert!(
+                d["description"].as_str().unwrap().len() > 10,
+                "{name} 描述过短"
+            );
+        }
+        for m in meta {
+            assert!(
+                defs.iter().any(|d| d["name"].as_str() == Some(m.name)),
+                "注册表工具 {} 缺 tools/list 定义",
+                m.name
+            );
+        }
+    }
+
+    /// 启动临时控制面（全部权限放开）。返回 (base_url, db 控制句柄元组)。
+    /// miyo-mcp 不依赖 sqlx：db 以 `init_db` 返回的池类型经泛型省略——这里用
+    /// 具体池类型需要 sqlx 依赖，改为返回池的 `Clone`（miyo-storage 池为
+    /// `sqlx::SqlitePool` 的别名，测试里直接用）。为免新增依赖，把池留在
+    /// 闭包外用 `Box<dyn std::any::Any>`？——不，直接加 dev-dependency。
+    async fn spawn_full_control_plane() -> (String, sqlx::SqlitePool) {
+        use miyo_storage::repository as repo;
+        let dir = std::env::temp_dir().join(format!("miyo-mcp-up-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = init_db(&dir.join("t.db")).await.unwrap();
+        repo::set_setting(
+            &db,
+            miyo_agent::server::MCP_PERMISSIONS_KEY,
+            &serde_json::json!(["read", "write", "execute", "network_execute", "destructive"])
+                .to_string(),
+        )
+        .await
+        .unwrap();
+        let state = AgentState::new(db.clone(), "tok");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_router(state)).await });
+        (format!("http://{addr}"), db)
+    }
+
+    /// 注册完整性：注册表内每个工具都经 tools/call 分发到（最小参数调用
+    /// 要么成功、要么参数/业务错误——绝不出现「未注册工具」）。
+    #[tokio::test]
+    async fn every_registered_tool_dispatches() {
+        let (url, _db) = spawn_full_control_plane().await;
+        let connect = || {
+            let url = url.clone();
+            Box::pin(async move { Ok(ControlClient::new(url, "tok")) })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+                >
+        };
+        for meta in miyo_agent::registry::all_tool_meta() {
+            let line = serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": { "name": meta.name, "arguments": {} }
+            })
+            .to_string();
+            let lines = handle_line_with(&line, connect).await;
+            let reply = lines.last().unwrap();
+            assert!(
+                !reply.contains("TOOL_NOT_FOUND") && !reply.contains("未注册"),
+                "注册工具 {} 未接入分发：{reply}",
+                meta.name
+            );
+        }
+    }
+
+    /// 权限等级服务端拦截：仅 read 时，write / execute / network_execute /
+    /// destructive 工具一律 PERMISSION_DENIED（MCP 层拿到 isError 信封）。
+    #[tokio::test]
+    async fn permission_denial_surfaces_clear_code() {
+        use miyo_storage::repository as repo;
+        let (url, db) = spawn_full_control_plane().await;
+        repo::set_setting(
+            &db,
+            miyo_agent::server::MCP_PERMISSIONS_KEY,
+            &serde_json::json!(["read"]).to_string(),
+        )
+        .await
+        .unwrap();
+        let connect = || {
+            let url = url.clone();
+            Box::pin(async move { Ok(ControlClient::new(url, "tok")) })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+                >
+        };
+
+        // read 工具可用。
+        let line = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "list_projects", "arguments": {} }
+        })
+        .to_string();
+        let reply = handle_line_with(&line, connect).await.remove(0);
+        assert!(
+            reply.contains("success") && reply.contains("isError\":false"),
+            "read 工具应放行：{reply}"
+        );
+
+        // write（save_curl）→ 拒绝且带等级说明。
+        let line = serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": "save_curl",
+                        "arguments": { "command": "curl https://api.example.com/x" } }
+        })
+        .to_string();
+        let reply = handle_line_with(&line, connect).await.remove(0);
+        assert!(
+            reply.contains("PERMISSION_DENIED") && reply.contains("isError\":true"),
+            "write 工具在仅 read 时必须拒绝：{reply}"
+        );
+        assert!(
+            reply.contains("创建与修改数据"),
+            "拒绝消息带等级标签：{reply}"
+        );
+    }
+
+    /// Resources：清单 / 读取 / 脱敏 / 未知 URI 拒绝。
+    #[tokio::test]
+    async fn resources_read_with_redaction() {
+        use miyo_storage::repository as repo;
+        let (url, db) = spawn_full_control_plane().await;
+        let project = repo::create_project(&db, "资源项目", "").await.unwrap();
+        let env = miyo_core::model::Environment {
+            id: Uuid::new_v4(),
+            project_id: project.id,
+            name: "prod".into(),
+            base_url: "https://api.example.com".into(),
+            variables: vec![miyo_core::model::EnvironmentVariable {
+                key: "api_token".into(),
+                remote_value: "secret-token-1".into(),
+                local_value: String::new(),
+                enabled: true,
+                local_override: None,
+                sensitive: None,
+                description: None,
+            }],
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        repo::save_environment(&db, &env).await.unwrap();
+
+        let connect = || {
+            let url = url.clone();
+            Box::pin(async move { Ok(ControlClient::new(url, "tok")) })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+                >
+        };
+
+        // resources/list：含固定资源与模板。
+        let reply = handle_line_with(
+            r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#,
+            connect,
+        )
+        .await
+        .remove(0);
+        assert!(
+            reply.contains("miyo://projects") && reply.contains("uriTemplate"),
+            "{reply}"
+        );
+
+        // resources/read miyo://projects：返回项目。
+        let reply = handle_line_with(
+            r#"{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"miyo://projects"}}"#,
+            connect,
+        )
+        .await
+        .remove(0);
+        assert!(reply.contains("资源项目"), "{reply}");
+
+        // resources/read 环境详情：敏感变量值必须脱敏。
+        let line = serde_json::json!({
+            "jsonrpc": "2.0", "id": 3, "method": "resources/read",
+            "params": { "uri": format!("miyo://environments/{}", env.id) }
+        })
+        .to_string();
+        let reply = handle_line_with(&line, connect).await.remove(0);
+        assert!(
+            !reply.contains("secret-token-1"),
+            "环境敏感值不得明文：{reply}"
+        );
+        assert!(reply.contains("__MIYO_REDACTED__"), "{reply}");
+
+        // 未知 URI → 明确 NOT_FOUND。
+        let reply = handle_line_with(
+            r#"{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"miyo://nope"}}"#,
+            connect,
+        )
+        .await
+        .remove(0);
+        assert!(reply.contains("NOT_FOUND"), "{reply}");
+
+        // 运行资源：runId 非法 → VALIDATION_FAILED。
+        let reply = handle_line_with(
+            r#"{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"miyo://runs/zzz"}}"#,
+            connect,
+        )
+        .await
+        .remove(0);
+        assert!(reply.contains("VALIDATION_FAILED"), "{reply}");
+    }
+
+    /// Resources 读取走 read 权限：关闭 read 后资源读取被拒。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn resources_require_read_permission() {
+        use miyo_storage::repository as repo;
+        let (url, db) = spawn_full_control_plane().await;
+        repo::set_setting(
+            &db,
+            miyo_agent::server::MCP_PERMISSIONS_KEY,
+            &serde_json::json!([]).to_string(),
+        )
+        .await
+        .unwrap();
+        let connect = || {
+            let url = url.clone();
+            Box::pin(async move { Ok(ControlClient::new(url, "tok")) })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+                >
+        };
+        // 直接用闭包产物发请求（隔离 MCP 层）。
+        let direct = (connect)().await.unwrap();
+        eprintln!(
+            "direct states={:?}",
+            direct.list_tool_states().await.map(|v| v.len())
+        );
+        eprintln!(
+            "direct list_projects={:?}",
+            direct.list_projects().await.map(|v| v.len())
+        );
+        // 探针：先确认控制面存活（agent_info 是纯客户端回显，必须用真实 HTTP 工具）。
+        let probe = handle_line_with(
+            r#"{"jsonrpc":"2.0","id":0,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}"#,
+            connect,
+        )
+        .await
+        .remove(0);
+        assert!(!probe.contains("连接失败"), "控制面应存活：{probe}");
+        let reply = handle_line_with(
+            r#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"miyo://projects"}}"#,
+            connect,
+        )
+        .await
+        .remove(0);
+        assert!(
+            reply.contains("PERMISSION_DENIED"),
+            "read 全关时资源读取必须拒绝：{reply}"
+        );
+    }
+
+    /// Prompts：清单 + 展开 + 参数校验。
+    #[tokio::test]
+    async fn prompts_list_and_get() {
+        // prompts/list 不需要控制面。
+        let reply = handle_line_with(
+            r#"{"jsonrpc":"2.0","id":1,"method":"prompts/list"}"#,
+            || unreachable!(),
+        )
+        .await
+        .remove(0);
+        assert!(
+            reply.contains("design-api-tests") && reply.contains("author-scenario"),
+            "{reply}"
+        );
+
+        // 缺参 → -32602。
+        let reply = handle_line_with(
+            r#"{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"design-api-tests"}}"#,
+            || unreachable!(),
+        )
+        .await
+        .remove(0);
+        assert!(reply.contains("-32602"), "{reply}");
+
+        // 带参展开：消息包含接口 id 与步骤指引。
+        let line = serde_json::json!({
+            "jsonrpc": "2.0", "id": 3, "method": "prompts/get",
+            "params": { "name": "design-api-tests",
+                        "arguments": { "endpointId": "abc-123" } }
+        })
+        .to_string();
+        let reply = handle_line_with(&line, || unreachable!()).await.remove(0);
+        assert!(
+            reply.contains("abc-123") && reply.contains("get_endpoint"),
+            "{reply}"
+        );
+
+        // 未知 prompt → -32602。
+        let reply = handle_line_with(
+            r#"{"jsonrpc":"2.0","id":4,"method":"prompts/get","params":{"name":"nope"}}"#,
+            || unreachable!(),
+        )
+        .await
+        .remove(0);
+        assert!(reply.contains("-32602"), "{reply}");
+    }
+
+    /// get_context：返回当前项目摘要，敏感变量脱敏，无请求规格明细。
+    #[tokio::test]
+    async fn get_context_returns_masked_summary() {
+        use miyo_storage::repository as repo;
+        let (url, db) = spawn_full_control_plane().await;
+        let project = repo::create_project(&db, "上下文项目", "").await.unwrap();
+        repo::set_setting(
+            &db,
+            "active_project_id",
+            &serde_json::json!(project.id.to_string()).to_string(),
+        )
+        .await
+        .unwrap();
+        let mut with_vars = project.clone();
+        with_vars.variables = std::collections::HashMap::from([
+            (
+                "base_url".to_string(),
+                "https://api.example.com".to_string(),
+            ),
+            ("api_key".to_string(), "secret-key-9".to_string()),
+        ]);
+        repo::update_project(&db, &with_vars).await.unwrap();
+
+        let connect = || {
+            let url = url.clone();
+            Box::pin(async move { Ok(ControlClient::new(url, "tok")) })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+                >
+        };
+        let line = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "get_context", "arguments": {} }
+        })
+        .to_string();
+        let reply = handle_line_with(&line, connect).await.remove(0);
+        assert!(reply.contains("上下文项目"), "应含当前项目：{reply}");
+        assert!(!reply.contains("secret-key-9"), "敏感变量不得明文：{reply}");
+        assert!(reply.contains("__MIYO_REDACTED__"), "{reply}");
+    }
+
+    /// 并发工具调用：两个并发 tools/call 都成功（互不阻塞）。
+    #[tokio::test]
+    async fn concurrent_tool_calls_both_succeed() {
+        let (url, _db) = spawn_full_control_plane().await;
+        let connect = || {
+            let url = url.clone();
+            Box::pin(async move { Ok(ControlClient::new(url, "tok")) })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+                >
+        };
+        let line_a = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}"#;
+        let line_b = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"agent_info","arguments":{}}}"#;
+        let (a, b) = tokio::join!(
+            handle_line_with(line_a, connect),
+            handle_line_with(line_b, connect),
+        );
+        let ra = a.last().unwrap();
+        let rb = b.last().unwrap();
+        assert!(ra.contains("success"), "并发调用 A 失败：{ra}");
+        assert!(rb.contains("address"), "并发调用 B 失败：{rb}");
+    }
+
+    /// 串行闸：非并发工具按名互斥（second 在 first 释放前不可进入）。
+    #[tokio::test]
+    async fn serial_gate_blocks_same_name() {
+        let g1 = serial_gate("update_test_case").await;
+        let first_done = std::sync::Arc::new(tokio::sync::Notify::new());
+        let notifier = first_done.clone();
+        let t = tokio::spawn(async move {
+            let _g = g1;
+            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+            notifier.notify_waiters();
+            notifier.notify_one();
+        });
+        // 在 g1 持有期间尝试获取：80ms 内不应成功。
+        let g2 = tokio::spawn(serial_gate("update_test_case"));
+        let acquired = tokio::time::timeout(std::time::Duration::from_millis(30), g2).await;
+        assert!(acquired.is_err(), "同名非并发工具在持有期间不得进入");
+        t.await.unwrap();
     }
 }

@@ -21,8 +21,14 @@ const MCP_ENABLED_KEY: &str = "mcp_enabled";
 #[derive(Debug, serde::Serialize)]
 pub struct McpToolStatus {
     pub name: String,
-    /// read = 只读信息；write = 会落库。
+    /// 兼容字段：read_only → "read"，其余 → "write"。
     pub kind: &'static str,
+    /// 细分权限等级（read / write / execute / network_execute / destructive）。
+    pub permission: &'static str,
+    /// 业务模块。
+    pub module: &'static str,
+    /// 短标题。
+    pub title: &'static str,
     pub enabled: bool,
 }
 
@@ -190,7 +196,10 @@ pub async fn get_mcp_tools(state: State<'_, AppState>) -> CommandResult<Vec<McpT
         .iter()
         .map(|t| McpToolStatus {
             name: t.name.to_string(),
-            kind: t.kind,
+            kind: if t.read_only { "read" } else { "write" },
+            permission: t.permission.as_str(),
+            module: t.module.as_str(),
+            title: t.title,
             enabled: !disabled.iter().any(|n| n == t.name),
         })
         .collect())
@@ -219,6 +228,97 @@ pub async fn set_mcp_tool_enabled(
     let json = serde_json::to_string(&disabled)
         .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, MCP_DISABLED_TOOLS_KEY, &json).await?;
+    Ok(())
+}
+
+// ---------- MCP 权限等级（read/write/execute/network_execute/destructive） ----------
+
+/// 读取权限矩阵：五个等级的启用状态 + 各等级工具数 + 高风险标记。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpPermissionStatus {
+    pub level: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+    /// 该等级下的工具数（注册表实时统计）。
+    pub tool_count: usize,
+    /// 高风险等级：默认关闭，启用必须用户明确确认。
+    pub high_risk: bool,
+    pub enabled: bool,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_mcp_permissions(
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<McpPermissionStatus>> {
+    let raw = repo::get_setting(&state.db, miyo_agent::server::MCP_PERMISSIONS_KEY)
+        .await
+        .ok()
+        .flatten();
+    let enabled = miyo_agent::registry::parse_enabled_levels(raw.as_deref());
+    Ok(miyo_agent::registry::PermissionLevel::ALL
+        .iter()
+        .map(|level| {
+            let tool_count = miyo_agent::registry::all_tool_meta()
+                .iter()
+                .filter(|t| t.permission == *level)
+                .count();
+            McpPermissionStatus {
+                level: level.as_str(),
+                label: level.label(),
+                description: permission_level_description(level),
+                tool_count,
+                high_risk: level.is_high_risk(),
+                enabled: enabled.contains(level),
+            }
+        })
+        .collect())
+}
+
+/// 权限等级说明（设置页展示；与 docs/MCP-INTEGRATION.md 权限矩阵同口径）。
+fn permission_level_description(level: &miyo_agent::registry::PermissionLevel) -> &'static str {
+    use miyo_agent::registry::PermissionLevel as L;
+    match level {
+        L::Read => "读取项目 / 接口 / 环境 / 场景 / 历史等数据（默认启用）",
+        L::Write => "创建与修改项目数据：保存接口、新建场景、写用例（默认启用）",
+        L::Execute => "执行测试用例与集成测试场景（引擎编排的受控执行，默认启用）",
+        L::NetworkExecute => {
+            "直接向外部发起真实 HTTP 请求（URL 可任意覆盖，不受项目接口约束）——高风险，默认关闭"
+        }
+        L::Destructive => "删除场景 / 测试用例等不可恢复操作——高风险，默认关闭",
+    }
+}
+
+/// 保存权限等级启用集（实时生效：控制面每次调用实时读 settings）。
+///
+/// `acknowledge_high_risk`：启用任一高风险等级（network_execute / destructive）
+/// 时必须为 true——用户在设置页明确确认后前端才会传真；缺省拒绝。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn set_mcp_permissions(
+    state: State<'_, AppState>,
+    levels: Vec<String>,
+    acknowledge_high_risk: Option<bool>,
+) -> CommandResult<()> {
+    use miyo_agent::registry::PermissionLevel as L;
+    // 解析 + 去重 + 保序（未知等级直接拒绝，避免拼写错误静默失效）。
+    let mut parsed: Vec<L> = Vec::new();
+    for raw in &levels {
+        let level = L::parse(raw.trim())
+            .ok_or_else(|| CommandError::validation(format!("未知权限等级：{raw}")))?;
+        if !parsed.contains(&level) {
+            parsed.push(level);
+        }
+    }
+    let enabling_high_risk = parsed.iter().any(|l| l.is_high_risk());
+    if enabling_high_risk && !acknowledge_high_risk.unwrap_or(false) {
+        return Err(CommandError::with_code(
+            "HIGH_RISK_CONFIRMATION_REQUIRED",
+            "启用高风险权限（真实网络请求 / 删除数据）需要用户在设置页明确确认",
+        ));
+    }
+    let json = serde_json::to_string(&parsed.iter().map(|l| l.as_str()).collect::<Vec<_>>())
+        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+    repo::set_setting(&state.db, miyo_agent::server::MCP_PERMISSIONS_KEY, &json).await?;
     Ok(())
 }
 

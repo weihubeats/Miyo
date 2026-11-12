@@ -176,8 +176,9 @@ pub mod plugin {
                     // 合并进一次 block_on 并发执行，替代原来多次串行 block_on。
                     // 其后的激活态恢复依赖 db 移交 AppState，必须排在后面。
                     let mcp_enabled = tauri::async_runtime::block_on(async {
-                        let ((), (), mcp_enabled, ()) = tokio::join!(
+                        let ((), (), (), mcp_enabled, ()) = tokio::join!(
                             commands::settings::apply_saved_proxy(&db),
+                            commands::settings::apply_saved_sensitive_patterns(&db),
                             commands::seq::apply_saved_seq_counters(&db),
                             commands::agent::read_mcp_enabled(&db),
                             commands::settings::apply_saved_tls(&db),
@@ -313,6 +314,10 @@ pub mod plugin {
                 commands::get_http_timeout_ms,
                 commands::set_http_timeout_ms,
                 commands::get_tls_settings,
+                commands::get_sensitive_patterns,
+                commands::set_sensitive_patterns,
+                commands::get_mcp_permissions,
+                commands::set_mcp_permissions,
                 commands::set_tls_settings,
                 commands::get_mcp_tools,
                 commands::set_mcp_tool_enabled,
@@ -320,6 +325,8 @@ pub mod plugin {
                 commands::save_scenario,
                 commands::delete_scenario,
                 commands::run_scenario,
+                commands::run_scenario_matrix,
+                commands::export_scenario_report,
                 commands::cancel_scenario_run,
                 commands::list_scenario_runs,
                 commands::get_scenario_run,

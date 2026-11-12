@@ -31,13 +31,14 @@
 pub mod client;
 pub mod import;
 pub mod portfile;
+pub mod registry;
 pub mod server;
 pub mod token;
 
 pub use client::{default_data_dir, ControlClient};
 pub use server::{
     start, AgentEvent, AgentServer, AgentState, CreateScenarioRequest, CreateScenarioResult,
-    McpToolDef, McpToolState, SaveScenarioScriptRequest, SaveScenarioScriptResult, ScenarioDetail,
+    McpToolState, SaveScenarioScriptRequest, SaveScenarioScriptResult, ScenarioDetail,
     ScenarioStepDetail, ScenarioSummary, MCP_DISABLED_TOOLS_KEY, MCP_TOOLS,
 };
 pub use token::load_or_create_token;
