@@ -6,9 +6,8 @@
  * 导出时按敏感键名再过滤一次）。
  */
 import type { ScenarioRunResult, ScenarioStepResult } from '../types/miyoApi'
+import { EXPORT_PLACEHOLDER, isSensitiveKeyName, redactJsonText, redactUrlQuery } from './exportRedact'
 
-/** 敏感键名（与 scenarioVars 同词根，导出报告不再放大明文凭据）。 */
-const SENSITIVE = ['password', 'passwd', 'pwd', 'secret', 'token', 'authorization', 'api-key', 'apikey', 'api_key', 'cookie']
 
 /** 步骤状态的可读文本。 */
 export function stepStatusText(r: ScenarioStepResult, t: (k: string) => string): string {
@@ -21,11 +20,11 @@ export function stepStatusText(r: ScenarioStepResult, t: (k: string) => string):
   return t('integration.statusPending')
 }
 
-/** 头 / KV 行脱敏。 */
+/** 头 / KV 行脱敏（词根单源 exportRedact）。 */
 function maskPairs(pairs: readonly (readonly [string, string])[] | undefined): [string, string][] {
   return (pairs ?? []).map(([k, v]) => [
     k,
-    SENSITIVE.some((s) => k.toLowerCase().includes(s)) && v ? '__MIYO_REDACTED__' : v,
+    isSensitiveKeyName(k) && v ? EXPORT_PLACEHOLDER : v,
   ])
 }
 
@@ -72,7 +71,7 @@ export function buildRunReportMarkdown(input: {
     )
     if (r.duration_ms != null) out.push(`- ${t('integration.metaDuration')}: ${Math.round(r.duration_ms)}ms`)
     if (r.loop_runs && r.loop_runs > 1) out.push(`- ${t('integration.loopRunsBadge', { n: r.loop_runs })}`)
-    if (r.url) out.push(`- URL: \`${r.url}\``)
+    if (r.url) out.push(`- URL: \`${redactUrlQuery(r.url)}\``)
     if (r.request_error) out.push(`- ${t('integration.report.error')}: ${r.request_error}`)
     if (r.blocked_reason) out.push(`- ${t('integration.blockedReason')}: ${r.blocked_reason}`)
     out.push('')
@@ -91,13 +90,14 @@ export function buildRunReportMarkdown(input: {
       out.push('')
     }
 
-    // 变量提取
+    // 变量提取（提取值常含登录 token：敏感键一律掩码，实时结果的
+    // 明文提取值不再经报告外发）
     const extracted = Object.entries(r.extracted ?? {})
     if (extracted.length) {
       out.push(`### ${t('integration.report.extracted')}`)
       out.push('')
       for (const [k, v] of extracted) {
-        out.push(`- \`{{${k}}}\` = ${v}`)
+        out.push(`- \`{{${k}}}\` = ${isSensitiveKeyName(k) ? EXPORT_PLACEHOLDER : v}`)
       }
       out.push('')
     }
@@ -117,7 +117,7 @@ export function buildRunReportMarkdown(input: {
         }
         if (resp.request.body) {
           out.push('```json')
-          out.push(bodyPreview(resp.request.body, 4000, t))
+          out.push(bodyPreview(redactJsonText(resp.request.body), 4000, t))
           out.push('```')
         }
       } else {
@@ -131,7 +131,7 @@ export function buildRunReportMarkdown(input: {
       for (const [k, v] of headers) out.push(`${k}: ${v}`)
       out.push('```')
       out.push('```json')
-      out.push(bodyPreview(resp.body, 4000, t))
+      out.push(bodyPreview(redactJsonText(resp.body), 4000, t))
       out.push('```')
       out.push('')
     }

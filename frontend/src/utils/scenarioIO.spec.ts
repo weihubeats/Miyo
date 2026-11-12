@@ -77,7 +77,7 @@ function makeScenario(): Scenario {
 describe('scenarioIO 导出', () => {
   it('引用式步骤物化为内联拷贝（脱离项目仍可执行），内联步骤原样保留', () => {
     const ep = makeEndpoint()
-    const json = buildScenarioExport(makeScenario(), (id) => (id === 'ep-1' ? ep : undefined))
+    const { json, redactedFields } = buildScenarioExport(makeScenario(), (id) => (id === 'ep-1' ? ep : undefined))
     const parsed = JSON.parse(json) as { magic: string; scenario: { steps: { request?: { url: string; method: string }; enabled: boolean; name?: string | null }[] } }
     expect(parsed.magic).toBe('miyo.scenario')
     const [refStep, inlineStep] = parsed.scenario.steps
@@ -88,6 +88,23 @@ describe('scenarioIO 导出', () => {
     // 已是内联的步骤不变形
     expect(inlineStep.request?.url).toBe('{{base_url}}/ping')
     expect(inlineStep.enabled).toBe(false)
+    // 无敏感值的导出：脱敏清单为空
+    expect(redactedFields).toEqual([])
+  })
+
+  it('导出脱敏：内联步骤的 auth / 敏感头 / JSON body 凭证替换占位符并登记清单', () => {
+    const ep = makeEndpoint()
+    ep.request.headers.push({ key: 'Authorization', value: 'Bearer real-tok', enabled: true, description: '' })
+    ep.request.auth = { type: 'bearer', token: 'real-tok-2' }
+    ep.request.body = { mode: 'json', raw: '{"password":"pw-1","sku":"A"}' }
+    const scenario = makeScenario()
+    scenario.steps[0] = { endpoint_id: 'ep-1', enabled: true, extract: [], assertions: [] }
+    const { json, redactedFields } = buildScenarioExport(scenario, (id) => (id === 'ep-1' ? ep : undefined))
+    expect(json).not.toContain('real-tok')
+    expect(json).not.toContain('pw-1')
+    expect(json).toContain('__MIYO_REDACTED__')
+    expect(json).toContain('sku')
+    expect(redactedFields.length).toBeGreaterThan(0)
   })
 
   it('找不到接口的引用步骤保留为禁用占位（不静默丢步骤）', () => {
@@ -103,7 +120,7 @@ describe('scenarioIO 导出', () => {
 describe('scenarioIO 导入', () => {
   it('roundtrip：导出 → 导入得到等价场景体', () => {
     const ep = makeEndpoint()
-    const json = buildScenarioExport(makeScenario(), (id) => (id === 'ep-1' ? ep : undefined))
+    const { json } = buildScenarioExport(makeScenario(), (id) => (id === 'ep-1' ? ep : undefined))
     const parsed = parseScenarioImport(json)
     expect(parsed.name).toBe('电商主流程')
     expect(parsed.category).toBe('电商')

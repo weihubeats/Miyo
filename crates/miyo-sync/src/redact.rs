@@ -14,8 +14,13 @@ use serde::{Deserialize, Serialize};
 use miyo_backup::BackupFile;
 use miyo_core::model::{AuthSpec, BodySpec, KeyValue, RequestSpec};
 
-/// 敏感值占位符。
-pub const PLACEHOLDER: &str = "__MIYO_REDACTED__";
+// 敏感判定单源在 miyo_core::sensitive（内建词根 + 用户自定义规则，
+// 全仓共用；此处 re-export 保持既有调用方不变）。
+pub use miyo_core::sensitive::{
+    custom_sensitive_patterns, is_sensitive_header_name, is_sensitive_key, looks_like_secret,
+    redact_json_text, redact_json_value, redact_message_urls, redact_url_query,
+    set_custom_sensitive_patterns, PLACEHOLDER,
+};
 
 /// 品牌更名前写入远端快照的旧占位符：拉取合并时同样识别，
 /// 避免旧快照的占位值覆盖本地真实值。
@@ -39,37 +44,13 @@ impl RedactionLog {
     }
 }
 
-/// 敏感键名启发式：命中即视为需要脱敏。
+/// 敏感键名启发式：命中即视为需要脱敏（单源 [`is_sensitive_key`]，含用户
+/// 自定义规则；此处 doc 保留原有约定说明）。
 ///
 /// 覆盖常见凭证词根；`*_url` / `endpoint` 之类的地址键**不**命中
 /// （团队内通常需要共享，且不是凭证）。
-pub fn is_sensitive_key(key: &str) -> bool {
-    let k = key.to_ascii_lowercase();
-    const TOKENS: &[&str] = &[
-        "authorization",
-        "cookie",
-        "token",
-        "secret",
-        "password",
-        "passwd",
-        "pwd",
-        "api-key",
-        "apikey",
-        "api_key",
-        "access_key",
-        "accesskey",
-        "private",
-        "credential",
-        "sessionid",
-        "session_id",
-        "x-auth",
-    ];
-    TOKENS.iter().any(|t| k.contains(t))
-}
-
 /// 变量池脱敏：键名命中敏感词根的值替换为占位符（历史落库 / 内存结果 /
 /// MCP 返回共用；空值不掩码——占位符只该出现在「确有值」的位置）。
-/// 原 miyo-tauri 与 miyo-agent 各一份同逻辑实现，收敛于此。
 pub fn redact_vars(
     vars: &std::collections::HashMap<String, String>,
 ) -> std::collections::HashMap<String, String> {
@@ -168,6 +149,17 @@ pub fn redact_snapshot(snapshot: &BackupFile) -> RedactionReport {
     // 场景 / 请求 / 响应示例的 body 模板与场景脚本属于自由文本，无法可靠自动
     // 判断是否内嵌凭据——登记为「需人工检查」项（明确提示，不做静默假设）。
     for scenario in &mut out.scenarios {
+        // 内联步骤自带完整请求配置（auth / headers / body）：与接口本体同口径
+        // 脱敏（此前只登记人工检查，内联步骤的凭证明文随快照外发）。
+        for step in &mut scenario.steps {
+            if let Some(inline) = &mut step.request {
+                redact_request(
+                    &mut inline.spec,
+                    &mut log,
+                    &format!("场景 {}", scenario.name),
+                );
+            }
+        }
         if scenario
             .script
             .as_deref()
@@ -259,12 +251,83 @@ fn redact_project(snapshot: &mut BackupFile, log: &mut RedactionLog) {
     }
 }
 
+/// RequestSpec 级脱敏（公开单源）：headers / params / path_variables / auth /
+/// body 逐一处理，命中项记入日志。导出文档 / MCP 返回接口与场景详情共用。
+pub fn redact_request_spec(request: &mut RequestSpec, log: &mut RedactionLog, scope: &str) {
+    redact_request(request, log, scope);
+}
+
 fn redact_request(request: &mut RequestSpec, log: &mut RedactionLog, scope: &str) {
     redact_kv_list(&mut request.headers, log, scope, "请求头");
     redact_kv_list(&mut request.params, log, scope, "查询参数");
     redact_kv_list(&mut request.path_variables, log, scope, "路径变量");
     redact_auth(&mut request.auth, log, scope);
     redact_body(&mut request.body, log, scope);
+}
+
+/// AuthSpec 级脱敏（公开单源）：Bearer / Basic / ApiKey / 签名类 / OAuth2 /
+/// Digest / Hawk / AWS / HMAC 的凭据字段替换占位符，命中项记入日志。
+pub fn redact_auth_spec(auth: &mut AuthSpec, log: &mut RedactionLog, scope: &str) {
+    redact_auth(auth, log, scope);
+}
+
+/// TestCase 返回脱敏（MCP / Agent 返回路径）：headers / params /
+/// path_variables / auth / JSON 与表单 body 中的凭据替换占位符。
+/// 落库保持原样（用例是用户资产，UI 明文可见；只对对外返回做脱敏）。
+pub fn redact_test_case(case: &mut miyo_core::model::TestCase) {
+    let mask_kv = |items: &mut [KeyValue]| {
+        for kv in items.iter_mut() {
+            if is_sensitive_key(&kv.key) && !kv.value.is_empty() {
+                kv.value = PLACEHOLDER.to_string();
+            }
+        }
+    };
+    mask_kv(&mut case.headers);
+    mask_kv(&mut case.params);
+    mask_kv(&mut case.path_variables);
+    if let Some(auth) = &mut case.auth {
+        let mut log = RedactionLog::default();
+        redact_auth_spec(auth, &mut log, "test_case");
+    }
+    if matches!(
+        case.body_type.as_str(),
+        "json" | "urlencoded" | "form-data" | "multipart"
+    ) {
+        let (masked, changed) = redact_json_text(&case.body_content);
+        if changed {
+            case.body_content = masked;
+        }
+        if case.body_type == "urlencoded" {
+            // 表单字段形态 `[{"key":..,"value":..}]`：redact_json_text 的键名
+            // 启发式对 "value" 不命中，需按键对语义再过一遍。
+            if let Ok(mut fields) = serde_json::from_str::<Vec<KeyValue>>(&case.body_content) {
+                let before = serde_json::to_string(&fields).unwrap_or_default();
+                mask_kv(&mut fields);
+                let after = serde_json::to_string(&fields).unwrap_or(before.clone());
+                if after != before {
+                    case.body_content = after;
+                }
+            }
+        }
+    }
+}
+
+/// 响应头脱敏：Set-Cookie / 令牌类响应头不进入 AI 上下文或导出文件。
+pub fn redact_headers_map(headers: &mut std::collections::HashMap<String, String>) {
+    for (k, v) in headers.iter_mut() {
+        if is_sensitive_key(k) && !v.is_empty() && v != PLACEHOLDER {
+            *v = PLACEHOLDER.to_string();
+        }
+    }
+}
+
+/// 响应头对列表脱敏（StepResponse.headers 形态 `Vec<(String, String)>`）。
+pub fn redact_header_pairs(headers: &mut [(String, String)]) {
+    for (k, v) in headers.iter_mut() {
+        if is_sensitive_key(k) && !v.is_empty() && v != PLACEHOLDER {
+            *v = PLACEHOLDER.to_string();
+        }
+    }
 }
 
 /// 脱敏键值列表。**禁用项也脱敏**：禁用只是不发送，值仍随快照外发；
@@ -328,29 +391,10 @@ fn redact_body(body: &mut BodySpec, log: &mut RedactionLog, scope: &str) {
     }
 }
 
-/// 递归替换 JSON 中敏感键的字符串值（值形态如 JWT 也命中）。
+/// 递归替换 JSON 中敏感键的字符串值（值形态如 JWT 也命中；单源
+/// [`miyo_core::sensitive::redact_json_value`]）。
 fn redact_json_secrets(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            for (key, v) in map.iter_mut() {
-                if is_sensitive_key(key) {
-                    if let Some(s) = v.as_str() {
-                        if !s.is_empty() && (is_sensitive_key(key) || looks_like_secret(s)) {
-                            *v = serde_json::Value::String(PLACEHOLDER.to_string());
-                            continue;
-                        }
-                    }
-                }
-                redact_json_secrets(v);
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items.iter_mut() {
-                redact_json_secrets(item);
-            }
-        }
-        _ => {}
-    }
+    miyo_core::sensitive::redact_json_value(value);
 }
 
 fn redact_auth(auth: &mut AuthSpec, log: &mut RedactionLog, scope: &str) {
@@ -520,19 +564,6 @@ fn restore_request(target: &mut RequestSpec, local: &RequestSpec) {
         }
         _ => {}
     }
-}
-
-/// 值形态启发式：像 JWT / 长随机串时即便键名不敏感也脱敏。
-fn looks_like_secret(value: &str) -> bool {
-    // JWT：三段 base64url 以 . 分隔。
-    let jwt_like = value.matches('.').count() == 2
-        && value.len() > 40
-        && value.split('.').all(|p| {
-            !p.is_empty()
-                && p.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        });
-    jwt_like
 }
 
 fn report_unique(log: &mut RedactionLog) {
@@ -776,6 +807,10 @@ mod tests {
         });
         let ep_id = snapshot.endpoints[0].id;
         snapshot.scenarios = vec![Scenario {
+            setup: Vec::new(),
+            teardown: Vec::new(),
+            teardown_enabled: true,
+            data_sets: Vec::new(),
             id: uuid::Uuid::new_v4(),
             project_id: snapshot.project.id,
             name: "登录链路".into(),

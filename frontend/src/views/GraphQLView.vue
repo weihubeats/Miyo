@@ -31,6 +31,7 @@ import { handleTextareaTab } from '../utils/textareaIndent'
 import Modal from '../components/ui/Modal.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
 import type { BodySpec, ExecuteRequestArgs, ExecuteResponse, GraphQLSpec } from '../types/miyoApi'
+import { redactUrlQuery } from '../utils/exportRedact'
 
 const router = useRouter()
 const route = useRoute()
@@ -428,6 +429,8 @@ function clearHistory() {
 }
 
 // ---------- 生成代码（与 miyo-codegen 保持一致） ----------
+// 导出脱敏：URL query 中的敏感参数（token 类）替换占位符——生成的代码会
+// 被复制 / 提交，真实凭据不外带（与 miyo-codegen render_export 同口径）。
 const codegenOpen = ref(false)
 const codegenTab = ref<'curl' | 'apollo'>('curl')
 const copied = ref(false)
@@ -449,7 +452,7 @@ function gqlJsonBody(): string {
 }
 
 const curlCode = computed(() => {
-  let out = `curl -X POST '${sq(gqlUrl.value.trim())}'`
+  let out = `curl -X POST '${sq(redactUrlQuery(gqlUrl.value.trim()))}'`
   out += ` \\\n     -H 'Content-Type: application/json'`
   out += ` \\\n     --data '${sq(gqlJsonBody())}'`
   return out
@@ -458,7 +461,7 @@ const curlCode = computed(() => {
 const apolloCode = computed(() => {
   let out = `import { ApolloClient, InMemoryCache, gql } from '@apollo/client';\n\n`
   out += `const client = new ApolloClient({\n`
-  out += `  uri: '${sq(gqlUrl.value.trim())}',\n`
+  out += `  uri: '${sq(redactUrlQuery(gqlUrl.value.trim()))}',\n`
   out += `  cache: new InMemoryCache(),\n`
   out += `});\n\n`
   out += `const QUERY = gql\`\n${gql.value.query}\n\`;\n\n`

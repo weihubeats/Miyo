@@ -95,7 +95,30 @@ impl AppError {
     /// 5. 请求构建失败（参数非法）→ [`AppError::Validation`]；
     /// 6. 其余保留 [`AppError::Http`] 兜底。
     pub fn from_reqwest(e: reqwest::Error) -> AppError {
-        Self::classify(&e).unwrap_or_else(|| AppError::Http(e))
+        // reqwest 错误 Display 携带完整请求 URL（`?token=…` 类 query 凭据会随
+        // 错误消息进入日志 / AI 上下文 / 前端 toast）：统一在入口脱敏。
+        Self::classify(&e)
+            .map(Self::sanitize_message_urls)
+            .unwrap_or_else(|| AppError::Http(e))
+    }
+
+    /// 错误消息内的 URL query 脱敏（NetworkTimeout / Ssl / Dns / Connection /
+    /// Validation 载荷统一处理）。
+    pub fn sanitize_message_urls(self) -> AppError {
+        match self {
+            AppError::NetworkTimeout(m) => {
+                AppError::NetworkTimeout(crate::sensitive::redact_message_urls(&m))
+            }
+            AppError::Ssl(m) => AppError::Ssl(crate::sensitive::redact_message_urls(&m)),
+            AppError::Dns(m) => AppError::Dns(crate::sensitive::redact_message_urls(&m)),
+            AppError::Connection(m) => {
+                AppError::Connection(crate::sensitive::redact_message_urls(&m))
+            }
+            AppError::Validation(m) => {
+                AppError::Validation(crate::sensitive::redact_message_urls(&m))
+            }
+            other => other,
+        }
     }
 
     /// 只做分类（借用错误，无所有权）。无法识别时返回 `None`，由调用方兜底。
@@ -202,6 +225,26 @@ mod tests {
         assert!(AppError::OAuth2("需要重新授权".into())
             .user_message()
             .contains("重新授权"));
+    }
+
+    #[test]
+    fn sanitize_message_urls_redacts_url_credentials_in_payload() {
+        // 错误载荷包含带凭证 query 的 URL → 脱敏后不得出现明文值。
+        //（NetworkTimeout 的 user_message 是固定文案，载荷经 Debug / 日志 /
+        // api_error 通道外发，同样必须脱敏。）
+        let err = AppError::NetworkTimeout(
+            "error sending request for url (https://api.example.com/login?access_token=sec&x=1)"
+                .into(),
+        )
+        .sanitize_message_urls();
+        match err {
+            AppError::NetworkTimeout(msg) => {
+                assert!(msg.contains("__MIYO_REDACTED__"), "应脱敏：{msg}");
+                assert!(!msg.contains("sec&"), "不得残留明文凭据：{msg}");
+                assert!(msg.contains("x=1"), "非敏感参数保留：{msg}");
+            }
+            other => panic!("变体应保持：{other:?}"),
+        }
     }
 
     #[test]

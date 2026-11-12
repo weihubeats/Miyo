@@ -262,6 +262,164 @@ pub fn render<'a>(lang: Lang, req: &GenRequest<'a>) -> String {
     }
 }
 
+// ---------- 导出脱敏（P0 安全修复） ----------
+//
+// 导出脚本 / 文档会离开本机（提交仓库、发给同事），真实 Token / 密码 /
+// API Key 一律不得写入。敏感值替换为环境变量引用（如 `${MIYO_AUTHORIZATION}`，
+// shell 直接可执行；其他语言为显式占位串，用户替换为自身取值方式），
+// 保证「默认不导出真实凭证、脚本结构仍可运行」。
+
+/// 敏感头值的环境变量引用：键名规范化为大写下划线（`X-Api-Key` →
+/// `${MIYO_X_API_KEY}`）。
+fn env_ref(key: &str) -> String {
+    let env: String = key
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("${{MIYO_{env}}}")
+}
+
+/// 导出用认证头：与 [`auth_headers`] 同布局，但凭据一律环境变量引用；
+/// 签名类（Hawk / AWS / HMAC）的时间戳产物不可复用且派生自密钥，
+/// 统一输出 Authorization 占位。
+fn export_auth_headers(auth: &AuthSpec) -> Vec<(String, String)> {
+    match auth {
+        AuthSpec::None => Vec::new(),
+        AuthSpec::Bearer { token } if !token.is_empty() => {
+            vec![(
+                "Authorization".into(),
+                "Bearer ${MIYO_AUTHORIZATION}".to_string(),
+            )]
+        }
+        AuthSpec::Basic { username, password } if !username.is_empty() || !password.is_empty() => {
+            vec![("Authorization".into(), "Basic ${MIYO_BASIC_AUTH}".into())]
+        }
+        AuthSpec::ApiKey {
+            key,
+            value,
+            location: ApiKeyLocation::Header,
+        } if !key.trim().is_empty() && !value.is_empty() => {
+            vec![(key.clone(), env_ref(key))]
+        }
+        AuthSpec::OAuth2 { token: Some(t), .. } if !t.access_token.is_empty() => {
+            vec![(
+                "Authorization".into(),
+                "Bearer ${MIYO_AUTHORIZATION}".into(),
+            )]
+        }
+        AuthSpec::AwsV4 { session_token, .. } => {
+            let mut out = vec![
+                ("Authorization".into(), "${MIYO_AUTHORIZATION}".to_string()),
+                ("x-amz-date".into(), "${MIYO_X_AMZ_DATE}".to_string()),
+            ];
+            if session_token
+                .as_deref()
+                .is_some_and(|t| !t.trim().is_empty())
+            {
+                out.push((
+                    "x-amz-security-token".into(),
+                    "${MIYO_X_AMZ_SECURITY_TOKEN}".to_string(),
+                ));
+            }
+            out
+        }
+        AuthSpec::Hawk { .. } | AuthSpec::Hmac { .. } | AuthSpec::Digest { .. } => {
+            // Digest 需运行时握手；Hawk / HMAC 的 Authorization 为签名快照。
+            vec![("Authorization".into(), "${MIYO_AUTHORIZATION}".to_string())]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// 导出用 body：JSON / GraphQL variables 敏感字段脱敏；UrlEncoded /
+/// Multipart 文本字段按键名脱敏；Text / Binary 无法可靠判定，保守保留。
+fn export_sanitized_body(body: &BodySpec) -> BodySpec {
+    match body {
+        BodySpec::Json { raw } => BodySpec::Json {
+            raw: miyo_core::sensitive::redact_json_text(raw).0,
+        },
+        BodySpec::GraphQL { spec } => {
+            let mut spec = spec.clone();
+            let (masked, _) = miyo_core::sensitive::redact_json_text(&spec.variables);
+            spec.variables = masked;
+            BodySpec::GraphQL { spec }
+        }
+        BodySpec::UrlEncoded { fields } => BodySpec::UrlEncoded {
+            fields: fields
+                .iter()
+                .map(|f| {
+                    let mut f = f.clone();
+                    if miyo_core::sensitive::is_sensitive_key(&f.key) && !f.value.is_empty() {
+                        f.value = env_ref(&f.key);
+                    }
+                    f
+                })
+                .collect(),
+        },
+        BodySpec::Multipart { fields } => BodySpec::Multipart {
+            fields: fields
+                .iter()
+                .map(|f| {
+                    let mut f = f.clone();
+                    if f.value_type == MultipartValueType::Text
+                        && miyo_core::sensitive::is_sensitive_key(&f.key)
+                        && !f.value.is_empty()
+                    {
+                        f.value = env_ref(&f.key);
+                    }
+                    f
+                })
+                .collect(),
+        },
+        other => other.clone(),
+    }
+}
+
+/// 导出用渲染（默认脱敏入口）：与 [`render`] 同参，敏感值以环境变量引用
+/// 占位，真实凭证不写入导出脚本。应用内「代码生成」预览仍用 [`render`]
+///（明文已在 UI 中可见，导出/复制走本入口）。
+pub fn render_export<'a>(lang: Lang, req: &GenRequest<'a>) -> String {
+    let url = miyo_core::sensitive::redact_url_query(req.url);
+    let mut merged: Vec<(String, String)> = export_auth_headers(req.auth);
+    for kv in req
+        .headers
+        .iter()
+        .filter(|kv| kv.enabled && !kv.key.trim().is_empty())
+    {
+        let key = kv.key.trim().to_string();
+        let value = if miyo_core::sensitive::is_sensitive_key(&key) && !kv.value.is_empty() {
+            env_ref(&key)
+        } else {
+            kv.value.clone()
+        };
+        if let Some(existing) = merged
+            .iter_mut()
+            .find(|(ek, _)| ek.eq_ignore_ascii_case(&key))
+        {
+            existing.1 = value;
+        } else {
+            merged.push((key, value));
+        }
+    }
+    let body = export_sanitized_body(req.body);
+    let m = req.method;
+    match lang {
+        Lang::Curl => render_curl(m, &url, &merged, &body),
+        Lang::Python => render_python(m, &url, &merged, &body),
+        Lang::JavaScript => render_js(m, &url, &merged, &body),
+        Lang::Go => render_go(m, &url, &merged, &body),
+        Lang::Java => render_java(m, &url, &merged, &body),
+        Lang::Php => render_php(m, &url, &merged, &body),
+        Lang::Rust => render_rust(m, &url, &merged, &body),
+    }
+}
+
 /// 生成 GraphQL curl 代码（POST + `application/json`）。
 pub fn render_graphql_curl(
     url: &str,
@@ -1293,6 +1451,95 @@ mod tests {
         };
         let digest_code = render_with(&digest);
         assert!(!digest_code.contains("Authorization: Digest"));
+    }
+
+    #[test]
+    fn export_masks_bearer_basic_and_apikey() {
+        let method = HttpMethod::POST;
+        let body = BodySpec::Json { raw: "{}".into() };
+        let req = GenRequest {
+            method: &method,
+            url: "https://api.example.com/login?access_token=sec",
+            headers: &[KeyValue::new("X-Api-Key", "ak-123")],
+            body: &body,
+            auth: &AuthSpec::Bearer {
+                token: "tok123".into(),
+            },
+        };
+        let code = render_export(Lang::Curl, &req);
+        // 真实凭证不出现；环境变量引用占位。
+        assert!(
+            !code.contains("tok123"),
+            "Bearer token 不得明文导出：{code}"
+        );
+        assert!(!code.contains("ak-123"), "API Key 不得明文导出：{code}");
+        assert!(!code.contains("sec"), "URL query 凭据不得明文导出：{code}");
+        assert!(code.contains("Authorization: Bearer ${MIYO_AUTHORIZATION}"));
+        assert!(code.contains("X-Api-Key: ${MIYO_X_API_KEY}"));
+        assert!(code.contains("access_token=__MIYO_REDACTED__"));
+
+        let basic = AuthSpec::Basic {
+            username: "u".into(),
+            password: "p".into(),
+        };
+        let req_basic = GenRequest {
+            method: &method,
+            url: "https://api.example.com/x",
+            headers: &[],
+            body: &body,
+            auth: &basic,
+        };
+        let code_basic = render_export(Lang::Curl, &req_basic);
+        assert!(
+            !code_basic.contains("dXNlcjpw"),
+            "Basic base64 不得明文导出"
+        );
+        assert!(code_basic.contains("Basic ${MIYO_BASIC_AUTH}"));
+    }
+
+    #[test]
+    fn export_masks_json_body_and_keeps_plain_data() {
+        let method = HttpMethod::POST;
+        let body = BodySpec::Json {
+            raw: r#"{"username":"alice","password":"pw-1","note":"keep-me"}"#.into(),
+        };
+        let req = GenRequest {
+            method: &method,
+            url: "https://api.example.com/register",
+            headers: &[],
+            body: &body,
+            auth: &AuthSpec::None,
+        };
+        let code = render_export(Lang::Python, &req);
+        assert!(!code.contains("pw-1"), "JSON body 密码不得明文导出：{code}");
+        assert!(code.contains("alice"), "非敏感字段保留");
+        assert!(code.contains("keep-me"), "非敏感字段保留");
+    }
+
+    #[test]
+    fn export_signature_auth_becomes_placeholder() {
+        let method = HttpMethod::GET;
+        let aws = AuthSpec::AwsV4 {
+            access_key: "AKIA".into(),
+            secret_key: "SK-SECRET".into(),
+            region: "us-east-1".into(),
+            service: "iam".into(),
+            session_token: Some("st-1".into()),
+        };
+        let req = GenRequest {
+            method: &method,
+            url: "https://s3.amazonaws.com/bucket",
+            headers: &[],
+            body: &BodySpec::None,
+            auth: &aws,
+        };
+        let code = render_export(Lang::Curl, &req);
+        assert!(
+            !code.contains("SK-SECRET") && !code.contains("AWS4-HMAC"),
+            "签名快照不得导出：{code}"
+        );
+        assert!(code.contains("${MIYO_AUTHORIZATION}"));
+        assert!(code.contains("${MIYO_X_AMZ_SECURITY_TOKEN}"));
     }
 
     #[test]

@@ -11,6 +11,7 @@ import type {
   ScenarioInlineRequest,
   ScenarioStep,
 } from '../types/miyoApi'
+import { redactSpecForExport } from './exportRedact'
 
 /** 导出文件的结构标记与版本（向后兼容留位）。 */
 const EXPORT_MAGIC = 'miyo.scenario'
@@ -20,6 +21,8 @@ export interface ScenarioExportFile {
   magic: typeof EXPORT_MAGIC
   version: number
   exportedAt: string
+  /** 本次导出被脱敏的字段清单（导入方据此知道哪些值需自行回填）。 */
+  redactedFields?: string[]
   scenario: {
     name: string
     description: string
@@ -58,24 +61,44 @@ function endpointUrlTemplate(ep: Endpoint): string {
   return `{{base_url}}${ep.path.startsWith('/') ? ep.path : `/${ep.path}`}`
 }
 
-/** 构造导出 JSON（pretty，2 空格缩进）。 */
+/**
+ * 构造导出 JSON（pretty，2 空格缩进）。
+ *
+ * 导出脱敏：内联步骤里的 auth / 敏感头 / body 凭证替换占位符——导出文件
+ * 会离开本机（发同事 / 入库），真实凭证默认不导出；被脱敏字段写入
+ * `redactedFields` 供导出前预览。
+ */
 export function buildScenarioExport(
   scenario: Scenario,
   endpointOf: (id: string) => Endpoint | undefined,
-): string {
+): { json: string; redactedFields: string[] } {
+  const redactedFields: string[] = []
+  const steps = scenario.steps.map((s) => {
+    const step = inlineStepFromEndpoint(s, endpointOf(s.endpoint_id ?? ''))
+    if (step.request) {
+      const [spec, masked] = redactSpecForExport(
+        step.request.spec as unknown as Record<string, unknown>,
+        step.name ?? step.request.url,
+      )
+      step.request = { ...step.request, spec } as unknown as ScenarioInlineRequest
+      redactedFields.push(...masked)
+    }
+    return step
+  })
   const file: ScenarioExportFile = {
     magic: EXPORT_MAGIC,
     version: EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
+    redactedFields,
     scenario: {
       name: scenario.name,
       description: scenario.description,
       category: scenario.category,
-      steps: scenario.steps.map((s) => inlineStepFromEndpoint(s, endpointOf(s.endpoint_id ?? ''))),
+      steps,
       script: scenario.script ?? null,
     },
   }
-  return JSON.stringify(file, null, 2)
+  return { json: JSON.stringify(file, null, 2), redactedFields }
 }
 
 /** 解析导入文件：形状校验 + 归一化为 Scenario（不含 id / 项目归属，由调用方填充）。 */

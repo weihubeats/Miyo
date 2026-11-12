@@ -654,8 +654,9 @@ fn digest_retry_header(
     .ok()
 }
 
-/// 重定向策略是 Client 级配置，故按 `RequestSpec::follow_redirects`
-/// 维护两个共享实例（跟随 = 默认最多 10 跳；不跟随 = `Policy::none`）。
+/// 重定向由 [`send_hop`] 手动循环接管（跨源剥离敏感头的安全逻辑在应用层，
+/// reqwest 内建剥离覆盖不了自定义凭证头），四个共享客户端一律
+/// `Policy::none`；`follow_redirects` 标志在发送时按 `RequestSpec` 传入。
 ///
 /// 客户端对放在 `RwLock` 里：代理设置变更时整体重建（`Client` 内部是
 /// Arc,克隆廉价）。默认启用 cookie 存储：同域后续请求自动回放
@@ -713,9 +714,9 @@ fn build_pair(proxy: Option<&str>, tls: &TlsOptions) -> Result<ClientPair, Strin
         }
     };
     Ok(ClientPair {
-        follow: build(reqwest::redirect::Policy::default(), true)?,
+        follow: build(reqwest::redirect::Policy::none(), true)?,
         no_follow: build(reqwest::redirect::Policy::none(), true)?,
-        follow_no_cookies: build(reqwest::redirect::Policy::default(), false)?,
+        follow_no_cookies: build(reqwest::redirect::Policy::none(), false)?,
         no_follow_no_cookies: build(reqwest::redirect::Policy::none(), false)?,
     })
 }
@@ -950,99 +951,38 @@ async fn send_request_inner(
     // 实际发出形态快照（前端「请求」页签）：URL / 头 / Cookie / 体均已定型。
     let request = build_request_snapshot(method, &url, &headers, &payload, spec.disable_cookies);
 
-    // 签名阶段建好的 payload 复用为首轮请求体（原来 Digest 循环内再建一次：
-    // 重复序列化 / 重复开文件）；仅 Digest 401 重发时才重建——流式 body
-    //（文件流 / multipart）一次性不可复用，重建 = 重新打开，语义一致。
+    // 签名阶段建好的 payload 复用为首轮请求体；后续跳（Digest 重发 / 重定向
+    // / 307|308 保留 body）按需经 `build_payload` 重建——流式 body（文件流 /
+    // multipart）一次性不可复用，重建 = 重新打开，语义一致。
     let mut pending_payload = Some(payload);
-    // 只有 Digest 认证可能重发（见下方 `digest_retry_header`）：非 Digest
-    // 路径发完即结束，把 url move 进请求，省掉一次 Url 克隆。
-    let is_digest = matches!(spec.auth, AuthSpec::Digest { .. });
-    let mut url_slot: Option<Url> = Some(url);
     let start = std::time::Instant::now();
+    // 总超时预算（跨重定向共享：与 reqwest 自动跟随的 RequestBuilder::timeout
+    // 语义一致，整条重定向链共用一个超时，而非每跳重置）。
+    let deadline = start + Duration::from_millis(timeout_ms);
     // Digest 挑战-应答：首轮无凭据 → 401 携质询 → 补 Authorization 重发一次。
+    // 重发目标 = 返回 401 的那个 URL（重定向链末端的 current_url）。
     let mut digest_authz: Option<String> = None;
+    let mut current_url = url.clone();
     let resp: Response = loop {
-        // 首轮 payload 直接取签名阶段那一份；重发轮（pending_payload 已被取走）
-        // 才重新构建。
-        let payload = match pending_payload.take() {
-            Some(p) => p,
-            None => build_payload(spec).await?,
-        };
-        // Digest 首轮发完还要用 url 算质询，只能克隆；非 Digest（或已重发过）
-        // 是最后一轮，url 直接 move 进请求。
-        let retry_possible = is_digest && digest_authz.is_none();
-        let req_url = if retry_possible {
-            url_slot.as_ref().expect("Digest 首轮保留 url").clone()
-        } else {
-            url_slot.take().expect("最后一轮 move url")
-        };
-        let mut req = client
-            .request(reqwest_method(method), req_url)
-            .timeout(Duration::from_millis(timeout_ms));
-
-        for (k, v) in &headers {
-            if k.is_empty() {
-                continue;
-            }
-            req = req.header(k, v);
-        }
-        if let Some(authz) = &digest_authz {
-            req = req.header("Authorization", authz);
-        }
-        // payload 之后不再使用，按值解构直接 move body，避免整包克隆
-        match payload {
-            Payload::None => {}
-            Payload::Bytes(body, content_type) => {
-                if let Some(ct) = &content_type {
-                    if !has_header(&headers, "content-type") {
-                        req = req.header("content-type", ct.as_str());
-                    }
-                }
-                req = req.body(body);
-            }
-            Payload::Stream {
-                body,
-                content_type,
-                content_length,
-                ..
-            } => {
-                if let Some(ct) = &content_type {
-                    if !has_header(&headers, "content-type") {
-                        req = req.header("content-type", ct.as_str());
-                    }
-                }
-                if let Some(len) = content_length {
-                    if !has_header(&headers, "content-length") {
-                        req = req.header("content-length", len);
-                    }
-                }
-                req = req.body(body);
-            }
-        }
-
-        let one: Response = match cancel {
-            Some(token) => {
-                let fut = req.send();
-                tokio::select! {
-                    // 取消分支胜出即丢弃请求 future：底层 hyper 连接随之中止
-                    //（hyper 官方文档：丢弃返回的 future 是取消在途请求的支持方式）。
-                    _ = token.cancelled() => {
-                        return Err(AppError::Cancelled("request aborted by user".to_string()));
-                    }
-                    r = fut => r.map_err(AppError::from_reqwest)?,
-                }
-            }
-            None => req.send().await.map_err(AppError::from_reqwest)?,
-        };
+        let (one, final_url) = send_hop(
+            &client,
+            method,
+            &current_url,
+            spec.follow_redirects,
+            &headers,
+            pending_payload.take(),
+            spec,
+            deadline,
+            cancel,
+            digest_authz.as_deref(),
+        )
+        .await?;
+        pending_payload = None;
+        current_url = final_url;
         // 仅 Digest 首轮 401 且质询可解析时重试；算法不支持 / 密码错误等情况
         // 直接返回服务端响应（用户可见真实 401，而不是客户端报错）。
-        // 非 Digest 路径 url 已 move 进请求，此处取不到 url 同样 break——
-        // 与 digest_retry_header 对非 Digest 恒返回 None 等价。
         if digest_authz.is_none() {
-            if let Some(authz) = url_slot
-                .as_ref()
-                .and_then(|u| digest_retry_header(&one, &spec.auth, method, u))
-            {
+            if let Some(authz) = digest_retry_header(&one, &spec.auth, method, &current_url) {
                 digest_authz = Some(authz);
                 continue;
             }
@@ -1111,6 +1051,187 @@ async fn send_request_inner(
     })
 }
 
+/// 重定向跟随上限（与 reqwest `Policy::default()` 的 10 跳一致）。
+const MAX_REDIRECTS: usize = 10;
+
+/// 发送单跳请求并按需跟随重定向（跨源安全剥离版）。
+///
+/// reqwest 内建的自动跟随只剥离 `authorization` / `cookie` 等少数标准头，
+/// **自定义凭证头（x-api-key、x-amz-security-token、签名头等）会原样复制到
+/// 重定向目标**，且 https→http 降级跳转照跟不误。为堵住这条凭据外带通道，
+/// 重定向改为手动循环：
+///
+/// - 跨源（host / port 不同）或 https→http 降级的跳转，剥离全部命中
+///   [`miyo_core::sensitive::is_sensitive_header_name`] 的请求头（含 Digest
+///   补发的 Authorization）；一旦跨源，后续所有跳保持剥离（凭证不回流）；
+/// - 301/302/303 改写为 GET（HEAD 除外）并丢弃 body；307/308 保留方法与
+///   body（流式 body 重建后重发）；
+/// - 超过 [`MAX_REDIRECTS`] 跳报错；同源跳转不剥离任何头（http→https 同 host
+///   升级也不剥离，与 curl 行为一致）。
+///
+/// Cookie 不在剥离名单内做手工处理：client 级 `cookie_provider` 每跳按目标
+/// URL 计算回放，跨源时 jar 的域匹配天然不附带他域 Cookie。
+#[allow(clippy::too_many_arguments)]
+async fn send_hop(
+    client: &Client,
+    method: HttpMethod,
+    url: &Url,
+    follow_redirects: bool,
+    headers: &[(String, String)],
+    first_payload: Option<Payload>,
+    spec: &RequestSpec,
+    deadline: std::time::Instant,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    digest_authz: Option<&str>,
+) -> Result<(Response, Url), AppError> {
+    let mut method = method;
+    let mut current_url = url.clone();
+    let mut sensitive_stripped = false;
+    let mut drop_body = false;
+    let mut hop = 0usize;
+    let mut payload = first_payload;
+
+    loop {
+        // 首跳 payload 直接取调用方那份；后续跳按需重建（流式 body 重新打开）。
+        let this_payload = match payload.take() {
+            Some(p) => p,
+            None => build_payload(spec).await?,
+        };
+        // 本跳请求头：显式头 + Digest 补发的 Authorization；跨源剥离按名单统一执行。
+        let mut hop_headers: Vec<(String, String)> = headers.to_vec();
+        if let Some(authz) = digest_authz {
+            hop_headers.push(("Authorization".to_string(), authz.to_string()));
+        }
+        if sensitive_stripped {
+            hop_headers.retain(|(k, _)| !miyo_core::sensitive::is_sensitive_header_name(k));
+        }
+        // 剩余时间预算归零 → 整链超时（与总超时语义一致）。
+        let remaining = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .ok_or_else(|| {
+                AppError::NetworkTimeout("请求超时（重定向链未在总超时内完成）".to_string())
+            })?;
+        let mut req = client
+            .request(reqwest_method(method), current_url.clone())
+            .timeout(remaining);
+        for (k, v) in &hop_headers {
+            if k.is_empty() {
+                continue;
+            }
+            req = req.header(k, v);
+        }
+        if !drop_body {
+            match this_payload {
+                Payload::None => {}
+                Payload::Bytes(body, content_type) => {
+                    if let Some(ct) = &content_type {
+                        if !has_header(headers, "content-type") {
+                            req = req.header("content-type", ct.as_str());
+                        }
+                    }
+                    req = req.body(body);
+                }
+                Payload::Stream {
+                    body,
+                    content_type,
+                    content_length,
+                    ..
+                } => {
+                    if let Some(ct) = &content_type {
+                        if !has_header(headers, "content-type") {
+                            req = req.header("content-type", ct.as_str());
+                        }
+                    }
+                    if let Some(len) = content_length {
+                        if !has_header(headers, "content-length") {
+                            req = req.header("content-length", len);
+                        }
+                    }
+                    req = req.body(body);
+                }
+            }
+        }
+
+        let one: Response = match cancel {
+            Some(token) => {
+                let fut = req.send();
+                tokio::select! {
+                    // 取消分支胜出即丢弃请求 future：底层 hyper 连接随之中止
+                    //（hyper 官方文档：丢弃返回的 future 是取消在途请求的支持方式）。
+                    _ = token.cancelled() => {
+                        return Err(AppError::Cancelled("request aborted by user".to_string()));
+                    }
+                    r = fut => r.map_err(AppError::from_reqwest)?,
+                }
+            }
+            None => req.send().await.map_err(AppError::from_reqwest)?,
+        };
+
+        // 重定向判定：不跟随 / 非重定向状态 / 无可解析 Location → 返回本响应。
+        if !follow_redirects {
+            return Ok((one, current_url));
+        }
+        let Some(next_url) = redirect_target(&one, &current_url) else {
+            return Ok((one, current_url));
+        };
+        if hop >= MAX_REDIRECTS {
+            return Err(AppError::Validation(format!(
+                "重定向次数超过上限（{MAX_REDIRECTS}）"
+            )));
+        }
+        // 跨源 / 降级判断：命中即从下一跳起剥离敏感头（并保持到链尾）。
+        if is_cross_origin(&current_url, &next_url) || is_tls_downgrade(&current_url, &next_url) {
+            sensitive_stripped = true;
+        }
+        // 方法 / body 改写：301/302/303 → GET（HEAD 除外）且丢弃 body。
+        if matches!(one.status().as_u16(), 301..=303) && method != HttpMethod::HEAD {
+            method = HttpMethod::GET;
+            drop_body = true;
+        }
+        current_url = next_url;
+        hop += 1;
+    }
+}
+
+/// 解析重定向目标：301/302/303/307/308 且带可解析的 Location 才跟随；
+/// Location 缺失 / 非法时返回响应本身（不做二次猜测）。
+fn redirect_target(resp: &Response, base: &Url) -> Option<Url> {
+    if !matches!(resp.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    let loc = resp
+        .headers()
+        .get(reqwest::header::LOCATION)?
+        .to_str()
+        .ok()?;
+    base.join(loc.trim()).ok()
+}
+
+/// 跨源判定：scheme / host / 任一端口不同即跨源（默认端口归一化，
+/// `http://a:80` 与 `http://a` 同源）。
+fn is_cross_origin(prev: &Url, next: &Url) -> bool {
+    if prev.scheme() != next.scheme() || prev.host_str() != next.host_str() {
+        return true;
+    }
+    effective_port(prev) != effective_port(next)
+}
+
+/// https→http 降级判定：同 host 也视为敏感跳转（明文信道不复用 TLS 凭证头）。
+fn is_tls_downgrade(prev: &Url, next: &Url) -> bool {
+    prev.scheme() == "https" && next.scheme() == "http"
+}
+
+fn effective_port(u: &Url) -> Option<u16> {
+    match u.port() {
+        Some(p) => Some(p),
+        None => match u.scheme() {
+            "https" => Some(443),
+            "http" => Some(80),
+            _ => None,
+        },
+    }
+}
+
 /// 把 reqwest 错误翻译为面向用户的中文提示（DNS / 超时 / TLS / 连接失败）。
 ///
 /// 分类逻辑统一收敛在 [`AppError::classify`]，此处仅取其用户消息。
@@ -1118,6 +1239,348 @@ pub fn describe_http_error(e: &reqwest::Error) -> String {
     AppError::classify(e)
         .map(|err| err.user_message())
         .unwrap_or_else(|| "请求失败：服务端未返回有效响应".to_string())
+}
+
+#[cfg(test)]
+mod redirect_tests {
+    //! 跨源重定向安全测试：裸 TCP 测试服务器（无新增依赖），逐请求记录
+    //! 实际收到的方法 / 头 / body，断言敏感头在跨源跳转时被剥离。
+
+    use super::*;
+    use miyo_core::model::{BodySpec, KeyValue, RequestSpec};
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    /// 测试服务器收到的一条请求。
+    #[derive(Debug, Clone)]
+    struct RecRequest {
+        method: String,
+        path: String,
+        headers: Vec<(String, String)>,
+        body: String,
+    }
+
+    impl RecRequest {
+        fn header(&self, name: &str) -> Option<&str> {
+            self.headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.as_str())
+        }
+    }
+
+    type Handler = Arc<dyn Fn(&RecRequest) -> (u16, Option<String>, String) + Send + Sync>;
+
+    /// 启动一个逐连接应答的测试服务器（每响应 `Connection: close`，请求间
+    /// 不复用连接）。返回 (端口, 请求记录)。
+    async fn spawn_server(handler: Handler) -> (u16, Arc<Mutex<Vec<RecRequest>>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<Mutex<Vec<RecRequest>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_c = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                let handler = handler.clone();
+                let seen = seen_c.clone();
+                tokio::spawn(async move {
+                    let mut buf: Vec<u8> = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    // 读到头结束
+                    let head_end = loop {
+                        if let Some(pos) = find_subsequence(&buf, b"\r\n\r\n") {
+                            break pos;
+                        }
+                        match sock.read(&mut chunk).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                        }
+                    };
+                    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+                    let mut lines = head.lines();
+                    let first = lines.next().unwrap_or_default();
+                    let mut parts = first.split_whitespace();
+                    let method = parts.next().unwrap_or_default().to_string();
+                    let path = parts.next().unwrap_or_default().to_string();
+                    let mut headers = Vec::new();
+                    for line in lines {
+                        if let Some((k, v)) = line.split_once(':') {
+                            headers.push((k.trim().to_string(), v.trim().to_string()));
+                        }
+                    }
+                    let content_length: usize = headers
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                        .and_then(|(_, v)| v.parse().ok())
+                        .unwrap_or(0);
+                    // 读 body 余量
+                    while buf.len() < head_end + 4 + content_length {
+                        match sock.read(&mut chunk).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                        }
+                    }
+                    let body = String::from_utf8_lossy(
+                        &buf[head_end + 4..(head_end + 4 + content_length).min(buf.len())],
+                    )
+                    .to_string();
+                    let rec = RecRequest {
+                        method,
+                        path,
+                        headers,
+                        body,
+                    };
+                    let (status, location, resp_body) = handler(&rec);
+                    seen.lock().unwrap().push(rec);
+                    let reason = match status {
+                        200 => "OK",
+                        302 => "Found",
+                        303 => "See Other",
+                        307 => "Temporary Redirect",
+                        _ => "Moved Permanently",
+                    };
+                    let mut resp =
+                        format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n", resp_body.len());
+                    if let Some(loc) = &location {
+                        resp.push_str(&format!("Location: {loc}\r\n"));
+                    }
+                    resp.push_str("\r\n");
+                    resp.push_str(&resp_body);
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        (port, seen)
+    }
+
+    fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack.windows(needle.len()).position(|w| w == needle)
+    }
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn spec_with(headers: &[(&str, &str)], follow: bool) -> RequestSpec {
+        RequestSpec {
+            headers: headers.iter().map(|(k, v)| KeyValue::new(*k, *v)).collect(),
+            follow_redirects: follow,
+            disable_cookies: true,
+            ..RequestSpec::default()
+        }
+    }
+
+    /// 同源跳转保留凭证（对照组：剥离只发生在跨源）。
+    #[tokio::test]
+    async fn same_origin_redirect_keeps_credentials() {
+        let handler: Handler = Arc::new(|_req| {
+            if _req.path == "/a" {
+                (302, Some("/b".into()), String::new())
+            } else {
+                (200, None, "ok".into())
+            }
+        });
+        let (port, seen) = spawn_server(handler).await;
+        let spec = spec_with(
+            &[("Authorization", "Bearer tok"), ("X-Api-Key", "ak")],
+            true,
+        );
+        let resp = send_request(
+            HttpMethod::GET,
+            &format!("http://127.0.0.1:{port}/a"),
+            &spec,
+            Some(5000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status, 200);
+        let seen = seen.lock().unwrap();
+        let b = seen.iter().find(|r| r.path == "/b").expect("应有 /b");
+        assert_eq!(b.header("authorization"), Some("Bearer tok"));
+        assert_eq!(b.header("x-api-key"), Some("ak"));
+    }
+
+    /// 跨源跳转：Authorization / X-Api-Key / X-Signature 全部剥离，
+    /// X-Trace-Id 等非敏感头保留。
+    #[tokio::test]
+    async fn cross_origin_redirect_strips_sensitive_headers() {
+        // 目标服务器（跨源端）。
+        let (target_port, target_seen) =
+            spawn_server(Arc::new(|_req| (200, None, "from-b".into()))).await;
+        // 源服务器：/a → 302 到目标服务器 /b。
+        let handler: Handler = {
+            Arc::new(move |_req| {
+                (
+                    302,
+                    Some(format!("http://127.0.0.1:{target_port}/b")),
+                    String::new(),
+                )
+            })
+        };
+        let (source_port, _source_seen) = spawn_server(handler).await;
+
+        let spec = spec_with(
+            &[
+                ("Authorization", "Bearer secret-tok"),
+                ("X-Api-Key", "ak-123"),
+                ("X-Signature", "sig-abc"),
+                ("X-Trace-Id", "keep-me"),
+            ],
+            true,
+        );
+        let resp = send_request(
+            HttpMethod::GET,
+            &format!("http://127.0.0.1:{source_port}/a"),
+            &spec,
+            Some(5000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.body_text(), "from-b");
+
+        let seen = target_seen.lock().unwrap();
+        let b = seen.iter().find(|r| r.path == "/b").expect("应有 /b 请求");
+        assert_eq!(b.header("authorization"), None, "Authorization 必须被剥离");
+        assert_eq!(b.header("x-api-key"), None, "自定义凭证头必须被剥离");
+        assert_eq!(b.header("x-signature"), None, "签名头必须被剥离");
+        assert_eq!(b.header("x-trace-id"), Some("keep-me"), "非敏感头保留");
+    }
+
+    /// 跨源跳转后凭证不回流：A → B → 回 A 的链路上同样剥离。
+    #[tokio::test]
+    async fn sensitive_headers_do_not_return_after_cross_origin() {
+        // 先起源 A（/c 终点），B 需要 A 的端口回跳。
+        let b_port_holder: Arc<std::sync::Mutex<Option<u16>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let holder = b_port_holder.clone();
+        let (a_port, a_seen) = spawn_server(Arc::new(move |req| {
+            if req.path == "/a" {
+                let target = holder.lock().unwrap().expect("B 端口应在请求前写入");
+                (
+                    302,
+                    Some(format!("http://127.0.0.1:{target}/b")),
+                    String::new(),
+                )
+            } else {
+                (200, None, "final".into())
+            }
+        }))
+        .await;
+        let (b_port, b_seen) = spawn_server(Arc::new(move |_req| {
+            (
+                302,
+                Some(format!("http://127.0.0.1:{a_port}/c")),
+                String::new(),
+            )
+        }))
+        .await;
+        *b_port_holder.lock().unwrap() = Some(b_port);
+
+        let spec = spec_with(&[("Authorization", "Bearer secret-tok")], true);
+        let resp = send_request(
+            HttpMethod::GET,
+            &format!("http://127.0.0.1:{a_port}/a"),
+            &spec,
+            Some(5000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.body_text(), "final");
+        // B 收到的 /b 无 Authorization。
+        assert!(
+            b_seen
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|r| r.header("authorization").is_none()),
+            "B 上不得收到 Authorization"
+        );
+        // 回到 A（源 origin）的 /c 同样无 Authorization：剥离保持到链尾。
+        assert!(
+            a_seen
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| r.path == "/c")
+                .all(|r| r.header("authorization").is_none()),
+            "跨源剥离必须保持到链尾，凭证不得回流"
+        );
+    }
+
+    /// 303 → GET 且丢弃 body。
+    #[tokio::test]
+    async fn see_other_rewrites_to_get_without_body() {
+        let handler: Handler = Arc::new(|req| {
+            if req.path == "/a" {
+                (303, Some("/b".into()), String::new())
+            } else {
+                (200, None, "ok".into())
+            }
+        });
+        let (port, seen) = spawn_server(handler).await;
+        let spec = RequestSpec {
+            headers: vec![KeyValue::new("Authorization", "Bearer tok")],
+            body: BodySpec::Json {
+                raw: r#"{"k":"v"}"#.into(),
+            },
+            follow_redirects: true,
+            disable_cookies: true,
+            ..RequestSpec::default()
+        };
+        let resp = send_request(
+            HttpMethod::POST,
+            &format!("http://127.0.0.1:{port}/a"),
+            &spec,
+            Some(5000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status, 200);
+        let seen = seen.lock().unwrap();
+        let b = seen.iter().find(|r| r.path == "/b").expect("应有 /b");
+        assert_eq!(b.method, "GET", "303 必须改写为 GET");
+        assert!(b.body.is_empty(), "303 必须丢弃 body");
+        // 同源：Authorization 保留
+        assert_eq!(b.header("authorization"), Some("Bearer tok"));
+    }
+
+    /// 超过 10 跳报错（自指重定向不死循环）。
+    #[tokio::test]
+    async fn redirect_loop_errors_at_limit() {
+        let handler: Handler = Arc::new(|_req| (302, Some("/loop".into()), String::new()));
+        let (port, _seen) = spawn_server(handler).await;
+        let spec = spec_with(&[], true);
+        let err = send_request(
+            HttpMethod::GET,
+            &format!("http://127.0.0.1:{port}/loop"),
+            &spec,
+            Some(5000),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("重定向"), "应报重定向超限：{err}");
+    }
+
+    /// follow_redirects=false：302 原样返回（不跟随、不报错）。
+    #[tokio::test]
+    async fn no_follow_returns_redirect_response() {
+        let handler: Handler = Arc::new(|_req| (302, Some("/b".into()), String::new()));
+        let (port, seen) = spawn_server(handler).await;
+        let spec = spec_with(&[("Authorization", "Bearer tok")], false);
+        let resp = send_request(
+            HttpMethod::GET,
+            &format!("http://127.0.0.1:{port}/a"),
+            &spec,
+            Some(5000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status, 302);
+        assert_eq!(seen.lock().unwrap().len(), 1, "只发一跳");
+    }
 }
 
 #[cfg(test)]
