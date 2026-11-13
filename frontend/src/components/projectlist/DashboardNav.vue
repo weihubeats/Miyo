@@ -22,7 +22,15 @@ const NAV_ITEMS = [
   { key: 'dashboard', labelKey: 'pnav.dashboard', icon: 'gauge' as const, route: '/projects' },
   { key: 'integration', labelKey: 'pnav.integration', icon: 'beaker' as const, route: '/integration' },
   { key: 'realtime', labelKey: 'pnav.realtime', icon: 'globe' as const, route: '/realtime' },
-  { key: 'aiTest', labelKey: 'pnav.aiTest', icon: 'zap' as const, route: '/ai-test' },
+  {
+    key: 'aiTest',
+    labelKey: 'pnav.aiTest',
+    icon: 'zap' as const,
+    route: '/ai-test',
+    // 页面仍在测试：「测试中」标记在导航入口就要可见，进页面前就知道结果可能不可靠
+    badgeKey: 'ai.beta' as const,
+    badgeTipKey: 'ai.betaTipShort' as const,
+  },
 ]
 
 /** 激活态跟随当前路由（实时调试视图打开时高亮对应入口）。 */
@@ -47,6 +55,14 @@ function onNav(item: (typeof NAV_ITEMS)[number]): void {
     >
       <Icon :name="item.icon" :size="15" />
       <span class="nav-label">{{ t(item.labelKey) }}</span>
+      <span
+        v-if="'badgeKey' in item && item.badgeKey"
+        class="nav-beta"
+        role="status"
+        :title="t(item.badgeTipKey)"
+      >
+        {{ t(item.badgeKey) }}
+      </span>
     </button>
   </nav>
 </template>
@@ -106,5 +122,24 @@ function onNav(item: (typeof NAV_ITEMS)[number]): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 「测试中」标记：未选中 amber 描边，选中（紫底）提亮为半透明白底保证可读 */
+.nav-beta {
+  flex: none;
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+  color: var(--warning);
+  background: var(--warning-tint);
+  white-space: nowrap;
+}
+
+.nav-item.active .nav-beta {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
 }
 </style>

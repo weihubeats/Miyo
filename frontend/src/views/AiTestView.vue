@@ -18,6 +18,7 @@ import ContextPanel from '../components/ai/ContextPanel.vue'
 import ChatPanel from '../components/ai/ChatPanel.vue'
 import ArtifactPanel from '../components/ai/ArtifactPanel.vue'
 import RunDock from '../components/ai/RunDock.vue'
+import Tooltip from '../components/ui/Tooltip.vue'
 
 const t = useLocaleStore().t
 const router = useRouter()
@@ -50,6 +51,13 @@ function goBack(): void {
         ← {{ t('integration.back') }}
       </button>
       <h1 class="ai-topbar-title">{{ t('ai.title') }}</h1>
+      <!-- 测试中标记：常驻且不可关闭——页面仍在测试，结果可能不可靠，需持续可见 -->
+      <Tooltip :content="t('ai.betaTip')" placement="bottom">
+        <span class="ai-beta-badge no-drag" role="status">
+          <span class="ai-beta-dot"></span>
+          {{ t('ai.beta') }}
+        </span>
+      </Tooltip>
       <div class="topbar-spacer" />
       <div class="no-drag">
         <CustomSelect
@@ -112,6 +120,46 @@ function goBack(): void {
 }
 .topbar-spacer {
   flex: 1;
+}
+
+/* 「测试中」标记：amber 描边 + 呼吸小圆点，常驻不可关闭（主题差异走变量） */
+.ai-beta-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+  background: var(--warning-tint);
+  color: var(--warning);
+  cursor: help;
+  user-select: none;
+  white-space: nowrap;
+}
+.ai-beta-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: ai-beta-pulse 2s ease-in-out infinite;
+}
+@keyframes ai-beta-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+/* 全局 prefers-reduced-motion 兜底会一刀切，此处让圆点静止即可 */
+@media (prefers-reduced-motion: reduce) {
+  .ai-beta-dot {
+    animation: none;
+  }
 }
 
 .ai-body-empty {

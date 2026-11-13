@@ -2182,6 +2182,10 @@ export const en: Record<ZhKey, string> = {
   // ---- AI Test workspace (/ai-test) ----
   'pnav.aiTest': 'AI Testing',
   'ai.title': 'AI Test Center',
+  'ai.beta': 'Under test',
+  'ai.betaTip':
+    'AI Test Center is still under test: features and generated results may be incomplete or wrong. Do not rely on it for production acceptance without human review.',
+  'ai.betaTipShort': 'Still under test — results may be inaccurate',
   'ai.noProject': 'Select a project on the dashboard first',
   'ai.settingsHint': 'AI model not configured: go to Settings → AI Model and fill in Base URL / API Key / model name.',
   'ai.contextEndpoints': 'Endpoints ({n})',

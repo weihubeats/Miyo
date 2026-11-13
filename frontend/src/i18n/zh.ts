@@ -2177,6 +2177,10 @@ export const zh = {
   // ---- AI 测试工作区（/ai-test）----
   'pnav.aiTest': 'AI 测试',
   'ai.title': 'AI 测试中心',
+  'ai.beta': '测试中',
+  'ai.betaTip':
+    'AI 测试中心仍在测试中：功能与生成结果都可能不完整或出错，请勿直接用于生产环境的自动化验收，生成内容提交前请人工复核。',
+  'ai.betaTipShort': '功能仍在测试中，结果可能不准确',
   'ai.noProject': '请先在仪表板选择项目',
   'ai.settingsHint': '尚未配置 AI 模型：请到 设置 → AI 模型 填写 Base URL / API Key / 模型名。',
   'ai.contextEndpoints': '接口（{n}）',
