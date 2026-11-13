@@ -12,7 +12,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
     "preview": "vite preview",
     "tauri": "bash ../scripts/ensure-mcp-bin.sh && tauri",
     "test": "vitest run",

@@ -31,6 +31,11 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      # TS 绑定防漂移：重新导出 miyo-core 模型绑定，与提交产物比对
+      - name: Export TS bindings (miyo-core)
+        run: cargo test -p miyo-core --features ts export_bindings
+      - name: Check TS bindings drift (miyo-core)
+        run: git diff --exit-code -- frontend/src/types/generated
 
   miyo-tauri:
     name: Check & Test (miyo-tauri 插件)
@@ -62,6 +67,12 @@ jobs:
       - name: Test
         working-directory: crates/miyo-tauri
         run: cargo test
+      # TS 绑定防漂移：导出 miyo-tauri view DTO 绑定（依赖 miyo-core/ts），与提交产物比对
+      - name: Export TS bindings (miyo-tauri)
+        working-directory: crates/miyo-tauri
+        run: cargo test --features ts export_bindings
+      - name: Check TS bindings drift (miyo-tauri)
+        run: git diff --exit-code -- frontend/src/types/generated
 
   frontend:
     name: Build (Vue 前端 + Tauri 壳)
@@ -105,7 +116,11 @@ jobs:
       - name: Test (vitest)
         working-directory: frontend
         run: npm test
-      - name: Build frontend (vue-tsc + vite)
+      # 类型检查独立门禁（build 已瘦身为纯 vite build，类型错误在这里拦截）
+      - name: Typecheck (vue-tsc)
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Build frontend (vite)
         working-directory: frontend
         run: npm run build
       - name: Check Tauri shell
