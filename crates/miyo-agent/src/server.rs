@@ -1315,13 +1315,10 @@ async fn execute_endpoint_handler(
     let global_params = repo::get_global_params(&state.db)
         .await
         .map_err(api_error)?;
-    miyo_core::apply_global_params(&mut spec, &global_params, &vars);
-    // 变量渲染（与 Tauri execute_request 同口径）：URL 模板 + 规格全文
-    // （headers/params/auth/body 的 {{var}} 占位在此替换）。
-    let spec = miyo_core::render_spec(&spec, &vars);
-
+    // 变量渲染（与 Tauri execute_request 同一 prepare_request 链）：
+    // 全局参数补缺 → 规格全文渲染 → URL 渲染。
     let url_template = req.url.clone().unwrap_or_else(|| url_template_for(&ep));
-    let url = miyo_core::resolve_variables(&url_template, &vars);
+    let (spec, url) = miyo_core::prepare_request(&spec, &url_template, &global_params, &vars);
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(api_error(miyo_core::AppError::Validation(format!(
             "解析后的 URL 非法：{url}。项目缺少 base_url 变量？可在 variables 中显式传入 base_url 或用 url 参数覆盖完整地址。"
@@ -1568,7 +1565,7 @@ async fn execute_scenario(
     //（runner 落 skipped 行）。
     let mut steps = Vec::new();
     for (idx, step) in scenario.steps.iter().enumerate() {
-        let (ep, mut url_template, spec) = match (&step.request, step.endpoint_id) {
+        let (ep, mut url_template) = match (&step.request, step.endpoint_id) {
             (Some(inline), _) => {
                 let method = inline
                     .method
@@ -1598,7 +1595,6 @@ async fn execute_scenario(
                         updated_at: scenario.updated_at,
                     },
                     path,
-                    inline.spec.clone(),
                 )
             }
             (None, Some(endpoint_id)) => {
@@ -1611,8 +1607,7 @@ async fn execute_scenario(
                         ))
                     })?;
                 let url = url_template_for(&ep);
-                let spec = ep.request.clone();
-                (ep, url, spec)
+                (ep, url)
             }
             (None, None) => {
                 return Err(miyo_core::AppError::Validation(format!(
@@ -1621,82 +1616,39 @@ async fn execute_scenario(
                 )))
             }
         };
-        // 幂等键自动注入：写操作步骤且未显式配置 Idempotency-Key 时补一键
-        //（键 = runId-位次；循环轮次共用——同一逻辑操作重试不重复执行）。
-        let is_write = {
-            let m = match (&step.request, step.endpoint_id) {
-                (Some(inline), _) => inline.method.clone(),
-                (None, Some(ep_id)) => repo::get_endpoint(&state.db, ep_id)
-                    .await
-                    .map(|ep| ep.method.to_string())
-                    .unwrap_or_default(),
-                (None, None) => String::new(),
-            };
-            ["POST", "PUT", "PATCH", "DELETE"].contains(&m.to_uppercase().as_str())
-        };
-        let mut spec = spec;
-        // 引用式步骤的请求参数覆盖（url 覆盖单独替换 url_template）。
-        if let Some(ov) = &step.overrides {
-            if let Some(u) = ov.get("url").and_then(|v| v.as_str()) {
-                url_template = u.to_string();
-            }
-            miyo_core::apply_step_overrides(&mut spec, ov).map_err(|e| {
-                miyo_core::AppError::Validation(format!("第 {} 步的参数覆盖无效：{e}", idx + 1))
-            })?;
-        }
-        if req.auto_idempotency && is_write {
-            let has_key = spec
-                .headers
-                .iter()
-                .any(|h| h.enabled && h.key.eq_ignore_ascii_case("Idempotency-Key"));
-            if !has_key {
-                spec.headers.push(miyo_core::model::KeyValue::new(
-                    "Idempotency-Key",
-                    format!("{run_id}-{idx}"),
-                ));
-            }
-        }
-        miyo_core::apply_global_params(&mut spec, &global_params, &vars);
-        let config = miyo_test::config::TestSpec::from_request_value(Some(&serde_json::json!({
-            "extract": step.extract,
-            "assertions": step.assertions,
-        })))
-        .map_err(|e| {
-            miyo_core::AppError::Validation(format!("第 {} 步的提取/断言配置无效：{e}", idx + 1))
-        })?;
-        // 执行控制透传（条件 / 循环 / 等待 / 并行；配置无效 → 校验错误）。
-        let condition = step
-            .condition
+        // 引用式步骤的 url 覆盖单独替换 url_template（其余交给 materialize_step）。
+        if let Some(u) = step
+            .overrides
             .as_ref()
-            .map(|v| serde_json::from_value::<miyo_test::config::StepCondition>(v.clone()))
-            .transpose()
-            .map_err(|e| {
-                miyo_core::AppError::Validation(format!("第 {} 步的执行条件无效：{e}", idx + 1))
-            })?;
-        let r#loop = step
-            .r#loop
-            .as_ref()
-            .map(|v| serde_json::from_value::<miyo_test::config::StepLoop>(v.clone()))
-            .transpose()
-            .map_err(|e| {
-                miyo_core::AppError::Validation(format!("第 {} 步的循环配置无效：{e}", idx + 1))
-            })?;
-        steps.push(miyo_test::runner::ScenarioStepInput {
-            url_template,
-            endpoint: ep,
-            spec_template: spec,
-            // 步骤重试策略（显式配置才启用；引擎执行期注入幂等键）。
-            retry: step.retry.clone(),
-            extract: config.extract,
-            assertions: config.assertions,
-            enabled: step.enabled,
-            condition,
-            r#loop,
-            wait_ms: step
-                .wait_ms
-                .map(|w| w.min(miyo_test::config::StepLoop::MAX_INTERVAL_MS)),
-            parallel: step.parallel,
-        });
+            .and_then(|ov| ov.get("url").and_then(|v| v.as_str()))
+        {
+            url_template = u.to_string();
+        }
+        // 自动幂等键的注入判定（写方法 + 未显式配置）在 materialize_step 内单源；
+        // 这里只决定「是否启用自动幂等」。
+        let auto_key = req.auto_idempotency.then(|| format!("{run_id}-{idx}"));
+        steps.push(
+            miyo_test::materialize::materialize_step(
+                miyo_test::materialize::StepMaterialInput {
+                    endpoint: ep,
+                    url_template,
+                    extract_json: step.extract.clone(),
+                    assertions_json: step.assertions.clone(),
+                    condition_json: step.condition.clone(),
+                    loop_json: step.r#loop.clone(),
+                    retry: step.retry.clone(),
+                    enabled: step.enabled,
+                    wait_ms: step.wait_ms,
+                    parallel: step.parallel,
+                    overrides_json: step.overrides.clone(),
+                    auto_idempotency_key: auto_key,
+                    step_label: format!("第 {} 步", idx + 1),
+                },
+                &global_params,
+                &vars,
+            )
+            .map_err(miyo_core::AppError::Validation)?,
+        );
     }
     if steps.iter().all(|s| !s.enabled) {
         return Err(miyo_core::AppError::Validation(
@@ -1715,7 +1667,7 @@ async fn execute_scenario(
     ) -> Result<Vec<miyo_test::runner::ScenarioStepInput>, miyo_core::AppError> {
         let mut out = Vec::with_capacity(rows.len());
         for (idx, step) in rows.iter().enumerate() {
-            let (ep, url_template, spec) = match (&step.request, step.endpoint_id) {
+            let (ep, url_template) = match (&step.request, step.endpoint_id) {
                 (Some(inline), _) => {
                     let method = inline
                         .method
@@ -1742,13 +1694,12 @@ async fn execute_scenario(
                         created_at,
                         updated_at,
                     };
-                    (ep, inline.url.clone(), inline.spec.clone())
+                    (ep, inline.url.clone())
                 }
                 (None, Some(endpoint_id)) => {
                     let ep = repo::get_endpoint(&state.db, endpoint_id).await?;
                     let url = url_template_for(&ep);
-                    let spec = ep.request.clone();
-                    (ep, url, spec)
+                    (ep, url)
                 }
                 (None, None) => {
                     return Err(miyo_core::AppError::Validation(format!(
@@ -1757,34 +1708,31 @@ async fn execute_scenario(
                     )))
                 }
             };
-            let mut spec = spec;
-            miyo_core::apply_global_params(&mut spec, global_params, vars);
             // 生命周期步骤的提取 / 断言与主步骤同引擎求值（setup 产物
-            // 流入主步骤链路）。
-            let config =
-                miyo_test::config::TestSpec::from_request_value(Some(&serde_json::json!({
-                    "extract": step.extract,
-                    "assertions": step.assertions,
-                })))
-                .map_err(|e| {
-                    miyo_core::AppError::Validation(format!(
-                        "setup/teardown 第 {} 步的提取/断言配置无效：{e}",
-                        idx + 1
-                    ))
-                })?;
-            out.push(miyo_test::runner::ScenarioStepInput {
-                endpoint: ep,
-                url_template,
-                spec_template: spec,
-                retry: step.retry.clone(),
-                extract: config.extract,
-                assertions: config.assertions,
-                enabled: step.enabled,
-                condition: None,
-                r#loop: None,
-                wait_ms: None,
-                parallel: false,
-            });
+            // 流入主步骤链路）；无条件 / 循环 / 等待 / 并行、无参数覆盖与
+            // 自动幂等——均由 materialize_step 单源处理。
+            out.push(
+                miyo_test::materialize::materialize_step(
+                    miyo_test::materialize::StepMaterialInput {
+                        endpoint: ep,
+                        url_template,
+                        extract_json: step.extract.clone(),
+                        assertions_json: step.assertions.clone(),
+                        condition_json: None,
+                        loop_json: None,
+                        retry: step.retry.clone(),
+                        enabled: step.enabled,
+                        wait_ms: None,
+                        parallel: false,
+                        overrides_json: None,
+                        auto_idempotency_key: None,
+                        step_label: format!("setup/teardown 第 {} 步", idx + 1),
+                    },
+                    global_params,
+                    vars,
+                )
+                .map_err(miyo_core::AppError::Validation)?,
+            );
         }
         Ok(out)
     }

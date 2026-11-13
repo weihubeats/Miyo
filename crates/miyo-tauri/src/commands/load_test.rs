@@ -9,10 +9,9 @@ use uuid::Uuid;
 
 use miyo_core::model::{Endpoint, HttpMethod, RequestSpec};
 
-use crate::commands::request::{apply_global_params, resolve_timeout_ms};
+use crate::commands::request::resolve_timeout_ms;
 use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
-use miyo_core::render_spec;
 
 /// `test_endpoint` 入参。
 #[derive(Debug, Clone, Deserialize)]
@@ -44,9 +43,12 @@ pub async fn test_endpoint(
     let vars = vars?;
     let settings = settings?;
     let timeout_ms = timeout_ms?;
-    let url = miyo_core::resolve_variables(&args.url, &vars);
-    let mut spec = render_spec(&args.endpoint.request, &vars);
-    apply_global_params(&mut spec, &settings.global_params, &vars);
+    let (spec, url) = miyo_core::prepare_request(
+        &args.endpoint.request,
+        &args.url,
+        &settings.global_params,
+        &vars,
+    );
     // 取消令牌（测试用例单跑「取消」按钮；run_id 不提供则不可取消）。
     let cancel = args.run_id.as_ref().map(|id| {
         let token = tokio_util::sync::CancellationToken::new();
@@ -146,9 +148,8 @@ pub async fn load_test(
     let vars = vars?;
     let settings = settings?;
     let timeout_ms = timeout_ms?;
-    let url = miyo_core::resolve_variables(&args.url, &vars);
-    let mut spec = render_spec(&args.spec, &vars);
-    apply_global_params(&mut spec, &settings.global_params, &vars);
+    let (spec, url) =
+        miyo_core::prepare_request(&args.spec, &args.url, &settings.global_params, &vars);
     let cfg = miyo_test::load::LoadConfig {
         concurrency,
         total,
@@ -298,9 +299,8 @@ pub async fn test_collection(
         .items
         .iter()
         .map(|it| {
-            let url = miyo_core::resolve_variables(&it.url, &vars);
-            let mut spec = render_spec(&it.spec, &vars);
-            apply_global_params(&mut spec, &settings.global_params, &vars);
+            let (spec, url) =
+                miyo_core::prepare_request(&it.spec, &it.url, &settings.global_params, &vars);
             miyo_test::runner::CollectionItem {
                 endpoint: it.endpoint.clone(),
                 url,

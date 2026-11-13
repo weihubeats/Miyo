@@ -12,7 +12,8 @@ pub use curl_parser::{parse_curl, CurlParsed};
 pub use error::{not_found, openapi_error, script_error, validation, ws_error, AppError};
 pub use model::*;
 pub use render::{
-    apply_global_params, apply_step_overrides, render_kv, render_spec, render_spec_typed,
+    apply_global_params, apply_step_overrides, prepare_request, render_kv, render_spec,
+    render_spec_typed,
 };
 pub use util::*;
 pub use variable::{

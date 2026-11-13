@@ -377,6 +377,25 @@ mod tests {
 
 /// 引用式步骤的请求参数覆盖（引擎与前端物化共用语义）。
 ///
+/// 单请求执行链的公共编排：全局参数补缺 → 规格渲染 → URL 渲染。
+///
+/// tauri `execute_request` / `test_endpoint` / `load_test` / `test_collection`
+/// 与 agent `execute_endpoint` 共用；顺序为「先补缺后渲染」——与场景引擎
+/// （模板补缺 + 执行期渲染）同口径，全局参数值中的 `{{var}}` 同样被渲染
+///（旧 tauri 的 render→fill 顺序不渲染全局值，属隐性口径分叉，此处统一）。
+pub fn prepare_request(
+    spec: &RequestSpec,
+    url_template: &str,
+    global_params: &[crate::model::GlobalParam],
+    vars: &VariableMap,
+) -> (RequestSpec, String) {
+    let mut spec = spec.clone();
+    apply_global_params(&mut spec, global_params, vars);
+    let rendered = render_spec(&spec, vars);
+    let url = crate::variable::resolve_variables(url_template, vars);
+    (rendered, url)
+}
+
 /// `overrides` 为部分覆盖对象（JSON），键与语义：
 /// - `url`：整体替换该步的 URL 模板（由调用方处理——本函数只改 spec）；
 /// - `params` / `headers` / `path_variables`：按 key 合并——同名键替换值与

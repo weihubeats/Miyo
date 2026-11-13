@@ -5,7 +5,6 @@ use tauri::State;
 use uuid::Uuid;
 
 use miyo_core::model::{HttpMethod, KeyValue, RequestHistory, RequestSpec};
-use miyo_core::render_spec;
 pub(crate) use miyo_core::text::byte_truncate;
 use miyo_core::VariableMap;
 use miyo_http::client::{HttpResponseData, RequestSnapshot};
@@ -109,9 +108,8 @@ pub async fn execute_request(
     let vars = vars?;
     let settings = settings?;
     let timeout_ms = timeout_ms?;
-    let url = miyo_core::resolve_variables(&args.url, &vars);
-    let mut spec = render_spec(&args.spec, &vars);
-    apply_global_params(&mut spec, &settings.global_params, &vars);
+    let (mut spec, url) =
+        miyo_core::prepare_request(&args.spec, &args.url, &settings.global_params, &vars);
 
     // 1.5 脚本两段代码先取出（后续 spec.headers 会被 pre 脚本结果改写）。
     let (pre_code, post_code) = match &spec.scripts {
@@ -544,13 +542,10 @@ pub(crate) async fn resolve_timeout_ms(spec: &RequestSpec, state: &AppState) -> 
         .unwrap_or(miyo_http::client::DEFAULT_TIMEOUT_MS))
 }
 
-/// 全局参数注入：已下沉 [`miyo_core::render::apply_global_params`]（Agent
-/// 控制面执行路由与 Tauri 命令共用同一物化口径），此处保留原路径的再导出。
-pub(crate) use miyo_core::apply_global_params;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use miyo_core::apply_global_params;
     use miyo_core::model::{AuthSpec, BodySpec, GlobalParamLocation};
     use std::collections::HashMap;
 

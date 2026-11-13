@@ -176,57 +176,38 @@ pub async fn run_scenario(
     let settings = state.global_settings().await?;
     let global_params = settings.global_params.clone();
 
-    // 物化步骤：URL / 规格保留模板；步骤级提取/断言解析为 TestSpec 形状。
+    // 物化步骤：单源走 miyo_test::materialize_step（URL / 规格保留模板；
+    // 全局参数补缺、提取/断言与执行控制解析、wait_ms 收钳都在共享函数内）。
     // 禁用步骤照传（runner 落 skipped 行，结果面板完整呈现「为什么没跑」）。
     let materialize = |steps_args: Vec<ScenarioStepArgs>,
                        vars: &HashMap<String, String>|
      -> Result<Vec<ScenarioStepInput>, CommandError> {
-        let mut out = Vec::with_capacity(steps_args.len());
-        for (idx, step) in steps_args.into_iter().enumerate() {
-            let mut spec = step.endpoint.request.clone();
-            crate::commands::request::apply_global_params(&mut spec, &global_params, vars);
-            let config =
-                miyo_test::config::TestSpec::from_request_value(Some(&serde_json::json!({
-                    "extract": step.extract,
-                    "assertions": step.assertions,
-                })))
-                .map_err(|e| {
-                    CommandError::validation(format!("第 {} 步的提取/断言配置无效：{e}", idx + 1))
-                })?;
-            let condition = step
-                .condition
-                .as_ref()
-                .map(|v| serde_json::from_value::<miyo_test::config::StepCondition>(v.clone()))
-                .transpose()
-                .map_err(|e| {
-                    CommandError::validation(format!("第 {} 步的执行条件无效：{e}", idx + 1))
-                })?;
-            let r#loop = step
-                .r#loop
-                .as_ref()
-                .map(|v| serde_json::from_value::<miyo_test::config::StepLoop>(v.clone()))
-                .transpose()
-                .map_err(|e| {
-                    CommandError::validation(format!("第 {} 步的循环配置无效：{e}", idx + 1))
-                })?;
-            out.push(ScenarioStepInput {
-                endpoint: step.endpoint,
-                url_template: step.url,
-                spec_template: spec,
-                // 步骤重试策略（显式配置才启用；引擎执行期注入幂等键）。
-                retry: step.retry,
-                extract: config.extract,
-                assertions: config.assertions,
-                enabled: step.enabled,
-                condition,
-                r#loop,
-                wait_ms: step
-                    .wait_ms
-                    .map(|w| w.min(miyo_test::config::StepLoop::MAX_INTERVAL_MS)),
-                parallel: step.parallel,
-            });
-        }
-        Ok(out)
+        steps_args
+            .into_iter()
+            .enumerate()
+            .map(|(idx, step)| {
+                miyo_test::materialize::materialize_step(
+                    miyo_test::materialize::StepMaterialInput {
+                        endpoint: step.endpoint,
+                        url_template: step.url,
+                        extract_json: step.extract,
+                        assertions_json: step.assertions,
+                        condition_json: step.condition,
+                        loop_json: step.r#loop,
+                        retry: step.retry,
+                        enabled: step.enabled,
+                        wait_ms: step.wait_ms,
+                        parallel: step.parallel,
+                        overrides_json: None,
+                        auto_idempotency_key: None,
+                        step_label: format!("第 {} 步", idx + 1),
+                    },
+                    &global_params,
+                    vars,
+                )
+                .map_err(CommandError::validation)
+            })
+            .collect()
     };
     let mut steps = materialize(args.steps, &vars)?;
     // 生命周期步骤：Setup 提取产物流入主步骤（同一执行上下文物化）。
@@ -523,51 +504,32 @@ pub async fn run_scenario_matrix(
         let materialize_owned = |steps_args: &[ScenarioStepArgs],
                                  vars: &HashMap<String, String>|
          -> Result<Vec<ScenarioStepInput>, CommandError> {
-            let mut out = Vec::with_capacity(steps_args.len());
-            for (i, step) in steps_args.iter().enumerate() {
-                let mut spec = step.endpoint.request.clone();
-                crate::commands::request::apply_global_params(&mut spec, &global_params, vars);
-                let config =
-                    miyo_test::config::TestSpec::from_request_value(Some(&serde_json::json!({
-                        "extract": step.extract,
-                        "assertions": step.assertions,
-                    })))
-                    .map_err(|e| {
-                        CommandError::validation(format!("第 {} 步的提取/断言配置无效：{e}", i + 1))
-                    })?;
-                let condition = step
-                    .condition
-                    .as_ref()
-                    .map(|v| serde_json::from_value::<miyo_test::config::StepCondition>(v.clone()))
-                    .transpose()
-                    .map_err(|e| {
-                        CommandError::validation(format!("第 {} 步的执行条件无效：{e}", i + 1))
-                    })?;
-                let r#loop = step
-                    .r#loop
-                    .as_ref()
-                    .map(|v| serde_json::from_value::<miyo_test::config::StepLoop>(v.clone()))
-                    .transpose()
-                    .map_err(|e| {
-                        CommandError::validation(format!("第 {} 步的循环配置无效：{e}", i + 1))
-                    })?;
-                out.push(ScenarioStepInput {
-                    endpoint: step.endpoint.clone(),
-                    url_template: step.url.clone(),
-                    spec_template: spec,
-                    retry: step.retry.clone(),
-                    extract: config.extract,
-                    assertions: config.assertions,
-                    enabled: step.enabled,
-                    condition,
-                    r#loop,
-                    wait_ms: step
-                        .wait_ms
-                        .map(|w| w.min(miyo_test::config::StepLoop::MAX_INTERVAL_MS)),
-                    parallel: step.parallel,
-                });
-            }
-            Ok(out)
+            steps_args
+                .iter()
+                .enumerate()
+                .map(|(i, step)| {
+                    miyo_test::materialize::materialize_step(
+                        miyo_test::materialize::StepMaterialInput {
+                            endpoint: step.endpoint.clone(),
+                            url_template: step.url.clone(),
+                            extract_json: step.extract.clone(),
+                            assertions_json: step.assertions.clone(),
+                            condition_json: step.condition.clone(),
+                            loop_json: step.r#loop.clone(),
+                            retry: step.retry.clone(),
+                            enabled: step.enabled,
+                            wait_ms: step.wait_ms,
+                            parallel: step.parallel,
+                            overrides_json: None,
+                            auto_idempotency_key: None,
+                            step_label: format!("第 {} 步", i + 1),
+                        },
+                        &global_params,
+                        vars,
+                    )
+                    .map_err(CommandError::validation)
+                })
+                .collect()
         };
         // 基础变量（数据行覆盖；环境行在 run rows 独立解析）——这里按行预解析。
         let mut row_vars: Vec<HashMap<String, String>> = Vec::with_capacity(args.rows.len());
@@ -732,56 +694,32 @@ pub async fn run_scenario_matrix(
             let materialize = |steps_args: &[ScenarioStepArgs],
                                vars: &HashMap<String, String>|
              -> Result<Vec<ScenarioStepInput>, CommandError> {
-                let mut out = Vec::with_capacity(steps_args.len());
-                for (i, step) in steps_args.iter().enumerate() {
-                    let mut spec = step.endpoint.request.clone();
-                    crate::commands::request::apply_global_params(&mut spec, &global_params, vars);
-                    let config =
-                        miyo_test::config::TestSpec::from_request_value(Some(&serde_json::json!({
-                            "extract": step.extract,
-                            "assertions": step.assertions,
-                        })))
-                        .map_err(|e| {
-                            CommandError::validation(format!(
-                                "第 {} 步的提取/断言配置无效：{e}",
-                                i + 1
-                            ))
-                        })?;
-                    let condition = step
-                        .condition
-                        .as_ref()
-                        .map(|v| {
-                            serde_json::from_value::<miyo_test::config::StepCondition>(v.clone())
-                        })
-                        .transpose()
-                        .map_err(|e| {
-                            CommandError::validation(format!("第 {} 步的执行条件无效：{e}", i + 1))
-                        })?;
-                    let r#loop = step
-                        .r#loop
-                        .as_ref()
-                        .map(|v| serde_json::from_value::<miyo_test::config::StepLoop>(v.clone()))
-                        .transpose()
-                        .map_err(|e| {
-                            CommandError::validation(format!("第 {} 步的循环配置无效：{e}", i + 1))
-                        })?;
-                    out.push(ScenarioStepInput {
-                        endpoint: step.endpoint.clone(),
-                        url_template: step.url.clone(),
-                        spec_template: spec,
-                        retry: step.retry.clone(),
-                        extract: config.extract,
-                        assertions: config.assertions,
-                        enabled: step.enabled,
-                        condition,
-                        r#loop,
-                        wait_ms: step
-                            .wait_ms
-                            .map(|w| w.min(miyo_test::config::StepLoop::MAX_INTERVAL_MS)),
-                        parallel: step.parallel,
-                    });
-                }
-                Ok(out)
+                steps_args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, step)| {
+                        miyo_test::materialize::materialize_step(
+                            miyo_test::materialize::StepMaterialInput {
+                                endpoint: step.endpoint.clone(),
+                                url_template: step.url.clone(),
+                                extract_json: step.extract.clone(),
+                                assertions_json: step.assertions.clone(),
+                                condition_json: step.condition.clone(),
+                                loop_json: step.r#loop.clone(),
+                                retry: step.retry.clone(),
+                                enabled: step.enabled,
+                                wait_ms: step.wait_ms,
+                                parallel: step.parallel,
+                                overrides_json: None,
+                                auto_idempotency_key: None,
+                                step_label: format!("第 {} 步", i + 1),
+                            },
+                            &global_params,
+                            vars,
+                        )
+                        .map_err(CommandError::validation)
+                    })
+                    .collect()
             };
             let mut steps = materialize(&args.steps, &vars)?;
             let setup_steps = materialize(&args.setup, &vars)?;

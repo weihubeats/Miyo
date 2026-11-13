@@ -4,6 +4,7 @@ pub mod assert;
 pub mod config;
 pub mod extract;
 pub mod load;
+pub mod materialize;
 pub mod report;
 pub mod runner;
 
