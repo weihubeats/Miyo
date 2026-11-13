@@ -3055,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "miyo"
-version = "0.0.57"
+version = "0.0.58"
 dependencies = [
  "miyo-tauri",
  "serde",
