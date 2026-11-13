@@ -6,13 +6,13 @@
  *   errorComponent 只拿得到 error prop）；
  * - 自动重试一次：WebView 偶发的 chunk 拉取抖动不该直接把用户拍在错误页。
  *
- * 用法：`const Foo = lazyComponent(() => import('./Foo.vue'))`。
+ * 用法：`const Foo = lazyComponent(() => import('@/composables/Foo.vue'))`。
  * 仅用于「打开才出现」或常驻但不在首屏关键路径的面板；首屏骨架 / 响应区保持同步，
  * 否则会出现一帧占位或测试需额外等待。
  */
 import { defineAsyncComponent, h, type AsyncComponentLoader, type Component } from 'vue'
-import Skeleton from '../components/ui/Skeleton.vue'
-import { useLocaleStore } from '../stores/locale'
+import Skeleton from '@/components/ui/Skeleton.vue'
+import { useLocaleStore } from '@/stores/locale'
 
 /** 错误对象 → 重试函数：错误层只能拿到 error prop，用它反查 retry 通道。 */
 const retryByError = new WeakMap<Error, () => void>()

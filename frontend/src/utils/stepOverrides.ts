@@ -3,7 +3,7 @@
  * miyo-core::apply_step_overrides 一致——params/headers/path_variables
  * 按 key 合并（header 键大小写不敏感），body 整体替换）。
  */
-import type { KeyValue, RequestSpec, StepOverrides } from '../types/miyoApi'
+import type { KeyValue, RequestSpec, StepOverrides } from '@/types/miyoApi'
 
 /** 应用覆盖到请求规格（原地修改）。非法 overrides 抛错（保存期拦截兜底）。 */
 export function applyStepOverrides(spec: RequestSpec, overrides: StepOverrides | null | undefined): void {

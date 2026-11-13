@@ -3,8 +3,8 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { KeyValue, RequestSpec, TestCase } from '../types/miyoApi'
-import { useLocaleStore } from '../stores/locale'
+import type { KeyValue, RequestSpec, TestCase } from '@/types/miyoApi'
+import { useLocaleStore } from '@/stores/locale'
 import {
   applyCaseToRequest,
   bodyContentOf,
@@ -17,7 +17,7 @@ import {
   snapshotRequest,
   statusTextOf,
   statusToneOf,
-} from './testCases'
+} from '@/utils/testCases'
 
 function req(overrides: Partial<RequestSpec> = {}): RequestSpec {
   return {

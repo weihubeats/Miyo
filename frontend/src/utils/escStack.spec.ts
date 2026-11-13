@@ -4,7 +4,7 @@
  * ESC 只关子弹层，不连外层一起关（此前 document 双监听无仲裁即此缺陷）。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { pushEscHandler } from './escStack'
+import { pushEscHandler } from '@/utils/escStack'
 
 function esc(target: Window | Document = window): void {
   target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))

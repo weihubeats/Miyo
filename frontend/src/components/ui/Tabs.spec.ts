@@ -4,8 +4,8 @@
  */
 import { describe, expect, it, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import Tabs from './Tabs.vue'
-import type { TabItem } from './Tabs.vue'
+import Tabs from '@/components/ui/Tabs.vue'
+import type { TabItem } from '@/components/ui/Tabs.vue'
 
 const TABS: TabItem[] = [
   { key: 'request', label: '请求' },

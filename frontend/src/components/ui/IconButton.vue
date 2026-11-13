@@ -3,8 +3,8 @@
  * IconButton：图标按钮（default/hover/focus/active/disabled × 深/浅双主题）。
  * 28×28 触点、圆角 6、text-2 常态 → hover 提升；tone=danger/accent 语义色。
  */
-import Icon from './Icon.vue'
-import type { IconName } from './Icon.vue'
+import Icon from '@/components/ui/Icon.vue'
+import type { IconName } from '@/components/ui/Icon.vue'
 
 withDefaults(
   defineProps<{

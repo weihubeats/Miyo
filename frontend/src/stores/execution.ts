@@ -15,7 +15,7 @@
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ExecuteResponse, GrpcResponse } from '../types/miyoApi'
+import type { ExecuteResponse, GrpcResponse } from '@/types/miyoApi'
 
 /** 每桶上限（响应 / 错误 / 最近 request_id 同规格）。 */
 export const RESPONSE_BUCKET_MAX = 10

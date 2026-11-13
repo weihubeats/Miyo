@@ -3,7 +3,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { translate, useLocaleStore } from './locale'
+import { translate, useLocaleStore } from '@/stores/locale'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -42,8 +42,8 @@ describe('locale store', () => {
   })
 
   it('中英文字典键完全一致', async () => {
-    const { zh } = await import('../i18n/zh')
-    const { en } = await import('../i18n/en')
+    const { zh } = await import('@/i18n/zh')
+    const { en } = await import('@/i18n/en')
     expect(Object.keys(en).sort()).toEqual(Object.keys(zh).sort())
   })
 })

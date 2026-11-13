@@ -4,7 +4,7 @@ import {
   planSameGroupMove,
   wouldCreateCycle,
   type Orderable,
-} from './treeOps'
+} from '@/stores/treeOps'
 
 function group(...orders: number[]): Orderable[] {
   return orders.map((o, i) => ({ id: `i${i}`, sort_order: o }))

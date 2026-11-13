@@ -5,8 +5,8 @@
  * Rust camelCase 序列化导致仪表板统计全为 0 的事故）。
  */
 import { describe, expect, it } from 'vitest'
-import { aggregateProjectStats, sumCounts, totalEndpointCount } from './projectStats'
-import type { ProjectStat } from '../types/miyoApi'
+import { aggregateProjectStats, sumCounts, totalEndpointCount } from '@/utils/projectStats'
+import type { ProjectStat } from '@/types/miyoApi'
 
 const snakeStats: ProjectStat[] = [
   {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { applyPolicy, detectPolicy, OVERRIDE_POLICIES, policyLabelKey } from './overridePolicy'
-import type { RequestSpec, StepOverrides } from '../types/miyoApi'
+import { applyPolicy, detectPolicy, OVERRIDE_POLICIES, policyLabelKey } from '@/utils/overridePolicy'
+import type { RequestSpec, StepOverrides } from '@/types/miyoApi'
 
 function spec(patch: Partial<RequestSpec> = {}): RequestSpec {
   return {

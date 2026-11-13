@@ -8,7 +8,7 @@
  */
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { zh, type ZhKey } from '../i18n/zh'
+import { zh, type ZhKey } from '@/i18n/zh'
 
 export type LocaleMode = 'system' | 'zh' | 'en'
 export type ResolvedLocale = 'zh' | 'en'
@@ -38,7 +38,7 @@ export function hasLocale(locale: ResolvedLocale): boolean {
 export function loadLocale(locale: ResolvedLocale): Promise<void> {
   if (locale === 'zh' || enDict) return Promise.resolve()
   if (!enLoading) {
-    enLoading = import('../i18n/en')
+    enLoading = import('@/i18n/en')
       .then((mod) => {
         enDict = mod.en as unknown as Dict
       })

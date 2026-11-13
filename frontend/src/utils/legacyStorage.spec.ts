@@ -1,5 +1,5 @@
 import { describe, expect, beforeEach, it } from 'vitest'
-import { migrateLegacyStorageKeys } from './legacyStorage'
+import { migrateLegacyStorageKeys } from '@/utils/legacyStorage'
 
 describe('migrateLegacyStorageKeys（品牌更名 localStorage 迁移）', () => {
   beforeEach(() => {

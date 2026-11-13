@@ -8,14 +8,14 @@
  * - 深色底色 #121318，聚焦时 1px 紫色光晕（原 3px 重描边移除）。
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useToast } from '../../composables/useToast'
-import { useLocaleStore } from '../../stores/locale'
-import { copyText } from '../../utils/clipboard'
-import { highlightJSON, highlightJSONText } from '../../utils/highlight'
-import { handleTextareaTab } from '../../utils/textareaIndent'
-import { compactJson, prettyJson } from '../../utils/jsonFormat'
-import { JsonFormatError } from '../../utils/jsonFormat'
-import Icon from './Icon.vue'
+import { useToast } from '@/composables/useToast'
+import { useLocaleStore } from '@/stores/locale'
+import { copyText } from '@/utils/clipboard'
+import { highlightJSON, highlightJSONText } from '@/utils/highlight'
+import { handleTextareaTab } from '@/utils/textareaIndent'
+import { compactJson, prettyJson } from '@/utils/jsonFormat'
+import { JsonFormatError } from '@/utils/jsonFormat'
+import Icon from '@/components/ui/Icon.vue'
 
 const props = withDefaults(
   defineProps<{

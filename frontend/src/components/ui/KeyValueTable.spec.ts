@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import KeyValueTable, { type KVRow } from './KeyValueTable.vue'
-import { useLocaleStore } from '../../stores/locale'
+import KeyValueTable, { type KVRow } from '@/components/ui/KeyValueTable.vue'
+import { useLocaleStore } from '@/stores/locale'
 
 let wrapper: VueWrapper | null = null
 

@@ -12,12 +12,12 @@
 import { defineStore } from 'pinia'
 import { computed, markRaw, nextTick, ref, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { useMiyoApi } from '../composables/useMiyoApi'
-import { useToast } from '../composables/useToast'
-import { useLocaleStore } from './locale'
-import { planCrossGroupMove, planSameGroupMove, wouldCreateCycle } from './treeOps'
-import { deepClone } from '../utils/clone'
-import { splitUrl } from '../utils/url'
+import { useMiyoApi } from '@/composables/useMiyoApi'
+import { useToast } from '@/composables/useToast'
+import { useLocaleStore } from '@/stores/locale'
+import { planCrossGroupMove, planSameGroupMove, wouldCreateCycle } from '@/stores/treeOps'
+import { deepClone } from '@/utils/clone'
+import { splitUrl } from '@/utils/url'
 import {
   BUILTIN_VARIABLES,
   envBaseUrl,
@@ -26,9 +26,9 @@ import {
   requestTemplateTexts,
   resolveRequestUrl,
   resolveVariables,
-} from '../utils/environment'
-import { applyCaseToRequest, restoreBody, snapshotRequest } from '../utils/testCases'
-import { applyPathVars } from '../utils/pathVariables'
+} from '@/utils/environment'
+import { applyCaseToRequest, restoreBody, snapshotRequest } from '@/utils/testCases'
+import { applyPathVars } from '@/utils/pathVariables'
 import type {
   AuthSpec,
   CurlParsed,
@@ -54,7 +54,7 @@ import type {
   TestCase,
   TestCaseCategory,
   TestCaseStatus,
-} from '../types/miyoApi'
+} from '@/types/miyoApi'
 
 /**
  * 后端内置默认超时（毫秒）。镜像 miyo-http::client::DEFAULT_TIMEOUT_MS（300s）：
@@ -2677,5 +2677,5 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 })
 
-import type { Folder as FolderInput } from '../types/miyoApi'
-import { errorText } from '../utils/errorText'
+import type { Folder as FolderInput } from '@/types/miyoApi'
+import { errorText } from '@/utils/errorText'

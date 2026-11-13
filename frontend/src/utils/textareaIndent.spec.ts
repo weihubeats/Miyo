@@ -2,7 +2,7 @@
  * textareaIndent 单测：Tab 缩进 / Shift+Tab 反缩进 / input 事件派发。
  */
 import { describe, expect, it, vi } from 'vitest'
-import { handleTextareaTab } from './textareaIndent'
+import { handleTextareaTab } from '@/utils/textareaIndent'
 
 function ta(value: string, start: number, end: number): HTMLTextAreaElement {
   const el = document.createElement('textarea')

@@ -4,8 +4,8 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { detectLang, parseCodeSnippet } from './codeImport'
-import { useLocaleStore } from '../stores/locale'
+import { detectLang, parseCodeSnippet } from '@/utils/codeImport'
+import { useLocaleStore } from '@/stores/locale'
 
 beforeEach(() => {
   setActivePinia(createPinia())

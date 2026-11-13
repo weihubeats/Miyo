@@ -2,7 +2,7 @@
  * English dictionary. Keys must stay 1:1 with zh.ts
  * (locale.spec.ts fails the suite on any mismatch).
  */
-import type { ZhKey } from './zh'
+import type { ZhKey } from '@/i18n/zh'
 
 export const en: Record<ZhKey, string> = {
   'app.tagline': 'API Testing Toolkit',

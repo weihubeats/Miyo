@@ -1,6 +1,6 @@
 /** schemaInfer：JSON 样本 → 树状 Schema 行（文档预览 Tree Table 数据源）。 */
 import { describe, expect, it } from 'vitest'
-import { exampleText, inferSchema, mockJsonFromSchema, typeLabelOf } from './schemaInfer'
+import { exampleText, inferSchema, mockJsonFromSchema, typeLabelOf } from '@/utils/schemaInfer'
 
 describe('inferSchema 嵌套对象', () => {
   it(' payer/payee 嵌套对象下钻为 children，叶子带示例值', () => {

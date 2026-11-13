@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import Menu from './Menu.vue'
-import { useLocaleStore } from '../../stores/locale'
+import Menu from '@/components/ui/Menu.vue'
+import { useLocaleStore } from '@/stores/locale'
 
 function mountMenu() {
   const wrapper = mount(Menu, { attachTo: document.body })

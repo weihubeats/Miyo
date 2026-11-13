@@ -11,8 +11,8 @@
  * Body 的真源在接口——解析结果携带它们仅供比对与匹配，回写只覆盖
  * 步骤自有字段（extract / assertions / 步骤增删）。
  */
-import type { ScenarioAssertionRule, ScenarioExtractRule } from '../types/miyoApi'
-import { tFallback } from '../stores/locale'
+import type { ScenarioAssertionRule, ScenarioExtractRule } from '@/types/miyoApi'
+import { tFallback } from '@/stores/locale'
 
 /** 解析失败：message 携带行号与原因（toast 直接可读）。 */
 export class ScriptParseError extends Error {

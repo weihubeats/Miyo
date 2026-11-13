@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { applyPathVars, extractPathVarNames } from './pathVariables'
+import { applyPathVars, extractPathVarNames } from '@/utils/pathVariables'
 
 /**
  * 路径变量公共逻辑回归。

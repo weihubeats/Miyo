@@ -10,9 +10,9 @@
  *   danger=false 时为普通确认（accent 徽章 + 主色确认键）。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { pushEscHandler } from '../../utils/escStack'
-import { useLocaleStore } from '../../stores/locale'
-import Icon from './Icon.vue'
+import { pushEscHandler } from '@/utils/escStack'
+import { useLocaleStore } from '@/stores/locale'
+import Icon from '@/components/ui/Icon.vue'
 
 const props = withDefaults(
   defineProps<{

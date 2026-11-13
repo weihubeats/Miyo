@@ -3,7 +3,7 @@
  * 锁定：标题/列表/行内样式/链接白名单、HTML 转义、代码块原文输出、段内换行。
  */
 import { describe, expect, it } from 'vitest'
-import { renderMarkdownLite } from './markdownLite'
+import { renderMarkdownLite } from '@/utils/markdownLite'
 
 describe('renderMarkdownLite', () => {
   it('空文返回空串', () => {

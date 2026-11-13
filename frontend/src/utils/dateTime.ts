@@ -8,7 +8,7 @@
  * - 显式模式：映射到 zh-CN / en-US；
  * - 在渲染上下文调用会建立对 locale store 的响应式依赖，切语言即时刷新。
  */
-import { useLocaleStore } from '../stores/locale'
+import { useLocaleStore } from '@/stores/locale'
 
 /** 当前生效的 BCP 47 语言标签。无活动 Pinia（纯函数单测）时回退中文。 */
 export function localeTag(): string {

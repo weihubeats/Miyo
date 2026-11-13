@@ -10,7 +10,7 @@ vi.mock('sortablejs', () => ({
   Swap: class Swap {},
 }))
 
-import { ensureSwapMounted } from './sortable'
+import { ensureSwapMounted } from '@/utils/sortable'
 
 afterEach(() => {
   vi.clearAllMocks()

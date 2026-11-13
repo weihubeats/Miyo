@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fuzzyScore } from './fuzzyMatch'
+import { fuzzyScore } from '@/utils/fuzzyMatch'
 
 describe('fuzzyScore', () => {
   it('空查询得 0 分（调用方自行处理列全量）', () => {

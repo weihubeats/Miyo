@@ -8,8 +8,8 @@
  * Ctrl/Cmd+Alt+Enter = 全部替换，Esc = 关闭整个查找条。
  */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useLocaleStore } from '../../stores/locale'
-import Icon from './Icon.vue'
+import { useLocaleStore } from '@/stores/locale'
+import Icon from '@/components/ui/Icon.vue'
 
 const locale = useLocaleStore()
 const t = locale.t

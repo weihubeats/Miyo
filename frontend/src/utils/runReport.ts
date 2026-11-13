@@ -5,8 +5,8 @@
  * 重构）；敏感值沿用落库脱敏口径（历史结果已打码，实时结果的请求快照在
  * 导出时按敏感键名再过滤一次）。
  */
-import type { ScenarioRunResult, ScenarioStepResult } from '../types/miyoApi'
-import { EXPORT_PLACEHOLDER, isSensitiveKeyName, redactJsonText, redactUrlQuery } from './exportRedact'
+import type { ScenarioRunResult, ScenarioStepResult } from '@/types/miyoApi'
+import { EXPORT_PLACEHOLDER, isSensitiveKeyName, redactJsonText, redactUrlQuery } from '@/utils/exportRedact'
 
 
 /** 步骤状态的可读文本。 */

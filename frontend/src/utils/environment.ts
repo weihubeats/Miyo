@@ -9,8 +9,8 @@
  * - resolveVariables：镜像 miyo-core variable.rs 的 `{{name}}` 单层递归解析（深度上限 10）。
  */
 
-import type { Endpoint, Environment } from '../types/miyoApi'
-import { extractVarRefs } from './scenarioVars'
+import type { Endpoint, Environment } from '@/types/miyoApi'
+import { extractVarRefs } from '@/utils/scenarioVars'
 
 /** 环境名称 → 颜色类（映射类名，颜色值由调用方 scoped CSS 定义）。 */
 export function envColorClass(name: string): string {

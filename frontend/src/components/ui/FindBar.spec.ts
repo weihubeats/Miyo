@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import FindBar from './FindBar.vue'
-import { useLocaleStore } from '../../stores/locale'
+import FindBar from '@/components/ui/FindBar.vue'
+import { useLocaleStore } from '@/stores/locale'
 
 function mountBar(props: Record<string, unknown> = {}) {
   return mount(

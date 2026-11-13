@@ -3,7 +3,7 @@
  * 关键字 / 字符串 / 注释 / flag / 宏着色，且所有文本先 HTML 转义。
  */
 import { describe, expect, it } from 'vitest'
-import { escapeHtml, highlightCode, highlightJSON, highlightJSONText, jsonTokens } from './highlight'
+import { escapeHtml, highlightCode, highlightJSON, highlightJSONText, jsonTokens } from '@/utils/highlight'
 
 describe('highlightCode：JavaScript', () => {
   it('关键字、字符串、数字分别着色', () => {

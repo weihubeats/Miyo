@@ -8,8 +8,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h } from 'vue'
-import Popconfirm from './Popconfirm.vue'
-import { useLocaleStore } from '../../stores/locale'
+import Popconfirm from '@/components/ui/Popconfirm.vue'
+import { useLocaleStore } from '@/stores/locale'
 
 /** 挂一个带默认插槽的 Popconfirm，返回 wrapper；气泡被 Teleport 到 body。 */
 function mountWithSlot(slot: () => ReturnType<typeof h>) {

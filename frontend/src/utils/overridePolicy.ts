@@ -14,7 +14,7 @@
  * 三态在数据上只是 `overrides` 的不同内容，**没有新增持久化字段**，因此
  * ScenarioStep 序列化保持兼容，MCP 契约不变。
  */
-import type { KeyValue, RequestSpec, StepOverrides } from '../types/miyoApi'
+import type { KeyValue, RequestSpec, StepOverrides } from '@/types/miyoApi'
 
 export type OverridePolicy = 'inherit' | 'merge' | 'replace'
 

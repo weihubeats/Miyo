@@ -11,7 +11,7 @@ import {
   redactKeyValuePairs,
   redactSpecForExport,
   redactUrlQuery,
-} from './exportRedact'
+} from '@/utils/exportRedact'
 
 describe('isSensitiveKeyName', () => {
   it('内建词根命中（大小写不敏感）', () => {

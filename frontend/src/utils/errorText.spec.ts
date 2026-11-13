@@ -5,7 +5,7 @@
  * 只剩 "[object Object]"，真实原因丢失。
  */
 import { describe, expect, it } from 'vitest'
-import { errorCode, errorText } from './errorText'
+import { errorCode, errorText } from '@/utils/errorText'
 
 describe('errorText', () => {
   it('Error 实例取 message', () => {

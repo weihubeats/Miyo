@@ -4,8 +4,8 @@
  */
 import { describe, expect, it, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import SegmentedControl from './SegmentedControl.vue'
-import type { SegmentOption } from './SegmentedControl.vue'
+import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import type { SegmentOption } from '@/components/ui/SegmentedControl.vue'
 
 const OPTIONS: SegmentOption[] = [
   { value: 'form', label: 'form-data' },

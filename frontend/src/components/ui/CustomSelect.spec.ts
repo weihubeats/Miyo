@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import CustomSelect from './CustomSelect.vue'
-import { useLocaleStore } from '../../stores/locale'
+import CustomSelect from '@/components/ui/CustomSelect.vue'
+import { useLocaleStore } from '@/stores/locale'
 
 const OPTIONS = [
   { value: '', label: '默认模块' },

@@ -31,8 +31,8 @@ function cssBlock(css: string, selector: string): string {
 }
 
 /** 抽取 `<BodyPanel … />` 之外的源码（模板断言用）。 */
-const endpointEditor = read('src/components/EndpointEditor.vue')
-const bodyPanel = read('src/components/BodyPanel.vue')
+const endpointEditor = read('src/domains/endpoint/components/EndpointEditor.vue')
+const bodyPanel = read('src/domains/endpoint/components/BodyPanel.vue')
 
 describe('请求卡高度契约', () => {
   it('.config-box.grow 带 min-height 保底（矮窗口不压扁 Body 编辑区）', () => {

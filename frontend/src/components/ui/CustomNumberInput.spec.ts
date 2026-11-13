@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import CustomNumberInput from './CustomNumberInput.vue'
-import { useLocaleStore } from '../../stores/locale'
+import CustomNumberInput from '@/components/ui/CustomNumberInput.vue'
+import { useLocaleStore } from '@/stores/locale'
 
 function mountInput(props: Record<string, unknown> = {}) {
   return mount(

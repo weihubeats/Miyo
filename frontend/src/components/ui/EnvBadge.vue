@@ -5,9 +5,9 @@
  * 哪个环境」——运行链路统一取 store.activeEnvId，此处同源展示。
  */
 import { computed } from 'vue'
-import { useWorkspaceStore } from '../../stores/workspace'
-import { useLocaleStore } from '../../stores/locale'
-import { envBaseUrl, envColorClass } from '../../utils/environment'
+import { useWorkspaceStore } from '@/stores/workspace'
+import { useLocaleStore } from '@/stores/locale'
+import { envBaseUrl, envColorClass } from '@/utils/environment'
 
 const store = useWorkspaceStore()
 const locale = useLocaleStore()

@@ -9,12 +9,12 @@
  *   （调用方放批量编辑 / 抽取等同级操作，避免两层工具栏）。
  */
 import { computed, nextTick, ref, watch, type ComponentPublicInstance } from 'vue'
-import { useLocaleStore } from '../../stores/locale'
-import { useVarAutocomplete } from '../../composables/useVarAutocomplete'
-import { rowKey } from '../../utils/rowKey'
-import IconButton from './IconButton.vue'
-import Icon from './Icon.vue'
-import VarSuggest from './VarSuggest.vue'
+import { useLocaleStore } from '@/stores/locale'
+import { useVarAutocomplete } from '@/domains/endpoint/composables/useVarAutocomplete'
+import { rowKey } from '@/utils/rowKey'
+import IconButton from '@/components/ui/IconButton.vue'
+import Icon from '@/components/ui/Icon.vue'
+import VarSuggest from '@/components/ui/VarSuggest.vue'
 
 export interface KVRow {
   key?: string

@@ -9,7 +9,7 @@
  * scenario_count / request_count 为后发字段：缺省（旧载荷）按 0 计，
  * 不作为条目有效性判据（有效判据仍以 endpoint_count 为准）。
  */
-import type { HttpMethod, ProjectStat } from '../types/miyoApi'
+import type { HttpMethod, ProjectStat } from '@/types/miyoApi'
 
 export interface LatestEndpoint {
   method: HttpMethod

@@ -4,17 +4,17 @@
  */
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import App from './App.vue'
-import router from './router'
-import { useThemeStore } from './stores/theme'
-import { useLocaleStore } from './stores/locale'
-import { migrateLegacyStorageKeys } from './utils/legacyStorage'
+import App from '@/App.vue'
+import router from '@/router'
+import { useThemeStore } from '@/stores/theme'
+import { useLocaleStore } from '@/stores/locale'
+import { migrateLegacyStorageKeys } from '@/utils/legacyStorage'
 // 字体：仅 latin 子集 + 仅 woff2 + 400/500/700（原 8 个 fontsource 入口产出
 // 44 个 woff/woff2 共 760KB，占 dist 约 1/3），声明见 fonts.css。
 import './fonts.css'
 import './style.css'
-import tooltipOverflow from './directives/tooltipOverflow'
-import focusEnd from './directives/focusEnd'
+import tooltipOverflow from '@/directives/tooltipOverflow'
+import focusEnd from '@/directives/focusEnd'
 
 // macOS 无边框标题栏（Overlay）：标记平台，供全局 CSS 为顶部栏预留交通灯空间。
 if (navigator.userAgent.includes('Mac')) {

@@ -2,7 +2,7 @@
 /**
  * MethodText：HTTP 方法彩色文本标识（mono、加粗、语义色；双主题跟随令牌）。
  */
-import { methodTextTone } from '../../utils/methodTone'
+import { methodTextTone } from '@/utils/methodTone'
 
 withDefaults(defineProps<{ method: string }>(), {})
 </script>

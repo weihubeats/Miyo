@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitUrl, protocolFromDomain, stripProtocol, withProtocol, isCurlCommand } from './url'
+import { splitUrl, protocolFromDomain, stripProtocol, withProtocol, isCurlCommand } from '@/utils/url'
 
 describe('splitUrl', () => {
   it('完整 URL 拆出路径、查询参数与 origin', () => {

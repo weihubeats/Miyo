@@ -9,7 +9,7 @@ import {
   jsonPathToJs,
   urlTemplateToJs,
   type ScriptStep,
-} from './scenarioScript'
+} from '@/utils/scenarioScript'
 
 /** 一致性测试的步骤构造器：缺省字段统一物化（生成器同款容错）。 */
 function step(partial: Partial<ScriptStep> & Pick<ScriptStep, 'name' | 'method' | 'url'>): ScriptStep {

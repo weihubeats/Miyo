@@ -20,7 +20,7 @@
  *
  * 返回项带 `stepIndex`（-1 = 场景级）与 `field`，宿主据此定位到步骤与页签。
  */
-import { extractVarRefs } from './scenarioVars'
+import { extractVarRefs } from '@/utils/scenarioVars'
 
 /** 定位锚点：步骤页签（`control` = 条件 / 循环 / 等待）。 */
 export type ValidateField = 'request' | 'control' | 'extract' | 'assert' | 'vars' | 'general'

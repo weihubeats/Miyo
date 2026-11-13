@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { RequestSpec } from '../types/miyoApi'
-import { applyMethodDefaults, envBadgeLabel, envBadgeTooltip, methodNeedsBody, smartTabFor } from './requestBar'
+import type { RequestSpec } from '@/types/miyoApi'
+import { applyMethodDefaults, envBadgeLabel, envBadgeTooltip, methodNeedsBody, smartTabFor } from '@/utils/requestBar'
 
 function req(overrides: Partial<RequestSpec> = {}): RequestSpec {
   return {

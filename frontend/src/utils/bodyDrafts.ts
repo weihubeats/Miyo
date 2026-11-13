@@ -16,9 +16,9 @@
  *
  * 仅会话内记忆，不写进后端 BodySpec 契约；限制记住的接口数避免无限堆积。
  */
-import { contentTypeOf, removeContentType, syncContentType, tabOf, rawMime, rawSubtypeOf } from './bodyMode'
-import type { BodyTab, RawSubtype } from './bodyMode'
-import type { BodySpec, Endpoint, GraphQLSpec, KeyValue } from '../types/miyoApi'
+import { contentTypeOf, removeContentType, syncContentType, tabOf, rawMime, rawSubtypeOf } from '@/utils/bodyMode'
+import type { BodyTab, RawSubtype } from '@/utils/bodyMode'
+import type { BodySpec, Endpoint, GraphQLSpec, KeyValue } from '@/types/miyoApi'
 
 /** 某个接口各页签的草稿 + raw 子类型。`slots` 里存的就是活对象（= 该页签激活时的 request.body）。 */
 export interface BodyDrafts {

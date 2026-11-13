@@ -6,7 +6,7 @@
  * - 树节点自带 description / required，序列化时 flatten 成 `Record<pointer, FieldDoc>`；
  * - 发送 / Mock 忽略 docs，仅设计页消费。
  */
-import type { FieldDoc } from '../types/miyoApi'
+import type { FieldDoc } from '@/types/miyoApi'
 
 export type JsonTreeType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'null'
 

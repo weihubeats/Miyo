@@ -17,8 +17,8 @@
  *   敏感名（见 isSensitiveVarName）一律引用环境变量，不把本机真实
  *   密钥写进导出脚本。
  */
-import type { ScenarioAssertionRule, ScenarioExtractRule } from '../types/miyoApi'
-import { isSensitiveVarName } from './scenarioVars'
+import type { ScenarioAssertionRule, ScenarioExtractRule } from '@/types/miyoApi'
+import { isSensitiveVarName } from '@/utils/scenarioVars'
 export { isSensitiveVarName }
 
 /** 生成脚本的步骤输入（从编辑态物化：只带启用行）。 */

@@ -7,9 +7,9 @@
  * - 打开期间锁定 body 滚动；Teleport 到 body，双主题。
  */
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { useLocaleStore } from '../../stores/locale'
-import { pushEscHandler } from '../../utils/escStack'
-import IconButton from './IconButton.vue'
+import { useLocaleStore } from '@/stores/locale'
+import { pushEscHandler } from '@/utils/escStack'
+import IconButton from '@/components/ui/IconButton.vue'
 
 const props = withDefaults(
   defineProps<{

@@ -7,7 +7,7 @@
  * 保序、保重键、保数字原文的语法树做纯文本排版：输出风格与
  * `JSON.stringify(x, null, 2)` 完全一致，但完整保留上述信息。
  */
-import { tFallback } from '../stores/locale'
+import { tFallback } from '@/stores/locale'
 
 /** 解析 / 排版失败（错误消息含位置信息，随当前语言展示）。 */
 export class JsonFormatError extends Error {}

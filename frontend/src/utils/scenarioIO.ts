@@ -10,8 +10,8 @@ import type {
   Scenario,
   ScenarioInlineRequest,
   ScenarioStep,
-} from '../types/miyoApi'
-import { redactSpecForExport } from './exportRedact'
+} from '@/types/miyoApi'
+import { redactSpecForExport } from '@/utils/exportRedact'
 
 /** 导出文件的结构标记与版本（向后兼容留位）。 */
 const EXPORT_MAGIC = 'miyo.scenario'

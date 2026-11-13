@@ -5,8 +5,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import JsonEditor from './JsonEditor.vue'
-import { useLocaleStore } from '../../stores/locale'
+import JsonEditor from '@/components/ui/JsonEditor.vue'
+import { useLocaleStore } from '@/stores/locale'
 
 beforeEach(() => {
   setActivePinia(createPinia())

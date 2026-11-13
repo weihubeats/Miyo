@@ -7,7 +7,7 @@ import {
   normalizeCurlCommand,
   pickPathToken,
   setFieldValueAt,
-} from './urlBar'
+} from '@/utils/urlBar'
 
 describe('pickPathToken', () => {
   it('裸路径原样保留', () => {

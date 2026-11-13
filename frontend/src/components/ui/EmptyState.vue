@@ -2,10 +2,10 @@
 /**
  * EmptyState：空态（图标 + 标题 + 描述 + 操作插槽）。
  */
-import Icon from './Icon.vue'
-import type { IconName } from './Icon.vue'
+import Icon from '@/components/ui/Icon.vue'
+import type { IconName } from '@/components/ui/Icon.vue'
 import { computed } from 'vue'
-import { useLocaleStore } from '../../stores/locale'
+import { useLocaleStore } from '@/stores/locale'
 
 const props = withDefaults(
   defineProps<{

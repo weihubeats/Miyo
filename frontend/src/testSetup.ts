@@ -1,4 +1,4 @@
-import { preloadBootLocale } from './stores/locale'
+import { preloadBootLocale } from '@/stores/locale'
 
 /**
  * vitest setup：修复 Node ≥24 实验性全局 localStorage 残缺问题。

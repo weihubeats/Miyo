@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Environment } from '../types/miyoApi'
+import type { Environment } from '@/types/miyoApi'
 import {
   BUILTIN_VARIABLES,
   effectiveVariable,
@@ -17,8 +17,8 @@ import {
   resolveVariables,
   validateBaseUrl,
   variableListToMap,
-} from './environment'
-import type { Endpoint, KeyValue } from '../types/miyoApi'
+} from '@/utils/environment'
+import type { Endpoint, KeyValue } from '@/types/miyoApi'
 
 function mkEnv(overrides: Partial<Environment> = {}): Environment {
   return {

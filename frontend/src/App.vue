@@ -9,16 +9,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import ToastHost from './components/ToastHost.vue'
-import ProgressBar from './components/ProgressBar.vue'
-import Brand from './components/Brand.vue'
-import AboutDialog from './components/AboutDialog.vue'
-import ReleaseNotesModal from './components/ReleaseNotesModal.vue'
-import { useToast } from './composables/useToast'
-import { useProgress } from './composables/useProgress'
-import { useLocaleStore } from './stores/locale'
-import { startAutoUpdate, openAboutSignal, openReleaseSignal } from './composables/useAutoUpdate'
-import { errorText } from './utils/errorText'
+import ToastHost from '@/domains/workspace/components/ToastHost.vue'
+import ProgressBar from '@/domains/workspace/components/ProgressBar.vue'
+import Brand from '@/domains/workspace/components/Brand.vue'
+import AboutDialog from '@/domains/workspace/components/AboutDialog.vue'
+import ReleaseNotesModal from '@/domains/workspace/components/ReleaseNotesModal.vue'
+import { useToast } from '@/composables/useToast'
+import { useProgress } from '@/composables/useProgress'
+import { useLocaleStore } from '@/stores/locale'
+import { startAutoUpdate, openAboutSignal, openReleaseSignal } from '@/domains/workspace/composables/useAutoUpdate'
+import { errorText } from '@/utils/errorText'
 
 const toast = useToast()
 const locale = useLocaleStore()
@@ -128,7 +128,7 @@ onMounted(async () => {
       if (getCurrentWindow().label === 'main') {
         const { ask } = await import('@tauri-apps/plugin-dialog')
         unlistenClose = await getCurrentWindow().onCloseRequested(async (event) => {
-          const { useWorkspaceStore } = await import('./stores/workspace')
+          const { useWorkspaceStore } = await import('@/stores/workspace')
           if (quitAnyway || !useWorkspaceStore().hasDirtyDrafts()) return
           event.preventDefault()
           const quit = await ask(t('app.quitDirtyConfirm'), {

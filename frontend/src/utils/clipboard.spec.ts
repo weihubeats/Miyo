@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { copyText } from './clipboard'
+import { copyText } from '@/utils/clipboard'
 
 // hoisted mock：拦截 utils 内动态 import('@tauri-apps/api/core')。
 const { invoke: mockInvoke } = vi.hoisted(() => ({ invoke: vi.fn() }))

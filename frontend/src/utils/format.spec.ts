@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatDuration, formatDurationShort } from './format'
+import { formatBytes, formatDuration, formatDurationShort } from '@/utils/format'
 
 describe('formatDuration', () => {
   it('空值与 NaN 显示占位符', () => {

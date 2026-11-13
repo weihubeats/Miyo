@@ -14,7 +14,7 @@ import {
   shortcutDef,
   shortcutGroups,
   shortcutLabel,
-} from './useShortcuts'
+} from '@/composables/useShortcuts'
 
 function keydown(init: KeyboardEventInit): void {
   window.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))

@@ -1,4 +1,4 @@
-import type { AuthSpec, BodySpec, Endpoint, HttpMethod, KeyValue } from '../types/miyoApi'
+import type { AuthSpec, BodySpec, Endpoint, HttpMethod, KeyValue } from '@/types/miyoApi'
 
 /** 构造一个最小可用的接口草稿（含请求配置），供组件测试使用。 */
 export function makeDraft(overrides: Partial<Endpoint> = {}): Endpoint {

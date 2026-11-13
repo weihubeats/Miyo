@@ -9,10 +9,10 @@ import type {
   Endpoint,
   Scenario,
   ScenarioStep,
-} from '../types/miyoApi'
-import { tFallback } from '../stores/locale'
-import { applyStepOverrides, applyUrlOverride } from './stepOverrides'
-import type { BuiltRunStep } from '../composables/useScenarioRun'
+} from '@/types/miyoApi'
+import { tFallback } from '@/stores/locale'
+import { applyStepOverrides, applyUrlOverride } from '@/utils/stepOverrides'
+import type { BuiltRunStep } from '@/domains/integration/composables/useScenarioRun'
 
 /** 编辑态断言 → 引擎断言（expected 保留原值：字符串数字由引擎宽松比较）。 */
 function normalizeAssertions(raw: unknown): BuiltRunStep['assertions'] {
@@ -85,7 +85,7 @@ function buildOne(step: ScenarioStep, endpointById: Map<string, Endpoint>, index
   if (!step.endpoint_id) return null
   const ep = endpointById.get(step.endpoint_id)
   if (!ep) return null
-  const spec: import('../types/miyoApi').RequestSpec = JSON.parse(JSON.stringify(ep.request))
+  const spec: import('@/types/miyoApi').RequestSpec = JSON.parse(JSON.stringify(ep.request))
   try {
     applyStepOverrides(spec, step.overrides)
   } catch {

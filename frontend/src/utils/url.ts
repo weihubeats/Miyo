@@ -1,7 +1,7 @@
 /**
  * url.ts：URL 拆解工具（从 workspace store 抽出的纯函数）。
  */
-import type { KeyValue } from '../types/miyoApi'
+import type { KeyValue } from '@/types/miyoApi'
 
 /** 可选的协议前缀（地址栏协议选择器取值集合）。 */
 export const PROTOCOLS = ['https', 'http', 'wss', 'ws'] as const

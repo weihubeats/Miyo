@@ -3,8 +3,8 @@
  * 以及降级形状（复杂 JSONPath / 自造 JS）的明确报错。
  */
 import { describe, expect, it } from 'vitest'
-import { generateScenarioScript, type ScriptStep } from './scenarioScript'
-import { parseScenarioScript, ScriptParseError } from './scenarioScriptParse'
+import { generateScenarioScript, type ScriptStep } from '@/utils/scenarioScript'
+import { parseScenarioScript, ScriptParseError } from '@/utils/scenarioScriptParse'
 
 /** 断言期望值统一成字符串比对（编辑态本来就是字符串形状）。 */
 function normExpected(v: unknown): string {

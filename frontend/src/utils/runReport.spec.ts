@@ -2,8 +2,8 @@
  * runReport：Markdown 报告构造（快照数据 → 可交付文档）。
  */
 import { describe, expect, it } from 'vitest'
-import { buildRunReportMarkdown } from './runReport'
-import type { ScenarioRunResult } from '../types/miyoApi'
+import { buildRunReportMarkdown } from '@/utils/runReport'
+import type { ScenarioRunResult } from '@/types/miyoApi'
 
 const t = (k: string, params?: Record<string, string | number>) =>
   `«${k}${params ? ':' + JSON.stringify(params) : ''}»`

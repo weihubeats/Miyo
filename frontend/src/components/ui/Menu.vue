@@ -7,10 +7,10 @@
  * - 外部点击 / Esc / 滚动 / 窗口缩放自动关闭。
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { useLocaleStore } from '../../stores/locale'
-import Icon from './Icon.vue'
-import type { IconName } from './Icon.vue'
-import { pushEscHandler } from '../../utils/escStack'
+import { useLocaleStore } from '@/stores/locale'
+import Icon from '@/components/ui/Icon.vue'
+import type { IconName } from '@/components/ui/Icon.vue'
+import { pushEscHandler } from '@/utils/escStack'
 
 export interface MenuItem {
   key: string

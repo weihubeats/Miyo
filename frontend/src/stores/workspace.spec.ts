@@ -6,7 +6,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import type { CurlParsed, Endpoint, Environment, Project, TestCase } from '../types/miyoApi'
+import type { CurlParsed, Endpoint, Environment, Project, TestCase } from '@/types/miyoApi'
 
 function makeProject(id: string, name: string): Project {
   const now = new Date().toISOString()
@@ -97,7 +97,7 @@ const toastMock = vi.hoisted(() => ({
   warning: vi.fn(),
 }))
 
-vi.mock('../composables/useMiyoApi', () => ({
+vi.mock('@/composables/useMiyoApi.ts', () => ({
   useMiyoApi: () => ({
     getProjects: vi.fn().mockResolvedValue(backend.projects),
     getActiveProject: vi.fn().mockImplementation(async () => backend.projects.find((p) => p.id === backend.active()) ?? null),
@@ -175,12 +175,12 @@ vi.mock('../composables/useMiyoApi', () => ({
   }),
 }))
 
-vi.mock('../composables/useToast', () => ({
+vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => toastMock,
 }))
 
-import { useWorkspaceStore, FALLBACK_GLOBAL_TIMEOUT_MS } from '../stores/workspace'
-import { useLocaleStore } from '../stores/locale'
+import { useWorkspaceStore, FALLBACK_GLOBAL_TIMEOUT_MS } from '@/stores/workspace'
+import { useLocaleStore } from '@/stores/locale'
 
 /** 测试环境的 localStorage 为残缺对象（真机 WebView 才有完整实现），stub 一个内存版。 */
 beforeAll(() => {

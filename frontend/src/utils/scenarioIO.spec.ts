@@ -2,8 +2,8 @@
  * scenarioIO：导入 / 导出（JSON）——导出物化内联、导入形状校验。
  */
 import { describe, expect, it } from 'vitest'
-import { buildScenarioExport, inlineStepFromEndpoint, parseScenarioImport } from './scenarioIO'
-import type { Endpoint, Scenario } from '../types/miyoApi'
+import { buildScenarioExport, inlineStepFromEndpoint, parseScenarioImport } from '@/utils/scenarioIO'
+import type { Endpoint, Scenario } from '@/types/miyoApi'
 
 function makeEndpoint(): Endpoint {
   return {

@@ -7,29 +7,29 @@
  * `git diff --exit-code` 防漂移——改 Rust 模型不重新导出即红灯。
  *
  * 本文件只保留两类内容：
- * 1. `export type { … } from './generated/…'` re-export（导入路径不变）；
+ * 1. `export type { … } from '@/types/generated/…'` re-export（导入路径不变）；
  * 2. 尚未接入生成的 IPC view 类型（agent / mock / sync / ws 等手写镜像，
  *    渐进迁移：Rust 侧 derive 后把对应手写块换成 re-export 行）。
  */
 
-import type { AuthSpec } from './generated/AuthSpec';
-import type { BodySpec } from './generated/BodySpec';
-import type { Endpoint } from './generated/Endpoint';
-import type { EnvironmentVariable } from './generated/EnvironmentVariable';
-import type { Folder } from './generated/Folder';
-import type { HttpMethod } from './generated/HttpMethod';
-import type { KeyValue } from './generated/KeyValue';
-import type { MockMatchItem } from './generated/MockMatchItem';
-import type { Project } from './generated/Project';
-import type { RequestExample } from './generated/RequestExample';
-import type { RequestHistory } from './generated/RequestHistory';
-import type { RequestSnapshot } from './generated/RequestSnapshot';
-import type { RequestSpec } from './generated/RequestSpec';
-import type { ResponseExample } from './generated/ResponseExample';
-import type { ScenarioRunSummary } from './generated/ScenarioRunSummary';
-import type { ScriptRunSummary } from './generated/ScriptRunSummary';
-import type { StepRetry } from './generated/StepRetry';
-import type { TestCaseStatus } from './generated/TestCaseStatus';
+import type { AuthSpec } from '@/types/generated/AuthSpec';
+import type { BodySpec } from '@/types/generated/BodySpec';
+import type { Endpoint } from '@/types/generated/Endpoint';
+import type { EnvironmentVariable } from '@/types/generated/EnvironmentVariable';
+import type { Folder } from '@/types/generated/Folder';
+import type { HttpMethod } from '@/types/generated/HttpMethod';
+import type { KeyValue } from '@/types/generated/KeyValue';
+import type { MockMatchItem } from '@/types/generated/MockMatchItem';
+import type { Project } from '@/types/generated/Project';
+import type { RequestExample } from '@/types/generated/RequestExample';
+import type { RequestHistory } from '@/types/generated/RequestHistory';
+import type { RequestSnapshot } from '@/types/generated/RequestSnapshot';
+import type { RequestSpec } from '@/types/generated/RequestSpec';
+import type { ResponseExample } from '@/types/generated/ResponseExample';
+import type { ScenarioRunSummary } from '@/types/generated/ScenarioRunSummary';
+import type { ScriptRunSummary } from '@/types/generated/ScriptRunSummary';
+import type { StepRetry } from '@/types/generated/StepRetry';
+import type { TestCaseStatus } from '@/types/generated/TestCaseStatus';
 export type { AuthSpec };
 export type { BodySpec };
 export type { Endpoint };
@@ -49,36 +49,36 @@ export type { ScriptRunSummary };
 export type { StepRetry };
 export type { TestCaseStatus };
 
-export type { ApiKeyLocation } from './generated/ApiKeyLocation';
-export type { CommandError } from './generated/CommandError';
-export type { DynamicSignatureConfig } from './generated/DynamicSignatureConfig';
-export type { EndpointStatus } from './generated/EndpointStatus';
-export type { Environment } from './generated/Environment';
-export type { FieldDoc } from './generated/FieldDoc';
-export type { FieldType } from './generated/FieldType';
-export type { GlobalParam } from './generated/GlobalParam';
-export type { GlobalParamLocation } from './generated/GlobalParamLocation';
-export type { GraphQLError } from './generated/GraphQLError';
-export type { GraphQLErrorLocation } from './generated/GraphQLErrorLocation';
-export type { GraphQLResponse } from './generated/GraphQLResponse';
-export type { GraphQLSpec } from './generated/GraphQLSpec';
-export type { GrpcSpec } from './generated/GrpcSpec';
-export type { MockRequestLog } from './generated/MockRequestLog';
-export type { MockRule } from './generated/MockRule';
-export type { MultipartField } from './generated/MultipartField';
-export type { MultipartValueType } from './generated/MultipartValueType';
-export type { OAuth2Grant } from './generated/OAuth2Grant';
-export type { OAuth2Token } from './generated/OAuth2Token';
-export type { ProtoFile } from './generated/ProtoFile';
-export type { ScriptTestOutcome } from './generated/ScriptTestOutcome';
-export type { ScriptsSpec } from './generated/ScriptsSpec';
-export type { SeqCounter } from './generated/SeqCounter';
-export type { SignatureAlgorithm } from './generated/SignatureAlgorithm';
-export type { SignatureEncoding } from './generated/SignatureEncoding';
-export type { SyncRemoteKind } from './generated/SyncRemoteKind';
-export type { Team } from './generated/Team';
-export type { TestCaseRun } from './generated/TestCaseRun';
-export type { TestCaseRunSummary } from './generated/TestCaseRunSummary';
+export type { ApiKeyLocation } from '@/types/generated/ApiKeyLocation';
+export type { CommandError } from '@/types/generated/CommandError';
+export type { DynamicSignatureConfig } from '@/types/generated/DynamicSignatureConfig';
+export type { EndpointStatus } from '@/types/generated/EndpointStatus';
+export type { Environment } from '@/types/generated/Environment';
+export type { FieldDoc } from '@/types/generated/FieldDoc';
+export type { FieldType } from '@/types/generated/FieldType';
+export type { GlobalParam } from '@/types/generated/GlobalParam';
+export type { GlobalParamLocation } from '@/types/generated/GlobalParamLocation';
+export type { GraphQLError } from '@/types/generated/GraphQLError';
+export type { GraphQLErrorLocation } from '@/types/generated/GraphQLErrorLocation';
+export type { GraphQLResponse } from '@/types/generated/GraphQLResponse';
+export type { GraphQLSpec } from '@/types/generated/GraphQLSpec';
+export type { GrpcSpec } from '@/types/generated/GrpcSpec';
+export type { MockRequestLog } from '@/types/generated/MockRequestLog';
+export type { MockRule } from '@/types/generated/MockRule';
+export type { MultipartField } from '@/types/generated/MultipartField';
+export type { MultipartValueType } from '@/types/generated/MultipartValueType';
+export type { OAuth2Grant } from '@/types/generated/OAuth2Grant';
+export type { OAuth2Token } from '@/types/generated/OAuth2Token';
+export type { ProtoFile } from '@/types/generated/ProtoFile';
+export type { ScriptTestOutcome } from '@/types/generated/ScriptTestOutcome';
+export type { ScriptsSpec } from '@/types/generated/ScriptsSpec';
+export type { SeqCounter } from '@/types/generated/SeqCounter';
+export type { SignatureAlgorithm } from '@/types/generated/SignatureAlgorithm';
+export type { SignatureEncoding } from '@/types/generated/SignatureEncoding';
+export type { SyncRemoteKind } from '@/types/generated/SyncRemoteKind';
+export type { Team } from '@/types/generated/Team';
+export type { TestCaseRun } from '@/types/generated/TestCaseRun';
+export type { TestCaseRunSummary } from '@/types/generated/TestCaseRunSummary';
 
 /** OAuth2 授权状态（UI 状态指示器用）。 */
 export type OAuth2Status = 'unauthorized' | 'valid' | 'expiring_soon' | 'expired'
@@ -686,10 +686,10 @@ export interface EndpointResult {
 /** 压测结果（Rust `LoadResult`）。 */
 
 /** 压测结果（Rust `LoadResult`）。 */
-export type { LoadSchedule } from './generated/LoadSchedule';
-export type { LoadConfig } from './generated/LoadConfig';
-export type { LoadResult } from './generated/LoadResult';
-export type { LoadProgress } from './generated/LoadProgress';
+export type { LoadSchedule } from '@/types/generated/LoadSchedule';
+export type { LoadConfig } from '@/types/generated/LoadConfig';
+export type { LoadResult } from '@/types/generated/LoadResult';
+export type { LoadProgress } from '@/types/generated/LoadProgress';
 
 /** 集合测试结果（Rust `CollectionResult`，results 与输入同序）。 */
 

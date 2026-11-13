@@ -9,7 +9,7 @@ import {
   methodBadgeTone,
   methodTextTone,
   methodTone,
-} from './methodTone'
+} from '@/utils/methodTone'
 
 describe('methodTone', () => {
   it('常用方法映射到对应语义工具类', () => {

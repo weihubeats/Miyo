@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { computed, defineComponent, ref, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
-import { countOccurrences, replaceAllOccurrences, useFindInText } from './useFindInText'
+import { countOccurrences, replaceAllOccurrences, useFindInText } from '@/composables/useFindInText'
 
 describe('countOccurrences', () => {
   it('大小写不敏感统计，空词/空文本为 0', () => {

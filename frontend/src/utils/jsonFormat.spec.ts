@@ -4,8 +4,8 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { JsonFormatError, compactJson, dedupeJsonKeys, prettyJson } from './jsonFormat'
-import { useLocaleStore } from '../stores/locale'
+import { JsonFormatError, compactJson, dedupeJsonKeys, prettyJson } from '@/utils/jsonFormat'
+import { useLocaleStore } from '@/stores/locale'
 
 beforeEach(() => {
   setActivePinia(createPinia())

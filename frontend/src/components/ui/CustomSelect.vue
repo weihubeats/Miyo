@@ -14,9 +14,9 @@
  *   跟随语义色浅色高亮而非 --accent。
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { useLocaleStore } from '../../stores/locale'
-import { pushEscHandler } from '../../utils/escStack'
-import Icon from './Icon.vue'
+import { useLocaleStore } from '@/stores/locale'
+import { pushEscHandler } from '@/utils/escStack'
+import Icon from '@/components/ui/Icon.vue'
 
 export interface SelectOption {
   value: string | number

@@ -9,7 +9,7 @@ import {
   rebindPointers,
   treeToJsonString,
   treeToPrettyJson,
-} from './jsonTree'
+} from '@/utils/jsonTree'
 
 describe('parseJsonTree', () => {
   it('解析嵌套对象，指针为 RFC6901 转义路径', () => {

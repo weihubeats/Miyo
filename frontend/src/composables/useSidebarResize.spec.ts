@@ -2,7 +2,7 @@
  * useSidebarResize 单测：折叠态切换 + localStorage 持久化（宽度逻辑原行为不动）。
  */
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useSidebarResize } from './useSidebarResize'
+import { useSidebarResize } from '@/composables/useSidebarResize'
 
 describe('useSidebarResize 折叠', () => {
   beforeEach(() => {

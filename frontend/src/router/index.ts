@@ -13,32 +13,32 @@ const router = createRouter({
     {
       path: '/projects',
       name: 'projects',
-      component: () => import('../views/ProjectList.vue'),
+      component: () => import('@/domains/workspace/views/ProjectList.vue'),
     },
     {
       path: '/graphql',
       name: 'graphql',
-      component: () => import('../views/GraphQLView.vue'),
+      component: () => import('@/domains/endpoint/views/GraphQLView.vue'),
     },
     {
       path: '/realtime',
       name: 'realtime',
-      component: () => import('../views/RealtimeView.vue'),
+      component: () => import('@/domains/endpoint/views/RealtimeView.vue'),
     },
     {
       path: '/integration',
       name: 'integration',
-      component: () => import('../views/IntegrationView.vue'),
+      component: () => import('@/domains/integration/views/IntegrationView.vue'),
     },
     {
       path: '/ai-test',
       name: 'ai-test',
-      component: () => import('../views/AiTestView.vue'),
+      component: () => import('@/domains/agent/views/AiTestView.vue'),
     },
     {
       path: '/workspace',
       name: 'workspace',
-      component: () => import('../views/WorkspaceView.vue'),
+      component: () => import('@/domains/workspace/views/WorkspaceView.vue'),
     },
   ],
 })

@@ -4,7 +4,7 @@
  * 嵌套/转义/字符串收尾后（无候选）等边界。
  */
 import { describe, expect, it } from 'vitest'
-import { collectJsonKeys, scanJsonCompletionSlot } from './jsonCompletion'
+import { collectJsonKeys, scanJsonCompletionSlot } from '@/utils/jsonCompletion'
 
 /** 构造「光标前文本」：竖线标记光标位，光标之后的模板文本不参与扫描。 */
 function scan(tpl: string): ReturnType<typeof scanJsonCompletionSlot> {

@@ -7,8 +7,8 @@
  * Go net/http、Rust reqwest、PHP cURL/Guzzle），
  * 无法识别的部分（变量引用等）跳过而不是报错；仅「找不到 URL」视为失败。
  */
-import type { AuthSpec, BodySpec, CurlParsed, HttpMethod, KeyValue } from '../types/miyoApi'
-import { tFallback } from '../stores/locale'
+import type { AuthSpec, BodySpec, CurlParsed, HttpMethod, KeyValue } from '@/types/miyoApi'
+import { tFallback } from '@/stores/locale'
 
 export type SnippetLang = 'curl' | 'java' | 'python' | 'javascript' | 'go' | 'rust' | 'php'
 

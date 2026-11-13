@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeFlowGraph, groupBatches, requiredVarsFrom, toFlowSteps, type FlowStep } from './scenarioFlow'
+import { computeFlowGraph, groupBatches, requiredVarsFrom, toFlowSteps, type FlowStep } from '@/utils/scenarioFlow'
 
 const fs = (patch: Partial<FlowStep> = {}): FlowStep => ({
   index: 0,

@@ -6,9 +6,9 @@
  * - applyMethodDefaults：切换 Method 时的智能默认（POST 系 → body 空则初始化
  *   JSON `{}` + Content-Type；其余 → params），返回应激活的 Tab。
  */
-import type { RequestSpec } from '../types/miyoApi'
-import { applyRawSubtype } from './bodyMode'
-import { stripProtocol } from './url'
+import type { RequestSpec } from '@/types/miyoApi'
+import { applyRawSubtype } from '@/utils/bodyMode'
+import { stripProtocol } from '@/utils/url'
 
 export type SmartTab = 'body' | 'params' | 'grpc'
 

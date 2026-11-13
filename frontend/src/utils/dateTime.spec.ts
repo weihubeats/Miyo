@@ -3,8 +3,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { formatDateTime, formatTime, localeTag } from './dateTime'
-import { useLocaleStore } from '../stores/locale'
+import { formatDateTime, formatTime, localeTag } from '@/utils/dateTime'
+import { useLocaleStore } from '@/stores/locale'
 
 beforeEach(() => {
   setActivePinia(createPinia())

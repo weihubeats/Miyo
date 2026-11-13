@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validateScenario, summarizeIssues, issuesOfStep, type ValidateStep } from './scenarioValidate'
+import { validateScenario, summarizeIssues, issuesOfStep, type ValidateStep } from '@/utils/scenarioValidate'
 
 /** 造一个「干净」的步骤，各用例只改关心的字段。 */
 function step(patch: Partial<ValidateStep> = {}): ValidateStep {

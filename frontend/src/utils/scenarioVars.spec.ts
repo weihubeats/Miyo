@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeVarChain, extractVarRefs, isSensitiveVarName } from './scenarioVars'
+import { computeVarChain, extractVarRefs, isSensitiveVarName } from '@/utils/scenarioVars'
 
 describe('extractVarRefs', () => {
   it('提取 {{var}} 占位并去重保序', () => {

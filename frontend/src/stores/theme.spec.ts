@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { useThemeStore, THEME_EVENT, type ThemeMode } from './theme'
+import { useThemeStore, THEME_EVENT, type ThemeMode } from '@/stores/theme'
 
 interface StubMQL {
   matches: boolean

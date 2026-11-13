@@ -16,7 +16,7 @@
  * 渲染：在 App 根组件挂载 <ToastHost />（见 components/ToastHost.vue）。
  */
 import { readonly, ref } from 'vue'
-import { tFallback } from '../stores/locale'
+import { tFallback } from '@/stores/locale'
 
 export type ToastType = 'success' | 'info' | 'warning' | 'error'
 

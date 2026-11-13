@@ -3,7 +3,7 @@
  * 残缺报文回退、Content-Type 判定。
  */
 import { describe, expect, it } from 'vitest'
-import { formatXml, isXmlContentType, XmlFormatError } from './xmlFormat'
+import { formatXml, isXmlContentType, XmlFormatError } from '@/utils/xmlFormat'
 
 describe('formatXml', () => {
   it('压缩单行展开为缩进结构；短文本键值对内联', () => {

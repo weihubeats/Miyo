@@ -13,7 +13,7 @@ import {
   resolveTargetVersion,
   syncVersions,
   VERSION_FILES,
-} from '../../scripts/release.mjs'
+} from '@/../../scripts/release.mjs'
 
 function makeFixture(version = '0.0.8'): string {
   const root = mkdtempSync(path.join(tmpdir(), 'miyo-release-'))

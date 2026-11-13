@@ -19,9 +19,9 @@
  */
 import { invoke } from '@tauri-apps/api/core'
 import { ref } from 'vue'
-import { useProgress } from './useProgress'
-import { tFallback } from '../stores/locale'
-import { errorText } from '../utils/errorText'
+import { useProgress } from '@/composables/useProgress'
+import { tFallback } from '@/stores/locale'
+import { errorText } from '@/utils/errorText'
 import type {
   AiSessionView,
   AiSettingsView,
@@ -102,7 +102,7 @@ import type {
   TestCaseRun,
   TestCaseRunSummary,
   TestCaseStatus,
-} from '../types/miyoApi'
+} from '@/types/miyoApi'
 
 /** 插件命令统一前缀：`plugin:{插件名}|{命令名}`。 */
 const PLUGIN = 'plugin:miyo'
@@ -126,7 +126,7 @@ let decryptionWarned = false
 function warnDecryptionFailed(): void {
   if (decryptionWarned) return
   decryptionWarned = true
-  import('./useToast').then(({ useToast }) => {
+  import('@/composables/useToast').then(({ useToast }) => {
     useToast().error(tFallback('miyoapi.decryptFailTitle'), {
       message: tFallback('miyoapi.decryptWarning'),
       duration: 0,
@@ -1038,7 +1038,7 @@ export function useMiyoApi() {
   async getAiSettings(): Promise<AiSettingsView> {
     return invoke('plugin:miyo|get_ai_settings')
   },
-  async setAiSettings(args: import('../types/miyoApi').SetAiSettingsArgs): Promise<void> {
+  async setAiSettings(args: import('@/types/miyoApi').SetAiSettingsArgs): Promise<void> {
     await invoke('plugin:miyo|set_ai_settings', { args })
   },
   async aiTestConnection(): Promise<void> {

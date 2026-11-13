@@ -4,7 +4,7 @@
  * - escapeHtml / highlightJSON / highlightGraphQL 从 GraphQLView.vue 提取为共享实现；
  * - 输出 HTML 片段，配合调用方作用域内的 .hl-* 颜色类（.hl-s/.hl-k/.hl-n/.hl-b/.hl-c/.hl-v/.hl-p）。
  */
-import type { CodeLang } from '../types/miyoApi'
+import type { CodeLang } from '@/types/miyoApi'
 
 /** HTML 转义（所有高亮输出必须先转义再包 span）。 */
 export function escapeHtml(s: string): string {

@@ -6,7 +6,7 @@
  * 替换为占位符，导入方 / 接手者按提示自行回填。自由文本（text body）
  * 无法可靠判定，保守保留不整段替换。
  */
-import type { AuthSpec } from '../types/miyoApi'
+import type { AuthSpec } from '@/types/miyoApi'
 
 export const EXPORT_PLACEHOLDER = '__MIYO_REDACTED__'
 

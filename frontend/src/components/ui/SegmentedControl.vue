@@ -6,7 +6,7 @@
  * 选项带 panelId 时渲染 aria-controls（有关联面板时）。
  */
 import { computed } from 'vue'
-import Icon, { type IconName } from './Icon.vue'
+import Icon, { type IconName } from '@/components/ui/Icon.vue'
 
 export interface SegmentOption {
   value: string

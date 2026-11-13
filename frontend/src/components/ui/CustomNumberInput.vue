@@ -7,8 +7,8 @@
  * - 五态：default / hover / focus / active / disabled × 深/浅主题；tabular-nums。
  */
 import { computed, ref } from 'vue'
-import Icon from './Icon.vue'
-import { useLocaleStore } from '../../stores/locale'
+import Icon from '@/components/ui/Icon.vue'
+import { useLocaleStore } from '@/stores/locale'
 
 const props = withDefaults(
   defineProps<{

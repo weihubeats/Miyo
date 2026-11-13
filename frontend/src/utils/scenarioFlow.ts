@@ -12,7 +12,7 @@
  *   但显示出来有助于理解「这一步吃了什么」。
  */
 
-import { extractVarRefs } from './scenarioVars'
+import { extractVarRefs } from '@/utils/scenarioVars'
 
 /** 单步输入（宿主从编辑态物化）。 */
 export interface FlowStep {
