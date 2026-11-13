@@ -41,7 +41,7 @@ vi.mock('../composables/useMiyoApi', () => ({
 
 function draft(): Endpoint {
   const d = makeDraft({ id: 'ep-1', method: 'POST', path: '/api/v1/transfer' })
-  d.request.params.push({ key: 'userId', value: '1', enabled: true, description: '' })
+  d.request.params.push({ key: 'userId', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' })
   return reactive(d)
 }
 
@@ -113,7 +113,7 @@ describe('DesignPanel：请求参数定义', () => {
 
   it('Headers Tab 同样挂接参数表', async () => {
     const d = draft()
-    d.request.headers.push({ key: 'X-Trace', value: '', enabled: true, description: '' })
+    d.request.headers.push({ key: 'X-Trace', value: '', enabled: true, description: '', field_type: 'string', required: true, example: '' })
     const wrapper = mountPanel(d)
     await wrapper.findAll('.tabs .tab').find((t) => t.text().startsWith('Headers'))!.trigger('click')
 
@@ -194,8 +194,8 @@ describe('DesignPanel：Body 设计器', () => {
     expect(d.request.body).toEqual({
       mode: 'urlencoded',
       fields: [
-        { key: 'a', value: '1', enabled: true, description: '' },
-        { key: 'b', value: 'x', enabled: true, description: '' },
+        { key: 'a', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+        { key: 'b', value: 'x', enabled: true, description: '', field_type: 'string', required: true, example: '' },
       ],
     })
   })
@@ -204,7 +204,7 @@ describe('DesignPanel：Body 设计器', () => {
     const d = draft()
     d.request.body = {
       mode: 'urlencoded',
-      fields: [{ key: 'amount', value: '100', enabled: true, description: '' }],
+      fields: [{ key: 'amount', value: '100', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
     }
     const wrapper = mountPanel(d)
     await openBodyTab(wrapper)

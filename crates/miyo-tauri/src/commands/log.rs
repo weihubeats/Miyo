@@ -13,7 +13,7 @@ use tauri::State;
 
 use miyo_storage::repository as repo;
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 /// settings 表中的日志保留天数键；值为 JSON 数字。缺失时用默认值。
@@ -40,7 +40,7 @@ pub async fn log_files() -> CommandResult<Vec<LogFile>> {
     // 目录扫描 + 元数据读取为同步文件 IO：挪到阻塞线程池。
     tokio::task::spawn_blocking(list_log_files)
         .await
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("日志扫描任务失败：{e}")))?
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("日志扫描任务失败：{e}")))?
 }
 
 /// 同步实现（阻塞线程池内执行）。
@@ -95,7 +95,7 @@ pub async fn log_tail(file: Option<String>, lines: Option<u64>) -> CommandResult
     // 与同文件 list_log_files 的口径一致。
     tokio::task::spawn_blocking(move || read_log_tail(dir.join(&name), want))
         .await
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("日志读取任务失败：{e}")))?
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("日志读取任务失败：{e}")))?
 }
 
 /// 同步实现：只读文件末尾 [`MAX_TAIL_BYTES`]，返回最后 `want` 行。
@@ -106,18 +106,18 @@ fn read_log_tail(path: std::path::PathBuf, want: usize) -> CommandResult<String>
         .unwrap_or("miyo.log")
         .to_string();
     let mut file = std::fs::File::open(&path)
-        .map_err(|e| CommandError::with_code("IO", format!("读取日志失败（{name}）：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("读取日志失败（{name}）：{e}")))?;
     use std::io::{Read, Seek, SeekFrom};
     let len = file
         .metadata()
-        .map_err(|e| CommandError::with_code("IO", format!("读取日志失败（{name}）：{e}")))?
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("读取日志失败（{name}）：{e}")))?
         .len();
     let offset = len.saturating_sub(MAX_TAIL_BYTES);
     file.seek(SeekFrom::Start(offset))
-        .map_err(|e| CommandError::with_code("IO", format!("读取日志失败（{name}）：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("读取日志失败（{name}）：{e}")))?;
     let mut content = Vec::with_capacity((len - offset) as usize);
     file.read_to_end(&mut content)
-        .map_err(|e| CommandError::with_code("IO", format!("读取日志失败（{name}）：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("读取日志失败（{name}）：{e}")))?;
     // 非文件起点时跳过被截断的 UTF-8 首字符（字符边界安全）。
     let mut start = 0usize;
     if offset > 0 {
@@ -168,13 +168,13 @@ pub async fn set_log_retention_days(state: State<'_, AppState>, days: u32) -> Co
         return Err(CommandError::validation("保留天数需在 1 ~ 365 之间"));
     }
     let json = serde_json::to_string(&days)
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, LOG_RETENTION_KEY, &json).await?;
     // 目录扫描 + 删除为同步文件 IO：挪到阻塞线程池，不占 IPC 线程。
     let dir = miyo_storage::db::log_dir();
     let removed = tokio::task::spawn_blocking(move || cleanup_expired_logs(&dir, days))
         .await
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("日志清理任务失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("日志清理任务失败：{e}")))?;
     if removed > 0 {
         tracing::info!("[log] 按保留 {days} 天清理，删除 {removed} 个过期日志文件");
     }

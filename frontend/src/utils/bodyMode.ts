@@ -45,7 +45,7 @@ export function syncContentType(headers: KeyValue[], mime: string): void {
     row.value = mime
     row.enabled = true
   } else {
-    headers.push({ key: 'Content-Type', value: mime, enabled: true, description: '' })
+    headers.push({ key: 'Content-Type', value: mime, enabled: true, description: '', field_type: 'string', required: true, example: '' })
   }
 }
 
@@ -117,7 +117,7 @@ function toMultipartField(kv: KeyValue): MultipartField {
 
 /** MultipartField → KeyValue（文本 part 退化为 urlencoded 行；文件路径丢弃）。 */
 function toKeyValue(f: MultipartField): KeyValue {
-  return { key: f.key, value: f.value_type === 'text' ? f.value : '', enabled: f.enabled, description: '' }
+  return { key: f.key, value: f.value_type === 'text' ? f.value : '', enabled: f.enabled, description: '', field_type: 'string', required: true, example: '' }
 }
 
 /**

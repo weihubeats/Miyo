@@ -179,7 +179,9 @@ pub enum TransportError {
 
 impl From<TransportError> for miyo_core::AppError {
     fn from(e: TransportError) -> Self {
-        miyo_core::AppError::Validation(e.to_string())
+        // 专属 SYNC 错误码（原借道 VALIDATION）：远端传输失败可被前端按码识别，
+        // 与「请求参数非法」区分开。
+        miyo_core::AppError::Sync(e.to_string())
     }
 }
 

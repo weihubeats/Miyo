@@ -301,7 +301,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
    * 保存态索引：isDirty / titleOf 原来每次调用都 `endpoints.find`
    *（O(标签数 × 接口数)），此处随列表刷新重建一次，查询 O(1)。
    */
-  const savedIndex = computed(() => new Map(endpoints.value.map((e) => [e.id, e] as const)))
+  const savedIndex = computed(() => new Map<string, Endpoint>(endpoints.value.map((e) => [e.id, e] as const)))
 
   const isDirty = (id: string): boolean => {
     void dirtyTick.value // 建立响应式依赖：定版推进后调用方重新求值
@@ -2283,6 +2283,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         timeout_ms: null,
         follow_redirects: true,
         tests: null,
+        disable_cookies: false,
       },
       created_at: now,
       updated_at: now,
@@ -2477,6 +2478,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         value,
         enabled: true,
         description: '',
+        field_type: 'string' as const,
+        required: true,
+        example: '',
       }))
       draft.request.timeout_ms = g?.timeout_ms ?? null
       draft.request.active_tab = 'grpc'

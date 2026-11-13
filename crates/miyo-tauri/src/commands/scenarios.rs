@@ -17,7 +17,7 @@ use miyo_sync::redact::{is_sensitive_key, PLACEHOLDER};
 use miyo_test::runner::{ScenarioOptions, ScenarioProgress, ScenarioStepInput};
 
 use crate::commands::request::{cap_ipc_body, resolve_timeout_ms};
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 fn default_step_enabled() -> bool {
@@ -998,7 +998,7 @@ pub async fn export_scenario_report(
         }
         ScenarioReportFormat::Json => (
             serde_json::to_string_pretty(&stats)
-                .map_err(|e| CommandError::with_code("INTERNAL", format!("统计序列化失败：{e}")))?,
+                .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("统计序列化失败：{e}")))?,
             "json",
         ),
     };
@@ -1011,6 +1011,7 @@ pub async fn export_scenario_report(
 
 /// 场景运行历史条目（IPC 摘要；results_json / variables_json 不下发）。
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScenarioRunSummary {
     pub id: String,
     pub finished_at: chrono::DateTime<chrono::Utc>,
@@ -1042,6 +1043,7 @@ impl ScenarioRunSummary {
 /// 场景库列表项：场景 + 最近一次运行摘要（单次 IPC 供列表页渲染，
 /// 免去前端逐场景 N+1 查询——与 dashboard list_project_stats 同思路）。
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScenarioLibraryItem {
     #[serde(flatten)]
     pub scenario: Scenario,

@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use miyo_storage::repository as repo;
 
-use crate::error::CommandResult;
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 
 /// 激活上下文持久化键（settings 表）。
 const KEY_ACTIVE_PROJECT: &str = "active_project_id";
@@ -207,7 +207,7 @@ impl AppState {
         self.script_sandbox
             .get_or_init(|| miyo_http::script_sandbox::ScriptSandbox::new().ok())
             .as_ref()
-            .ok_or_else(|| crate::error::CommandError::with_code("INTERNAL", "脚本沙箱初始化失败"))
+            .ok_or_else(|| CommandError::with_code(CommandErrorCode::Internal, "脚本沙箱初始化失败"))
     }
 
     /// 全局设置快照：缓存命中零查询；未命中查库构建并回填。

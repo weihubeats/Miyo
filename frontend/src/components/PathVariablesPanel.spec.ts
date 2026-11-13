@@ -40,16 +40,16 @@ describe('PathVariablesPanel', () => {
   it('重复抽取保留已有取值与手写行，不产生重复 key', async () => {
     const draft = reactive(makeDraft({ path: '/users/:id/teams/:id' }))
     draft.request.path_variables = [
-      { key: 'id', value: '42', enabled: true, description: '用户 ID' },
-      { key: 'note', value: '手写行', enabled: true, description: '' },
+      { key: 'id', value: '42', enabled: true, description: '用户 ID', field_type: 'string', required: true, example: '' },
+      { key: 'note', value: '手写行', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ]
     const wrapper = mountPanel(draft)
 
     await wrapper.find('.pv-extract').trigger('click')
 
     expect(draft.request.path_variables).toEqual([
-      { key: 'id', value: '42', enabled: true, description: '用户 ID' },
-      { key: 'note', value: '手写行', enabled: true, description: '' },
+      { key: 'id', value: '42', enabled: true, description: '用户 ID', field_type: 'string', required: true, example: '' },
+      { key: 'note', value: '手写行', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ])
     wrapper.unmount()
   })
@@ -70,7 +70,7 @@ describe('PathVariablesPanel', () => {
     const wrapper = mountPanel(draft)
 
     wrapper.findComponent(KeyValueTable).vm.$emit('update:modelValue', [
-      { key: 'id', value: '7', enabled: true, description: '' },
+      { key: 'id', value: '7', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ] satisfies KeyValue[])
     await nextTick()
 

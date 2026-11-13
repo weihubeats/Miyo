@@ -32,5 +32,7 @@ tokio-util = { workspace = true }
 futures = { workspace = true }
 # AI 依赖分析：{{var}} 引用扫描 / Mock 模板占位替换
 regex = { workspace = true }
+# MCP 工具 inputSchema 从入参结构体生成（试点：get_endpoint / list_endpoints）
+schemars = { workspace = true }
 
 [dev-dependencies]

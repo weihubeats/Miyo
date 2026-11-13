@@ -11,7 +11,7 @@ use miyo_core::model::{Endpoint, EndpointStatus, ResponseExample};
 use miyo_openapi::import::{import_any, ImportFormat};
 use miyo_storage::repository as repo;
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 /// 导入结果（前端先预览，确认后才落库）。
@@ -31,7 +31,7 @@ pub async fn import_document(
     // 挪到阻塞线程池，避免卡住 IPC 执行线程。
     let (endpoints, format) = tokio::task::spawn_blocking(move || import_any(&text))
         .await
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("文档解析任务失败：{e}")))?
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("文档解析任务失败：{e}")))?
         .map_err(CommandError::from)?;
     if endpoints.is_empty() {
         return Err(CommandError::validation("文档中没有可导入的接口"));
@@ -47,7 +47,7 @@ pub async fn read_text_file(path: String) -> CommandResult<String> {
     // 异步读：不在 IPC 线程上做同步文件 IO。
     let bytes = tokio::fs::read(&path)
         .await
-        .map_err(|e| CommandError::with_code("IO", format!("无法读取文件 {path}：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("无法读取文件 {path}：{e}")))?;
     if bytes.len() as u64 > MAX_LEN {
         return Err(CommandError::validation("文件超过 2MB，请改用粘贴文本导入"));
     }
@@ -282,7 +282,7 @@ fn render_docs(
                 miyo_openapi::export::export_project_value(project_name, endpoints, examples)
                     .map_err(CommandError::from)?;
             serde_norway::to_string(&value)
-                .map_err(|e| CommandError::with_code("EXPORT", e.to_string()))
+                .map_err(|e| CommandError::with_code(CommandErrorCode::Export, e.to_string()))
         }
         ExportFormat::Postman => Ok(miyo_openapi::postman_export::export_postman(
             project_name,
@@ -427,7 +427,7 @@ pub async fn save_text_file(path: String, contents: String) -> CommandResult<()>
     // 异步写入：不阻塞 IPC 执行线程（大文档导出可达数 MB）。
     tokio::fs::write(&path, contents)
         .await
-        .map_err(|e| CommandError::with_code("IO", format!("写入文件失败：{e}")))
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("写入文件失败：{e}")))
 }
 
 #[cfg(test)]

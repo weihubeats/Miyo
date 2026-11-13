@@ -9,7 +9,7 @@
  * - 运行：复用 useScenarioRun（buildRunSteps 来自 utils/runStepBuild），
  *   场景保存后运行、失败后一键分析走同一会话。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, ref, type Ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
@@ -140,7 +140,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
   const analyzing = ref(false)
 
   // ---------- 运行链路（RunDock 组件内复用 useScenarioRun；store 只持有当前场景） ----------
-  const runScenario = ref<Scenario | null>(null)
+  const runScenario = ref<Scenario | null>(null) as Ref<Scenario | null> // `as Ref`：绕开 UnwrapRef TS2589（运行时行为不变）
   /** 运行令牌：RunDock 监听自增后自动运行（避免跨组件直调）。 */
   const runToken = ref(0)
 
@@ -371,6 +371,24 @@ export const useAiTestStore = defineStore('aiTest', () => {
     }
   }
 
+  /** 草稿 DTO 行 → 完整 KeyValue（设计元数据补齐 Rust 侧同款默认）。 */
+  function toFullKv(kv: {
+    key: string
+    value: string
+    enabled: boolean
+    description?: string
+  }): import('../types/miyoApi').KeyValue {
+    return {
+      key: kv.key,
+      value: kv.value,
+      enabled: kv.enabled,
+      description: kv.description ?? '',
+      field_type: 'string',
+      required: true,
+      example: '',
+    }
+  }
+
   /** 保存勾选的用例草稿到接口（save_test_case upsert）。 */
   async function saveTestCaseDrafts(endpointId: string, drafts: TestCaseDraft[]): Promise<number> {
     let saved = 0
@@ -386,9 +404,10 @@ export const useAiTestStore = defineStore('aiTest', () => {
           folder: t('ai.caseFolder'),
           method: d.method as import('../types/miyoApi').HttpMethod,
           url_path: d.url_path,
-          path_variables: d.path_variables.map((kv) => ({ ...kv, description: '' })),
-          params: d.params.map((kv) => ({ ...kv, description: '' })),
-          headers: d.headers.map((kv) => ({ ...kv, description: '' })),
+          // 草稿 DTO（KeyValueDto）缺设计元数据字段，落库前补齐 Rust 侧默认值
+          path_variables: d.path_variables.map(toFullKv),
+          params: d.params.map(toFullKv),
+          headers: d.headers.map(toFullKv),
           body_type: d.body_type,
           body_content: d.body_content,
           assertions: (Array.isArray(d.assertions) ? d.assertions : []) as import('../types/miyoApi').ScenarioAssertionRule[],

@@ -7,8 +7,8 @@ describe('splitUrl', () => {
     expect(r.path).toBe('/posts')
     expect(r.origin).toBe('https://api.x.com')
     expect(r.params).toEqual([
-      { key: 'userId', value: '1', enabled: true, description: '' },
-      { key: 'page', value: '2', enabled: true, description: '' },
+      { key: 'userId', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+      { key: 'page', value: '2', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ])
   })
 

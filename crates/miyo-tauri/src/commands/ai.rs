@@ -21,7 +21,7 @@ use uuid::Uuid;
 use miyo_agent::registry::{self, tool_meta};
 use miyo_storage::repository as repo;
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 /// 聊天事件通道（前端 `listen('miyo:ai-chat')`）。
@@ -134,7 +134,7 @@ pub async fn ai_test_connection(state: State<'_, AppState>) -> CommandResult<()>
 async fn require_ai_config(db: &sqlx::SqlitePool) -> CommandResult<miyo_ai::AiProviderConfig> {
     let cfg = repo::get_ai_settings(db).await?.ok_or_else(|| {
         CommandError::with_code(
-            "AI_NOT_CONFIGURED",
+            CommandErrorCode::AiNotConfigured,
             "尚未配置 AI 模型：请到 设置 → AI 模型 填写 Base URL / API Key / 模型名",
         )
     })?;
@@ -151,7 +151,7 @@ fn to_ai_config(cfg: repo::AiProviderSettings) -> CommandResult<miyo_ai::AiProvi
     };
     if !c.is_complete() {
         return Err(CommandError::with_code(
-            "AI_NOT_CONFIGURED",
+            CommandErrorCode::AiNotConfigured,
             "AI 配置不完整：Base URL 与模型名必填",
         ));
     }
@@ -160,7 +160,7 @@ fn to_ai_config(cfg: repo::AiProviderSettings) -> CommandResult<miyo_ai::AiProvi
 
 impl From<miyo_ai::AiError> for CommandError {
     fn from(e: miyo_ai::AiError) -> Self {
-        CommandError::with_code("AI_PROVIDER", e.to_string())
+        CommandError::with_code(CommandErrorCode::AiProvider, e.to_string())
     }
 }
 
@@ -488,7 +488,7 @@ pub async fn ai_chat_approve(
         .approvals
         .remove(&key)
         .ok_or_else(|| {
-            CommandError::with_code("AI_NO_PENDING", "该调用不在待确认状态（可能已处理）")
+            CommandError::with_code(CommandErrorCode::AiNoPending, "该调用不在待确认状态（可能已处理）")
         })?;
     let _ = sender.send(approved);
     Ok(())
@@ -640,7 +640,7 @@ async fn build_system_prompt(
     let en = locale == Some("en");
     let project = repo::get_project(db, project_id)
         .await
-        .map_err(|e| CommandError::with_code("NOT_FOUND", format!("项目不存在：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::NotFound, format!("项目不存在：{e}")))?;
     let endpoints = repo::list_endpoints(db, project_id).await?;
     let scenarios = repo::list_scenarios(db, project_id).await?;
     let environments = repo::list_environments(db, project_id).await?;
@@ -860,7 +860,7 @@ pub async fn ai_analyze_dependencies(
 ) -> CommandResult<serde_json::Value> {
     let report =
         miyo_agent::analysis::dependencies::analyze_api_dependencies(&state.db, project_id).await?;
-    serde_json::to_value(report).map_err(|e| CommandError::with_code("INTERNAL", e.to_string()))
+    serde_json::to_value(report).map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
 }
 
 /// 项目测试覆盖率（七维）。
@@ -872,7 +872,7 @@ pub async fn ai_analyze_coverage(
     let report =
         miyo_agent::analysis::coverage::analyze_project_test_coverage(&state.db, project_id)
             .await?;
-    serde_json::to_value(report).map_err(|e| CommandError::with_code("INTERNAL", e.to_string()))
+    serde_json::to_value(report).map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
 }
 
 /// 测试用例草稿（不落库）。
@@ -884,7 +884,7 @@ pub async fn ai_generate_test_case_drafts(
     let drafts =
         miyo_agent::analysis::testcase_gen::generate_test_case_drafts(&state.db, endpoint_id)
             .await?;
-    serde_json::to_value(drafts).map_err(|e| CommandError::with_code("INTERNAL", e.to_string()))
+    serde_json::to_value(drafts).map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
 }
 
 /// 场景草稿物化（不落库）。
@@ -895,7 +895,7 @@ pub async fn ai_generate_scenario_draft(
 ) -> CommandResult<serde_json::Value> {
     let result =
         miyo_agent::analysis::scenario_gen::materialize_scenario_draft(&state.db, &draft).await?;
-    serde_json::to_value(result).map_err(|e| CommandError::with_code("INTERNAL", e.to_string()))
+    serde_json::to_value(result).map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
 }
 
 /// 修复草稿（不落库）。
@@ -906,7 +906,7 @@ pub async fn ai_propose_fix(
     notes: Option<String>,
 ) -> CommandResult<serde_json::Value> {
     let proposal = miyo_agent::analysis::fix::propose_fix_for_run(&state.db, run_id, notes).await?;
-    serde_json::to_value(proposal).map_err(|e| CommandError::with_code("INTERNAL", e.to_string()))
+    serde_json::to_value(proposal).map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
 }
 
 // ---------- 4. 场景草稿历史 ----------
@@ -990,7 +990,7 @@ pub async fn ai_apply_scenario_draft(
 ) -> CommandResult<()> {
     let row = repo::get_scenario_draft(&state.db, draft_id)
         .await?
-        .ok_or_else(|| CommandError::with_code("NOT_FOUND", "草稿不存在或已被清理"))?;
+        .ok_or_else(|| CommandError::with_code(CommandErrorCode::NotFound, "草稿不存在或已被清理"))?;
     let scenario: miyo_core::model::Scenario = serde_json::from_str(&row.draft_json)
         .map_err(|e| CommandError::validation(format!("草稿 JSON 损坏：{e}")))?;
     repo::save_scenario(&state.db, &scenario).await?;
@@ -1006,7 +1006,7 @@ pub async fn ai_revert_scenario_draft(
 ) -> CommandResult<()> {
     let row = repo::get_scenario_draft(&state.db, draft_id)
         .await?
-        .ok_or_else(|| CommandError::with_code("NOT_FOUND", "草稿不存在或已被清理"))?;
+        .ok_or_else(|| CommandError::with_code(CommandErrorCode::NotFound, "草稿不存在或已被清理"))?;
     let scenario: miyo_core::model::Scenario = serde_json::from_str(&row.base_json)
         .map_err(|e| CommandError::validation(format!("草稿基线 JSON 损坏：{e}")))?;
     repo::save_scenario(&state.db, &scenario).await?;

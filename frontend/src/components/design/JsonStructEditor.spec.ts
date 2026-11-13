@@ -8,8 +8,9 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import JsonStructEditor from './JsonStructEditor.vue'
 import { useLocaleStore } from '../../stores/locale'
+import type { FieldDoc } from '../../types/miyoApi'
 
-function mountEditor(props: { raw: string; docs?: Record<string, { description?: string; required?: boolean }> }) {
+function mountEditor(props: { raw: string; docs?: Record<string, FieldDoc> }) {
   return mount(JsonStructEditor, { props })
 }
 

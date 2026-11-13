@@ -30,16 +30,16 @@ const endpoint: Endpoint = makeDraft({
 })
 
 endpoint.request.headers = [
-  { key: 'Cookie', value: 'sid=1', enabled: true, description: '' },
-  { key: '', value: '', enabled: true, description: '' },
+  { key: 'Cookie', value: 'sid=1', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+  { key: '', value: '', enabled: true, description: '', field_type: 'string', required: true, example: '' },
 ]
 endpoint.request.params = [
-  { key: 'page', value: '1', enabled: true, description: '' },
-  { key: '', value: '', enabled: true, description: '' },
+  { key: 'page', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+  { key: '', value: '', enabled: true, description: '', field_type: 'string', required: true, example: '' },
 ]
 endpoint.request.path_variables = [
-  { key: 'orderNo', value: 'SO1', enabled: true, description: '' },
-  { key: '', value: '', enabled: true, description: '' },
+  { key: 'orderNo', value: 'SO1', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+  { key: '', value: '', enabled: true, description: '', field_type: 'string', required: true, example: '' },
 ]
 
 async function mountEditor() {
@@ -91,7 +91,7 @@ describe('EndpointEditor：配置 Tab 计数不含空白幽灵行', () => {
   it('纯空白（空格）行也不计数', async () => {
     const { wrapper, store } = await mountEditor()
     const draft = store.activeEndpoint!
-    draft.request.headers.push({ key: '   ', value: '  ', enabled: true, description: '' })
+    draft.request.headers.push({ key: '   ', value: '  ', enabled: true, description: '', field_type: 'string', required: true, example: '' })
     await nextTick()
     expect(badgeOf(wrapper, 'Headers')).toBe('1')
   })

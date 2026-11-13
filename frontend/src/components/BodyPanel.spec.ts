@@ -307,7 +307,7 @@ describe('BodyPanel：raw JSON 编辑与格式化', () => {
     const draft = makeDraft({ id: 'ep-conv-mem' })
     draft.request.body = {
       mode: 'urlencoded',
-      fields: [{ key: 'a', value: '1', enabled: true, description: '' }],
+      fields: [{ key: 'a', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
     }
     const wrapper = mountPanel(reactive(draft))
     const tabBtn = (label: string) =>
@@ -322,7 +322,7 @@ describe('BodyPanel：raw JSON 编辑与格式化', () => {
 
   it('raw(JSON)→无→raw：还原 JSON 子类型与文本，而非默认 text', async () => {
     const draft = jsonDraft('{"a":1}')
-    draft.request.headers.push({ key: 'Content-Type', value: 'application/json', enabled: true, description: '' })
+    draft.request.headers.push({ key: 'Content-Type', value: 'application/json', enabled: true, description: '', field_type: 'string', required: true, example: '' })
     const wrapper = mountPanel(draft)
     const tabBtn = (label: string) =>
       wrapper.findAll('.seg-item').find((b) => b.text() === label)!
@@ -463,8 +463,7 @@ describe('BodyPanel：发送内容 = 当前类型自己的参数', () => {
       key: 'Content-Type',
       value: 'application/x-www-form-urlencoded',
       enabled: true,
-      description: '',
-    })
+      description: '', field_type: 'string', required: true, example: '' })
     const wrapper = mountPanel(draft)
 
     await bodyTabOf(wrapper, 'form-data').trigger('click')

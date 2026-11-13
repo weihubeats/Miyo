@@ -50,8 +50,8 @@ describe('EndpointEditor：Path 页签', () => {
   it('页签列表含 Path，角标跟随 path_variables 条数；点击即切换', async () => {
     const { wrapper } = await mountEditor((ep) => {
       ep.request.path_variables = [
-        { key: 'id', value: '1', enabled: true, description: '' },
-        { key: 'scope', value: '', enabled: false, description: '' },
+        { key: 'id', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+        { key: 'scope', value: '', enabled: false, description: '', field_type: 'string', required: true, example: '' },
       ]
     })
 

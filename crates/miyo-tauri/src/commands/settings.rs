@@ -4,7 +4,7 @@ use tauri::State;
 
 use miyo_storage::repository as repo;
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 /// settings 表中的代理键；值为 JSON 字符串（`null` = 直连）。
@@ -19,7 +19,7 @@ pub async fn read_http_timeout_ms(db: &sqlx::SqlitePool) -> CommandResult<Option
     match raw {
         None => Ok(None),
         Some(json) => serde_json::from_str::<Option<u64>>(&json)
-            .map_err(|e| CommandError::with_code("INTERNAL", format!("超时设置解析失败：{e}"))),
+            .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("超时设置解析失败：{e}"))),
     }
 }
 
@@ -71,7 +71,7 @@ pub async fn set_tls_settings(
     })
     .map_err(|e| CommandError::validation(e.user_message()))?;
     let identity_json = serde_json::to_string(&identity)
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, TLS_IDENTITY_KEY, &identity_json).await?;
     repo::set_setting(
         &state.db,
@@ -114,7 +114,7 @@ pub async fn set_http_timeout_ms(state: State<'_, AppState>, timeout_ms: u64) ->
         return Err(CommandError::validation("超时需在 1 秒 ~ 1 小时之间"));
     }
     let json = serde_json::to_string(&Some(timeout_ms))
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, HTTP_TIMEOUT_KEY, &json).await?;
     state.invalidate_global_settings();
     Ok(())
@@ -129,7 +129,7 @@ pub async fn get_http_proxy(state: State<'_, AppState>) -> CommandResult<Option<
     match raw {
         None => Ok(None),
         Some(json) => serde_json::from_str::<Option<String>>(&json)
-            .map_err(|e| CommandError::with_code("INTERNAL", format!("代理设置解析失败：{e}"))),
+            .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("代理设置解析失败：{e}"))),
     }
 }
 
@@ -153,7 +153,7 @@ pub async fn set_http_proxy(
     miyo_http::client::set_proxy(trimmed.as_deref())
         .map_err(|e| CommandError::validation(e.user_message()))?;
     let json = serde_json::to_string(&trimmed)
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, PROXY_KEY, &json)
         .await
         .map_err(CommandError::from)?;
@@ -239,7 +239,7 @@ pub async fn set_sensitive_patterns(
 ) -> CommandResult<()> {
     miyo_core::sensitive::set_custom_sensitive_patterns(patterns.clone());
     let json = serde_json::to_string(&patterns)
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, SENSITIVE_PATTERNS_KEY, &json).await?;
     Ok(())
 }
@@ -277,22 +277,22 @@ pub async fn set_data_dir(path: String) -> CommandResult<()> {
     // 异步文件系统调用：不在 IPC 线程上做同步目录 / 文件 IO。
     tokio::fs::create_dir_all(&target)
         .await
-        .map_err(|e| CommandError::with_code("IO", format!("创建目录失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("创建目录失败：{e}")))?;
     // 可写探测（建删空文件；失败即拒收，避免重启后打不开库）。
     let probe = target.join(".miyo-write-test");
     tokio::fs::write(&probe, b"ok")
         .await
-        .map_err(|e| CommandError::with_code("IO", format!("目录不可写：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("目录不可写：{e}")))?;
     let _ = tokio::fs::remove_file(&probe).await;
     let bootstrap = miyo_storage::db::bootstrap_path();
     if let Some(parent) = bootstrap.parent() {
         tokio::fs::create_dir_all(parent)
             .await
-            .map_err(|e| CommandError::with_code("IO", format!("创建配置目录失败：{e}")))?;
+            .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("创建配置目录失败：{e}")))?;
     }
     tokio::fs::write(&bootstrap, target.to_string_lossy().as_bytes())
         .await
-        .map_err(|e| CommandError::with_code("IO", format!("写入目录配置失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("写入目录配置失败：{e}")))?;
     Ok(())
 }
 
@@ -303,7 +303,7 @@ pub async fn reset_data_dir() -> CommandResult<()> {
     if tokio::fs::try_exists(&bootstrap).await.unwrap_or(false) {
         tokio::fs::remove_file(&bootstrap)
             .await
-            .map_err(|e| CommandError::with_code("IO", format!("删除目录配置失败：{e}")))?;
+            .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("删除目录配置失败：{e}")))?;
     }
     Ok(())
 }

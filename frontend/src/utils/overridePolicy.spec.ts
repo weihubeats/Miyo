@@ -5,7 +5,7 @@ import type { RequestSpec, StepOverrides } from '../types/miyoApi'
 function spec(patch: Partial<RequestSpec> = {}): RequestSpec {
   return {
     params: [],
-    headers: [{ key: 'X-Trace', value: 'a', enabled: true, description: '' }],
+    headers: [{ key: 'X-Trace', value: 'a', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
     path_variables: [],
     auth: { type: 'none' },
     body: { mode: 'none' },
@@ -13,6 +13,7 @@ function spec(patch: Partial<RequestSpec> = {}): RequestSpec {
     follow_redirects: true,
     tests: null,
     ...patch,
+    disable_cookies: false,
   }
 }
 
@@ -51,14 +52,14 @@ describe('applyPolicy', () => {
   it('replace 预填接口全量行', () => {
     const out = applyPolicy('replace', spec(), { headers: [{ key: 'X-New', value: 'n' }] })
     expect(out?.headers).toEqual([
-      { key: 'X-Trace', value: 'a', enabled: true, description: '' },
+      { key: 'X-Trace', value: 'a', enabled: true, description: '', field_type: 'string', required: true, example: '' },
       { key: 'X-New', value: 'n' },
     ])
   })
 
   it('replace 时已有覆盖行优先，不重复插入', () => {
     const out = applyPolicy('replace', spec(), { headers: [{ key: 'x-trace', value: 'changed', enabled: false }] })
-    expect(out?.headers).toEqual([{ key: 'X-Trace', value: 'changed', enabled: false, description: '' }])
+    expect(out?.headers).toEqual([{ key: 'X-Trace', value: 'changed', enabled: false, description: '', field_type: 'string', required: true, example: '' }])
   })
 
   it('replace 预填 body（接口有 body 时）', () => {

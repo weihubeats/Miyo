@@ -43,8 +43,8 @@ function makeCase(overrides: Partial<TestCase> = {}): TestCase {
     method: 'POST',
     url_path: '/funds/transfer',
     path_variables: [],
-    params: [{ key: 'env', value: 'prod', enabled: true, description: '' }],
-    headers: [{ key: 'X-Trace', value: 'on', enabled: true, description: '' }],
+    params: [{ key: 'env', value: 'prod', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
+    headers: [{ key: 'X-Trace', value: 'on', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
     body_type: 'json',
     body_content: '{"amount":100}',
     assertions: [{ type: 'status', op: 'eq', expected: '200' }],
@@ -67,8 +67,8 @@ function makeEndpoint(): Endpoint {
     status: 'designing',
     sort_order: 0,
     request: {
-      params: [{ key: 'env', value: 'prod', enabled: true, description: '' }],
-      headers: [{ key: 'X-Trace', value: 'on', enabled: true, description: '' }],
+      params: [{ key: 'env', value: 'prod', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
+      headers: [{ key: 'X-Trace', value: 'on', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
       path_variables: [],
       auth: { type: 'none' },
       body: { mode: 'json', raw: '{"amount":100}' },
@@ -76,6 +76,7 @@ function makeEndpoint(): Endpoint {
       timeout_ms: null,
       follow_redirects: true,
       tests: null,
+      disable_cookies: false,
     },
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
@@ -192,7 +193,7 @@ describe('TestCaseDrawer（三 Tab 重构版）', () => {
     expect(payload.extractors).toHaveLength(1)
     expect(payload.timeoutMs).toBe(8000)
     expect(payload.disableCookies).toBe(true)
-    expect(payload.params).toEqual([{ key: 'env', value: 'prod', enabled: true, description: '' }])
+    expect(payload.params).toEqual([{ key: 'env', value: 'prod', enabled: true, description: '', field_type: 'string', required: true, example: '' }])
     // 保存成功 → 抽屉关闭
     expect(wrapper.emitted('update:open')?.[0]).toEqual([false])
   })

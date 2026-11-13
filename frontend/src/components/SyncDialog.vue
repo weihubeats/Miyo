@@ -211,7 +211,7 @@ const diffTotal = computed(() => {
   return d.added.length + d.removed.length + d.modified.length
 })
 
-function shortRev(rev: string | null): string {
+function shortRev(rev?: string | null): string {
   return rev ? rev.slice(0, 12) : t('sync.never')
 }
 </script>

@@ -44,8 +44,8 @@ const resp = await fetch('https://api.example.com/users', {
     expect(parsed.url).toBe('https://api.example.com/users')
     expect(parsed.method).toBe('POST')
     expect(parsed.headers).toEqual([
-      { key: 'Content-Type', value: 'application/json', enabled: true, description: '' },
-      { key: 'X-Token', value: 'abc', enabled: true, description: '' },
+      { key: 'Content-Type', value: 'application/json', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+      { key: 'X-Token', value: 'abc', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ])
     expect(parsed.body).toEqual({ mode: 'json', raw: '{"name":"alice","age":18}' })
   })
@@ -68,7 +68,7 @@ const { data } = await axios.post('https://api.example.com/orders', { sku: 'A-1'
     const parsed = parseCodeSnippet('javascript', src)
     expect(parsed.method).toBe('POST')
     expect(parsed.body).toEqual({ mode: 'json', raw: '{"sku":"A-1","count":2}' })
-    expect(parsed.headers).toEqual([{ key: 'Authorization', value: 'Bearer tok', enabled: true, description: '' }])
+    expect(parsed.headers).toEqual([{ key: 'Authorization', value: 'Bearer tok', enabled: true, description: '', field_type: 'string', required: true, example: '' }])
   })
 })
 
@@ -120,8 +120,8 @@ Request request = new Request.Builder()
     const parsed = parseCodeSnippet('java', src)
     expect(parsed.url).toBe('https://api.example.com/users')
     expect(parsed.method).toBe('POST')
-    expect(parsed.headers).toContainEqual({ key: 'Content-Type', value: 'application/json', enabled: true, description: '' })
-    expect(parsed.headers).toContainEqual({ key: 'Authorization', value: 'Bearer jt', enabled: true, description: '' })
+    expect(parsed.headers).toContainEqual({ key: 'Content-Type', value: 'application/json', enabled: true, description: '', field_type: 'string', required: true, example: '' })
+    expect(parsed.headers).toContainEqual({ key: 'Authorization', value: 'Bearer jt', enabled: true, description: '', field_type: 'string', required: true, example: '' })
     expect(parsed.body).toEqual({ mode: 'json', raw: '{"name":"carol"}' })
   })
 
@@ -158,8 +158,8 @@ func main() {
     expect(parsed.url).toBe('https://api.example.com/items')
     expect(parsed.method).toBe('POST')
     expect(parsed.headers).toEqual([
-      { key: 'Content-Type', value: 'application/json', enabled: true, description: '' },
-      { key: 'X-Trace', value: 't1', enabled: true, description: '' },
+      { key: 'Content-Type', value: 'application/json', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+      { key: 'X-Trace', value: 't1', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ])
   })
 
@@ -188,8 +188,8 @@ let res = client.post("https://api.example.com/orders")
     expect(parsed.url).toBe('https://api.example.com/orders')
     expect(parsed.method).toBe('POST')
     expect(parsed.headers).toEqual([
-      { key: 'Content-Type', value: 'application/json', enabled: true, description: '' },
-      { key: 'X-Token', value: 'abc', enabled: true, description: '' },
+      { key: 'Content-Type', value: 'application/json', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+      { key: 'X-Token', value: 'abc', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ])
     expect(parsed.body).toEqual({ mode: 'json', raw: '{"amount":99}' })
   })
@@ -204,7 +204,7 @@ let res = client.get("https://api.example.com/me")
     const parsed = parseCodeSnippet('rust', src)
     expect(parsed.method).toBe('GET')
     expect(parsed.headers).toEqual([
-      { key: 'Authorization', value: 'Bearer tok-1', enabled: true, description: '' },
+      { key: 'Authorization', value: 'Bearer tok-1', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ])
     const src2 = `client.get("https://api.example.com/x").basic_auth("u", "p").send().await?;`
     const parsed2 = parseCodeSnippet('rust', src2)
@@ -237,8 +237,8 @@ curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
     expect(parsed.url).toBe('https://api.example.com/pay')
     expect(parsed.method).toBe('POST')
     expect(parsed.headers).toEqual([
-      { key: 'Content-Type', value: 'application/json', enabled: true, description: '' },
-      { key: 'X-Sign', value: 's', enabled: true, description: '' },
+      { key: 'Content-Type', value: 'application/json', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+      { key: 'X-Sign', value: 's', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ])
     expect(parsed.body).toEqual({ mode: 'json', raw: '{"order":1}' })
   })
@@ -255,7 +255,7 @@ $res = $client->post("https://api.example.com/g", [
     expect(parsed.url).toBe('https://api.example.com/g')
     expect(parsed.method).toBe('POST')
     expect(parsed.headers).toEqual([
-      { key: 'X-A', value: 'b', enabled: true, description: '' },
+      { key: 'X-A', value: 'b', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ])
     expect(parsed.body).toEqual({ mode: 'json', raw: '{"k":"v"}' })
   })

@@ -15,9 +15,9 @@ import { useLocaleStore } from '../stores/locale'
 import type { Environment, EnvironmentVariable } from '../types/miyoApi'
 
 const VARS: EnvironmentVariable[] = [
-  { key: 'token', remote_value: 'r1', local_value: '', enabled: false, description: null },
-  { key: 'host', remote_value: 'h1', local_value: 'h2', enabled: true, description: null },
-  { key: 'api_key', remote_value: 'k1', local_value: '', enabled: true, sensitive: true, description: null },
+  { key: 'token', remote_value: 'r1', local_value: '', enabled: false, description: null, },
+  { key: 'host', remote_value: 'h1', local_value: 'h2', enabled: true, description: null, },
+  { key: 'api_key', remote_value: 'k1', local_value: '', enabled: true, sensitive: true, description: null, },
 ]
 
 const ENV: Environment = {

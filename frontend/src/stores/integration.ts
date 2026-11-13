@@ -13,7 +13,7 @@
  * 执行态（运行 / 进度 / 结果）不在本 store——归 WorkflowEditor 与
  * useScenarioRun，随编辑器实例存在。
  */
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useMiyoApi } from '../composables/useMiyoApi'
 import { useWorkspaceStore } from './workspace'
@@ -52,7 +52,8 @@ export const useIntegrationStore = defineStore('integration', () => {
   }
 
   // ---------- 场景库缓存 ----------
-  const libraryItems = ref<ScenarioLibraryItem[]>([])
+  // `as Ref<T>`：UnwrapRef 对该深嵌套类型会触发 TS2589 深度实例化爆炸（运行时行为不变）
+  const libraryItems = ref<ScenarioLibraryItem[]>([]) as Ref<ScenarioLibraryItem[]>
   const libraryLoaded = ref(false)
   const libraryLoading = ref(false)
 

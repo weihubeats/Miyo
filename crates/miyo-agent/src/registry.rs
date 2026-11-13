@@ -637,16 +637,6 @@ pub static TOOL_SCHEMA: &[(&str, &str, &str)] = &[
         r#"{"type":"object","properties":{}}"#,
     ),
     (
-        "list_endpoints",
-        r#"列出指定项目下的接口（方法 / 路径 / 名称 / 请求规格）。支持按名称子串（匹配名称或路径）、HTTP 方法、所属分组过滤，支持分页；全缺省时返回全量（与旧版兼容）。创建场景前用它了解项目里有哪些接口。"#,
-        r#"{"type":"object","properties":{"projectId":{"type":"string","description":"项目 UUID（先调 list_projects 获取）"},"name":{"type":"string","description":"可选，名称/路径子串过滤（大小写不敏感）"},"method":{"type":"string","description":"可选，HTTP 方法过滤（GET/POST/…，大小写不敏感）"},"folderId":{"type":"string","description":"可选，分组 UUID 过滤"},"limit":{"type":"number","description":"可选，分页条数（配合 offset；缺省全量）"},"offset":{"type":"number","description":"可选，分页偏移（缺省 0）"}},"required":["projectId"]}"#,
-    ),
-    (
-        "get_endpoint",
-        r#"读取单个接口的完整定义（方法 / 路径 / 请求头 / 参数 / Body / 认证形态），调用 send_endpoint 前先看它。"#,
-        r#"{"type":"object","properties":{"endpointId":{"type":"string","description":"接口 UUID（list_endpoints / save_curl 返回）"}},"required":["endpointId"]}"#,
-    ),
-    (
         "send_endpoint",
         r#"发送一次真实 HTTP 请求（链式调用的核心工具）。按 Miyo 中已保存接口的当前配置执行，支持覆盖：url（完整地址）、headers、query、body（请求体原文）、variables（额外变量，渲染进 {{var}} 占位）。返回完整响应（状态码 / 耗时 / 正文，超 64KB 截断）。典型链路：调用下单接口 → 从响应正文提取订单号 → 用 variables/body 把订单号传给支付预览接口 → 再调支付接口。"#,
         r#"{"type":"object","properties":{"endpointId":{"type":"string","description":"接口 UUID（list_endpoints / save_curl 返回）"},"url":{"type":"string","description":"可选，覆盖完整 URL 模板（支持 {{var}} 占位）"},"headers":{"type":"object","description":"可选，追加/覆盖请求头 {\"名\": \"值\"}","additionalProperties":{"type":"string"}},"query":{"type":"object","description":"可选，追加/覆盖 query 参数","additionalProperties":{"type":"string"}},"body":{"type":"string","description":"可选，覆盖请求体原文（Json/Text 原位替换；其余类型降级为 text）"},"variables":{"type":"object","description":"可选，额外变量注入（优先级最高），如 {\"orderId\": \"A1024\"}","additionalProperties":{"type":"string"}},"environmentId":{"type":"string","description":"可选，环境 UUID（缺省用全局+项目变量）"},"timeoutMs":{"type":"number","description":"可选，本次请求超时毫秒（缺省 接口级→全局设置→300s）"}},"required":["endpointId"]}"#,
@@ -856,6 +846,16 @@ pub fn tool_meta(name: &str) -> Option<&'static ToolMeta> {
 
 /// 按名查描述 + Schema（未注册返回 None）。
 pub fn tool_schema(name: &str) -> Option<(&'static str, Value)> {
+    // 单源试点：args.rs 结构体生成的 schema 优先（与 dispatch 反序列化同源），
+    // 其余工具沿用 TOOL_SCHEMA 手写表（渐进迁移）。
+    if let Some(schema) = crate::args::generated_tool_schemas().get(name) {
+        let desc = GENERATED_TOOL_DESCRIPTIONS
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, d)| *d)
+            .unwrap_or("");
+        return Some((desc, schema.clone()));
+    }
     TOOL_SCHEMA
         .iter()
         .find(|(n, _, _)| *n == name)
@@ -865,6 +865,18 @@ pub fn tool_schema(name: &str) -> Option<(&'static str, Value)> {
             (*desc, parsed)
         })
 }
+
+/// 试点工具的工具描述（与原 TOOL_SCHEMA 手写文案一致；schema 已迁至 args.rs 生成）。
+static GENERATED_TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "list_endpoints",
+        "列出指定项目下的接口（方法 / 路径 / 名称 / 请求规格）。支持按名称子串（匹配名称或路径）、HTTP 方法、所属分组过滤，支持分页；全缺省时返回全量（与旧版兼容）。创建场景前用它了解项目里有哪些接口。",
+    ),
+    (
+        "get_endpoint",
+        "读取单个接口的完整定义（方法 / 路径 / 请求头 / 参数 / Body / 认证形态），调用 send_endpoint 前先看它。",
+    ),
+];
 
 /// 全部工具元数据（tools/list / 设置页 / 完整性测试共用）。
 pub fn all_tool_meta() -> &'static [ToolMeta] {
@@ -942,7 +954,12 @@ mod tests {
         for (name, _, _) in TOOL_SCHEMA {
             assert!(tool_meta(name).is_some(), "Schema 表多出未注册工具：{name}");
         }
-        assert_eq!(TOOL_META.len(), TOOL_SCHEMA.len());
+        // Schema 来源两份：手写表 + args.rs 生成表（单源试点），合计须覆盖全部工具
+        assert_eq!(
+            TOOL_META.len(),
+            TOOL_SCHEMA.len() + crate::args::generated_tool_schemas().len(),
+            "工具数应等于手写 Schema 数 + 生成 Schema 数"
+        );
     }
 
     /// 权限矩阵：高风险等级默认关闭的含义 —— 删除类必须是 Destructive、

@@ -29,6 +29,7 @@
 //! | PUT  | `/agent/scenarios/{id}/script` | 写入 / 清除场景自定义脚本 |
 
 pub mod analysis;
+pub mod args;
 pub mod client;
 pub mod dispatch;
 pub mod import;

@@ -51,7 +51,7 @@ function suggestions(): HTMLElement[] {
 }
 
 describe('KeyValueTable 变量补全', () => {
-  const emptyRow: KVRow = { key: '', value: '', enabled: true, description: '' }
+  const emptyRow: KVRow = { key: '', value: '', enabled: true, description: '', }
 
   it('输入 {{ 展开候选，方向键切换高亮，Enter 插入 {{name}} 并回写 v-model', async () => {
     const w = mountTable([emptyRow], ['base_url', 'token', 'uuid_x'])
@@ -96,7 +96,7 @@ describe('KeyValueTable 变量补全', () => {
   })
 
   it('未传 varCandidates：输入 {{ 不弹候选（保持既有调用方行为）', async () => {
-    const w = mountTable([{ key: 'a', value: '', enabled: true, description: '' }])
+    const w = mountTable([{ key: 'a', value: '', enabled: true, description: '', }])
     const input = w.findAll('input.kvt-value')[0]!.element as HTMLInputElement
 
     typeInto(input, '{{')
@@ -135,9 +135,9 @@ describe('KeyValueTable 行管理（无幽灵行）', () => {
 
 describe('KeyValueTable 行过滤（searchable）', () => {
   const rows: KVRow[] = [
-    { key: 'token', value: 'abc123', enabled: true, description: '鉴权' },
-    { key: 'page', value: '2', enabled: true, description: '' },
-    { key: 'size', value: '20', enabled: false, description: '页大小' },
+    { key: 'token', value: 'abc123', enabled: true, description: '鉴权', },
+    { key: 'page', value: '2', enabled: true, description: '', },
+    { key: 'size', value: '20', enabled: false, description: '页大小', },
   ]
 
   it('默认不渲染过滤条（既有调用方零感知）', () => {

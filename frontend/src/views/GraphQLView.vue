@@ -255,6 +255,7 @@ function buildArgs(): ExecuteRequestArgs {
       timeout_ms: null,
       follow_redirects: true,
       tests: null,
+      disable_cookies: false,
     },
     environment_id: props.environmentId ?? store.activeEnvId ?? null,
   }

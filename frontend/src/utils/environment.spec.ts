@@ -18,7 +18,7 @@ import {
   validateBaseUrl,
   variableListToMap,
 } from './environment'
-import type { Endpoint } from '../types/miyoApi'
+import type { Endpoint, KeyValue } from '../types/miyoApi'
 
 function mkEnv(overrides: Partial<Environment> = {}): Environment {
   return {
@@ -103,8 +103,8 @@ describe('environmentVariableMap', () => {
     const env = mkEnv({
       base_url: 'https://pay.example.com',
       variables: [
-        { key: 'token', remote_value: 'abc', local_value: 'LOCAL', enabled: true, description: null },
-        { key: 'skipped', remote_value: 'x', local_value: '', enabled: false, description: null },
+        { key: 'token', remote_value: 'abc', local_value: 'LOCAL', enabled: true, description: null, },
+        { key: 'skipped', remote_value: 'x', local_value: '', enabled: false, description: null, },
       ],
     })
     const map = environmentVariableMap(env)
@@ -117,7 +117,7 @@ describe('environmentVariableMap', () => {
     const env = mkEnv({
       base_url: 'https://env.example.com',
       variables: [
-        { key: 'base_url', remote_value: 'https://override.example.com', local_value: '', enabled: true, description: null },
+        { key: 'base_url', remote_value: 'https://override.example.com', local_value: '', enabled: true, description: null, },
       ],
     })
     expect(environmentVariableMap(env).base_url).toBe('https://override.example.com')
@@ -168,7 +168,7 @@ describe('resolveRequestUrl（请求拼接核心）', () => {
     const env = mkEnv({
       base_url: '{{host}}',
       variables: [
-        { key: 'host', remote_value: 'https://dev.example.com', local_value: '', enabled: true, description: null },
+        { key: 'host', remote_value: 'https://dev.example.com', local_value: '', enabled: true, description: null, },
       ],
     })
     expect(resolveRequestUrl(mkEnv({ base_url: '{{host}}' }), '/ping').url).toBe('{{host}}/ping')
@@ -183,7 +183,7 @@ describe('resolveRequestUrl（请求拼接核心）', () => {
     const envWithHost = mkEnv({
       base_url: '{{host}}',
       variables: [
-        { key: 'host', remote_value: 'https://env.example.com', local_value: '', enabled: true, description: null },
+        { key: 'host', remote_value: 'https://env.example.com', local_value: '', enabled: true, description: null, },
       ],
     })
     expect(resolveRequestUrl(envWithHost, '/ping', { host: 'https://extra.example.com' }).url).toBe('https://env.example.com/ping')
@@ -215,7 +215,17 @@ describe('resolveVariables', () => {
 })
 
 describe('requestTemplateTexts / findUnknownVars（发送前未定义变量扫描）', () => {
-  const ep = (body: Endpoint['request']['body'], headers: Endpoint['request']['headers'] = [], params: Endpoint['request']['params'] = []): Endpoint => {
+  type KvInput = Partial<KeyValue> & { key: string; value: string }
+  const fullKv = (r: KvInput): KeyValue => ({
+    key: r.key,
+    value: r.value,
+    enabled: r.enabled ?? true,
+    description: r.description ?? '',
+    field_type: r.field_type ?? 'string',
+    required: r.required ?? true,
+    example: r.example ?? '',
+  })
+  const ep = (body: Endpoint['request']['body'], headers: KvInput[] = [], params: KvInput[] = []): Endpoint => {
     const now = '2026-01-01T00:00:00.000Z'
     return {
       id: 'ep-1',
@@ -228,8 +238,8 @@ describe('requestTemplateTexts / findUnknownVars（发送前未定义变量扫�
       status: 'developing',
       sort_order: 0,
       request: {
-        params,
-        headers,
+        params: params.map(fullKv),
+        headers: headers.map(fullKv),
         path_variables: [],
         auth: { type: 'none' },
         body,

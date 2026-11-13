@@ -21,23 +21,35 @@ pub async fn dispatch_tool(client: &ControlClient, name: &str, args: &Value) -> 
             "address": client.base(),
             "tokenPath": crate::token::token_path(&crate::default_data_dir()).display().to_string(),
         })),
+        // 试点：入参经 typed struct 反序列化（与 registry 生成 schema 同源）
         "list_endpoints" => {
-            let project = arg_uuid(args, "projectId")?;
+            let a: crate::args::ListEndpointsArgs = serde_json::from_value(args.clone())
+                .map_err(|e| AppError::Validation(format!("list_endpoints 参数无效：{e}")))?;
+            let project = uuid::Uuid::parse_str(&a.project_id).map_err(|_| {
+                AppError::Validation(format!("projectId 不是合法 UUID：{}", a.project_id))
+            })?;
+            let folder =
+                match &a.folder_id {
+                    Some(f) => Some(uuid::Uuid::parse_str(f).map_err(|_| {
+                        AppError::Validation(format!("folderId 不是合法 UUID：{f}"))
+                    })?),
+                    None => None,
+                };
             let mut path = format!("/agent/endpoints/{project}");
             let mut query = Vec::new();
-            if let Some(n) = arg_str(args, "name") {
+            if let Some(n) = &a.name {
                 query.push(format!("name={}", urlencoded(n)));
             }
-            if let Some(m) = arg_str(args, "method") {
+            if let Some(m) = &a.method {
                 query.push(format!("method={}", urlencoded(m)));
             }
-            if let Some(f) = opt_arg_uuid(args, "folderId")? {
+            if let Some(f) = folder {
                 query.push(format!("folderId={f}"));
             }
-            if let Some(l) = args.get("limit").and_then(|v| v.as_u64()) {
+            if let Some(l) = a.limit {
                 query.push(format!("limit={l}"));
             }
-            if let Some(o) = args.get("offset").and_then(|v| v.as_u64()) {
+            if let Some(o) = a.offset {
                 query.push(format!("offset={o}"));
             }
             if !query.is_empty() {
@@ -47,7 +59,11 @@ pub async fn dispatch_tool(client: &ControlClient, name: &str, args: &Value) -> 
             client.get_raw_json(&path).await
         }
         "get_endpoint" => {
-            let id = arg_uuid(args, "endpointId")?;
+            let a: crate::args::GetEndpointArgs = serde_json::from_value(args.clone())
+                .map_err(|e| AppError::Validation(format!("get_endpoint 参数无效：{e}")))?;
+            let id = uuid::Uuid::parse_str(&a.endpoint_id).map_err(|_| {
+                AppError::Validation(format!("endpointId 不是合法 UUID：{}", a.endpoint_id))
+            })?;
             client
                 .get_raw_json(&format!("/agent/endpoints/{id}/detail"))
                 .await

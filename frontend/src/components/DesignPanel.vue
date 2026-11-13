@@ -151,6 +151,9 @@ function bodyToFormFields(old: BodySpec): KeyValue[] {
       value: f.value,
       enabled: f.enabled,
       description: '',
+      field_type: 'string' as const,
+      required: true,
+      example: '',
     }))
   }
   if (old.mode === 'json' || old.mode === 'text') {
@@ -162,6 +165,9 @@ function bodyToFormFields(old: BodySpec): KeyValue[] {
           value: typeof value === 'string' ? value : JSON.stringify(value),
           enabled: true,
           description: '',
+          field_type: 'string' as const,
+          required: true,
+          example: '',
         }))
       }
     } catch {
@@ -665,7 +671,7 @@ function normalizePathInput(): void {
     for (const [key, val] of new URLSearchParams(qs).entries()) {
       const existing = target.request.params.find((p) => p.key === key)
       if (existing) existing.value = val
-      else target.request.params.push({ key, value: val, enabled: true, description: '' })
+      else target.request.params.push({ key, value: val, enabled: true, description: '', field_type: 'string', required: true, example: '' })
     }
   }
   const isAbs = /^(https?|wss?):\/\//i.test(v)

@@ -3,7 +3,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { RequestSpec, TestCase } from '../types/miyoApi'
+import type { KeyValue, RequestSpec, TestCase } from '../types/miyoApi'
 import { useLocaleStore } from '../stores/locale'
 import {
   applyCaseToRequest,
@@ -21,8 +21,8 @@ import {
 
 function req(overrides: Partial<RequestSpec> = {}): RequestSpec {
   return {
-    params: [{ key: 'page', value: '1', enabled: true, description: '' }],
-    headers: [{ key: 'X-Trace', value: 'on', enabled: true, description: '' }],
+    params: [{ key: 'page', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
+    headers: [{ key: 'X-Trace', value: 'on', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
     path_variables: [],
     auth: { type: 'none' },
     body: { mode: 'none' },
@@ -30,6 +30,7 @@ function req(overrides: Partial<RequestSpec> = {}): RequestSpec {
     timeout_ms: 30000,
     follow_redirects: true,
     tests: null,
+    disable_cookies: false,
     ...overrides,
   }
 }
@@ -116,7 +117,7 @@ describe('restoreBody', () => {
   })
 
   it('urlencoded / form-data 还原字段', () => {
-    const kv = [{ key: 'a', value: '1', enabled: true, description: '' }]
+    const kv = [{ key: 'a', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' }]
     expect(restoreBody('urlencoded', JSON.stringify(kv))).toEqual({ mode: 'urlencoded', fields: kv })
     expect(restoreBody('form-data', JSON.stringify(kv))).toEqual({
       mode: 'multipart',
@@ -142,19 +143,24 @@ describe('applyCaseToRequest', () => {
   it('整体替换 params / headers / body', () => {
     const r = req()
     applyCaseToRequest(r, {
-      params: [{ key: 'debug', value: '0', enabled: true, description: '' }],
+      params: [{ key: 'debug', value: '0', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
       headers: [],
       body_type: 'json',
       body_content: '{"amount":100}',
     })
-    expect(r.params).toEqual([{ key: 'debug', value: '0', enabled: true, description: '' }])
+    expect(r.params).toEqual([{ key: 'debug', value: '0', enabled: true, description: '', field_type: 'string', required: true, example: '' }])
     expect(r.headers).toEqual([])
     expect(r.body).toEqual({ mode: 'json', raw: '{"amount":100}' })
   })
 
   it('回填不污染原快照数据（深拷贝）', () => {
-    const snap = {
-      params: [{ key: 'a', value: '1', enabled: true, description: '' }],
+    const snap: {
+      params: KeyValue[]
+      headers: KeyValue[]
+      body_type: string
+      body_content: string
+    } = {
+      params: [{ key: 'a', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
       headers: [],
       body_type: 'json',
       body_content: '{}',
@@ -176,8 +182,8 @@ describe('matchTestCaseKeyword', () => {
       method: 'POST',
       url_path: '/funds/transfer',
       path_variables: [],
-      params: [{ key: 'debug', value: '0', enabled: true, description: '' }],
-      headers: [{ key: 'X-Trace', value: 'on', enabled: true, description: '' }],
+      params: [{ key: 'debug', value: '0', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
+      headers: [{ key: 'X-Trace', value: 'on', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
       body_type: 'json',
       body_content: '{"amount":100,"currency":"CNY"}',
       last_run_status: 'Untested',

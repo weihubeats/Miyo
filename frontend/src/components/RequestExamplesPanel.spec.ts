@@ -54,6 +54,7 @@ function makeExample(name: string, overrides: Partial<RequestExample> = {}): Req
       timeout_ms: 30000,
       follow_redirects: true,
       tests: null,
+      disable_cookies: false,
     },
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

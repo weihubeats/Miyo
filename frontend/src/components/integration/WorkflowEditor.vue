@@ -12,7 +12,7 @@
  * 步骤两种形态：内联请求（步骤自持 method/url/spec，导入导出友好）与
  * 接口引用（endpoint_id，配置跟随接口）。运行统一物化为 BuiltRunStep。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { type Ref, computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { join } from '@tauri-apps/api/path'
@@ -95,6 +95,7 @@ function emptyInline(): EditorStep['inline'] {
       timeout_ms: null,
       follow_redirects: true,
       tests: null,
+      disable_cookies: false,
     },
   }
 }
@@ -105,7 +106,7 @@ function newStepKey(): string {
   return `step-${Date.now().toString(36)}-${stepSeq}`
 }
 
-const scenario = ref<Scenario | null>(null)
+const scenario = ref<Scenario | null>(null) as Ref<Scenario | null> // `as Ref`：绕开 UnwrapRef 对深嵌套场景类型的 TS2589（运行时行为不变）
 const name = ref('')
 const description = ref('')
 const category = ref('')
@@ -1386,12 +1387,12 @@ function applyScriptToSteps(): void {
               : p.bodyKind === 'urlencoded'
                 ? {
                     mode: 'urlencoded',
-                    fields: p.bodyFields.map((f) => ({ key: f.key, value: f.value, enabled: true, description: '' })),
+                    fields: p.bodyFields.map((f) => ({ key: f.key, value: f.value, enabled: true, description: '', field_type: 'string' as const, required: true, example: '' })),
                   }
                 : { mode: 'none' }
-      inlineStep.spec.params = p.params.map((f) => ({ key: f.key, value: f.value, enabled: true, description: '' }))
+      inlineStep.spec.params = p.params.map((f) => ({ key: f.key, value: f.value, enabled: true, description: '', field_type: 'string' as const, required: true, example: '' }))
       // 头无法与鉴权区分（解析器并入 headers），按普通头落盘。
-      inlineStep.spec.headers = p.headers.map((f) => ({ key: f.key, value: f.value, enabled: true, description: '' }))
+      inlineStep.spec.headers = p.headers.map((f) => ({ key: f.key, value: f.value, enabled: true, description: '', field_type: 'string' as const, required: true, example: '' }))
       return {
         key: newStepKey(),
         enabled: true,

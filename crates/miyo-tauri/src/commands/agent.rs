@@ -10,7 +10,7 @@ use tauri::{Emitter, Manager, State};
 use miyo_agent::server::{AgentState, MCP_DISABLED_TOOLS_KEY};
 use miyo_storage::repository as repo;
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 /// settings 表中的 MCP（Agent 控制面）开关键；值为 JSON bool。
@@ -62,7 +62,7 @@ pub async fn ensure_started(app: &tauri::AppHandle) -> CommandResult<String> {
 
     let preferred_port = read_mcp_port(&state.db).await;
     let token = miyo_agent::load_or_create_token(&miyo_storage::db::data_dir())
-        .map_err(|e| CommandError::with_code("IO", format!("Agent 令牌文件创建失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("Agent 令牌文件创建失败：{e}")))?;
     let agent_state = AgentState::new(state.db.clone(), token);
     let mut events = agent_state.subscribe();
 
@@ -180,7 +180,7 @@ pub async fn set_mcp_enabled(
         stop_locked(&mut guard).await;
     }
     let json = serde_json::to_string(&enabled)
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, MCP_ENABLED_KEY, &json).await?;
     Ok(())
 }
@@ -226,7 +226,7 @@ pub async fn set_mcp_tool_enabled(
         disabled.push(name);
     }
     let json = serde_json::to_string(&disabled)
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, MCP_DISABLED_TOOLS_KEY, &json).await?;
     Ok(())
 }
@@ -312,12 +312,12 @@ pub async fn set_mcp_permissions(
     let enabling_high_risk = parsed.iter().any(|l| l.is_high_risk());
     if enabling_high_risk && !acknowledge_high_risk.unwrap_or(false) {
         return Err(CommandError::with_code(
-            "HIGH_RISK_CONFIRMATION_REQUIRED",
+            CommandErrorCode::HighRiskConfirmationRequired,
             "启用高风险权限（真实网络请求 / 删除数据）需要用户在设置页明确确认",
         ));
     }
     let json = serde_json::to_string(&parsed.iter().map(|l| l.as_str()).collect::<Vec<_>>())
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
     repo::set_setting(&state.db, miyo_agent::server::MCP_PERMISSIONS_KEY, &json).await?;
     Ok(())
 }
@@ -340,9 +340,9 @@ pub async fn set_mcp_port(
         return Ok(());
     }
     let prev_json = serde_json::to_string(&prev)
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
     let next_json = serde_json::to_string(&port)
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
 
     let was_running = {
         let mut guard = state.agent.write().await;

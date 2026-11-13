@@ -14,7 +14,7 @@ export function makeDraft(overrides: Partial<Endpoint> = {}): Endpoint {
     sort_order: 0,
     request: {
       params: [],
-      headers: [{ key: 'X-Token', value: 'abc', enabled: true, description: '' }],
+      headers: [{ key: 'X-Token', value: 'abc', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
       path_variables: [],
       auth: { type: 'bearer', token: 'tok123' },
       body: { mode: 'none' },
@@ -22,6 +22,7 @@ export function makeDraft(overrides: Partial<Endpoint> = {}): Endpoint {
       follow_redirects: true,
       tests: null,
       body_docs: {},
+  disable_cookies: false,
     },
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',

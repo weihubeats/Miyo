@@ -27,7 +27,7 @@ export const SNIPPET_LANGS: Array<{ value: SnippetLang | 'auto'; label: string }
 const METHODS: HttpMethod[] = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
 
 function kv(key: string, value: string): KeyValue {
-  return { key, value, enabled: true, description: '' }
+  return { key, value, enabled: true, description: '', field_type: 'string', required: true, example: '' }
 }
 
 // ---------- 通用工具 ----------

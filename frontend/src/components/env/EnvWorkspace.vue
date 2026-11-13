@@ -680,7 +680,7 @@ async function confirmImport(): Promise<void> {
 
 // ---------- 变量行增删 / 批量合并（EnvVarTable 事件 → 父级执行，按作用域写入） ----------
 function newVarRow(): EnvironmentVariable {
-  return { key: '', remote_value: '', local_value: '', enabled: true, description: null }
+  return { key: '', remote_value: '', local_value: '', enabled: true, description: null, }
 }
 
 /** 当前变量表归属：env 作用域写选中环境，global 作用域写全局变量副本。 */

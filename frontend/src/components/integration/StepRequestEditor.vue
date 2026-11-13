@@ -132,8 +132,7 @@ function toRows(rows: KeyValue[] | undefined): KVRow[] {
     key: r.key,
     value: r.value,
     enabled: r.enabled,
-    description: r.description,
-  }))
+    description: r.description, }))
 }
 
 function fromRows(rows: KVRow[]): KeyValue[] {
@@ -142,6 +141,9 @@ function fromRows(rows: KVRow[]): KeyValue[] {
     value: r.value ?? '',
     enabled: r.enabled ?? true,
     description: r.description ?? '',
+    field_type: 'string' as const,
+    required: true,
+    example: '',
   }))
 }
 

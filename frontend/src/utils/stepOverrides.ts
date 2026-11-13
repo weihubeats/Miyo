@@ -37,6 +37,9 @@ export function applyStepOverrides(spec: RequestSpec, overrides: StepOverrides |
           value,
           enabled,
           description: typeof row.description === 'string' ? row.description : '',
+          field_type: 'string',
+          required: true,
+          example: '',
         })
       }
     }

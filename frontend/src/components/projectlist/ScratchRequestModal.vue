@@ -76,6 +76,7 @@ async function sendScratch(): Promise<void> {
         timeout_ms: null,
         follow_redirects: true,
         tests: null,
+        disable_cookies: false,
       },
       environment_id: null,
     })

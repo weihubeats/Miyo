@@ -13,6 +13,7 @@ function req(overrides: Partial<RequestSpec> = {}): RequestSpec {
     timeout_ms: 30_000,
     follow_redirects: true,
     tests: null,
+    disable_cookies: false,
     ...overrides,
   }
 }
@@ -42,6 +43,9 @@ describe('applyMethodDefaults', () => {
       value: 'application/json',
       enabled: true,
       description: '',
+      field_type: 'string',
+      required: true,
+      example: '',
     })
   })
 

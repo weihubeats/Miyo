@@ -39,6 +39,7 @@ const SNAPSHOT_BODY_BYTES: usize = 64 * 1024;
 /// 本次请求实际发出形态的快照（变量渲染、全局参数注入、认证应用、
 /// Cookie Jar 回放之后的最终值），供前端「请求」页签排查错误。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RequestSnapshot {
     pub method: String,
     /// 实际发送的完整 URL（含 query 参数）。

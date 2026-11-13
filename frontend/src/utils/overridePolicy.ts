@@ -63,7 +63,16 @@ export function detectPolicy(spec: RequestSpec | null, overrides: StepOverrides 
  * 只是让 UI 有完整可编辑的行集合。真正的删除靠 enabled=false。
  */
 function inheritRow(row: KeyValue): Partial<KeyValue> {
-  return { key: row.key, value: row.value, enabled: row.enabled, description: row.description }
+  // 保留设计元数据（field_type/required/example）：replace 重建行时不丢用户标注
+  return {
+    key: row.key,
+    value: row.value,
+    enabled: row.enabled,
+    description: row.description,
+    field_type: row.field_type ?? 'string',
+    required: row.required ?? true,
+    example: row.example ?? '',
+  }
 }
 
 /**

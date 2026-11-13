@@ -63,6 +63,16 @@ sqlx = { version = "0.8", features = [
     "json",
     "migrate",
 ] }
+# `ts` feature：CommandError / 关键 view DTO derive TS，导出 frontend/src/types/generated/
+ts-rs = { version = "12", optional = true, default-features = false, features = [
+    "serde-compat",
+    "uuid-impl",
+    "chrono-impl",
+    "serde-json-impl",
+] }
+
+[features]
+ts = ["dep:ts-rs", "miyo-core/ts", "miyo-http/ts"]
 
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }

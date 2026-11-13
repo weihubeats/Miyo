@@ -9,7 +9,7 @@ use miyo_mock::server::MockServer;
 use miyo_storage::repository as repo;
 use std::collections::HashMap;
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 /// 启动 Mock 服务（重复启动返回 409 语义错误码 MOCK_RUNNING）。
@@ -20,7 +20,7 @@ use crate::state::AppState;
 pub async fn mock_start(state: State<'_, AppState>) -> CommandResult<String> {
     if state.mock.read().await.is_some() {
         return Err(CommandError::with_code(
-            "MOCK_RUNNING",
+            CommandErrorCode::MockRunning,
             "Mock 服务已在运行，请先停止",
         ));
     }
@@ -42,7 +42,7 @@ pub async fn mock_start(state: State<'_, AppState>) -> CommandResult<String> {
     if guard.is_some() {
         server.stop().await;
         return Err(CommandError::with_code(
-            "MOCK_RUNNING",
+            CommandErrorCode::MockRunning,
             "Mock 服务已在运行，请先停止",
         ));
     }
@@ -100,7 +100,7 @@ pub async fn mock_reload(state: State<'_, AppState>) -> CommandResult<u64> {
     let guard = state.mock.read().await;
     let Some(server) = guard.as_ref() else {
         return Err(CommandError::with_code(
-            "MOCK_NOT_RUNNING",
+            CommandErrorCode::MockNotRunning,
             "Mock 服务未运行，请先启动",
         ));
     };

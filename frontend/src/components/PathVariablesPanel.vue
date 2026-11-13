@@ -50,7 +50,7 @@ function extract(): void {
   const merged: KeyValue[] = [...current]
   for (const name of names) {
     if (known.has(name)) continue
-    merged.push({ key: name, value: '', enabled: true, description: '' })
+    merged.push({ key: name, value: '', enabled: true, description: '', field_type: 'string', required: true, example: '' })
   }
   d.request.path_variables = merged
   toast.success(t('editor.pathExtracted', { n: names.length }))

@@ -33,3 +33,8 @@ url = { workspace = true }
 sqlx = { workspace = true }
 rquickjs = { workspace = true }
 tokio-tungstenite = { workspace = true }
+# `ts` feature：RequestSnapshot derive TS（仅 bindings 导出测试编译）
+ts-rs = { workspace = true, optional = true }
+
+[features]
+ts = ["dep:ts-rs"]

@@ -321,7 +321,7 @@ watch(urlPath, () => {
   const existing = new Set(req.request.path_variables.map((p) => p.key))
   for (const n of names) {
     if (!existing.has(n)) {
-      req.request.path_variables.push({ key: n, value: '', enabled: true, description: '' })
+      req.request.path_variables.push({ key: n, value: '', enabled: true, description: '', field_type: 'string', required: true, example: '' })
     }
   }
 })

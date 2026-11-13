@@ -25,6 +25,7 @@ function makeEndpoint(): Endpoint {
       timeout_ms: null,
       follow_redirects: true,
       tests: null,
+      disable_cookies: false,
     },
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
@@ -64,6 +65,7 @@ function makeScenario(): Scenario {
             timeout_ms: null,
             follow_redirects: true,
             tests: null,
+            disable_cookies: false,
           },
         },
       },
@@ -94,7 +96,7 @@ describe('scenarioIO 导出', () => {
 
   it('导出脱敏：内联步骤的 auth / 敏感头 / JSON body 凭证替换占位符并登记清单', () => {
     const ep = makeEndpoint()
-    ep.request.headers.push({ key: 'Authorization', value: 'Bearer real-tok', enabled: true, description: '' })
+    ep.request.headers.push({ key: 'Authorization', value: 'Bearer real-tok', enabled: true, description: '', field_type: 'string', required: true, example: '' })
     ep.request.auth = { type: 'bearer', token: 'real-tok-2' }
     ep.request.body = { mode: 'json', raw: '{"password":"pw-1","sku":"A"}' }
     const scenario = makeScenario()

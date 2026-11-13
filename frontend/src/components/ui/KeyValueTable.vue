@@ -89,7 +89,7 @@ const rows = ref<KVRow[]>([])
 const keyInputs = new Map<number, HTMLInputElement>()
 
 function blank(): KVRow {
-  return { key: '', value: '', enabled: true, description: '' }
+  return { key: '', value: '', enabled: true, description: '', }
 }
 
 function isEmpty(row: KVRow): boolean {

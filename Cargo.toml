@@ -122,6 +122,19 @@ prost-reflect = { version = "0.16", features = ["serde"] }
 protox = "0.10"
 tonic-reflection = "0.14"
 
+# MCP 工具 inputSchema 生成（miyo-agent 工具入参结构体 derive JsonSchema）
+schemars = "1"
+
+# Rust → TypeScript 类型生成（miyo-core/miyo-tauri 的 `ts` feature 可选启用，
+# 由 crates/*/tests/ts_bindings.rs 导出到 frontend/src/types/generated/）。
+# serde-compat 为默认特性；uuid/chrono/serde_json 值类型映射经对应 -impl 特性接入。
+ts-rs = { version = "12", default-features = false, features = [
+    "serde-compat",
+    "uuid-impl",
+    "chrono-impl",
+    "serde-json-impl",
+] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

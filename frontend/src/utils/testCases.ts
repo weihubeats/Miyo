@@ -219,6 +219,9 @@ function parseFields(json: string): KeyValue[] {
         value: f.value ?? '',
         enabled: f.enabled !== false,
         description: f.description ?? '',
+        field_type: f.field_type ?? 'string',
+        required: f.required ?? true,
+        example: f.example ?? '',
       }))
     }
   } catch {

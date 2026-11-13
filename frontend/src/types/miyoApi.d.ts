@@ -1,280 +1,88 @@
 /**
- * miyo-core / miyo-http 模型的 TypeScript 镜像。
+ * miyo-core / miyo-http / miyo-tauri 模型的 TypeScript 镜像。
  *
- * 生成方案（二选一）：
- * 方案 A（推荐）：tauri-specta 在构建期自动生成（`miyo-tauri` 插件的 `bindings.ts`），
- *                Rust 侧模型需要 derive `specta::Type`，产物为「命令 + 类型」一体文件；
- * 方案 B：手写维护本文件。注意：修改 Rust 模型后必须同步本文件，并在 CI 里
- *        加一个字段快照比对（如 `ts-json-schema-generator` + `git diff`）防漂移。
+ * 领域模型与关键 view DTO 由 ts-rs 自动生成：Rust 侧模型 derive `TS`
+ * （miyo-core / miyo-http / miyo-tauri 的 `ts` feature），`cargo test
+ * --features ts` 导出到 `types/generated/`；CI `bindings` job 重新导出后
+ * `git diff --exit-code` 防漂移——改 Rust 模型不重新导出即红灯。
+ *
+ * 本文件只保留两类内容：
+ * 1. `export type { … } from './generated/…'` re-export（导入路径不变）；
+ * 2. 尚未接入生成的 IPC view 类型（agent / mock / sync / ws 等手写镜像，
+ *    渐进迁移：Rust 侧 derive 后把对应手写块换成 re-export 行）。
  */
 
-/** 统一命令错误（后端 AppError → { code, message }）。 */
-export interface CommandError {
-  code:
-    | 'DATABASE'
-    | 'IO'
-    | 'HTTP'
-    | 'TIMEOUT'
-    | 'SSL'
-    | 'DNS'
-    | 'CONNECTION'
-    | 'VALIDATION'
-    | 'NOT_FOUND'
-    | 'OPENAPI'
-    | 'MOCK'
-    | 'TEST'
-    | 'SCRIPT'
-    | 'WEBSOCKET'
-    | 'JSON'
-    | 'DECRYPT'
-    | 'OAUTH2'
-    | 'GRPC'
-  message: string
-}
+import type { AuthSpec } from './generated/AuthSpec';
+import type { BodySpec } from './generated/BodySpec';
+import type { Endpoint } from './generated/Endpoint';
+import type { EnvironmentVariable } from './generated/EnvironmentVariable';
+import type { Folder } from './generated/Folder';
+import type { HttpMethod } from './generated/HttpMethod';
+import type { KeyValue } from './generated/KeyValue';
+import type { MockMatchItem } from './generated/MockMatchItem';
+import type { Project } from './generated/Project';
+import type { RequestExample } from './generated/RequestExample';
+import type { RequestHistory } from './generated/RequestHistory';
+import type { RequestSnapshot } from './generated/RequestSnapshot';
+import type { RequestSpec } from './generated/RequestSpec';
+import type { ResponseExample } from './generated/ResponseExample';
+import type { ScenarioRunSummary } from './generated/ScenarioRunSummary';
+import type { ScriptRunSummary } from './generated/ScriptRunSummary';
+import type { StepRetry } from './generated/StepRetry';
+import type { TestCaseStatus } from './generated/TestCaseStatus';
+export type { AuthSpec };
+export type { BodySpec };
+export type { Endpoint };
+export type { EnvironmentVariable };
+export type { Folder };
+export type { HttpMethod };
+export type { KeyValue };
+export type { MockMatchItem };
+export type { Project };
+export type { RequestExample };
+export type { RequestHistory };
+export type { RequestSnapshot };
+export type { RequestSpec };
+export type { ResponseExample };
+export type { ScenarioRunSummary };
+export type { ScriptRunSummary };
+export type { StepRetry };
+export type { TestCaseStatus };
 
-export type HttpMethod =
-  | 'GET'
-  | 'POST'
-  | 'PUT'
-  | 'DELETE'
-  | 'PATCH'
-  | 'HEAD'
-  | 'OPTIONS'
-  | 'GRPC'
-
-export type EndpointStatus =
-  | 'designing'
-  | 'developing'
-  | 'testing'
-  | 'released'
-  | 'deprecated'
-
-export type ApiKeyLocation = 'header' | 'query'
-
-/** 参数字段类型（接口设计页的 Schema 标注，Rust `FieldType`）。 */
-export type FieldType = 'string' | 'number' | 'boolean' | 'object'
-
-/** Query / Header / Path 变量等键值对（Rust `KeyValue`）。 */
-export interface KeyValue {
-  key: string
-  value: string
-  enabled: boolean
-  description: string
-  /** 设计元数据：字段类型（旧数据缺省 string）。 */
-  field_type?: FieldType
-  /** 设计元数据：是否必填（缺省 true）。 */
-  required?: boolean
-  /** 设计元数据：示例值。 */
-  example?: string
-}
-
-/** 动态签名算法（Rust `SignatureAlgorithm`，serde snake_case）。 */
-export type SignatureAlgorithm = 'md5' | 'sha256' | 'hmac_sha256'
-
-/** 动态签名摘要编码（Rust `SignatureEncoding`，serde snake_case）。 */
-export type SignatureEncoding = 'hex_lower' | 'hex_upper' | 'base64'
-
-/** 动态签名鉴权配置（Rust `DynamicSignatureConfig`）。
- * `app_secret` 持久化时经 AES-256-GCM 加密（miyo-secret）。 */
-export interface DynamicSignatureConfig {
-  app_key: string
-  app_secret: string
-  /** App-Key 请求头名（默认 "App-Key"）。 */
-  key_header: string
-  /** App-Timestamp 请求头名（默认 "App-Timestamp"）。 */
-  timestamp_header: string
-  /** App-Sig 请求头名（默认 "App-Sig"）。 */
-  sig_header: string
-  algorithm: SignatureAlgorithm
-  encoding: SignatureEncoding
-  /** 签名载荷模板：{{$key}} {{$secret}} {{$timestamp}}。 */
-  payload_template: string
-}
-
-/** 认证方式（Rust `AuthSpec`，tag = "type"）。 */
-export type AuthSpec =
-  | { type: 'none' }
-  | { type: 'bearer'; token: string }
-  | { type: 'basic'; username: string; password: string }
-  | { type: 'apikey'; key: string; value: string; in: ApiKeyLocation }
-  | {
-      type: 'oauth2'
-      client_id: string
-      client_secret: string
-      auth_url: string
-      token_url: string
-      scope: string
-      redirect_uri: string
-      /** 授权模式（缺省 = authorization_code，旧数据零迁移）。 */
-      grant?: OAuth2Grant
-      /** password 模式：资源所有者用户名（其他模式忽略）。 */
-      username?: string | null
-      /** password 模式：资源所有者密码（其他模式忽略）。 */
-      password?: string | null
-      token?: OAuth2Token
-      /** 授权码流 PKCE（RFC 7636 S256）：缺省 true；false 仅兼容旧 IdP。 */
-      use_pkce?: boolean
-    }
-  /** HTTP Digest 认证（RFC 7616）：401 质询后自动应答重发。 */
-  | { type: 'digest'; username: string; password: string }
-  /** Hawk 认证（HMAC-SHA-256，每次发送实时计算 mac）。 */
-  | { type: 'hawk'; key_id: string; key: string }
-  /** AWS Signature V4（兼容 SigV4 风格网关）。 */
-  | {
-      type: 'awsv4'
-      access_key: string
-      secret_key: string
-      region: string
-      service: string
-      session_token?: string
-    }
-  /** 通用 HMAC AK-SK 加签（X-Access-Key / X-Timestamp / X-Nonce / X-Signature）。 */
-  | { type: 'hmac'; access_key: string; secret_key: string }
-  | { type: 'dynamic_signature'; config: DynamicSignatureConfig }
-
-
-/** OAuth2 令牌（`expires_at` 为 UTC 时刻）。 */
-/** OAuth2 授权模式（Rust `OAuth2Grant`，snake_case 序列化）。 */
-export type OAuth2Grant = 'authorization_code' | 'client_credentials' | 'password'
-
-export interface OAuth2Token {
-  access_token: string
-  token_type?: string
-  refresh_token?: string
-  expires_at: string
-}
+export type { ApiKeyLocation } from './generated/ApiKeyLocation';
+export type { CommandError } from './generated/CommandError';
+export type { DynamicSignatureConfig } from './generated/DynamicSignatureConfig';
+export type { EndpointStatus } from './generated/EndpointStatus';
+export type { Environment } from './generated/Environment';
+export type { FieldDoc } from './generated/FieldDoc';
+export type { FieldType } from './generated/FieldType';
+export type { GlobalParam } from './generated/GlobalParam';
+export type { GlobalParamLocation } from './generated/GlobalParamLocation';
+export type { GraphQLError } from './generated/GraphQLError';
+export type { GraphQLErrorLocation } from './generated/GraphQLErrorLocation';
+export type { GraphQLResponse } from './generated/GraphQLResponse';
+export type { GraphQLSpec } from './generated/GraphQLSpec';
+export type { GrpcSpec } from './generated/GrpcSpec';
+export type { MockRequestLog } from './generated/MockRequestLog';
+export type { MockRule } from './generated/MockRule';
+export type { MultipartField } from './generated/MultipartField';
+export type { MultipartValueType } from './generated/MultipartValueType';
+export type { OAuth2Grant } from './generated/OAuth2Grant';
+export type { OAuth2Token } from './generated/OAuth2Token';
+export type { ProtoFile } from './generated/ProtoFile';
+export type { ScriptTestOutcome } from './generated/ScriptTestOutcome';
+export type { ScriptsSpec } from './generated/ScriptsSpec';
+export type { SeqCounter } from './generated/SeqCounter';
+export type { SignatureAlgorithm } from './generated/SignatureAlgorithm';
+export type { SignatureEncoding } from './generated/SignatureEncoding';
+export type { SyncRemoteKind } from './generated/SyncRemoteKind';
+export type { Team } from './generated/Team';
+export type { TestCaseRun } from './generated/TestCaseRun';
 
 /** OAuth2 授权状态（UI 状态指示器用）。 */
 export type OAuth2Status = 'unauthorized' | 'valid' | 'expiring_soon' | 'expired'
 
 /** Multipart 值类型。 */
-export type MultipartValueType = 'text' | 'file_path'
-
-export interface MultipartField {
-  key: string
-  value_type: MultipartValueType
-  value: string
-  enabled: boolean
-}
-
-/** GraphQL 请求（Rust `GraphQLSpec`，变量为 JSON 文本，operationName 可空）。 */
-export interface GraphQLSpec {
-  query: string
-  variables: string
-  operation_name: string
-}
-
-/** 字段文档（Rust `FieldDoc`）：设计页结构化 Body 编辑器的注释 sidecar，key 为 JSON Pointer。 */
-export interface FieldDoc {
-  /** 字段说明（展示用注释）。 */
-  description?: string
-  /** 是否必填（样本推断默认 true）。 */
-  required?: boolean
-}
-
-/** gRPC 调用配置（Rust `GrpcSpec`；地址存 Endpoint.path，metadata 复用 headers）。 */
-export interface GrpcSpec {
-  /** 全限定服务名，如 `user.v1.UserService`。 */
-  service: string
-  method: string
-  /** 请求消息 protobuf-JSON 文本（空串或 "{}" 表示空消息）。 */
-  message: string
-  /** 是否使用 TLS（false = 明文 h2c）。 */
-  use_tls: boolean
-  /** 引用的项目级 proto 文件 id（空 = 使用服务端反射）。 */
-  proto_ids: string[]
-}
-
-/** 项目级 proto 文件（Rust `ProtoFile`）。 */
-export interface ProtoFile {
-  id: string
-  project_id: string
-  name: string
-  content: string
-  created_at: string
-  updated_at: string
-}
-
-/** 请求 Body（Rust `BodySpec`，tag = "mode"）。 */
-export type BodySpec =
-  | { mode: 'none' }
-  | { mode: 'json'; raw: string }
-  | { mode: 'text'; raw: string }
-  | { mode: 'urlencoded'; fields: KeyValue[] }
-  | { mode: 'multipart'; fields: MultipartField[] }
-  | { mode: 'graphql'; spec: GraphQLSpec }
-  | { mode: 'binary'; path: string }
-  | { mode: 'grpc'; spec: GrpcSpec }
-
-/** GraphQL 错误位置（Rust `GraphQLErrorLocation`）。 */
-export interface GraphQLErrorLocation {
-  line: number
-  column: number
-}
-
-/** GraphQL 错误条目（Rust `GraphQLError`）。 */
-export interface GraphQLError {
-  message: string
-  locations: GraphQLErrorLocation[] | null
-  path: (string | number | boolean | null)[] | null
-}
-
-/** 解析后的 GraphQL 响应（Rust `GraphQLResponse`）。 */
-export interface GraphQLResponse {
-  data: unknown
-  errors: GraphQLError[]
-}
-
-/** 统一请求结构（Rust `RequestSpec`）。 */
-export interface RequestSpec {
-  params: KeyValue[]
-  headers: KeyValue[]
-  path_variables: KeyValue[]
-  auth: AuthSpec
-  body: BodySpec
-  /** 编辑器配置 Tab 记忆（params/auth/headers/body/...），空时按 Method 智能默认。 */
-  active_tab?: string | null
-  /** 请求超时（毫秒）；null = 使用全局设置中的默认超时。 */
-  timeout_ms: number | null
-  follow_redirects: boolean
-  tests: unknown | null
-  /** 禁用 Cookie 自动回放（默认 false = 携带 Jar 中的同域 Cookie）。 */
-  disable_cookies?: boolean
-  /** JSON Body 字段文档（JSON Pointer → 注释；设计页结构化编辑器用，发送时忽略）。 */
-  body_docs?: Record<string, FieldDoc>
-  /** Pre / Post 脚本（pm.* 沙箱执行；缺省 = 无脚本，旧数据零迁移）。 */
-  scripts?: ScriptsSpec | null
-}
-
-/** Pre / Post 请求脚本（Rust `ScriptsSpec`，Postman 风格 pm.* API）。 */
-export interface ScriptsSpec {
-  /** 请求发送前执行：可改请求头、读写变量。 */
-  pre_request: string
-  /** 响应到达后执行：可断言（pm.test）、读响应。 */
-  post_response: string
-}
-
-/** 单条 pm.test 断言结果（Rust `ScriptTestOutcome`）。 */
-export interface ScriptTestOutcome {
-  name: string
-  passed: boolean
-  error?: string | null
-}
-
-/** 一个阶段的脚本运行摘要（Rust `ScriptRunSummary`）。 */
-export interface ScriptRunSummary {
-  phase: 'pre_request' | 'post_response'
-  /** 脚本本身执行失败（语法 / 运行时 / 超时）；post 阶段失败不吞响应。 */
-  error?: string | null
-  tests: ScriptTestOutcome[]
-  logs: string[]
-}
-
-/** 自增序列（Rust `SeqCounter`）；value 为下一次输出值，key 为空表示全局 `$seq`。 */
-export interface SeqCounter {
-  key: string
-  value: number
-}
 
 /** 代理连通性测试结果（Rust `ProxyTestResult`）。 */
 export interface ProxyTestResult {
@@ -283,6 +91,8 @@ export interface ProxyTestResult {
   duration_ms: number
   message: string
 }
+
+/** MCP 工具启停状态（Rust `McpToolStatus`，get/set_mcp_tools 命令）。 */
 
 /** MCP 工具启停状态（Rust `McpToolStatus`，get/set_mcp_tools 命令）。 */
 export interface McpToolStatus {
@@ -304,6 +114,8 @@ export interface McpToolStatus {
 }
 
 /** MCP 权限等级状态（Rust `McpPermissionStatus`，get_mcp_permissions 命令）。 */
+
+/** MCP 权限等级状态（Rust `McpPermissionStatus`，get_mcp_permissions 命令）。 */
 export interface McpPermissionStatus {
   level: 'read' | 'write' | 'execute' | 'network_execute' | 'destructive'
   label: string
@@ -316,12 +128,16 @@ export interface McpPermissionStatus {
 }
 
 /** TLS 设置（Rust `TlsSettings`，get/set_tls_settings 命令）。 */
+
+/** TLS 设置（Rust `TlsSettings`，get/set_tls_settings 命令）。 */
 export interface TlsSettings {
   /** 客户端证书 PEM 文件路径（证书链 + 私钥同文件；`null` = 不使用）。 */
   identityPath?: string | null
   /** 放行自签名 / 无效证书（内网调试）。 */
   acceptInvalidCerts?: boolean
 }
+
+/** Agent 控制面状态（Rust `AgentStatusInfo`；字段 snake_case）。 */
 
 /** Agent 控制面状态（Rust `AgentStatusInfo`；字段 snake_case）。 */
 export interface AgentStatusInfo {
@@ -331,34 +147,6 @@ export interface AgentStatusInfo {
 }
 
 /** 项目（Rust `Project`）。 */
-export interface Project {
-  id: string
-  name: string
-  description: string
-  variables: Record<string, string>
-  /** 所属团队 id（旧数据 / 旧备份为 null → 默认团队）。 */
-  team_id?: string | null
-  created_at: string
-  updated_at: string
-}
-
-/** 团队（Rust `Team`）：现阶段仅作为项目的容器。 */
-export interface Team {
-  id: string
-  name: string
-  created_at: string
-  updated_at: string
-}
-
-/** 场景步骤的内联请求定义（步骤自持请求配置，不引用接口）。 */
-export interface ScenarioInlineRequest {
-  /** 宽松字符串（未知方法运行时报错，徽章兜底中性灰）。 */
-  method: string
-  /** 请求 URL 模板，支持 {{base_url}} / {{var}}。 */
-  url: string
-  /** 与接口 RequestSpec 同构（params/headers/body/auth/timeout 等）。 */
-  spec: RequestSpec
-}
 
 /** 步骤执行条件（不满足 → 整步 skipped 不发送）。 */
 export interface StepCondition {
@@ -370,6 +158,8 @@ export interface StepCondition {
   op: string
   value?: unknown
 }
+
+/** 步骤循环（轮询 / 重复执行）。 */
 
 /** 步骤循环（轮询 / 重复执行）。 */
 export interface StepLoop {
@@ -387,57 +177,6 @@ export interface StepLoop {
 /** 场景步骤：引用接口（endpoint_id 有值）或内联请求（request 有值）+ 步骤级提取 / 断言
  *  + 执行控制（条件 / 循环 / 等待 / 并行）。 */
 /** 步骤重试策略（Rust `StepRetry`；显式配置才启用，None = 不重试）。 */
-export interface StepRetry {
-  /** 最大尝试次数（含首次，1..=10）。 */
-  max_attempts: number
-  /** 重试间隔毫秒（指数退避时为首 interval）。 */
-  interval_ms?: number
-  /** 指数退避：第 n 次延迟 = interval × 2^(n-1)，上限 30s。 */
-  exponential?: boolean
-  /** 可重试 HTTP 状态码（如 [502,503,504]）。 */
-  retry_on_status?: number[]
-  /** 网络错误是否重试。 */
-  retry_on_network?: boolean
-}
-
-/** 数据驱动的一组数据集（Rust `DataSet`）。 */
-export interface DataSet {
-  id: string
-  name: string
-  source:
-    | { kind: 'inline'; rows: Record<string, unknown>[] }
-    | { kind: 'json'; text: string }
-    | { kind: 'csv'; text: string }
-    | { kind: 'environment' }
-  sort_order?: number
-}
-
-export interface ScenarioStep {
-  /** 引用式步骤的接口 id；内联步骤为 null。 */
-  endpoint_id: string | null
-  enabled: boolean
-  /** 提取规则（ExtractSpec 数组形状，JSON 透传）。 */
-  extract: unknown
-  /** 断言规则（AssertionSpec 数组形状，JSON 透传）。 */
-  assertions: unknown
-  /** 步骤名（内联必填；引用缺省用接口名展示）。 */
-  name?: string | null
-  /** 内联请求定义；缺省 = 引用式步骤。 */
-  request?: ScenarioInlineRequest | null
-  /** 执行条件（不满足 → skipped 不发送）。 */
-  condition?: StepCondition | null
-  /** 循环配置。 */
-  loop?: StepLoop | null
-  /** 执行前等待毫秒（≤60000）。 */
-  wait_ms?: number | null
-  /** 与相邻 parallel 步骤成批并发（≥2 连续标记才成批）。 */
-  parallel?: boolean
-  /** 引用式步骤的请求参数覆盖（键：url/params/headers/path_variables/body；
-   *  未覆盖项沿用接口当前配置；按 key 合并，body 整体替换）。 */
-  overrides?: StepOverrides | null
-  /** 步骤重试策略（显式配置才启用；缺省 = 不重试）。 */
-  retry?: StepRetry | null
-}
 
 /** 引用式步骤的请求参数覆盖。 */
 export interface StepOverrides {
@@ -450,33 +189,6 @@ export interface StepOverrides {
 }
 
 /** 集成测试场景（Rust `Scenario`）：项目级接口链路。 */
-export interface Scenario {
-  id: string
-  project_id: string
-  name: string
-  description: string
-  /** 分类标签（场景库过滤；空 = 未分类）。 */
-  category: string
-  sort_order: number
-  steps: ScenarioStep[]
-  /** 自定义脚本（脚本视图编辑后持久化）；缺省 = 未自定义，视图实时由 steps 生成。 */
-  script?: string | null
-  /** Setup 步骤（主步骤之前执行；失败 → 主步骤跳过，teardown 仍执行）。 */
-  setup?: ScenarioStep[]
-  /** Teardown 步骤（失败 / 超时 / 取消时尽可能执行；写操作自动幂等键）。 */
-  teardown?: ScenarioStep[]
-  /** 自动清理开关（false = 不自动执行 teardown；缺省 true）。 */
-  teardown_enabled?: boolean
-  /** 数据驱动数据集（多组数据独立执行、变量隔离）。 */
-  data_sets?: DataSet[]
-  created_at: string
-  updated_at: string
-}
-
-/** 场景库列表项（Rust `ScenarioLibraryItem`；场景字段平铺 + 最近运行摘要）。 */
-export interface ScenarioLibraryItem extends Scenario {
-  last_run?: ScenarioRunSummary | null
-}
 
 /** 提取规则编辑形状（与后端 ExtractSpec 同构；cookie/body_regex 由 miyo-test extract.rs 解析）。 */
 export interface ScenarioExtractRule {
@@ -484,6 +196,8 @@ export interface ScenarioExtractRule {
   from: 'body' | 'header' | 'cookie' | 'body_regex'
   path: string
 }
+
+/** 断言规则编辑形状（与后端 AssertionSpec 同构；javascript 的 expected 为沙箱内执行的代码）。 */
 
 /** 断言规则编辑形状（与后端 AssertionSpec 同构；javascript 的 expected 为沙箱内执行的代码）。 */
 export interface ScenarioAssertionRule {
@@ -516,6 +230,8 @@ export interface ScenarioAssertionRule {
 }
 
 /** 场景步骤响应快照（Rust `StepResponse`；正文为 IPC 预览，全文经 get_response_body 按需取回）。 */
+
+/** 场景步骤响应快照（Rust `StepResponse`；正文为 IPC 预览，全文经 get_response_body 按需取回）。 */
 export interface ScenarioStepResponse {
   status: number
   headers: [string, string][]
@@ -531,6 +247,8 @@ export interface ScenarioStepResponse {
   /** 实际发出形态（变量渲染 / 认证注入后的最终值；旧后端缺失）。 */
   request?: RequestSnapshot | null
 }
+
+/** 场景单步结果（Rust `EndpointResult`）。 */
 
 /** 场景单步结果（Rust `EndpointResult`）。 */
 export interface ScenarioStepResult {
@@ -575,6 +293,8 @@ export interface ScenarioStepResult {
 }
 
 /** 矩阵运行的单行结果（Rust `MatrixRowOutcome`）。 */
+
+/** 矩阵运行的单行结果（Rust `MatrixRowOutcome`）。 */
 export interface MatrixRowOutcome {
   key: string
   label: string
@@ -588,12 +308,16 @@ export interface MatrixRowOutcome {
 }
 
 /** 矩阵运行汇总（Rust `MatrixRunOutcome`；数据驱动 / 环境矩阵共用）。 */
+
+/** 矩阵运行汇总（Rust `MatrixRunOutcome`；数据驱动 / 环境矩阵共用）。 */
 export interface MatrixRunOutcome {
   groupId: string
   total: number
   okRows: number
   rows: MatrixRowOutcome[]
 }
+
+/** 步骤执行状态（六态；结果行与徽章共用）。 */
 
 /** 步骤执行状态（六态；结果行与徽章共用）。 */
 export type WorkflowStepStatus =
@@ -603,6 +327,8 @@ export type WorkflowStepStatus =
   | 'failed'
   | 'skipped'
   | 'blocked'
+
+/** 场景运行结果（Rust `ScenarioRunResult`）。 */
 
 /** 场景运行结果（Rust `ScenarioRunResult`）。 */
 export interface ScenarioRunResult {
@@ -621,19 +347,6 @@ export interface ScenarioRunResult {
 }
 
 /** 场景运行历史（Rust `ScenarioRunSummary`；命令层已剥 results/variables 正文）。 */
-export interface ScenarioRunSummary {
-  /** 前端生成的 run_id。 */
-  id: string
-  /** 完成时刻（RFC3339）。 */
-  finished_at: string
-  duration_ms?: number | null
-  total_steps: number
-  ok_count: number
-  fail_count: number
-  skipped_count: number
-  cancelled: boolean
-  stopped_on_failure: boolean
-}
 
 /** 运行元信息（meta_json；历史重跑的配置真源）。 */
 export interface ScenarioRunMeta {
@@ -675,6 +388,9 @@ export interface ScenarioRunMeta {
 
 /** 场景运行历史详情（Rust `ScenarioRunDetail`；results 与实时运行同形，
  * 响应正文 64KB 内保留可回看；meta 供按当时配置重跑）。 */
+
+/** 场景运行历史详情（Rust `ScenarioRunDetail`；results 与实时运行同形，
+ * 响应正文 64KB 内保留可回看；meta 供按当时配置重跑）。 */
 export interface ScenarioRunDetail extends ScenarioRunSummary {
   results: ScenarioStepResult[]
   variables: Record<string, string>
@@ -682,7 +398,6 @@ export interface ScenarioRunDetail extends ScenarioRunSummary {
 }
 
 /** 同步远端类型。 */
-export type SyncRemoteKind = 'git' | 's3' | 'db'
 
 /** git 远端配置。 */
 export interface GitRemoteConfig {
@@ -708,15 +423,6 @@ export interface DbRemoteConfig {
 export type SyncRemoteConfig = GitRemoteConfig | S3RemoteConfig | DbRemoteConfig
 
 /** 团队同步远端（Rust `SyncRemote`）：绑定在团队上，推/拉按项目触发。 */
-export interface SyncRemote {
-  id: string
-  team_id: string
-  kind: SyncRemoteKind
-  config: SyncRemoteConfig
-  last_synced_revision: string | null
-  created_at: string
-  updated_at: string
-}
 
 /** 远端项目快照条目（首页导入入口：发现远端新增项目）。 */
 export interface RemoteProjectEntry {
@@ -729,6 +435,8 @@ export interface RemoteProjectEntry {
 }
 
 /** 推送结果。 */
+
+/** 推送结果。 */
 export interface SyncPushResult {
   revision: string
   /** 快照与远端一致（幂等推送，无实际变更）。 */
@@ -738,11 +446,15 @@ export interface SyncPushResult {
 }
 
 /** 接口粒度快照差异。 */
+
+/** 接口粒度快照差异。 */
 export interface SyncDiff {
   added: string[]
   removed: string[]
   modified: string[]
 }
+
+/** 拉取预览（不改本地）。 */
 
 /** 拉取预览（不改本地）。 */
 export interface SyncPullPreview {
@@ -758,6 +470,8 @@ export interface SyncPullPreview {
 }
 
 /** 拉取应用结果。 */
+
+/** 拉取应用结果。 */
 export interface SyncPullResult {
   revision: string
   applied: boolean
@@ -765,6 +479,8 @@ export interface SyncPullResult {
   /** 覆盖前本地快照留档路径。 */
   local_backup: string | null
 }
+
+/** 项目仪表板统计（Rust `ProjectStat`，list_project_stats 命令）。 */
 
 /** 项目仪表板统计（Rust `ProjectStat`，list_project_stats 命令）。 */
 export interface ProjectStat {
@@ -779,6 +495,8 @@ export interface ProjectStat {
   latest_method: string | null
   latest_path: string | null
 }
+
+/** 仪表板最近活动（Rust `RecentActivity`，list_recent_activities 命令，snake_case 契约）。 */
 
 /** 仪表板最近活动（Rust `RecentActivity`，list_recent_activities 命令，snake_case 契约）。 */
 export interface RecentActivity {
@@ -796,77 +514,6 @@ export interface RecentActivity {
 }
 
 /** 文件夹（Rust `Folder`）。 */
-export interface Folder {
-  id: string
-  project_id: string
-  parent_id: string | null
-  name: string
-  sort_order: number
-  created_at: string
-  updated_at: string
-}
-
-/** 接口（Rust `Endpoint`）。 */
-export interface Endpoint {
-  id: string
-  project_id: string
-  folder_id: string | null
-  name: string
-  method: HttpMethod
-  path: string
-  description: string
-  status: EndpointStatus
-  sort_order: number
-  request: RequestSpec
-  created_at: string
-  updated_at: string
-}
-
-/** 环境变量（Rust `EnvironmentVariable`）：本地覆盖值按 local_override 三态生效。 */
-export interface EnvironmentVariable {
-  key: string
-  /** 远程 / 公共值。 */
-  remote_value: string
-  /** 本地私有覆盖值。 */
-  local_value: string
-  /** 是否参与注入。 */
-  enabled: boolean
-  /**
-   * 本地覆盖开关三态：true = 启用覆盖（生效值取 local_value，允许空串）；
-   * false = 停用覆盖（恒用 remote_value）；null/undefined = 未标注，走旧推断
-   * （local_value 非空优先）。Rust 侧 `Option<bool>`，序列化缺省即 undefined。
-   */
-  local_override?: boolean | null
-  /** 密钥型变量标注：true = 密钥（默认掩码）；null/undefined 未标注时按键名启发式。 */
-  sensitive?: boolean | null
-  description?: string | null
-}
-
-/** 全局参数注入位置（Rust `GlobalParamLocation`）。 */
-export type GlobalParamLocation = 'query' | 'header'
-
-/** 全局参数（Rust `GlobalParam`）：每个请求自动注入的 key/value，无需手动写 {{}}。 */
-export interface GlobalParam {
-  key: string
-  value: string
-  enabled: boolean
-  /** 注入位置：query = URL 查询参数；header = 请求头。 */
-  location: GlobalParamLocation
-}
-
-/** 环境（Rust `Environment`，项目维度：哪个项目就编辑哪个项目的环境）。 */
-export interface Environment {
-  id: string
-  /** 归属项目 id。 */
-  project_id: string
-  name: string
-  /** 前置 Base URL（如 `http://dev-test01.redotpay.inet:8092`，可含 `{{变量}}`）。 */
-  base_url: string
-  /** 结构化环境变量列表。 */
-  variables: EnvironmentVariable[]
-  created_at: string
-  updated_at: string
-}
 
 /** 执行请求入参（Rust `ExecuteRequestArgs`）。 */
 export interface ExecuteRequestArgs {
@@ -881,58 +528,6 @@ export interface ExecuteRequestArgs {
 }
 
 /** 请求历史（Rust `RequestHistory`，miyo-tauri `list_request_histories` 返回）。 */
-export interface RequestHistory {
-  id: string
-  project_id: string
-  endpoint_id: string | null
-  method: string
-  url: string
-  status: number | null
-  duration_ms: number | null
-  request_summary_json: string
-  response_summary_json: string
-  created_at: string
-}
-
-/** 本次请求实际发出形态的快照（Rust `RequestSnapshot`）。
- * 变量渲染、认证注入、全局参数与 Cookie 回放之后的最终值；
- * 临时随响应返回，不落历史，供「请求」页签排查错误。
- */
-export interface RequestSnapshot {
-  method: string
-  /** 实际发送的完整 URL（含 query 参数）。 */
-  url: string
-  /** 渲染前 URL 模板（含 `{{变量}}`）；与实际 URL 相同时调用方置空。 */
-  url_template?: string | null
-  /** 实际发送的请求头（含认证注入与自动 Content-Type / Content-Length）。 */
-  headers: [string, string][]
-  /** Cookie Jar 自动回放的 `[name, value]`。 */
-  cookies: [string, string][]
-  /** 请求体预览（文本）；流式 / 二进制体为摘要说明。 */
-  body: string
-  /** `body` 是否非完整原文（截断或摘要）。 */
-  body_omitted: boolean
-}
-
-/** 执行请求出参（Rust `ExecuteResponse`）。 */
-export interface ExecuteResponse {
-  status: number
-  headers: [string, string][]
-  body: string
-  content_type: string
-  duration_ms: number
-  size_bytes: number
-  truncated: boolean
-  /**
-   * `body` 仅为 IPC 预览（Rust 侧超 2MB 时截断，全文经 `get_response_body` 按需取）。
-   * 可选：旧后端返回缺失时按 `false` 处理。
-   */
-  body_omitted?: boolean
-  /** 本次请求实际发出的形态（旧后端 / 手工构造场景缺失）。 */
-  request?: RequestSnapshot | null
-  /** Pre / Post 脚本运行摘要（无脚本时缺失，旧后端兼容）。 */
-  scripts?: ScriptRunSummary[]
-}
 
 /** cURL 命令解析结果（Rust `CurlParsed`，miyo-tauri `parse_curl_command` 返回）。 */
 export interface CurlParsed {
@@ -946,19 +541,6 @@ export interface CurlParsed {
 }
 
 /** 响应示例（Rust `ResponseExample`，miyo-tauri `list_examples` 等返回）。 */
-export interface ResponseExample {
-  id: string
-  endpoint_id: string
-  name: string
-  status: number
-  headers: Record<string, string>
-  body: string
-  content_type: string
-  /** 响应字段文档（JSON Pointer → 注释；设计页结构化编辑器用）。 */
-  docs?: Record<string, FieldDoc>
-  created_at: string
-  updated_at: string
-}
 
 /** 文档导出格式（Rust `ExportFormat`，snake_case 序列化）。 */
 export type ExportFormat =
@@ -970,10 +552,15 @@ export type ExportFormat =
   | 'curl_script'
 
 /** 文档导出结果（内容 + 建议文件名）。 */
+
+/** 文档导出结果（内容 + 建议文件名）。 */
 export interface ExportedDoc {
   content: string
   suggested_name: string
 }
+
+/** 项目备份导出结果：content 为完整备份 JSON；sensitive_count 为明文凭据项数
+ *  （与同步推送同口径统计，仅提示不替换；旧后端缺失）。 */
 
 /** 项目备份导出结果：content 为完整备份 JSON；sensitive_count 为明文凭据项数
  *  （与同步推送同口径统计，仅提示不替换；旧后端缺失）。 */
@@ -983,79 +570,16 @@ export interface BackupExportDoc {
 }
 
 /** 请求用例（Rust `RequestExample`）：接口请求快照，可一键回填编辑器。 */
-export interface RequestExample {
-  id: string
-  endpoint_id: string
-  name: string
-  request: RequestSpec
-  created_at: string
-  updated_at: string
-}
 
 /** 测试用例分组（与后端 CATEGORIES 一致）。 */
 export type TestCaseCategory = '正向' | '负向' | '边界值' | '安全性' | '其他'
 
 /** 测试用例运行状态（Rust `TestCaseStatus`）。 */
-export type TestCaseStatus = 'Success' | 'Failed' | 'Untested'
-
-/** 测试用例（Rust `TestCase`，miyo-tauri `list_test_cases` 等返回）。 */
-export interface TestCase {
-  id: string
-  /** 关联的主接口 ID（endpoints.id）。 */
-  request_id: string
-  name: string
-  category: TestCaseCategory
-  /** 用例文件夹（自由分组名，如「Dlocal 渠道」）；空 = 未分组。 */
-  folder?: string
-  method: HttpMethod
-  url_path: string
-  /** URL 路径变量取值（`/users/{id}` 里的 id）；随用例快照保存，否则单跑会发字面量 `{id}`。 */
-  path_variables: KeyValue[]
-  params: KeyValue[]
-  headers: KeyValue[]
-  /** body 类型标识：json / form-data / raw / urlencoded / graphql / binary / none。 */
-  body_type: string
-  body_content: string
-  /** 断言规则（miyo-test AssertionSpec 形状；空数组 = 无断言，2xx-3xx 即通过）。 */
-  assertions?: ScenarioAssertionRule[]
-  /** 变量提取规则（miyo-test ExtractSpec 形状）。 */
-  extractors?: ScenarioExtractRule[]
-  /** 用例级认证覆盖（null = 继承快照原状）。 */
-  auth?: AuthSpec | null
-  /** 用例级超时覆盖毫秒（null = 沿用接口 → 全局 → 300s）。 */
-  timeout_ms?: number | null
-  /** 禁用 Cookie 回放。 */
-  disable_cookies?: boolean
-  /** 组内排序序号（拖拽写回；同值按 created_at 稳定序）。 */
-  sort_order?: number
-  last_run_status: TestCaseStatus
-  /** 最近一次执行时间 / 断言通过数 / 失败数（落历史时回写）。 */
-  last_run_at?: string | null
-  last_run_ok?: number | null
-  last_run_fail?: number | null
-  created_at: string
-}
-
-/** 测试用例执行历史（Rust `TestCaseRun`，append-only；results 为 EndpointResult 快照）。 */
-export interface TestCaseRun {
-  id: string
-  case_id: string
-  endpoint_id?: string | null
-  environment_id?: string | null
-  started_at: string
-  finished_at: string
-  duration_ms?: number | null
-  status: TestCaseStatus
-  status_code?: number | null
-  ok_count: number
-  fail_count: number
-  error?: string | null
-  /** EndpointResult 快照 JSON 字符串（响应正文 64KB 截断 + 敏感头脱敏后），前端自行 parse。 */
-  results_json: string
-}
 
 /** 代码生成语言（Rust `Lang`，miyo-tauri `codegen_render` 的 `lang` 取值）。 */
 export type CodeLang = 'curl' | 'python' | 'js' | 'go' | 'java' | 'php' | 'rust'
+
+/** 备份恢复摘要（miyo-tauri `backup_restore` 返回）。 */
 
 /** 备份恢复摘要（miyo-tauri `backup_restore` 返回）。 */
 export interface BackupSummary {
@@ -1080,7 +604,11 @@ export interface BackupSummary {
 }
 
 /** 导入文档格式（Rust `ImportFormat`，lowercase 序列化）。 */
+
+/** 导入文档格式（Rust `ImportFormat`，lowercase 序列化）。 */
 export type ImportFormat = 'openapi30' | 'openapi31' | 'swagger20' | 'postman21' | 'unknown'
+
+/** 导入的示例（Rust `ImportedExample`）。 */
 
 /** 导入的示例（Rust `ImportedExample`）。 */
 export interface ImportedExample {
@@ -1090,6 +618,8 @@ export interface ImportedExample {
   headers: Record<string, string>
   body: string
 }
+
+/** 导入的接口（Rust `ImportedEndpoint`，miyo-tauri `import_document` 返回）。 */
 
 /** 导入的接口（Rust `ImportedEndpoint`，miyo-tauri `import_document` 返回）。 */
 export interface ImportedEndpoint {
@@ -1103,10 +633,14 @@ export interface ImportedEndpoint {
 }
 
 /** 导入解析结果。 */
+
+/** 导入解析结果。 */
 export interface ImportResult {
   format: ImportFormat
   endpoints: ImportedEndpoint[]
 }
+
+/** 单条断言结果（Rust `Outcome`）。 */
 
 /** 单条断言结果（Rust `Outcome`）。 */
 export interface Outcome {
@@ -1118,6 +652,8 @@ export interface Outcome {
   /** 实际值文本（取到实际值时随行）。 */
   actual?: string | null
 }
+
+/** 单接口 / 场景步骤测试结果（Rust `EndpointResult`）。 */
 
 /** 单接口 / 场景步骤测试结果（Rust `EndpointResult`）。 */
 export interface EndpointResult {
@@ -1147,6 +683,8 @@ export interface EndpointResult {
 }
 
 /** 压测结果（Rust `LoadResult`）。 */
+
+/** 压测结果（Rust `LoadResult`）。 */
 export interface LoadResult {
   total: number
   ok: number
@@ -1163,6 +701,8 @@ export interface LoadResult {
 }
 
 /** 压测进度（事件 `miyo:load-progress` 载荷，Rust `LoadProgress`）。 */
+
+/** 压测进度（事件 `miyo:load-progress` 载荷，Rust `LoadProgress`）。 */
 export interface LoadProgress {
   done: number
   total: number
@@ -1171,10 +711,14 @@ export interface LoadProgress {
 }
 
 /** 集合测试结果（Rust `CollectionResult`，results 与输入同序）。 */
+
+/** 集合测试结果（Rust `CollectionResult`，results 与输入同序）。 */
 export interface CollectionResult {
   results: EndpointResult[]
   cancelled: boolean
 }
+
+/** 日志文件元信息（`log_files` 返回）。 */
 
 /** 日志文件元信息（`log_files` 返回）。 */
 export interface LogFile {
@@ -1182,6 +726,8 @@ export interface LogFile {
   size_bytes: number
   modified_at: string
 }
+
+/** Jar 中的 Cookie 条目（`cookie_list` 返回）。 */
 
 /** Jar 中的 Cookie 条目（`cookie_list` 返回）。 */
 export interface CookieEntry {
@@ -1196,13 +742,19 @@ export interface CookieEntry {
 }
 
 /** 集合测试进度（事件 `miyo:test-progress` 载荷）。 */
+
+/** 集合测试进度（事件 `miyo:test-progress` 载荷）。 */
 export interface TestCollectionProgress {
   done: number
   total: number
 }
 
 /** 环境交换格式（`export_environment` 入参）。 */
+
+/** 环境交换格式（`export_environment` 入参）。 */
 export type EnvExchangeFormat = 'miyo_json' | 'postman_json'
+
+/** 环境导出结果（内容 + 建议文件名）。 */
 
 /** 环境导出结果（内容 + 建议文件名）。 */
 export interface ExportedEnv {
@@ -1213,6 +765,8 @@ export interface ExportedEnv {
 }
 
 /** 环境导入预览（不落库；前端确认后经 saveEnvironment 落库）。 */
+
+/** 环境导入预览（不落库；前端确认后经 saveEnvironment 落库）。 */
 export interface ImportedEnv {
   /** 'miyo' | 'postman' */
   format: string
@@ -1221,6 +775,8 @@ export interface ImportedEnv {
   /** 环境 Base URL（Postman 格式无此信息，为空串）。 */
   base_url: string
 }
+
+/** WS 事件（事件 `miyo:ws-event` 载荷）。 */
 
 /** WS 事件（事件 `miyo:ws-event` 载荷）。 */
 export type WsEventPayload =
@@ -1235,6 +791,8 @@ export type WsEventPayload =
   | { kind: 'failed'; connection_id: string; message: string }
 
 /** SSE 事件（事件 `miyo:sse-event` 载荷；chunk 为原始文本块）。 */
+
+/** SSE 事件（事件 `miyo:sse-event` 载荷；chunk 为原始文本块）。 */
 export type SseEventPayload =
   | { kind: 'open'; connection_id: string }
   | { kind: 'chunk'; connection_id: string; chunk: string }
@@ -1242,48 +800,7 @@ export type SseEventPayload =
   | { kind: 'closed'; connection_id: string }
 
 /** Mock 匹配项（Rust `MockMatchItem`，query / header 匹配键值）。 */
-export interface MockMatchItem {
-  key: string
-  value: string
-}
 
-/** Mock 请求日志条目（Rust `MockRequestLog`；内存环形缓冲最近 100 条，服务未运行返回空）。 */
-export interface MockRequestLog {
-  at: string
-  method: string
-  path: string
-  status: number
-  matched: boolean
-  /** 稳定键：rule | example | default | unmatched（展示文案前端映射）。 */
-  source: string
-  rule_id?: string | null
-  /** 规则名（示例 / 默认来源为接口的 method+path）。 */
-  source_name: string
-}
-
-/** Mock 规则（Rust `MockRule`，miyo-tauri `list_mock_rules` 等返回）。 */
-export interface MockRule {
-  id: string
-  project_id: string
-  endpoint_id: string | null
-  name: string
-  method: HttpMethod
-  path: string
-  match_query: MockMatchItem[]
-  match_headers: MockMatchItem[]
-  response_status: number
-  response_headers: Record<string, string>
-  response_body_template: string
-  delay_ms: number
-  /** 故障注入比例（0-100，0 = 关闭）。旧后端返回缺失时按 0 处理。 */
-  fault_rate_pct?: number
-  /** 故障注入状态码（默认 500）。 */
-  fault_status?: number
-  enabled: boolean
-  priority: number
-  created_at: string
-  updated_at: string
-}
 // ---------- gRPC 调试（Rust miyo-grpc / commands/grpc.rs） ----------
 
 /** gRPC 服务目录里的单个方法（Rust `GrpcMethodInfo`）。 */
@@ -1296,16 +813,22 @@ export interface GrpcMethodInfo {
 }
 
 /** gRPC 服务目录里的单个服务（Rust `GrpcServiceInfo`）。 */
+
+/** gRPC 服务目录里的单个服务（Rust `GrpcServiceInfo`）。 */
 export interface GrpcServiceInfo {
   service: string
   methods: GrpcMethodInfo[]
 }
 
 /** 服务目录（grpcListServices 返回；source = reflection | proto）。 */
+
+/** 服务目录（grpcListServices 返回；source = reflection | proto）。 */
 export interface ServiceCatalog {
   services: GrpcServiceInfo[]
   source: string
 }
+
+/** gRPC unary 响应（Rust `GrpcResponse`）。 */
 
 /** gRPC unary 响应（Rust `GrpcResponse`）。 */
 export interface GrpcResponse {
@@ -1318,9 +841,13 @@ export interface GrpcResponse {
 }
 
 /** grpcInvoke 结果：unary 直返响应；服务端流转 stream_id（消息走事件）。 */
+
+/** grpcInvoke 结果：unary 直返响应；服务端流转 stream_id（消息走事件）。 */
 export type GrpcInvokeResult =
   | { kind: 'unary'; response: GrpcResponse }
   | { kind: 'stream'; stream_id: string }
+
+/** 服务端流单条消息（miyo:grpc-event kind=message，Rust `GrpcMessage`）。 */
 
 /** 服务端流单条消息（miyo:grpc-event kind=message，Rust `GrpcMessage`）。 */
 export interface GrpcMessageEvent {
@@ -1332,6 +859,8 @@ export interface GrpcMessageEvent {
 }
 
 /** 服务端流结束事件（miyo:grpc-event kind=end，Rust `GrpcEvent::End`）。 */
+
+/** 服务端流结束事件（miyo:grpc-event kind=end，Rust `GrpcEvent::End`）。 */
 export interface GrpcEndEvent {
   kind: 'end'
   cancelled: boolean
@@ -1341,10 +870,14 @@ export interface GrpcEndEvent {
 }
 
 /** miyo:grpc-event 载荷（stream_id + 流事件，flatten）。 */
+
+/** miyo:grpc-event 载荷（stream_id + 流事件，flatten）。 */
 export type GrpcEventPayload =
   | ({ stream_id: string } & GrpcMessageEvent)
   | ({ stream_id: string } & GrpcEndEvent)
   | { stream_id: string; kind: 'failed'; message: string }
+
+/** grpcInvoke 入参（命令层组装；模板字段由后端按环境渲染）。 */
 
 /** grpcInvoke 入参（命令层组装；模板字段由后端按环境渲染）。 */
 export interface GrpcInvokeArgs {
@@ -1367,6 +900,10 @@ export interface GrpcInvokeArgs {
 // ---------- AI 测试中心 ----------
 
 /** AI 模型设置回显（apiKey 掩码，明文不出仓）。 */
+
+// ---------- AI 测试中心 ----------
+
+/** AI 模型设置回显（apiKey 掩码，明文不出仓）。 */
 export interface AiSettingsView {
   base_url: string
   api_key_masked: string
@@ -1375,6 +912,8 @@ export interface AiSettingsView {
   temperature: number | null
   max_tokens: number | null
 }
+
+/** 保存 AI 设置入参（api_key 缺省 = 保持原值）。 */
 
 /** 保存 AI 设置入参（api_key 缺省 = 保持原值）。 */
 export interface SetAiSettingsArgs {
@@ -1386,6 +925,8 @@ export interface SetAiSettingsArgs {
 }
 
 /** AI 聊天会话摘要。 */
+
+/** AI 聊天会话摘要。 */
 export interface AiSessionView {
   id: string
   project_id: string
@@ -1393,6 +934,8 @@ export interface AiSessionView {
   created_at: string
   updated_at: string
 }
+
+/** AI 聊天消息（持久化视图；role: user / assistant / tool / artifact）。 */
 
 /** AI 聊天消息（持久化视图；role: user / assistant / tool / artifact）。 */
 export interface AiMessageView {
@@ -1407,6 +950,8 @@ export interface AiMessageView {
 }
 
 /** 结构化产物（右栏预览面板数据源）。 */
+
+/** 结构化产物（右栏预览面板数据源）。 */
 export interface AiArtifact {
   type:
     | 'scenario_draft'
@@ -1417,6 +962,8 @@ export interface AiArtifact {
     | 'failure_analysis'
   data: unknown
 }
+
+/** miyo:ai-chat 事件载荷（flatten）。 */
 
 /** miyo:ai-chat 事件载荷（flatten）。 */
 export type AiChatEvent = {
@@ -1445,6 +992,8 @@ export type AiChatEvent = {
 }
 
 /** 依赖分析报告。 */
+
+/** 依赖分析报告。 */
 export interface DependencyReport {
   project_id: string
   nodes: {
@@ -1468,6 +1017,8 @@ export interface DependencyReport {
 }
 
 /** 覆盖率报告（七维）。 */
+
+/** 覆盖率报告（七维）。 */
 export interface CoverageReport {
   project_id: string
   score: number
@@ -1487,6 +1038,8 @@ export interface CoverageReport {
 }
 
 /** 测试用例草稿（generate_test_cases 产物；保存走 createTestCase）。 */
+
+/** 测试用例草稿（generate_test_cases 产物；保存走 createTestCase）。 */
 export interface TestCaseDraft {
   kind: string
   category: string
@@ -1502,6 +1055,8 @@ export interface TestCaseDraft {
   assertions: unknown
   notes: string[]
 }
+
+/** 场景草稿物化结果（generate_integration_scenario 产物）。 */
 
 /** 场景草稿物化结果（generate_integration_scenario 产物）。 */
 export interface ScenarioDraftResult {
@@ -1522,6 +1077,8 @@ export interface ScenarioDraftResult {
     risk: string
   }[]
 }
+
+/** 修复草稿（propose_scenario_fix 产物）。 */
 
 /** 修复草稿（propose_scenario_fix 产物）。 */
 export interface FixProposal {
@@ -1563,6 +1120,8 @@ export interface FixProposal {
 }
 
 /** 场景草稿历史条目。 */
+
+/** 场景草稿历史条目。 */
 export interface ScenarioDraftView {
   id: string
   scenario_id: string
@@ -1572,4 +1131,167 @@ export interface ScenarioDraftView {
   source: string
   created_at: string
   applied_at: string | null
+}
+
+// ---- 场景方言与执行结果 view 类型：保留手写 ----
+// - ScenarioStep 的 condition/loop/overrides 在前端是紧凑方言类型
+//   （StepCondition/StepLoop/StepOverrides），生成产物是 JsonValue 宽类型；
+// - ExecuteResponse/Scenario 的可选字段是旧后端兼容契约（字段缺失时前端兜底）。
+
+
+/** 执行请求出参（Rust `ExecuteResponse`）。 */
+export interface ExecuteResponse {
+  status: number
+  headers: [string, string][]
+  body: string
+  content_type: string
+  duration_ms: number
+  size_bytes: number
+  truncated: boolean
+  /**
+   * `body` 仅为 IPC 预览（Rust 侧超 2MB 时截断，全文经 `get_response_body` 按需取）。
+   * 可选：旧后端返回缺失时按 `false` 处理。
+   */
+  body_omitted?: boolean
+  /** 本次请求实际发出的形态（旧后端 / 手工构造场景缺失）。 */
+  request?: RequestSnapshot | null
+  /** Pre / Post 脚本运行摘要（无脚本时缺失，旧后端兼容）。 */
+  scripts?: ScriptRunSummary[]
+}
+
+
+/** 集成测试场景（Rust `Scenario`）：项目级接口链路。 */
+export interface Scenario {
+  id: string
+  project_id: string
+  name: string
+  description: string
+  /** 分类标签（场景库过滤；空 = 未分类）。 */
+  category: string
+  sort_order: number
+  steps: ScenarioStep[]
+  /** 自定义脚本（脚本视图编辑后持久化）；缺省 = 未自定义，视图实时由 steps 生成。 */
+  script?: string | null
+  /** Setup 步骤（主步骤之前执行；失败 → 主步骤跳过，teardown 仍执行）。 */
+  setup?: ScenarioStep[]
+  /** Teardown 步骤（失败 / 超时 / 取消时尽可能执行；写操作自动幂等键）。 */
+  teardown?: ScenarioStep[]
+  /** 自动清理开关（false = 不自动执行 teardown；缺省 true）。 */
+  teardown_enabled?: boolean
+  /** 数据驱动数据集（多组数据独立执行、变量隔离）。 */
+  data_sets?: DataSet[]
+  created_at: string
+  updated_at: string
+}
+
+
+export interface ScenarioStep {
+  /** 引用式步骤的接口 id；内联步骤为 null。 */
+  endpoint_id: string | null
+  enabled: boolean
+  /** 提取规则（ExtractSpec 数组形状，JSON 透传）。 */
+  extract: unknown
+  /** 断言规则（AssertionSpec 数组形状，JSON 透传）。 */
+  assertions: unknown
+  /** 步骤名（内联必填；引用缺省用接口名展示）。 */
+  name?: string | null
+  /** 内联请求定义；缺省 = 引用式步骤。 */
+  request?: ScenarioInlineRequest | null
+  /** 执行条件（不满足 → skipped 不发送）。 */
+  condition?: StepCondition | null
+  /** 循环配置。 */
+  loop?: StepLoop | null
+  /** 执行前等待毫秒（≤60000）。 */
+  wait_ms?: number | null
+  /** 与相邻 parallel 步骤成批并发（≥2 连续标记才成批）。 */
+  parallel?: boolean
+  /** 引用式步骤的请求参数覆盖（键：url/params/headers/path_variables/body；
+   *  未覆盖项沿用接口当前配置；按 key 合并，body 整体替换）。 */
+  overrides?: StepOverrides | null
+  /** 步骤重试策略（显式配置才启用；缺省 = 不重试）。 */
+  retry?: StepRetry | null
+}
+
+
+/** 场景步骤的内联请求定义（步骤自持请求配置，不引用接口）。 */
+export interface ScenarioInlineRequest {
+  /** 宽松字符串（未知方法运行时报错，徽章兜底中性灰）。 */
+  method: string
+  /** 请求 URL 模板，支持 {{base_url}} / {{var}}。 */
+  url: string
+  /** 与接口 RequestSpec 同构（params/headers/body/auth/timeout 等）。 */
+  spec: RequestSpec
+}
+
+
+/** 场景库列表项（Rust `ScenarioLibraryItem`；场景字段平铺 + 最近运行摘要）。 */
+export interface ScenarioLibraryItem extends Scenario {
+  last_run?: ScenarioRunSummary | null
+}
+
+// TestCase 同上：assertions / extractors 是 miyo-test 方言 JSON 透传，
+// 前端以 ScenarioAssertionRule / ScenarioExtractRule 紧类型消费。
+
+
+/** 测试用例（Rust `TestCase`，miyo-tauri `list_test_cases` 等返回）。 */
+export interface TestCase {
+  id: string
+  /** 关联的主接口 ID（endpoints.id）。 */
+  request_id: string
+  name: string
+  category: TestCaseCategory
+  /** 用例文件夹（自由分组名，如「Dlocal 渠道」）；空 = 未分组。 */
+  folder?: string
+  method: HttpMethod
+  url_path: string
+  /** URL 路径变量取值（`/users/{id}` 里的 id）；随用例快照保存，否则单跑会发字面量 `{id}`。 */
+  path_variables: KeyValue[]
+  params: KeyValue[]
+  headers: KeyValue[]
+  /** body 类型标识：json / form-data / raw / urlencoded / graphql / binary / none。 */
+  body_type: string
+  body_content: string
+  /** 断言规则（miyo-test AssertionSpec 形状；空数组 = 无断言，2xx-3xx 即通过）。 */
+  assertions?: ScenarioAssertionRule[]
+  /** 变量提取规则（miyo-test ExtractSpec 形状）。 */
+  extractors?: ScenarioExtractRule[]
+  /** 用例级认证覆盖（null = 继承快照原状）。 */
+  auth?: AuthSpec | null
+  /** 用例级超时覆盖毫秒（null = 沿用接口 → 全局 → 300s）。 */
+  timeout_ms?: number | null
+  /** 禁用 Cookie 回放。 */
+  disable_cookies?: boolean
+  /** 组内排序序号（拖拽写回；同值按 created_at 稳定序）。 */
+  sort_order?: number
+  last_run_status: TestCaseStatus
+  /** 最近一次执行时间 / 断言通过数 / 失败数（落历史时回写）。 */
+  last_run_at?: string | null
+  last_run_ok?: number | null
+  last_run_fail?: number | null
+  created_at: string
+}
+
+
+/** 团队同步远端（Rust `SyncRemote`）：绑定在团队上，推/拉按项目触发。 */
+export interface SyncRemote {
+  id: string
+  team_id: string
+  kind: SyncRemoteKind
+  config: SyncRemoteConfig
+  last_synced_revision: string | null
+  created_at: string
+  updated_at: string
+}
+
+
+/** 数据驱动的一组数据集（Rust `DataSet`）。 */
+export interface DataSet {
+  id: string
+  name: string
+  source:
+    | { kind: 'inline'; rows: Record<string, unknown>[] }
+    | { kind: 'json'; text: string }
+    | { kind: 'csv'; text: string }
+    | { kind: 'environment' }
+  sort_order?: number
 }

@@ -94,7 +94,7 @@ describe('EndpointEditor 路径变量缺失提示', () => {
   it('path 含未配置变量时出现 chips（{id} 与 {{var}} 两种写法），点击切到 Path 页签', async () => {
     const endpoint = makeDraft({ id: 'ep-pv', name: '路径', path: '/orders/{id}/items/{{itemId}}' })
     endpoint.request.path_variables = [
-      { key: 'id', value: '5', enabled: true, description: '' },
+      { key: 'id', value: '5', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ]
     const { wrapper, store } = await mountEditor(endpoint)
     const chips = wrapper.findAll('.pathvar-chip')
@@ -110,7 +110,7 @@ describe('EndpointEditor 路径变量缺失提示', () => {
 
   it('变量全部配置 / path 无变量 / gRPC 接口时不提示', async () => {
     const full = makeDraft({ id: 'ep-ok', name: '全配', path: '/orders/{id}' })
-    full.request.path_variables = [{ key: 'id', value: '', enabled: true, description: '' }]
+    full.request.path_variables = [{ key: 'id', value: '', enabled: true, description: '', field_type: 'string', required: true, example: '' }]
     const { wrapper: w1 } = await mountEditor(full)
     expect(w1.find('.pathvar-hint').exists()).toBe(false)
 

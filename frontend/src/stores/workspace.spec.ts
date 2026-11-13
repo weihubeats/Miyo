@@ -34,6 +34,7 @@ function makeEndpoint(id: string, projectId: string, name: string, now = new Dat
       timeout_ms: 30000,
       follow_redirects: true,
       tests: null,
+      disable_cookies: false,
     },
     created_at: now,
     updated_at: now,
@@ -504,7 +505,7 @@ describe('cURL 导入：环境前缀优先时不覆写环境，path 存完整 UR
   const parsed: CurlParsed = {
     url: 'https://httpbin.org/post?x=1',
     method: 'POST',
-    headers: [{ key: 'Content-Type', value: 'application/json', enabled: true, description: '' }],
+    headers: [{ key: 'Content-Type', value: 'application/json', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
     body: null,
     auth: { type: 'none' },
   }
@@ -554,7 +555,7 @@ describe('cURL 导入：环境前缀优先时不覆写环境，path 存完整 UR
     // 地址栏应直达 httpbin（完整 URL 存 path），而非显示环境前缀 + /post
     expect(store.draftOf(id)!.path).toBe('https://httpbin.org/post')
     expect(store.draftOf(id)!.request.params).toEqual([
-      { key: 'x', value: '1', enabled: true, description: '' },
+      { key: 'x', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ])
     // 共享环境不被导入污染；展示前缀仍是环境变量
     expect(env.base_url).toBe('https://env.example.com')
@@ -755,7 +756,7 @@ describe('请求历史：增量分页与失败提示', () => {
       request_summary_json: JSON.stringify({
         method: 'GET',
         url: 'https://api.example.com/users?page=2',
-        spec: { headers: [{ key: 'X-Trace', value: '1', enabled: true, description: '' }] },
+        spec: { headers: [{ key: 'X-Trace', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' }] },
       }),
       response_summary_json: '{}',
       created_at: new Date().toISOString(),
@@ -924,7 +925,7 @@ describe('用例运行：URL 路径变量代入', () => {
     await store.init()
     await store.runTestCase(
       'ep-1',
-      baseCase({ path_variables: [{ key: 'id', value: '42', enabled: true, description: '' }] }),
+      baseCase({ path_variables: [{ key: 'id', value: '42', enabled: true, description: '', field_type: 'string', required: true, example: '' }] }),
       null,
     )
     expect(backend.execCalls.at(-1)?.url).toContain('/users/42')

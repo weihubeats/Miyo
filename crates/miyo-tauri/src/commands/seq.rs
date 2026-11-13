@@ -7,7 +7,7 @@ use tauri::State;
 use miyo_core::model::SeqCounter;
 use miyo_storage::repository as repo;
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 /// settings 表中自增序列的存储键（JSON map：key → 下一次输出值）。
@@ -49,7 +49,7 @@ pub async fn delete_seq_counter(state: State<'_, AppState>, key: String) -> Comm
 pub async fn sync_seq_counters(db: &sqlx::SqlitePool) -> CommandResult<()> {
     let map = miyo_core::variable::dump_seq_counters();
     let json = serde_json::to_string(&map)
-        .map_err(|e| CommandError::with_code("INTERNAL", format!("序列化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
     repo::set_setting(db, SEQ_STORAGE_KEY, &json).await?;
     Ok(())
 }

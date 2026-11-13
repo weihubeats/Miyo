@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 
 use miyo_http::ws_client::{WsClient, WsEvent, WsMessage, WsOptions};
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 /// 一个 WS 会话：可克隆的客户端 + 事件转发任务句柄。
@@ -290,7 +290,7 @@ pub async fn sse_connect(
         .connect_timeout(std::time::Duration::from_secs(15))
         .no_proxy()
         .build()
-        .map_err(|e| CommandError::with_code("IO", format!("HTTP 客户端初始化失败：{e}")))?;
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("HTTP 客户端初始化失败：{e}")))?;
     let mut req = client
         .get(&args.url)
         .header("Accept", "text/event-stream")

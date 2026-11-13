@@ -23,6 +23,7 @@ function spec(body: BodySpec, headers: RequestSpec['headers'] = []): RequestSpec
     timeout_ms: 30000,
     follow_redirects: true,
     tests: null,
+    disable_cookies: false,
   }
 }
 
@@ -44,7 +45,7 @@ describe('rawSubtypeOf', () => {
   })
 
   it('text 模式按 Content-Type 头推导子类型', () => {
-    const h = (v: string) => [{ key: 'Content-Type', value: v, enabled: true, description: '' }]
+    const h = (v: string) => [{ key: 'Content-Type', value: v, enabled: true, description: '', field_type: 'string' as const, required: true, example: '' }]
     expect(rawSubtypeOf({ mode: 'text', raw: '' }, h('text/html'))).toBe('html')
     expect(rawSubtypeOf({ mode: 'text', raw: '' }, h('application/xml'))).toBe('xml')
     expect(rawSubtypeOf({ mode: 'text', raw: '' }, h('text/javascript'))).toBe('javascript')
@@ -70,8 +71,8 @@ describe('applyRawSubtype', () => {
 
   it('原位更新已有 Content-Type 行而不是追加', () => {
     const req = spec({ mode: 'text', raw: '' }, [
-      { key: 'content-type', value: 'text/plain', enabled: true, description: '' },
-      { key: 'X-Token', value: 't', enabled: true, description: '' },
+      { key: 'content-type', value: 'text/plain', enabled: true, description: '', field_type: 'string', required: true, example: '' },
+      { key: 'X-Token', value: 't', enabled: true, description: '', field_type: 'string', required: true, example: '' },
     ])
     applyRawSubtype(req, 'html')
     expect(req.headers).toHaveLength(2)
@@ -110,8 +111,8 @@ describe('applyBodyTab', () => {
 
   it('form-data：urlencoded 字段转换为文本 part，且移除 Content-Type（boundary 由执行器生成）', () => {
     const req = spec(
-      { mode: 'urlencoded', fields: [{ key: 'a', value: '1', enabled: true, description: '' }] },
-      [{ key: 'Content-Type', value: 'application/json', enabled: true, description: '' }],
+      { mode: 'urlencoded', fields: [{ key: 'a', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' }] },
+      [{ key: 'Content-Type', value: 'application/json', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
     )
     applyBodyTab(req, 'form-data')
     expect(req.body).toEqual({
@@ -129,7 +130,7 @@ describe('applyBodyTab', () => {
     applyBodyTab(req, 'x-www-form-urlencoded')
     expect(req.body).toEqual({
       mode: 'urlencoded',
-      fields: [{ key: 'a', value: '1', enabled: true, description: '' }],
+      fields: [{ key: 'a', value: '1', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
     })
     expect(contentTypeOf(req.headers)).toBe('application/x-www-form-urlencoded')
   })
@@ -144,7 +145,7 @@ describe('applyBodyTab', () => {
   it('none：移除 Content-Type', () => {
     const req = spec(
       { mode: 'none' },
-      [{ key: 'Content-Type', value: 'application/json', enabled: true, description: '' }],
+      [{ key: 'Content-Type', value: 'application/json', enabled: true, description: '', field_type: 'string', required: true, example: '' }],
     )
     applyBodyTab(req, 'none')
     expect(contentTypeOf(req.headers)).toBe('')

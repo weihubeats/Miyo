@@ -13,6 +13,7 @@ use crate::error::AppError;
 /// 请求方法（HTTP 七种 + Grpc 独立协议维度）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum HttpMethod {
     GET,
     POST,
@@ -100,6 +101,7 @@ impl FromStr for HttpMethod {
 /// 接口状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum EndpointStatus {
     Designing,
     #[default]
@@ -134,6 +136,7 @@ impl EndpointStatus {
 /// 参数字段类型（接口设计页的 Schema 标注；旧数据缺省为 String）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum FieldType {
     #[default]
     String,
@@ -148,6 +151,7 @@ pub enum FieldType {
 /// serde 带默认值：旧持久化 JSON 缺省这些字段时照常反序列化。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct KeyValue {
     pub key: String,
     pub value: String,
@@ -188,6 +192,7 @@ impl KeyValue {
 /// API Key 放置位置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum ApiKeyLocation {
     Header,
     Query,
@@ -198,6 +203,7 @@ pub enum ApiKeyLocation {
 // 显式 rename：`rename_all = "snake_case"` 会把连续大写当作单词边界，
 // 导致 `MD5`→`m_d5`、`SHA256`→`s_h_a256`、`HmacSHA256`→`hmac_s_h_a256`，
 // 与前端传参 `md5` / `sha256` / `hmac_sha256` 不匹配（IPC 报 unknown variant）。
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum SignatureAlgorithm {
     #[default]
     #[serde(rename = "md5")]
@@ -212,6 +218,7 @@ pub enum SignatureAlgorithm {
 /// 摘要字节 → 传输字符串的编码方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum SignatureEncoding {
     #[default]
     HexLower,
@@ -225,6 +232,7 @@ pub enum SignatureEncoding {
 /// - `payload_template` 是签名载荷模板，`{{$key}}` / `{{$secret}}` / `{{$timestamp}}`
 ///   为内置占位符，由后端在发送前最后一刻替换（保证时间戳实时性）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct DynamicSignatureConfig {
     #[serde(default)]
     pub app_key: String,
@@ -280,6 +288,7 @@ impl Default for DynamicSignatureConfig {
 /// password（非交互式，向 token_url 直接换取令牌）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum OAuth2Grant {
     #[default]
     AuthorizationCode,
@@ -290,6 +299,7 @@ pub enum OAuth2Grant {
 /// 认证方式。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum AuthSpec {
     #[default]
     None,
@@ -392,6 +402,7 @@ pub enum AuthSpec {
 
 /// OAuth2 令牌（access + refresh + 过期时刻）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct OAuth2Token {
     pub access_token: String,
     #[serde(default = "default_token_type")]
@@ -453,6 +464,7 @@ impl AuthSpec {
 /// Multipart 值类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum MultipartValueType {
     Text,
     FilePath,
@@ -460,6 +472,7 @@ pub enum MultipartValueType {
 
 /// Multipart 字段。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct MultipartField {
     pub key: String,
     pub value_type: MultipartValueType,
@@ -471,6 +484,7 @@ pub struct MultipartField {
 /// GraphQL 请求。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GraphQLSpec {
     pub query: String,
     /// 变量 JSON 文本（空串或 "{}" 表示无变量）。
@@ -485,6 +499,7 @@ pub struct GraphQLSpec {
 /// 与 HTTP 同口径渲染。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GrpcSpec {
     /// 全限定服务名，如 `user.v1.UserService`。
     pub service: String,
@@ -500,6 +515,7 @@ pub struct GrpcSpec {
 
 /// 项目级 proto 文件（gRPC 端点引用；protox 运行时编译的输入）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ProtoFile {
     pub id: Uuid,
     pub project_id: Uuid,
@@ -513,6 +529,7 @@ pub struct ProtoFile {
 
 /// GraphQL 错误位置（errors[].locations[]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GraphQLErrorLocation {
     pub line: u64,
     pub column: u64,
@@ -520,15 +537,23 @@ pub struct GraphQLErrorLocation {
 
 /// GraphQL 错误条目（errors[]）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GraphQLError {
     pub message: String,
     pub locations: Option<Vec<GraphQLErrorLocation>>,
+    // TS 侧对齐旧前端契约（宽松数组），避免递归 JsonValue 进入 UnwrapRef
+    #[cfg_attr(
+        feature = "ts",
+        ts(type = "(string | number | boolean | null)[] | null")
+    )]
     pub path: Option<Vec<serde_json::Value>>,
 }
 
 /// 解析后的 GraphQL 响应：`data` 与 `errors` 并存或互斥。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GraphQLResponse {
+    #[cfg_attr(feature = "ts", ts(type = "unknown | null"))]
     pub data: Option<serde_json::Value>,
     pub errors: Vec<GraphQLError>,
 }
@@ -543,6 +568,7 @@ impl GraphQLResponse {
 /// 请求 Body。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "mode", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum BodySpec {
     #[default]
     None,
@@ -604,6 +630,7 @@ impl BodySpec {
 /// key 为 RFC6901 JSON Pointer 路径（如 `/user/name`、数组样本元素用 `/0`），
 /// 与前端 `jsonTree` 编辑器生成的 path 一一对应；发送 / Mock 均忽略此数据。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct FieldDoc {
     /// 字段说明（展示用注释）。
     #[serde(default)]
@@ -619,6 +646,7 @@ pub type TestConfig = serde_json::Value;
 /// Pre / Post 请求脚本（Postman 风格 `pm.*` API，引擎见 miyo-http 脚本沙箱）。
 /// 两段均为空时序列化整体省略（`Option::is_none`），旧数据零迁移。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScriptsSpec {
     /// 请求发送前执行：可改请求头（`pm.request.headers.*`）、读写变量。
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -630,6 +658,7 @@ pub struct ScriptsSpec {
 
 /// 统一请求结构。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RequestSpec {
     #[serde(default)]
     pub params: Vec<KeyValue>,
@@ -650,7 +679,10 @@ pub struct RequestSpec {
     pub timeout_ms: Option<u64>,
     #[serde(default = "default_true")]
     pub follow_redirects: bool,
+    // TS 侧用 unknown 而非 JsonValue：tests 是 miyo-test 方言 JSON（前端以
+    // 紧类型断言消费），JsonValue 递归 union 会把方言对象的可选属性判为不兼容。
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(type = "unknown | null"))]
     pub tests: Option<TestConfig>,
     /// 禁用 Cookie 自动回放（默认 false = 携带 jar 中的同域 Cookie）。
     #[serde(default)]
@@ -687,6 +719,7 @@ pub const DEFAULT_TEAM_ID: Uuid = Uuid::from_u128(1);
 
 /// 团队：现阶段仅作为项目的容器（schema 预留，后续扩展成员/权限）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Team {
     pub id: Uuid,
     pub name: String,
@@ -700,6 +733,7 @@ pub struct Team {
 /// 前端徽章兜底中性灰）；`url` 保留 `{{var}}` 模板（执行期二次渲染）；
 /// `spec` 与接口的 RequestSpec 同构（params / headers / body / auth / 超时）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScenarioInlineRequest {
     pub method: String,
     pub url: String,
@@ -713,6 +747,7 @@ pub struct ScenarioInlineRequest {
 /// 写操作步骤，执行期自动注入步骤级幂等键（`Idempotency-Key`，同一步骤的
 /// 全部尝试共用一键），配合服务端幂等实现「重试不重复执行业务」。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct StepRetry {
     /// 最大尝试次数（含首次；1..=10）。
     pub max_attempts: u32,
@@ -764,6 +799,7 @@ impl StepRetry {
 /// 数据驱动测试的数据集来源。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum DataSetSource {
     /// 手动配置：行内联（对象数组，每行即一组变量）。
     Inline { rows: Vec<serde_json::Value> },
@@ -777,6 +813,7 @@ pub enum DataSetSource {
 
 /// 数据驱动测试的一组数据集。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct DataSet {
     pub id: Uuid,
     #[serde(default)]
@@ -914,6 +951,7 @@ pub fn parse_csv_rows(text: &str) -> Option<Vec<std::collections::HashMap<String
 /// 字段同构（miyo-test 的 ExtractSpec / AssertionSpec 数组），JSON 透传、
 /// 运行时解析。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScenarioStep {
     /// 引用式步骤的接口 id；内联步骤为 `None`。
     #[serde(default)]
@@ -991,6 +1029,7 @@ impl ScenarioStep {
 /// 按步骤顺序串行执行：前一步提取的变量（runtime）与环境静态变量合并后
 /// 渲染下一步的 URL / 规格，`{{var}}` 即成链路数据流。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Scenario {
     pub id: Uuid,
     pub project_id: Uuid,
@@ -1028,6 +1067,7 @@ pub struct Scenario {
 /// 同步远端类型（存储层枚举，与 miyo-sync::RemoteKind 对应）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum SyncRemoteKind {
     Git,
     S3,
@@ -1039,6 +1079,7 @@ pub enum SyncRemoteKind {
 /// `source` 为稳定键（rule | example | default），展示文案由前端按语言映射；
 /// 未匹配请求 `matched = false` 且 status 恒为 404。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct MockRequestLog {
     pub at: DateTime<Utc>,
     pub method: String,
@@ -1057,6 +1098,7 @@ pub struct MockRequestLog {
 /// 同一仓库内按 `projects/{project_id}.json` 分文件存放各项目快照。
 /// `config` 为 RemoteConfig（miyo-sync）的 JSON（含 kind tag），存储层不解析内容。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct SyncRemote {
     pub id: Uuid,
     pub team_id: Uuid,
@@ -1071,6 +1113,7 @@ pub struct SyncRemote {
 
 /// 项目。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Project {
     pub id: Uuid,
     pub name: String,
@@ -1085,6 +1128,7 @@ pub struct Project {
 
 /// 文件夹。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Folder {
     pub id: Uuid,
     pub project_id: Uuid,
@@ -1097,6 +1141,7 @@ pub struct Folder {
 
 /// 接口。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Endpoint {
     pub id: Uuid,
     pub project_id: Uuid,
@@ -1114,6 +1159,7 @@ pub struct Endpoint {
 
 /// 环境变量（支持远程 / 本地双值：本地值优先覆盖远程值）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct EnvironmentVariable {
     pub key: String,
     /// 远程 / 公共值。
@@ -1141,6 +1187,7 @@ pub struct EnvironmentVariable {
 /// 全局参数注入位置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum GlobalParamLocation {
     /// 拼入每个请求的 URL 查询参数。
     #[default]
@@ -1155,6 +1202,7 @@ pub enum GlobalParamLocation {
 /// - 全局变量是「引用制」——请求里写 `{{name}}` 才按名替换；
 /// - 全局参数是「注入制」——定义后每个请求自动并入 query / header，无需手动写。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GlobalParam {
     pub key: String,
     pub value: String,
@@ -1170,6 +1218,7 @@ pub struct GlobalParam {
 /// 单一前置 Base URL `base_url`（可包含 `{{变量}}`）与一组结构化
 /// 环境变量 `variables`（本地值覆盖远程值）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Environment {
     pub id: Uuid,
     /// 归属项目（环境随项目删除级联清理）。
@@ -1223,6 +1272,7 @@ impl Environment {
 
 /// 响应示例。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ResponseExample {
     pub id: Uuid,
     pub endpoint_id: Uuid,
@@ -1243,6 +1293,7 @@ pub struct ResponseExample {
 /// 保存接口某次请求的完整 `RequestSpec`（参数 / 认证 / 请求头 / Body / 超时等），
 /// 可一键回填编辑器复用，避免反复手工拼装。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RequestExample {
     pub id: Uuid,
     pub endpoint_id: Uuid,
@@ -1255,6 +1306,7 @@ pub struct RequestExample {
 /// 测试用例运行状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum TestCaseStatus {
     Success,
     Failed,
@@ -1288,6 +1340,7 @@ impl TestCaseStatus {
 /// 由 `miyo-test` 引擎求值；`auth` / `timeout_ms` / `disable_cookies` 为用例级
 /// 执行控制覆盖（None / 0 = 沿用接口与全局默认）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TestCase {
     pub id: Uuid,
     /// 关联的主接口 ID（endpoints.id）。
@@ -1346,6 +1399,7 @@ pub struct TestCase {
 /// `results_json` 为 `EndpointResult` 快照（正文 64KB 截断 + 敏感头/变量
 /// 脱敏在写入方完成，与 scenario_runs 同口径）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TestCaseRun {
     pub id: Uuid,
     pub case_id: Uuid,
@@ -1371,6 +1425,7 @@ pub struct TestCaseRun {
 
 /// Mock 匹配条件项。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct MockMatchItem {
     pub key: String,
     pub value: String,
@@ -1378,6 +1433,7 @@ pub struct MockMatchItem {
 
 /// 自定义 Mock 规则。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct MockRule {
     pub id: Uuid,
     pub project_id: Uuid,
@@ -1405,6 +1461,7 @@ pub struct MockRule {
 
 /// 单次测试运行结果。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TestRun {
     pub id: Uuid,
     pub project_id: Uuid,
@@ -1425,6 +1482,7 @@ pub struct TestRun {
 /// initial_vars（脱敏）, stop_on_failure, warnings}` —— 历史基于当时配置
 /// 快照回看 / 重跑；旧行 NULL 视为无快照。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScenarioRun {
     pub id: Uuid,
     pub scenario_id: Uuid,
@@ -1448,6 +1506,7 @@ pub struct ScenarioRun {
 
 /// 请求历史。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RequestHistory {
     pub id: Uuid,
     pub project_id: Uuid,
@@ -1463,6 +1522,7 @@ pub struct RequestHistory {
 
 /// 自增序列（`{{$seq:key}}`）；`value` 为下一次输出值。key 为空字符串表示全局 `{{$seq}}`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct SeqCounter {
     pub key: String,
     pub value: u64,
@@ -1471,6 +1531,7 @@ pub struct SeqCounter {
 /// WebSocket 待发消息类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum WsMessageType {
     Text,
     Binary,
@@ -1489,6 +1550,7 @@ impl WsMessageType {
 
 /// 持久化的 WebSocket 待发消息（断线 / 队列溢出时落库）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct WsMessageRecord {
     pub id: Uuid,
     pub message_type: WsMessageType,

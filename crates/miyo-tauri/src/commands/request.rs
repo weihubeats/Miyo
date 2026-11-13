@@ -12,7 +12,7 @@ use miyo_http::client::{HttpResponseData, RequestSnapshot};
 use miyo_storage::repository as repo;
 use miyo_sync::redact::{is_sensitive_key, PLACEHOLDER};
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 /// 执行请求的入参（前端结构体，与 `RequestSpec` 一致可 JSON 互传）。
@@ -34,6 +34,7 @@ pub struct ExecuteRequestArgs {
 
 /// 执行结果（`HttpResponseData` 含非序列化 `Bytes`，此处转成 JSON 安全结构）。
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ExecuteResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
@@ -55,6 +56,7 @@ pub struct ExecuteResponse {
 
 /// 单条 `pm.test` 断言结果（序列化给前端展示）。
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScriptTestOutcome {
     pub name: String,
     pub passed: bool,
@@ -63,6 +65,7 @@ pub struct ScriptTestOutcome {
 
 /// 一个阶段（pre_request / post_response）的脚本运行摘要。
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScriptRunSummary {
     /// 执行阶段：`pre_request` / `post_response`。
     pub phase: &'static str,
@@ -164,7 +167,7 @@ pub async fn execute_request(
             }
             Err(e) => {
                 return Err(CommandError::with_code(
-                    "SCRIPT",
+                    CommandErrorCode::Script,
                     format!("Pre-request 脚本执行失败：{}", e.user_message()),
                 ));
             }

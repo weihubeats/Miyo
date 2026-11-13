@@ -105,7 +105,8 @@ describe('redactAuthForExport', () => {
       token_url: '',
       scope: '',
       redirect_uri: '',
-      token: { access_token: 'at', expires_at: '2026-11-12T00:00:00Z' },
+      grant: 'authorization_code',
+      token: { access_token: 'at', token_type: 'Bearer', expires_at: '2026-11-12T00:00:00Z' },
     })
     expect(oauth).toMatchObject({ client_secret: EXPORT_PLACEHOLDER, token: undefined })
     expect(redactAuthForExport({ type: 'none' })).toEqual({ type: 'none' })

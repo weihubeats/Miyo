@@ -210,7 +210,7 @@ export function useRequestUrl(options: UseRequestUrlOptions) {
         const qs = rest.slice(qIdx + 1)
         rest = rest.slice(0, qIdx) || '/'
         for (const [key, val] of new URLSearchParams(qs).entries()) {
-          d.request.params.push({ key, value: val, enabled: true, description: '' })
+          d.request.params.push({ key, value: val, enabled: true, description: '', field_type: 'string', required: true, example: '' })
         }
       }
       const envPrefixed = store.urlDomain.startsWith('{{')

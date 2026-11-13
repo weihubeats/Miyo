@@ -47,14 +47,13 @@ function parseBulk(text: string): KVRow[] {
       const colon = t.indexOf(':')
       const idx = eq === -1 ? colon : colon === -1 ? eq : Math.min(eq, colon)
       if (idx <= 0) {
-        out.push({ key: t, value: '', enabled: true, description: '' })
+        out.push({ key: t, value: '', enabled: true, description: '', })
       } else {
         out.push({
           key: t.slice(0, idx).trim(),
           value: t.slice(idx + 1).trim(),
           enabled: true,
-          description: '',
-        })
+          description: '', })
       }
     }
   }

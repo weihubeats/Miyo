@@ -180,5 +180,6 @@ function emptySpec(): ScenarioInlineRequest['spec'] {
     timeout_ms: null,
     follow_redirects: true,
     tests: null,
+    disable_cookies: false,
   }
 }

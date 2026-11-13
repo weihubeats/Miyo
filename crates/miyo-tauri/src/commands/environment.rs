@@ -16,7 +16,7 @@ use miyo_core::model::{Environment, EnvironmentVariable};
 use miyo_storage::repository as repo;
 use miyo_sync::redact::is_sensitive_key;
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 /// 列出项目的全部环境（项目维度）。
@@ -182,7 +182,7 @@ pub async fn export_environment(
     match format {
         EnvExchangeFormat::MiyoJson => {
             let content = serde_json::to_string_pretty(&env)
-                .map_err(|e| CommandError::with_code("EXPORT", e.to_string()))?;
+                .map_err(|e| CommandError::with_code(CommandErrorCode::Export, e.to_string()))?;
             Ok(ExportedEnv {
                 content,
                 suggested_name: format!("miyo-env-{safe_name}-{date}.json"),
@@ -208,7 +208,7 @@ pub async fn export_environment(
                 "values": values,
             });
             let content = serde_json::to_string_pretty(&doc)
-                .map_err(|e| CommandError::with_code("EXPORT", e.to_string()))?;
+                .map_err(|e| CommandError::with_code(CommandErrorCode::Export, e.to_string()))?;
             Ok(ExportedEnv {
                 content,
                 suggested_name: format!("postman-env-{safe_name}-{date}.json"),

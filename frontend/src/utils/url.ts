@@ -59,7 +59,7 @@ export function splitUrl(
   const parsed = new URL(target)
   const params: KeyValue[] = []
   parsed.searchParams.forEach((value, key) => {
-    params.push({ key, value, enabled: true, description: '' })
+    params.push({ key, value, enabled: true, description: '', field_type: 'string', required: true, example: '' })
   })
   let path = parsed.pathname
   if (!path.startsWith('/')) path = `/${path}`
