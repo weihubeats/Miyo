@@ -488,7 +488,10 @@ pub async fn ai_chat_approve(
         .approvals
         .remove(&key)
         .ok_or_else(|| {
-            CommandError::with_code(CommandErrorCode::AiNoPending, "该调用不在待确认状态（可能已处理）")
+            CommandError::with_code(
+                CommandErrorCode::AiNoPending,
+                "该调用不在待确认状态（可能已处理）",
+            )
         })?;
     let _ = sender.send(approved);
     Ok(())
@@ -638,9 +641,9 @@ async fn build_system_prompt(
     locale: Option<&str>,
 ) -> CommandResult<String> {
     let en = locale == Some("en");
-    let project = repo::get_project(db, project_id)
-        .await
-        .map_err(|e| CommandError::with_code(CommandErrorCode::NotFound, format!("项目不存在：{e}")))?;
+    let project = repo::get_project(db, project_id).await.map_err(|e| {
+        CommandError::with_code(CommandErrorCode::NotFound, format!("项目不存在：{e}"))
+    })?;
     let endpoints = repo::list_endpoints(db, project_id).await?;
     let scenarios = repo::list_scenarios(db, project_id).await?;
     let environments = repo::list_environments(db, project_id).await?;
@@ -860,7 +863,8 @@ pub async fn ai_analyze_dependencies(
 ) -> CommandResult<serde_json::Value> {
     let report =
         miyo_agent::analysis::dependencies::analyze_api_dependencies(&state.db, project_id).await?;
-    serde_json::to_value(report).map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
+    serde_json::to_value(report)
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
 }
 
 /// 项目测试覆盖率（七维）。
@@ -872,7 +876,8 @@ pub async fn ai_analyze_coverage(
     let report =
         miyo_agent::analysis::coverage::analyze_project_test_coverage(&state.db, project_id)
             .await?;
-    serde_json::to_value(report).map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
+    serde_json::to_value(report)
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
 }
 
 /// 测试用例草稿（不落库）。
@@ -884,7 +889,8 @@ pub async fn ai_generate_test_case_drafts(
     let drafts =
         miyo_agent::analysis::testcase_gen::generate_test_case_drafts(&state.db, endpoint_id)
             .await?;
-    serde_json::to_value(drafts).map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
+    serde_json::to_value(drafts)
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
 }
 
 /// 场景草稿物化（不落库）。
@@ -895,7 +901,8 @@ pub async fn ai_generate_scenario_draft(
 ) -> CommandResult<serde_json::Value> {
     let result =
         miyo_agent::analysis::scenario_gen::materialize_scenario_draft(&state.db, &draft).await?;
-    serde_json::to_value(result).map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
+    serde_json::to_value(result)
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
 }
 
 /// 修复草稿（不落库）。
@@ -906,7 +913,8 @@ pub async fn ai_propose_fix(
     notes: Option<String>,
 ) -> CommandResult<serde_json::Value> {
     let proposal = miyo_agent::analysis::fix::propose_fix_for_run(&state.db, run_id, notes).await?;
-    serde_json::to_value(proposal).map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
+    serde_json::to_value(proposal)
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))
 }
 
 // ---------- 4. 场景草稿历史 ----------
@@ -990,7 +998,9 @@ pub async fn ai_apply_scenario_draft(
 ) -> CommandResult<()> {
     let row = repo::get_scenario_draft(&state.db, draft_id)
         .await?
-        .ok_or_else(|| CommandError::with_code(CommandErrorCode::NotFound, "草稿不存在或已被清理"))?;
+        .ok_or_else(|| {
+            CommandError::with_code(CommandErrorCode::NotFound, "草稿不存在或已被清理")
+        })?;
     let scenario: miyo_core::model::Scenario = serde_json::from_str(&row.draft_json)
         .map_err(|e| CommandError::validation(format!("草稿 JSON 损坏：{e}")))?;
     repo::save_scenario(&state.db, &scenario).await?;
@@ -1006,7 +1016,9 @@ pub async fn ai_revert_scenario_draft(
 ) -> CommandResult<()> {
     let row = repo::get_scenario_draft(&state.db, draft_id)
         .await?
-        .ok_or_else(|| CommandError::with_code(CommandErrorCode::NotFound, "草稿不存在或已被清理"))?;
+        .ok_or_else(|| {
+            CommandError::with_code(CommandErrorCode::NotFound, "草稿不存在或已被清理")
+        })?;
     let scenario: miyo_core::model::Scenario = serde_json::from_str(&row.base_json)
         .map_err(|e| CommandError::validation(format!("草稿基线 JSON 损坏：{e}")))?;
     repo::save_scenario(&state.db, &scenario).await?;

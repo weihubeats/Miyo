@@ -686,30 +686,10 @@ export interface EndpointResult {
 /** 压测结果（Rust `LoadResult`）。 */
 
 /** 压测结果（Rust `LoadResult`）。 */
-export interface LoadResult {
-  total: number
-  ok: number
-  failed: number
-  total_ms: number
-  avg_ms: number
-  p50_ms: number
-  p90_ms: number
-  p99_ms: number
-  rps: number
-  errors: string[]
-  /** 是否被用户中途取消（取消时 total < 请求的 total）。 */
-  cancelled?: boolean
-}
-
-/** 压测进度（事件 `miyo:load-progress` 载荷，Rust `LoadProgress`）。 */
-
-/** 压测进度（事件 `miyo:load-progress` 载荷，Rust `LoadProgress`）。 */
-export interface LoadProgress {
-  done: number
-  total: number
-  ok: number
-  failed: number
-}
+export type { LoadSchedule } from './generated/LoadSchedule';
+export type { LoadConfig } from './generated/LoadConfig';
+export type { LoadResult } from './generated/LoadResult';
+export type { LoadProgress } from './generated/LoadProgress';
 
 /** 集合测试结果（Rust `CollectionResult`，results 与输入同序）。 */
 

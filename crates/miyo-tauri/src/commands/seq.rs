@@ -48,8 +48,9 @@ pub async fn delete_seq_counter(state: State<'_, AppState>, key: String) -> Comm
 /// 将内存计数落盘（请求执行后调用，保证「UI 看到的值」重启后一致）。
 pub async fn sync_seq_counters(db: &sqlx::SqlitePool) -> CommandResult<()> {
     let map = miyo_core::variable::dump_seq_counters();
-    let json = serde_json::to_string(&map)
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
+    let json = serde_json::to_string(&map).map_err(|e| {
+        CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}"))
+    })?;
     repo::set_setting(db, SEQ_STORAGE_KEY, &json).await?;
     Ok(())
 }

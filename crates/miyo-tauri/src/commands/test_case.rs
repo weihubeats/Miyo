@@ -4,7 +4,9 @@
 use tauri::State;
 use uuid::Uuid;
 
-use miyo_core::model::{HttpMethod, KeyValue, TestCase, TestCaseRun, TestCaseRunSummary, TestCaseStatus};
+use miyo_core::model::{
+    HttpMethod, KeyValue, TestCase, TestCaseRun, TestCaseRunSummary, TestCaseStatus,
+};
 use miyo_storage::repository as repo;
 
 use crate::error::{CommandError, CommandResult};

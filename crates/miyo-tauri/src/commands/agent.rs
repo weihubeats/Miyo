@@ -61,8 +61,9 @@ pub async fn ensure_started(app: &tauri::AppHandle) -> CommandResult<String> {
     }
 
     let preferred_port = read_mcp_port(&state.db).await;
-    let token = miyo_agent::load_or_create_token(&miyo_storage::db::data_dir())
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("Agent 令牌文件创建失败：{e}")))?;
+    let token = miyo_agent::load_or_create_token(&miyo_storage::db::data_dir()).map_err(|e| {
+        CommandError::with_code(CommandErrorCode::Io, format!("Agent 令牌文件创建失败：{e}"))
+    })?;
     let agent_state = AgentState::new(state.db.clone(), token);
     let mut events = agent_state.subscribe();
 
@@ -179,8 +180,9 @@ pub async fn set_mcp_enabled(
         let mut guard = state.agent.write().await;
         stop_locked(&mut guard).await;
     }
-    let json = serde_json::to_string(&enabled)
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
+    let json = serde_json::to_string(&enabled).map_err(|e| {
+        CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}"))
+    })?;
     repo::set_setting(&state.db, MCP_ENABLED_KEY, &json).await?;
     Ok(())
 }
@@ -225,8 +227,9 @@ pub async fn set_mcp_tool_enabled(
     } else if !disabled.iter().any(|n| n == &name) {
         disabled.push(name);
     }
-    let json = serde_json::to_string(&disabled)
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
+    let json = serde_json::to_string(&disabled).map_err(|e| {
+        CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}"))
+    })?;
     repo::set_setting(&state.db, MCP_DISABLED_TOOLS_KEY, &json).await?;
     Ok(())
 }
@@ -317,7 +320,9 @@ pub async fn set_mcp_permissions(
         ));
     }
     let json = serde_json::to_string(&parsed.iter().map(|l| l.as_str()).collect::<Vec<_>>())
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
+        .map_err(|e| {
+            CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}"))
+        })?;
     repo::set_setting(&state.db, miyo_agent::server::MCP_PERMISSIONS_KEY, &json).await?;
     Ok(())
 }
@@ -339,10 +344,12 @@ pub async fn set_mcp_port(
     if port == prev {
         return Ok(());
     }
-    let prev_json = serde_json::to_string(&prev)
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
-    let next_json = serde_json::to_string(&port)
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}")))?;
+    let prev_json = serde_json::to_string(&prev).map_err(|e| {
+        CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}"))
+    })?;
+    let next_json = serde_json::to_string(&port).map_err(|e| {
+        CommandError::with_code(CommandErrorCode::Internal, format!("序列化失败：{e}"))
+    })?;
 
     let was_running = {
         let mut guard = state.agent.write().await;

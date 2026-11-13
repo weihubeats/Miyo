@@ -108,8 +108,14 @@ pub struct LoadTestArgs {
     pub environment_id: Option<Uuid>,
     /// 并发数（默认 20）。
     pub concurrency: Option<usize>,
-    /// 总请求数（默认 200）。
+    /// 总请求数（默认 200；仅固定总量模式生效）。
     pub total: Option<usize>,
+    /// 调度模式（缺省 = 固定总量）：fixed_qps / ramp / duration。
+    #[serde(default)]
+    pub schedule: Option<miyo_test::load::LoadSchedule>,
+    /// 最大错误率熔断阈值（0.0-1.0；缺省不熔断）。
+    #[serde(default)]
+    pub max_error_rate: Option<f64>,
     /// 本次压测的运行标识（由前端生成；提供后可通过 `cancel_load_test` 中止）。
     #[serde(default)]
     pub run_id: Option<String>,
@@ -143,7 +149,12 @@ pub async fn load_test(
     let url = miyo_core::resolve_variables(&args.url, &vars);
     let mut spec = render_spec(&args.spec, &vars);
     apply_global_params(&mut spec, &settings.global_params, &vars);
-    let cfg = miyo_test::load::LoadConfig { concurrency, total };
+    let cfg = miyo_test::load::LoadConfig {
+        concurrency,
+        total,
+        schedule: args.schedule,
+        max_error_rate: args.max_error_rate,
+    };
 
     // 注册取消令牌（前端「取消压测」→ `cancel_load_test` 触发中止）。
     let cancel = args.run_id.as_ref().map(|id| {

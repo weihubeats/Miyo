@@ -997,8 +997,9 @@ pub async fn export_scenario_report(
             (miyo_test::report::junit_xml(&scenario_name, &runs), "xml")
         }
         ScenarioReportFormat::Json => (
-            serde_json::to_string_pretty(&stats)
-                .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("统计序列化失败：{e}")))?,
+            serde_json::to_string_pretty(&stats).map_err(|e| {
+                CommandError::with_code(CommandErrorCode::Internal, format!("统计序列化失败：{e}"))
+            })?,
             "json",
         ),
     };

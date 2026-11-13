@@ -290,7 +290,9 @@ pub async fn sse_connect(
         .connect_timeout(std::time::Duration::from_secs(15))
         .no_proxy()
         .build()
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("HTTP 客户端初始化失败：{e}")))?;
+        .map_err(|e| {
+            CommandError::with_code(CommandErrorCode::Io, format!("HTTP 客户端初始化失败：{e}"))
+        })?;
     let mut req = client
         .get(&args.url)
         .header("Accept", "text/event-stream")

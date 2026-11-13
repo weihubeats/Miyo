@@ -31,7 +31,9 @@ pub async fn import_document(
     // 挪到阻塞线程池，避免卡住 IPC 执行线程。
     let (endpoints, format) = tokio::task::spawn_blocking(move || import_any(&text))
         .await
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("文档解析任务失败：{e}")))?
+        .map_err(|e| {
+            CommandError::with_code(CommandErrorCode::Internal, format!("文档解析任务失败：{e}"))
+        })?
         .map_err(CommandError::from)?;
     if endpoints.is_empty() {
         return Err(CommandError::validation("文档中没有可导入的接口"));
@@ -45,9 +47,9 @@ pub async fn import_document(
 pub async fn read_text_file(path: String) -> CommandResult<String> {
     const MAX_LEN: u64 = 2 * 1024 * 1024;
     // 异步读：不在 IPC 线程上做同步文件 IO。
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, format!("无法读取文件 {path}：{e}")))?;
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        CommandError::with_code(CommandErrorCode::Io, format!("无法读取文件 {path}：{e}"))
+    })?;
     if bytes.len() as u64 > MAX_LEN {
         return Err(CommandError::validation("文件超过 2MB，请改用粘贴文本导入"));
     }

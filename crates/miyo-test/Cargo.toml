@@ -22,6 +22,13 @@ tracing = { workspace = true }
 regex = { workspace = true }
 jsonpath-rust = { workspace = true }
 jsonschema = { version = "0.61", default-features = false, features = ["resolve-file"] }
+# 压测资源监控：采样本进程 CPU / 内存（用户显式要求的能力）
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
+# `ts` feature：LoadConfig/LoadSchedule/LoadResult/LoadProgress 绑定生成
+ts-rs = { workspace = true, optional = true }
+
+[features]
+ts = ["dep:ts-rs"]
 
 [dev-dependencies]
 axum = { workspace = true }

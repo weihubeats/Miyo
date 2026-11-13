@@ -207,7 +207,9 @@ impl AppState {
         self.script_sandbox
             .get_or_init(|| miyo_http::script_sandbox::ScriptSandbox::new().ok())
             .as_ref()
-            .ok_or_else(|| CommandError::with_code(CommandErrorCode::Internal, "脚本沙箱初始化失败"))
+            .ok_or_else(|| {
+                CommandError::with_code(CommandErrorCode::Internal, "脚本沙箱初始化失败")
+            })
     }
 
     /// 全局设置快照：缓存命中零查询；未命中查库构建并回填。

@@ -60,6 +60,7 @@ import type {
   ImportResult,
   KeyValue,
   LoadResult,
+  LoadSchedule,
   LogFile,
   MockRule,
   MockRequestLog,
@@ -749,6 +750,10 @@ export function useMiyoApi() {
     environment_id: string | null
     concurrency: number
     total: number
+    /** 调度模式（缺省 = 固定总量）。 */
+    schedule?: LoadSchedule | null
+    /** 错误率熔断阈值（0-1；缺省不熔断）。 */
+    max_error_rate?: number | null
     run_id?: string | null
   }) => run(() => call<LoadResult>('load_test', { args }))
 

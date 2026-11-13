@@ -200,7 +200,10 @@ mod tests {
     fn serialization_matches_legacy_strings() {
         let cases = [
             (CommandErrorCode::Database, "DATABASE"),
-            (CommandErrorCode::DatabaseSchemaTooNew, "DATABASE_SCHEMA_TOO_NEW"),
+            (
+                CommandErrorCode::DatabaseSchemaTooNew,
+                "DATABASE_SCHEMA_TOO_NEW",
+            ),
             (CommandErrorCode::Io, "IO"),
             (CommandErrorCode::Http, "HTTP"),
             (CommandErrorCode::Timeout, "TIMEOUT"),
@@ -231,7 +234,11 @@ mod tests {
         ];
         for (code, expected) in cases {
             let json = serde_json::to_string(&code).unwrap();
-            assert_eq!(json, format!("\"{expected}\""), "code {expected} 序列化漂移");
+            assert_eq!(
+                json,
+                format!("\"{expected}\""),
+                "code {expected} 序列化漂移"
+            );
             assert_eq!(code.as_str(), expected);
         }
     }
@@ -277,7 +284,11 @@ mod tests {
         for code in codes {
             let serde_str = serde_json::to_string(&code).unwrap();
             let as_str = format!("\"{}\"", code.as_str());
-            assert_eq!(serde_str, as_str, "{:?} 的 as_str 与 serde 产物不一致", code);
+            assert_eq!(
+                serde_str, as_str,
+                "{:?} 的 as_str 与 serde 产物不一致",
+                code
+            );
         }
     }
 }
