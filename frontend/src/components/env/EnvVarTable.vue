@@ -327,10 +327,16 @@ function applyBatch(): void {
 
 <style scoped>
 /* 工具行：搜索占满剩余宽度，右侧两个文字钮 */
+/* 占满父级剩余高度：变量表（.em-table）才能撑开内部滚动区。
+   父级（EnvWorkspace .em-section-vars）是 flex 列容器，这里必须 flex:1 + min-height:0，
+   否则整块按内容高度撑开，变量一多就把 .em-table 的滚动区顶出可视区域——
+   表现为「环境变量太多无法上下滚动」（issue #172）。 */
 .evt {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1;
+  min-height: 0;
 }
 
 .evt-toolbar {

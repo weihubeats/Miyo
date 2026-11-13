@@ -2557,7 +2557,7 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             env_var("trace_id", "xz-trace-stg-001", "链路追踪 ID 示例"),
         ],
     );
-    let open_dev = environment(
+    let mut open_dev = environment(
         &open_demo,
         "开发环境",
         "https://jsonplaceholder.typicode.com",
@@ -2571,6 +2571,11 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             env_var("trace_id", "xz-trace-dev-001", "链路追踪 ID 示例"),
         ],
     );
+    // 长变量表压测素材（issue #172：环境变量多到超出弹窗时无法上下滚动）：
+    // 追加 20 条业务变量，合计 23 条，保证 dev 启动后打开「管理环境」就能复现
+    // 「变量表溢出、需要在表格内部滚动」的场景。覆盖敏感键名（按键名启发式走
+    // 掩码）、本地覆盖（local_override 三态）、停用行、超长值（横向截断）。
+    open_dev.variables.extend(overflow_env_vars());
     let open_test = environment(
         &open_demo,
         "测试环境",
@@ -2639,6 +2644,34 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
     ] {
         repo::save_environment(db, env).await?;
     }
+
+    // ---- 全局变量（长变量表素材 + 全局作用域同样验证滚动） ----
+    repo::save_global_variables(
+        db,
+        &[
+            env_var("global_tenant", "xz-tenant-001", "租户标识，注入所有请求"),
+            env_var("global_channel", "web", "默认渠道"),
+            {
+                let mut v = env_var(
+                    "global_api_secret",
+                    "xz-global-secret-0001",
+                    "全局密钥（按键名启发式掩码）",
+                );
+                v.sensitive = Some(true);
+                v
+            },
+            {
+                let mut v = env_var(
+                    "global_feature_flags",
+                    "verify_retry=true,metrics=true,trace=true",
+                    "特性开关",
+                );
+                v.enabled = false;
+                v
+            },
+        ],
+    )
+    .await?;
 
     // ---- 全局参数（注入制演示） ----
     repo::save_global_params(
@@ -2890,6 +2923,79 @@ fn env_var(key: &str, value: &str, description: &str) -> EnvironmentVariable {
         sensitive: None,
         description: Some(description.to_string()),
     }
+}
+
+/// 长变量表压测素材（issue #172：变量多到溢出弹窗时无法上下滚动）。
+///
+/// 20 条覆盖各种行形态，追加在「开放演示 · 开发环境」上（合计 23 条）：
+/// - 敏感键名（`secret` / `password` / `_token`）→ 掩码 + 行级揭示按钮；
+/// - 本地覆盖三态：开（有值）/ 开（显式空串）/ 未标注（按本地值推导）；
+/// - 停用行（整行淡显）；超长值（单元格横向截断）；中文说明。
+fn overflow_env_vars() -> Vec<EnvironmentVariable> {
+    let mut out = Vec::new();
+    for i in 1..=12 {
+        out.push(env_var(
+            &format!("api_key_{i:02}"),
+            &format!("xz-ak-{i:04}-demo"),
+            "业务接口 Key（分环境维护）",
+        ));
+    }
+
+    // 敏感标注 / 键名启发式命中的三条（掩码与行级揭示）
+    out.push({
+        let mut v = env_var("client_secret", "xz-client-secret-0001", "OAuth 客户端密钥");
+        v.sensitive = Some(true);
+        v
+    });
+    out.push(env_var(
+        "db_password",
+        "P@ssw0rd-demo",
+        "数据库密码（按键名启发式掩码）",
+    ));
+    out.push(env_var(
+        "refresh_token",
+        "xz-refresh-token-0001",
+        "刷新令牌",
+    ));
+
+    // 本地覆盖三态
+    out.push({
+        let mut v = env_var(
+            "gateway_host",
+            "http://127.0.0.1:4010",
+            "网关地址（本地覆盖演示）",
+        );
+        v.local_value = "http://localhost:4010".to_string();
+        v.local_override = Some(true);
+        v
+    });
+    out.push({
+        let mut v = env_var("mock_echo", "remote-echo", "显式覆盖为空串（关掉回显）");
+        v.local_override = Some(true);
+        v
+    });
+    out.push({
+        let mut v = env_var("legacy_flag", "off", "旧字段：未标注覆盖，按本地值推导");
+        v.local_value = "on".to_string();
+        v
+    });
+
+    // 停用行 + 超长值 + 超长键名（表格横向截断 / 悬停查看）
+    out.push({
+        let mut v = env_var(
+            "feature_flags",
+            "verify_retry=true,metrics=true,trace=true,saga=true,async_pay=false",
+            "特性开关（停用行演示）",
+        );
+        v.enabled = false;
+        v
+    });
+    out.push(env_var(
+        "callback_url_with_very_long_query_string_for_overflow_demo",
+        "https://demo.xiaozou.tech/api/v1/payment/notify?channel=alipay&sign=xz-sign-0001&ts=1731000000&nonce=abcdef",
+        "超长键名 / 超长值（横向溢出演示）",
+    ));
+    out
 }
 
 fn kv(key: &str, value: &str) -> KeyValue {

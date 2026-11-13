@@ -41,6 +41,8 @@ import Menu, { type MenuItem } from '../ui/Menu.vue'
 import Modal from '../ui/Modal.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import EnvVarTable from './EnvVarTable.vue'
+import { errorText } from '../../utils/errorText'
+
 import type {
   EnvExchangeFormat,
   Environment,
@@ -286,7 +288,7 @@ async function loadEnvs(opts: { keepStale?: boolean } = {}): Promise<void> {
       reselect(envs.value)
     } catch (err) {
       toast.error(t('envmgr.loadFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
     } finally {
       envsLoading.value = false
@@ -492,7 +494,7 @@ async function setActiveEnv(env: Environment): Promise<void> {
     toast.success(t('envmgr.setActiveDone', { name: env.name }))
   } catch (err) {
     toast.error(t('envmgr.setActiveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -523,7 +525,7 @@ async function duplicateEnv(env: Environment): Promise<void> {
     select(saved)
     toast.success(t('envmgr.duplicated', { name: saved.name }))
   } catch (err) {
-    toast.error(t('envmgr.saveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('envmgr.saveFail'), { message: errorText(err) })
   }
 }
 
@@ -540,7 +542,7 @@ async function remove(env: Environment): Promise<void> {
     }
     toast.success(t('envmgr.deleted', { name: env.name }))
   } catch (err) {
-    toast.error(t('envmgr.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('envmgr.deleteFail'), { message: errorText(err) })
   }
 }
 
@@ -576,7 +578,7 @@ async function exportSelected(format: EnvExchangeFormat): Promise<void> {
       toast.warning(t('envmgr.exportSensitive', { n: doc.sensitive_count }))
     }
   } catch (err) {
-    toast.error(t('envmgr.exportFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('envmgr.exportFail'), { message: errorText(err) })
   } finally {
     exchanging.value = false
   }
@@ -612,7 +614,7 @@ async function importFromFile(): Promise<void> {
     importText.value = await api.readTextFile(file)
     await previewImport()
   } catch (err) {
-    importError.value = err instanceof Error ? err.message : String(err)
+    importError.value = errorText(err)
   }
 }
 
@@ -627,7 +629,7 @@ async function previewImport(): Promise<void> {
   try {
     importPreview.value = await api.importEnvironment(importText.value, effectiveProjectId.value)
   } catch (err) {
-    importError.value = err instanceof Error ? err.message : String(err)
+    importError.value = errorText(err)
   } finally {
     importing.value = false
   }
@@ -670,7 +672,7 @@ async function confirmImport(): Promise<void> {
       }),
     })
   } catch (err) {
-    importError.value = err instanceof Error ? err.message : String(err)
+    importError.value = errorText(err)
   } finally {
     importing.value = false
   }
@@ -759,7 +761,7 @@ async function save(): Promise<boolean> {
       toast.success(t('envmgr.globalParamsSaved'))
       return true
     } catch (err) {
-      toast.error(t('envmgr.globalParamsSaveFail'), { message: err instanceof Error ? err.message : String(err) })
+      toast.error(t('envmgr.globalParamsSaveFail'), { message: errorText(err) })
       return false
     } finally {
       busy.value = false
@@ -778,7 +780,7 @@ async function save(): Promise<boolean> {
       toast.success(t('envmgr.globalVarsSaved'))
       return true
     } catch (err) {
-      toast.error(t('envmgr.globalVarsSaveFail'), { message: err instanceof Error ? err.message : String(err) })
+      toast.error(t('envmgr.globalVarsSaveFail'), { message: errorText(err) })
       return false
     } finally {
       busy.value = false
@@ -819,7 +821,7 @@ async function save(): Promise<boolean> {
     toast.success(t('envmgr.saved', { name: saved.name }))
     return true
   } catch (err) {
-    toast.error(t('envmgr.saveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('envmgr.saveFail'), { message: errorText(err) })
     return false
   } finally {
     busy.value = false
@@ -1581,6 +1583,7 @@ defineExpose({
 .em-editor {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;

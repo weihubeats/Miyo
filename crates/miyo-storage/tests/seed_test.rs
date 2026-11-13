@@ -345,6 +345,42 @@ async fn seeds_full_fixture_set() {
         .find(|e| e.name == "开发环境")
         .expect("开放演示开发环境存在");
     assert_eq!(open_dev.base_url, "https://jsonplaceholder.typicode.com");
+    // 长变量表压测素材（issue #172）：3 条基础 + 20 条溢出演示变量，
+    // 打开「管理环境」即处于变量表内部滚动状态，可直接回归验证修复。
+    assert_eq!(
+        open_dev.variables.len(),
+        23,
+        "开放演示开发环境应有 23 条变量"
+    );
+    assert!(
+        open_dev.variables.iter().filter(|v| !v.enabled).count() >= 1,
+        "应含停用行"
+    );
+    assert!(
+        open_dev
+            .variables
+            .iter()
+            .filter(|v| v.sensitive == Some(true))
+            .count()
+            >= 1,
+        "应含显式敏感标注行"
+    );
+    assert!(
+        open_dev
+            .variables
+            .iter()
+            .any(|v| v.local_override == Some(true)),
+        "应含本地覆盖行"
+    );
+
+    // 全局变量：4 条（全局作用域同样有长表 / 敏感 / 停用素材）
+    let globals = repo::get_global_variables(&db).await.unwrap();
+    assert_eq!(globals.len(), 4, "全局变量 4 条");
+    assert!(
+        globals.iter().any(|v| v.sensitive == Some(true)),
+        "全局变量含敏感标注"
+    );
+    assert!(globals.iter().any(|v| !v.enabled), "全局变量含停用行");
 
     // 全局参数 2 个；激活项 settings 已写入（项目 + 该项目的激活环境）
     let params = repo::get_global_params(&db).await.unwrap();
