@@ -4,11 +4,11 @@
  * - 实时面积图（Chart.js）：x=已耗时(s)，y=累计成功/失败请求数，压测中逐事件刷新；
  * - 3 列 KPI 指标网格：成功率 / 平均耗时 / RPS / P50 / P90 / P99。
  */
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import type { ChartOptions } from 'chart.js'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useToast } from '@/composables/useToast'
+import { useTauriEvent } from '@/composables/useTauriEvent'
 import { useLocaleStore } from '@/stores/locale'
 import { useWorkspaceStore } from '@/stores/workspace'
 import CustomNumberInput from '@/components/ui/CustomNumberInput.vue'
@@ -189,17 +189,7 @@ function onProgress(p: LoadProgress): void {
   if (points.value.length > 400) points.value.splice(0, points.value.length - 400)
 }
 
-let unlistenLoad: UnlistenFn | null = null
-
-onMounted(async () => {
-  unlistenLoad = await listen<LoadProgress>('miyo:load-progress', (event) =>
-    onProgress(event.payload),
-  )
-})
-
-onUnmounted(() => {
-  unlistenLoad?.()
-})
+useTauriEvent<LoadProgress>('miyo:load-progress', onProgress)
 
 // ---------- 启动 / 取消压测 ----------
 /** 本轮运行标识：取消按钮持有，结束后清空。 */

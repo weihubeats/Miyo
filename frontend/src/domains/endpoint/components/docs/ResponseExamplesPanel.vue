@@ -10,7 +10,7 @@
  *   字段唯一）两个快捷入口。
  */
 import { computed, ref, watch } from 'vue'
-import JsonCodeMirror from '@/components/ui/JsonCodeMirror.vue'
+const JsonCodeMirror = lazyComponent(() => import('@/components/ui/JsonCodeMirror.vue'))
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Icon from '@/components/ui/Icon.vue'
 import Tabs from '@/components/ui/Tabs.vue'
@@ -18,6 +18,7 @@ import type { TabItem } from '@/components/ui/Tabs.vue'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useLocaleStore } from '@/stores/locale'
 import { useMiyoApi } from '@/composables/useMiyoApi'
+import { lazyComponent } from '@/composables/lazyComponent'
 import { useToast } from '@/composables/useToast'
 import { copyText } from '@/utils/clipboard'
 import { prettyJson } from '@/utils/jsonFormat'

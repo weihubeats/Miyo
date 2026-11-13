@@ -9,7 +9,6 @@
  *   → 成功 Toast 附「打开文件位置」（opener.revealItemInDir）。
  */
 import { computed, ref } from 'vue'
-import { join } from '@tauri-apps/api/path'
 import { open } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import Modal from '@/components/ui/Modal.vue'
@@ -83,7 +82,7 @@ async function startExport(): Promise<void> {
     })
     if (!dir) return // 用户取消
 
-    const path = await join(dir, doc.suggested_name)
+    const path = await api.joinPath(dir, doc.suggested_name)
 
     // 3) 写入磁盘
     await api.writeTextFile(path, doc.content)

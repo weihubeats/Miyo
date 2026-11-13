@@ -7,10 +7,11 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSidebarResize } from '@/composables/useSidebarResize'
 import { useRoute, useRouter } from 'vue-router'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen } from '@tauri-apps/api/event'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useToast } from '@/composables/useToast'
+import { useEventSubscription } from '@/composables/useTauriEvent'
 import { useLocaleStore } from '@/stores/locale'
 import { hasPendingUpdate, pendingUpdateVersion } from '@/domains/workspace/composables/useAutoUpdate'
 import Brand from '@/domains/workspace/components/Brand.vue'
@@ -465,9 +466,6 @@ interface AgentEventPayload {
   name?: string
 }
 
-let unlistenAgent: UnlistenFn | null = null
-let agentListenerDisposed = false
-
 // 关闭最后一个项目标签（或项目被删）后回到项目列表
 watch(
   () => store.project,
@@ -480,33 +478,28 @@ onMounted(() => {
   load()
   refreshMockStatus()
   void store.loadHistories()
-  // AI Agent 经控制面导入接口后刷新侧栏并提示（仅当前激活项目时）
-  if ('__TAURI_INTERNALS__' in window) {
-    void listen<AgentEventPayload>('miyo:agent-event', async (event) => {
+})
+
+// AI Agent 经控制面导入接口后刷新侧栏并提示（仅当前激活项目时；
+// scope 卸载自动解绑 + 晚到竞态兜底，见 useEventSubscription）。
+if ('__TAURI_INTERNALS__' in window) {
+  useEventSubscription(async () =>
+    listen<AgentEventPayload>('miyo:agent-event', async (event) => {
       const payload = event.payload
       if (payload.type !== 'endpoint-imported') return
       if (!store.project || payload.project_id !== store.project.id) return
       await store.refresh()
       toast.info(t('workspace.agentImported', { name: payload.name ?? t('workspace.untitled') }))
-    }).then((unlisten) => {
-      // 组件在 IPC 返回前已卸载：立即解绑，避免泄漏
-      if (agentListenerDisposed) {
-        unlisten()
-        return
-      }
-      unlistenAgent = unlisten
-    })
-  }
-})
+    }),
+  )
+}
 
 /** 顶栏拖拽窗口：空白处 mousedown → startDragging；交互元素（按钮/输入等）跳过；双击切换最大化。 */
 const topBarEl = ref<HTMLElement | null>(null)
 useWindowDrag(topBarEl)
 
 onBeforeUnmount(() => {
-  agentListenerDisposed = true
   menuRef.value?.close()
-  unlistenAgent?.()
   if (apiSearchTimer) clearTimeout(apiSearchTimer)
   disposeSidebarResize()
 })

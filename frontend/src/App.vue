@@ -15,6 +15,7 @@ import Brand from '@/domains/workspace/components/Brand.vue'
 import AboutDialog from '@/domains/workspace/components/AboutDialog.vue'
 import ReleaseNotesModal from '@/domains/workspace/components/ReleaseNotesModal.vue'
 import { useToast } from '@/composables/useToast'
+import { useEventSubscription } from './composables/useTauriEvent'
 import { useProgress } from '@/composables/useProgress'
 import { useLocaleStore } from '@/stores/locale'
 import { startAutoUpdate, openAboutSignal, openReleaseSignal } from '@/domains/workspace/composables/useAutoUpdate'
@@ -47,7 +48,6 @@ const showFloatingBrand = computed(() => route.matched.length === 0)
 const showAbout = ref(false)
 /** 独立版本更新详情弹窗（顶部更新 Tag / 设置更新卡片 / 更新 toast 动作打开）。 */
 const showRelease = ref(false)
-let unlistenAbout: UnlistenFn | null = null
 let unlistenClose: UnlistenFn | null = null
 /** 用户已在确认框选择「放弃并退出」：destroy 回退 close 时放行，不再二次弹窗。 */
 let quitAnyway = false
@@ -94,9 +94,9 @@ onMounted(async () => {
   window.addEventListener('unhandledrejection', onWindowRejection)
   try {
     if ('__TAURI_INTERNALS__' in window) {
-      unlistenAbout = await listen('miyo://about', () => {
+      useEventSubscription(() => listen('miyo://about', () => {
         showAbout.value = true
-      })
+      }))
       // 定时检查更新：仅主窗口启动（实时调试弹出窗不重复检查），
       // 发现新版弹一次提醒，点击直达关于弹窗一键下载安装。
       const { getCurrentWindow } = await import('@tauri-apps/api/window')
@@ -158,7 +158,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('error', onWindowError)
   window.removeEventListener('unhandledrejection', onWindowRejection)
-  unlistenAbout?.()
   unlistenClose?.()
   stopAutoUpdate?.()
 })

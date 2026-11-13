@@ -381,6 +381,10 @@ function shortTime(iso: string): string {
   display: flex;
   align-items: center;
   gap: 2px;
+  /* 长列表渲染优化：屏外行跳过布局/绘制（500 条保留上限下显著省渲染）。
+     contain-intrinsic-size 按行高估算，防滚动条跳动。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 44px;
 }
 
 /** 行内操作钮（重放 / 删除）：hover 才出现（与树行「⋯」同节奏） */

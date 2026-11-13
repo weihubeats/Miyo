@@ -409,6 +409,9 @@ function applyBatch(): void {
   grid-template-columns: 17fr 25fr 28fr 13fr 8fr 9fr;
   gap: 8px;
   align-items: center;
+  /* 变量行较多时跳过屏外渲染（保留尺寸估算防滚动跳动） */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 36px;
 }
 
 .evt-c-key,

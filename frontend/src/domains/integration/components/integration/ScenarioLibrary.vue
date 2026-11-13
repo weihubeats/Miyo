@@ -8,15 +8,14 @@
  * - 操作：运行（直接跑最近保存的配置）/ 编辑 / 复制 / 导出 / 删除；
  * - 新建（可选分类）+ 导入（openDialog 选文件 → readTextFile → 解析入库）。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { join } from '@tauri-apps/api/path'
+import { computed, ref } from 'vue'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
-import { listen as tauriListen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useLocaleStore } from '@/stores/locale'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useIntegrationStore } from '@/domains/integration/stores/integration'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useToast } from '@/composables/useToast'
+import { useTauriEvent } from '@/composables/useTauriEvent'
 import { errorText } from '@/utils/errorText'
 import { buildScenarioExport, parseScenarioImport } from '@/utils/scenarioIO'
 import { formatDateTime } from '@/utils/dateTime'
@@ -175,30 +174,21 @@ const matrixProgress = ref<{
 const matrixResult = ref<MatrixRunOutcome | null>(null)
 const matrixResultOpen = ref(false)
 const runningMatrixScenarioId = ref<string | null>(null)
-let unlistenMatrix: UnlistenFn | null = null
-
-onMounted(async () => {
-  unlistenMatrix = await tauriListen<{
-    groupId: string
-    index: number
-    total: number
-    label: string
-    ok: boolean
-    runId: string
-  }>('miyo:matrix-progress', (e) => {
-    const p = e.payload
-    matrixProgress.value = {
-      groupId: p.groupId,
-      done: p.index,
-      total: p.total,
-      label: p.label,
-      ok: p.ok,
-    }
-  })
-})
-onUnmounted(() => {
-  unlistenMatrix?.()
-  unlistenMatrix = null
+useTauriEvent<{
+  groupId: string
+  index: number
+  total: number
+  label: string
+  ok: boolean
+  runId: string
+}>('miyo:matrix-progress', (p) => {
+  matrixProgress.value = {
+    groupId: p.groupId,
+    done: p.index,
+    total: p.total,
+    label: p.label,
+    ok: p.ok,
+  }
 })
 
 /** 矩阵行物化：数据集行（inline/json/csv 解析为变量行）或环境行。 */
@@ -367,7 +357,7 @@ async function onExport(s: Scenario): Promise<void> {
     const dir = await openDialog({ directory: true, title: t('integration.export') })
     if (!dir || Array.isArray(dir)) return
     const base = s.name.replace(/[\\/:*?"<>|\s]+/g, '_') || 'scenario'
-    const path = await join(dir, `${base}.miyo-scenario.json`)
+    const path = await api.joinPath(dir, `${base}.miyo-scenario.json`)
     const { json, redactedFields } = buildScenarioExport(
       s,
       (id) => workspace.endpoints.find((e) => e.id === id),

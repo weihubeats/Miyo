@@ -6,7 +6,6 @@
  * 右栏：卡片化设置组，Tab 切换淡入；简单项改动即自动保存。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { join } from '@tauri-apps/api/path'
 import { open } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { relaunch } from '@tauri-apps/plugin-process'
@@ -503,7 +502,7 @@ async function exportBackup(): Promise<void> {  if (!project.value) return
         title: t('settings.backupDirTitle'),
       })
       if (!dir) return // 用户取消
-      const path = await join(dir, filename)
+      const path = await api.joinPath(dir, filename)
       await api.writeTextFile(path, text)
       toast.success(t('settings.backupExported'), {
         message: path.split('/').pop() || path,

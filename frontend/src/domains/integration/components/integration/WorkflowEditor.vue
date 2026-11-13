@@ -14,15 +14,15 @@
  */
 import { type Ref, computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { join } from '@tauri-apps/api/path'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import Sortable from 'sortablejs'
 import { useLocaleStore } from '@/stores/locale'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useIntegrationStore } from '@/domains/integration/stores/integration'
 import { useMiyoApi } from '@/composables/useMiyoApi'
+import { lazyComponent } from '@/composables/lazyComponent'
 import { useToast } from '@/composables/useToast'
+import { useTauriEvent } from '@/composables/useTauriEvent'
 import {
   useScenarioRun,
   type BuiltRunStep,
@@ -47,7 +47,7 @@ import Menu, { type MenuItem } from '@/components/ui/Menu.vue'
 import Modal from '@/components/ui/Modal.vue'
 import Popconfirm from '@/components/ui/Popconfirm.vue'
 import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
-import JsonCodeMirror from '@/components/ui/JsonCodeMirror.vue'
+const JsonCodeMirror = lazyComponent(() => import('@/components/ui/JsonCodeMirror.vue'))
 import ScenarioRunReport from '@/domains/integration/components/scenario/scenario/ScenarioRunReport.vue'
 import ScenarioVarsPanel from '@/domains/integration/components/scenario/scenario/ScenarioVarsPanel.vue'
 import ExtractList from '@/domains/test-case/components/assertion/assertion/ExtractList.vue'
@@ -1086,20 +1086,11 @@ function confirmVarsFill(): void {
   void run.runFrom(target.from, target.only, vars)
 }
 
-// ---------- 进度事件 ----------
-let unlisten: UnlistenFn | null = null
-/** 卸载标记：listen 的 Promise 在卸载后才 resolve 时，监听器必须立刻注销
- *  （否则事件监听器与 applyProgressEvent 永久泄漏）。 */
-let disposed = false
+// ---------- 进度事件（scope 卸载自动解绑 + 晚到竞态兜底，见 useTauriEvent） ----------
+useTauriEvent<ScenarioProgressEvent>('miyo:scenario-progress', (p) => {
+  run.applyProgressEvent(p)
+})
 onMounted(async () => {
-  const off = await listen<ScenarioProgressEvent>('miyo:scenario-progress', (e) => {
-    run.applyProgressEvent(e.payload)
-  })
-  if (disposed) {
-    off()
-    return
-  }
-  unlisten = off
   await load()
   // 先加载历史列表，再恢复最近一次运行：restoreLatestRun 读 runHistory[0]，
   // 并行调用时列表尚未返回必然空跑（恢复功能整体失效）。
@@ -1115,11 +1106,8 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => {
-  disposed = true
   // 组合式内的在途恢复请求随之失效（卸载后不再写状态）。
   run.dispose()
-  unlisten?.()
-  unlisten = null
   sortInstance?.destroy()
   sortInstance = null
 })
@@ -1181,7 +1169,7 @@ watch(
 const reportWriteHook = async (suggestedName: string, content: string): Promise<void> => {
   const dir = await openDialog({ directory: true, title: t('integration.reportExport') })
   if (!dir || Array.isArray(dir)) throw new Error('cancelled')
-  const path = await join(dir, suggestedName)
+  const path = await api.joinPath(dir, suggestedName)
   await api.writeTextFile(path, content)
 }
 
@@ -1435,7 +1423,7 @@ async function exportRunReport(markdown: string): Promise<void> {
     const dir = await openDialog({ directory: true, title: t('integration.resultExport') })
     if (!dir || Array.isArray(dir)) return
     const base = (name.value.trim() || t('integration.newName')).replace(/[\\/:*?"<>|\s]+/g, '_') || 'run'
-    const path = await join(dir, `${base}-report.md`)
+    const path = await api.joinPath(dir, `${base}-report.md`)
     await api.writeTextFile(path, markdown)
     toast.success(t('integration.resultExported'), { message: path })
   } catch (err) {
@@ -1450,7 +1438,7 @@ async function exportScript(): Promise<void> {
     const dir = await openDialog({ directory: true, title: t('scenario.scriptExportTitle') })
     if (!dir || Array.isArray(dir)) return
     const base = (name.value.trim() || t('integration.newName')).replace(/[\\/:*?"<>|\s]+/g, '_') || 'scenario'
-    const path = await join(dir, `${base}.mjs`)
+    const path = await api.joinPath(dir, `${base}.mjs`)
     // 导出用脱敏再生成（不用 scriptDraft 原文）：真实凭证不写入 .mjs，
     // 敏感值以占位符出现，接手方按提示回填。
     await api.writeTextFile(path, generateScriptText(true))

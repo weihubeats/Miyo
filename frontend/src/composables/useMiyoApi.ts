@@ -18,6 +18,7 @@
  * ```
  */
 import { invoke } from '@tauri-apps/api/core'
+import { join as tauriPathJoin } from '@tauri-apps/api/path'
 import { ref } from 'vue'
 import { useProgress } from '@/composables/useProgress'
 import { tFallback } from '@/stores/locale'
@@ -135,21 +136,41 @@ function warnDecryptionFailed(): void {
 }
 
 /**
+ * quiet 的 in-flight 去重表：同命令 + 同参数的并发请求复用同一 Promise。
+ *
+ * 场景：切 Tab 时多个组件同时挂载各自发 `list_*`，同键请求只打一次 IPC。
+ * 仅合并「在途」请求，不缓存已完成结果——零陈旧风险（需要结果缓存另行设计）。
+ */
+const quietInflight = new Map<string, Promise<unknown>>()
+
+/**
  * 静默 invoke（无全局进度条）：高频纯读路径用——切 Tab 的示例/用例加载、
  * 历史刷新、Mock 轮询等走 `run()` 会让顶部进度条在 `Promise.all` 下抖动。
  * 写操作继续走 `run()`。
  */
 async function quiet<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  try {
-    return await invoke<T>(`${PLUGIN}|${command}`, args)
-  } catch (e) {
-    const err = toFoxError(e)
-    if ('code' in err && err.code === 'DECRYPT') {
-      warnDecryptionFailed()
+  const key = `${command} ${JSON.stringify(args ?? {})}`
+  const hit = quietInflight.get(key)
+  if (hit) return hit as Promise<T>
+  const p = (async () => {
+    try {
+      return await invoke<T>(`${PLUGIN}|${command}`, args)
+    } catch (e) {
+      const err = toFoxError(e)
+      if ('code' in err && err.code === 'DECRYPT') {
+        warnDecryptionFailed()
+      }
+      throw err
     }
-    throw err
-  }
+  })()
+  quietInflight.set(key, p)
+  void p.catch(() => {}).finally(() => quietInflight.delete(key))
+  return p
 }
+
+/** 路径拼接：@tauri-apps/api/path join 的统一出口（导出/保存文件流用，
+ *  6 处组件直调 path API 的散点收进 api 层）。 */
+const joinPath = tauriPathJoin
 
 /** 统一的带错误映射的 invoke 封装（自动加插件命名空间前缀）。 */
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -1006,6 +1027,7 @@ export function useMiyoApi() {
     exportSmokeDocs,
     writeTextFile,
     testEndpoint,
+    joinPath,
     loadTest,
     cancelLoadTest,
     testCollection,

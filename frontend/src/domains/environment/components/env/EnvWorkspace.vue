@@ -19,7 +19,6 @@
  * 自加载、保存不回写工作区列表。变量注入与解析链路不在本组件——只编辑数据。
  */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { join } from '@tauri-apps/api/path'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useLocaleStore } from '@/stores/locale'
@@ -570,7 +569,7 @@ async function exportSelected(format: EnvExchangeFormat): Promise<void> {
     const doc = await api.exportEnvironment(selected.value.id, format, exportRedact.value)
     const dir = await openDialog({ directory: true, title: t('envmgr.exportDirTitle') })
     if (!dir || Array.isArray(dir)) return
-    const path = await join(dir, doc.suggested_name)
+    const path = await api.joinPath(dir, doc.suggested_name)
     await api.writeTextFile(path, doc.content)
     toast.success(t('envmgr.exportSuccess'), { message: doc.suggested_name })
     // 未脱敏导出的明文凭证提示

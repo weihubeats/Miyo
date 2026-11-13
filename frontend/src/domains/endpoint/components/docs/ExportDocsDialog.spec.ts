@@ -18,6 +18,7 @@ const storeMock = vi.hoisted(() => ({
 const apiMock = vi.hoisted(() => ({
   exportDocs: vi.fn(),
   writeTextFile: vi.fn(),
+  joinPath: vi.fn(async (dir: string, name: string) => `${dir}/${name}`),
 }))
 
 const dialogMock = vi.hoisted(() => ({ open: vi.fn() }))

@@ -10,9 +10,9 @@
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useToast } from '@/composables/useToast'
+import { useTauriEvent } from '@/composables/useTauriEvent'
 import { useLocaleStore } from '@/stores/locale'
 import { formatTime } from '@/utils/dateTime'
 import Brand from '@/domains/workspace/components/Brand.vue'
@@ -331,34 +331,17 @@ function onSseEvent(payload: SseEventPayload): void {
   cap(sseLog.value)
 }
 
-// ---------- 事件订阅 ----------
-let unlistenWs: UnlistenFn | null = null
-let unlistenSse: UnlistenFn | null = null
-/** 卸载标志：listen 是异步注册，路由在 IPC 返回前切走时监听器会晚于
- *  onUnmounted 到达——此时立即解绑，避免事件打进已卸载组件。 */
-let listenersDisposed = false
+// ---------- 事件订阅（scope 卸载自动解绑 + 晚到竞态兜底，见 useTauriEvent） ----------
+if ('__TAURI_INTERNALS__' in window) {
+  useTauriEvent<WsEventPayload>('miyo:ws-event', onWsEvent)
+  useTauriEvent<SseEventPayload>('miyo:sse-event', onSseEvent)
+}
 
-onMounted(async () => {
+onMounted(() => {
   void detectWindow()
-  try {
-    if ('__TAURI_INTERNALS__' in window) {
-      unlistenWs = await listen<WsEventPayload>('miyo:ws-event', (e) => onWsEvent(e.payload))
-      unlistenSse = await listen<SseEventPayload>('miyo:sse-event', (e) => onSseEvent(e.payload))
-      if (listenersDisposed) {
-        unlistenWs()
-        unlistenSse()
-        unlistenWs = unlistenSse = null
-      }
-    }
-  } catch {
-    // 非 Tauri（浏览器预览）环境：忽略
-  }
 })
 
 onUnmounted(() => {
-  listenersDisposed = true
-  unlistenWs?.()
-  unlistenSse?.()
   // 视图卸载即断开：后台会话随之释放，避免泄漏。
   void wsDisconnect(true)
   void sseDisconnect(true)
