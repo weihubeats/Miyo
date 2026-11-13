@@ -15,7 +15,7 @@ use miyo_core::model::{
     Endpoint, Environment, EnvironmentVariable, Folder, GlobalParam, GraphQLResponse,
     MockRequestLog, MockRule, Project, ProtoFile, RequestExample, RequestHistory, RequestSpec,
     ResponseExample, Scenario, ScenarioRun, ScenarioStep, SeqCounter, SyncRemote, Team, TestCase,
-    TestCaseRun, TestRun, WsMessageRecord,
+    TestCaseRun, TestCaseRunSummary, TestRun, WsMessageRecord,
 };
 use ts_rs::TS;
 
@@ -39,6 +39,7 @@ fn export_bindings() {
     Team::export_all(&cfg).unwrap();
     TestCase::export_all(&cfg).unwrap();
     TestCaseRun::export_all(&cfg).unwrap();
+    TestCaseRunSummary::export_all(&cfg).unwrap();
     TestRun::export_all(&cfg).unwrap();
     Scenario::export_all(&cfg).unwrap();
     ScenarioStep::export_all(&cfg).unwrap();

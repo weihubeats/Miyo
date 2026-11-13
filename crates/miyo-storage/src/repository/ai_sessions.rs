@@ -121,11 +121,16 @@ pub async fn delete_ai_session(db: &SqlitePool, session_id: Uuid) -> Result<()> 
 }
 
 /// 追加消息（seq = 当前最大 +1，调用方无需传）。
+///
+/// MAX(seq)+INSERT 在同一事务内：两条 AI 循环任务并发追加同一会话时，
+/// 事务保证「取最大 → 插入」不被交错（SQLite 写串行 + 事务原子性），
+/// 避免 seq 撞号。
 pub async fn append_ai_message(db: &SqlitePool, msg: &AiMessageRow) -> Result<i64> {
+    let mut tx = db.begin().await.map_err(AppError::from)?;
     let (max,): (Option<i64>,) =
         sqlx::query_as("SELECT MAX(seq) FROM ai_messages WHERE session_id = ?")
             .bind(msg.session_id.to_string())
-            .fetch_one(db)
+            .fetch_one(&mut *tx)
             .await
             .map_err(AppError::from)?;
     let seq = max.unwrap_or(0) + 1;
@@ -142,9 +147,10 @@ pub async fn append_ai_message(db: &SqlitePool, msg: &AiMessageRow) -> Result<i6
     .bind(&msg.tool_call_id)
     .bind(&msg.artifact_json)
     .bind(msg.created_at.to_rfc3339())
-    .execute(db)
+    .execute(&mut *tx)
     .await
     .map_err(AppError::from)?;
+    tx.commit().await.map_err(AppError::from)?;
     Ok(seq)
 }
 

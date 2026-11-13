@@ -99,6 +99,7 @@ import type {
   StepRetry,
   MatrixRunOutcome,
   TestCaseRun,
+  TestCaseRunSummary,
   TestCaseStatus,
 } from '../types/miyoApi'
 
@@ -775,9 +776,9 @@ export function useMiyoApi() {
   const reorderTestCases = (caseIds: string[]) =>
     run(() => call<void>('reorder_test_cases', { caseIds }))
 
-  /** 用例执行历史（新→旧）。 */
+  /** 用例执行历史摘要（新→旧；不含 results_json，详情走 getTestCaseRun）。 */
   const listTestCaseRuns = (caseId: string, limit?: number) =>
-    run(() => call<TestCaseRun[]>('list_test_case_runs', { caseId, limit: limit ?? null }))
+    run(() => call<TestCaseRunSummary[]>('list_test_case_runs', { caseId, limit: limit ?? null }))
 
   /** 单条执行历史详情。 */
   const getTestCaseRun = (runId: string) =>

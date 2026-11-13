@@ -1423,6 +1423,53 @@ pub struct TestCaseRun {
     pub results_json: String,
 }
 
+/// 用例执行历史列表摘要：不含 `results_json`（每条最大 64KB×步数，列表页
+/// 不需要全文；详情走 `get_test_case_run` 按需取——与 scenario_runs 的
+/// summary 范式一致）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TestCaseRunSummary {
+    pub id: Uuid,
+    pub case_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<Uuid>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<f64>,
+    pub status: TestCaseStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    #[serde(default)]
+    pub ok_count: u32,
+    #[serde(default)]
+    pub fail_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl TestCaseRunSummary {
+    /// 从完整记录提取摘要（丢弃 results_json 正文）。
+    pub fn from_run(run: TestCaseRun) -> Self {
+        TestCaseRunSummary {
+            id: run.id,
+            case_id: run.case_id,
+            endpoint_id: run.endpoint_id,
+            environment_id: run.environment_id,
+            started_at: run.started_at,
+            finished_at: run.finished_at,
+            duration_ms: run.duration_ms,
+            status: run.status,
+            status_code: run.status_code,
+            ok_count: run.ok_count,
+            fail_count: run.fail_count,
+            error: run.error,
+        }
+    }
+}
+
 /// Mock 匹配条件项。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

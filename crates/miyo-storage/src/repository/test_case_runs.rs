@@ -4,7 +4,7 @@
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use miyo_core::model::{TestCaseRun, TestCaseStatus};
+use miyo_core::model::{TestCaseRun, TestCaseRunSummary, TestCaseStatus};
 use miyo_core::Result;
 
 /// 每用例保留的执行历史条数（插入后修剪更旧的）。
@@ -36,7 +36,28 @@ pub async fn save_test_case_run(db: &SqlitePool, run: &TestCaseRun) -> Result<()
     Ok(())
 }
 
-/// 列出某用例最近的执行历史（新→旧）。
+/// 列出某用例最近的执行历史摘要（新→旧；不含 results_json——每条最大
+/// 64KB×步数，列表页不需要全文；详情走 [`get_test_case_run`] 按需取，
+/// 与 scenario_runs 的 summary 范式一致）。
+pub async fn list_test_case_run_summaries(
+    db: &SqlitePool,
+    case_id: Uuid,
+    limit: i64,
+) -> Result<Vec<TestCaseRunSummary>> {
+    let rows: Vec<TestCaseRunSummaryRow> = sqlx::query_as(
+        "SELECT id, case_id, endpoint_id, environment_id, started_at, finished_at,
+                duration_ms, status, status_code, ok_count, fail_count, error
+         FROM test_case_runs WHERE case_id = ? ORDER BY started_at DESC LIMIT ?",
+    )
+    .bind(case_id.to_string())
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    rows.into_iter().map(|r| r.into_model()).collect()
+}
+
+/// 列出某用例最近的执行历史（新→旧；含 results_json 全文）。
+#[allow(dead_code)] // 保留全文变体供详情直读场景使用
 pub async fn list_test_case_runs(
     db: &SqlitePool,
     case_id: Uuid,
@@ -133,6 +154,49 @@ impl TestCaseRunRow {
             fail_count: self.fail_count.clamp(0, u32::MAX as i64) as u32,
             error: self.error,
             results_json: self.results_json,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct TestCaseRunSummaryRow {
+    id: String,
+    case_id: String,
+    endpoint_id: Option<String>,
+    environment_id: Option<String>,
+    started_at: String,
+    finished_at: String,
+    duration_ms: Option<f64>,
+    status: String,
+    status_code: Option<i64>,
+    ok_count: i64,
+    fail_count: i64,
+    error: Option<String>,
+}
+
+impl TestCaseRunSummaryRow {
+    fn into_model(self) -> Result<TestCaseRunSummary> {
+        Ok(TestCaseRunSummary {
+            id: super::rows::parse_uuid(&self.id)?,
+            case_id: super::rows::parse_uuid(&self.case_id)?,
+            endpoint_id: self
+                .endpoint_id
+                .as_deref()
+                .map(super::rows::parse_uuid)
+                .transpose()?,
+            environment_id: self
+                .environment_id
+                .as_deref()
+                .map(super::rows::parse_uuid)
+                .transpose()?,
+            started_at: super::rows::parse_time(&self.started_at)?,
+            finished_at: super::rows::parse_time(&self.finished_at)?,
+            duration_ms: self.duration_ms,
+            status: TestCaseStatus::parse(&self.status).unwrap_or(TestCaseStatus::Failed),
+            status_code: self.status_code.map(|v| v.clamp(0, u16::MAX as i64) as u16),
+            ok_count: self.ok_count.clamp(0, u32::MAX as i64) as u32,
+            fail_count: self.fail_count.clamp(0, u32::MAX as i64) as u32,
+            error: self.error,
         })
     }
 }

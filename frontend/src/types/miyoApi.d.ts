@@ -78,6 +78,7 @@ export type { SignatureEncoding } from './generated/SignatureEncoding';
 export type { SyncRemoteKind } from './generated/SyncRemoteKind';
 export type { Team } from './generated/Team';
 export type { TestCaseRun } from './generated/TestCaseRun';
+export type { TestCaseRunSummary } from './generated/TestCaseRunSummary';
 
 /** OAuth2 授权状态（UI 状态指示器用）。 */
 export type OAuth2Status = 'unauthorized' | 'valid' | 'expiring_soon' | 'expired'

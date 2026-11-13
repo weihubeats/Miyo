@@ -3625,22 +3625,14 @@ async fn list_test_case_runs_handler(
     State(state): State<AgentState>,
     AxumPath(id): AxumPath<uuid::Uuid>,
     Query(q): Query<RunsQuery>,
-) -> ApiResult<Vec<miyo_core::model::TestCaseRun>> {
+) -> ApiResult<Vec<miyo_core::model::TestCaseRunSummary>> {
     ensure_tool_allowed(&state, "list_test_case_runs").await?;
-    let mut runs = repo::list_test_case_runs(&state.db, id, q.limit.unwrap_or(50).clamp(1, 200))
-        .await
-        .map_err(api_error)?;
-    // 读取端重脱敏：旧历史行（results_json 内响应 body / 提取值）不漏明文。
-    for run in &mut runs {
-        if let Ok(mut snap) =
-            serde_json::from_str::<miyo_test::runner::EndpointResult>(&run.results_json)
-        {
-            redact_endpoint_result(&mut snap);
-            if let Ok(json) = serde_json::to_string(&snap) {
-                run.results_json = json;
-            }
-        }
-    }
+    // summary 列表：不含 results_json（每条最大 64KB×步数），列表页无需全文，
+    // 读取端重脱敏也随之免除（正文经 get_test_case_run 详情按需取、单独脱敏）。
+    let runs =
+        repo::list_test_case_run_summaries(&state.db, id, q.limit.unwrap_or(50).clamp(1, 200))
+            .await
+            .map_err(api_error)?;
     Ok(Json(runs))
 }
 

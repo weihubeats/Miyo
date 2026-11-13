@@ -4,7 +4,7 @@
 use tauri::State;
 use uuid::Uuid;
 
-use miyo_core::model::{HttpMethod, KeyValue, TestCase, TestCaseRun, TestCaseStatus};
+use miyo_core::model::{HttpMethod, KeyValue, TestCase, TestCaseRun, TestCaseRunSummary, TestCaseStatus};
 use miyo_storage::repository as repo;
 
 use crate::error::{CommandError, CommandResult};
@@ -210,14 +210,14 @@ pub async fn delete_test_case(state: State<'_, AppState>, case_id: Uuid) -> Comm
         .map_err(Into::into)
 }
 
-/// 列出用例执行历史（新→旧；limit 缺省 50）。
+/// 列出用例执行历史摘要（新→旧；不含 results_json，详情走 get_test_case_run）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn list_test_case_runs(
     state: State<'_, AppState>,
     case_id: Uuid,
     limit: Option<i64>,
-) -> CommandResult<Vec<TestCaseRun>> {
-    repo::list_test_case_runs(&state.db, case_id, limit.unwrap_or(50).clamp(1, 200))
+) -> CommandResult<Vec<TestCaseRunSummary>> {
+    repo::list_test_case_run_summaries(&state.db, case_id, limit.unwrap_or(50).clamp(1, 200))
         .await
         .map_err(Into::into)
 }

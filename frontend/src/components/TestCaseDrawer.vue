@@ -27,6 +27,7 @@ import type {
   TestCase,
   TestCaseCategory,
   TestCaseRun,
+  TestCaseRunSummary,
 } from '../types/miyoApi'
 import { TEST_CASE_CATEGORIES, caseCategoryLabel, formatDuration, relativeRunTime, restoreBody, snapshotRequest } from '../utils/testCases'
 import { applyPathVars, extractPathVarNames } from '../utils/pathVariables'
@@ -465,10 +466,14 @@ function resultToneOf(r: EndpointResult | null): string {
 }
 
 // ---------- 执行历史 ----------
-const history = ref<TestCaseRun[]>([])
+// 列表走 summary IPC（不含 results_json——每条最大 64KB×步数）；查看 / 对比
+// 时按 runId 拉取详情并缓存，避免打开历史面板就传 50 份全文。
+const history = ref<TestCaseRunSummary[]>([])
 const historyLoading = ref(false)
 const historyOpen = ref(false)
 const viewRun = ref<TestCaseRun | null>(null)
+/** runId → 详情缓存（查看 / 对比共用；切用例时清空）。 */
+const runDetails = ref(new Map<string, TestCaseRun>())
 const viewRunResult = computed<EndpointResult | null>(() => {
   if (!viewRun.value) return result.value
   try {
@@ -485,6 +490,7 @@ async function loadHistory(): Promise<void> {
   historyLoading.value = true
   try {
     history.value = await api.listTestCaseRuns(props.testCase.id, 50)
+    runDetails.value = new Map()
   } catch {
     history.value = []
   } finally {
@@ -501,18 +507,34 @@ function toggleHistory(): void {
   if (historyOpen.value) compareIds.value = null
 }
 
-function viewOf(run: TestCaseRun): void {
-  viewRun.value = run
+/** 打开某条历史详情：summary 行先占位，全文拉到后替换。 */
+async function viewOf(run: TestCaseRunSummary): Promise<void> {
+  const cached = runDetails.value.get(run.id)
+  if (cached) {
+    viewRun.value = cached
+    return
+  }
+  viewRun.value = { ...run, results_json: '' }
+  try {
+    const full = await api.getTestCaseRun(run.id)
+    if (full) {
+      runDetails.value.set(run.id, full)
+      if (viewRun.value?.id === run.id) viewRun.value = full
+    }
+  } catch {
+    /* 详情拉取失败：停留摘要视图（正文为空） */
+  }
 }
 
 function backToLatest(): void {
   viewRun.value = null
 }
 
-async function removeRun(run: TestCaseRun): Promise<void> {
+async function removeRun(run: TestCaseRunSummary): Promise<void> {
   try {
     await api.deleteTestCaseRun(run.id)
     history.value = history.value.filter((h) => h.id !== run.id)
+    runDetails.value.delete(run.id)
     if (viewRun.value?.id === run.id) viewRun.value = null
   } catch {
     /* 删除失败静默（列表仍在） */
@@ -541,10 +563,22 @@ function toggleCompare(runId: string): void {
 const comparePair = computed<{ a: TestCaseRun; b: TestCaseRun } | null>(() => {
   const ids = compareIds.value
   if (!ids) return null
-  const a = history.value.find((h) => h.id === ids[0])
-  const b = history.value.find((h) => h.id === ids[1])
+  const a = runDetails.value.get(ids[0])
+  const b = runDetails.value.get(ids[1])
   if (!a || !b || a.id === b.id) return null
   return { a, b }
+})
+
+/** 勾选变化时补拉缺失的两条详情（对比前 highlights 所需全文）。 */
+watch(compareIds, (ids) => {
+  if (!ids) return
+  for (const id of ids) {
+    if (!runDetails.value.has(id)) {
+      void api.getTestCaseRun(id).then((full) => {
+        if (full) runDetails.value.set(full.id, full)
+      })
+    }
+  }
 })
 
 const compareResults = computed(() => {
