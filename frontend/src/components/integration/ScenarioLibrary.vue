@@ -17,6 +17,7 @@ import { useWorkspaceStore } from '../../stores/workspace'
 import { useIntegrationStore } from '../../stores/integration'
 import { useMiyoApi } from '../../composables/useMiyoApi'
 import { useToast } from '../../composables/useToast'
+import { errorText } from '../../utils/errorText'
 import { buildScenarioExport, parseScenarioImport } from '../../utils/scenarioIO'
 import { formatDateTime } from '../../utils/dateTime'
 import CustomSelect from '../ui/CustomSelect.vue'
@@ -121,7 +122,7 @@ async function onCreate(): Promise<void> {
     store.openScenario(saved.id)
   } catch (err) {
     toast.error(t('integration.saveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -144,7 +145,7 @@ async function onDuplicate(s: Scenario): Promise<void> {
     await store.loadLibrary(true)
   } catch (err) {
     toast.error(t('integration.saveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -155,7 +156,7 @@ async function onDelete(id: string): Promise<void> {
     store.forgetScenario(id)
   } catch (err) {
     toast.error(t('integration.saveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -340,7 +341,7 @@ async function runMatrix(s: Scenario, mode: 'data' | 'environment'): Promise<voi
     await store.loadLibrary(true)
   } catch (err) {
     toast.error(t('integration.matrixFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -382,7 +383,7 @@ async function onExport(s: Scenario): Promise<void> {
     toast.success(t('integration.exported', { path }))
   } catch (err) {
     toast.error(t('integration.exportFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -414,7 +415,7 @@ async function onImport(): Promise<void> {
     toast.success(t('integration.imported', { name: saved.name }))
     await store.loadLibrary(true)
   } catch (err) {
-    const raw = err instanceof Error ? err.message : String(err)
+    const raw = errorText(err)
     toast.error(raw === 'invalid-json' || raw === 'invalid-shape' ? t('integration.importInvalid') : t('integration.importFail'), {
       message: raw,
     })

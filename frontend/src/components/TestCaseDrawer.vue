@@ -51,6 +51,7 @@ import PathVariablesPanel from './PathVariablesPanel.vue'
 import RequestDetail from './RequestDetail.vue'
 import ResponsePanel from './ResponsePanel.vue'
 import TestCaseRunCompare from './cases/TestCaseRunCompare.vue'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{
   open: boolean
@@ -436,7 +437,7 @@ async function run(): Promise<void> {
   try {
     result.value = await props.onRun(buildPayload(), runId)
   } catch (err) {
-    runError.value = err instanceof Error ? err.message : String(err)
+    runError.value = errorText(err)
   } finally {
     running.value = false
     if (activeRunId.value === runId) activeRunId.value = null

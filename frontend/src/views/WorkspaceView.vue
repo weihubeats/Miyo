@@ -35,6 +35,7 @@ import EndpointEditor from '../components/EndpointEditor.vue'
 import { useShortcuts, shortcutDef } from '../composables/useShortcuts'
 import { useWindowDrag } from '../composables/useWindowDrag'
 import { lazyComponent } from '../composables/lazyComponent'
+import { errorText } from '../utils/errorText'
 
 // 低频重型面板按需加载（composables/lazyComponent.ts：骨架 + 可翻译的错误重试层）。
 // 侧栏历史 / Cookie 页签与四个弹窗都是 v-if 打开才渲染，首次点开才拉各自 chunk，
@@ -162,7 +163,7 @@ async function toggleMock(): Promise<void> {
       toast.success(t('workspace.mockStarted', { v: mockAddress.value }))
     }
   } catch (err) {
-    toast.error(t('workspace.mockFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('workspace.mockFail'), { message: errorText(err) })
   } finally {
     mockBusy.value = false
   }
@@ -242,7 +243,7 @@ async function exportOpenapi(): Promise<void> {
     URL.revokeObjectURL(url)
     toast.success(t('workspace.exportedOpenapi'))
   } catch (err) {
-    toast.error(t('workspace.exportFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('workspace.exportFail'), { message: errorText(err) })
   }
 }
 
@@ -297,7 +298,7 @@ async function confirmCreateProject(): Promise<void> {
     await store.switchProject(p.id)
     toast.success(t('workspace.projectCreated'), { message: name })
   } catch (err) {
-    toast.error(t('workspace.projectCreateFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('workspace.projectCreateFail'), { message: errorText(err) })
   }
 }
 
@@ -324,7 +325,7 @@ async function confirmRenameProject(): Promise<void> {
     renamingProject.value = false
     toast.success(t('workspace.projectRenamed'))
   } catch (err) {
-    toast.error(t('workspace.projectRenameFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('workspace.projectRenameFail'), { message: errorText(err) })
   }
 }
 
@@ -338,7 +339,7 @@ async function confirmDeleteProject(): Promise<void> {
     toast.success(t('workspace.projectDeleted'), { message: target.name })
     router.replace('/projects')
   } catch (err) {
-    toast.error(t('workspace.projectDeleteFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('workspace.projectDeleteFail'), { message: errorText(err) })
   }
 }
 

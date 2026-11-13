@@ -245,7 +245,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if (idx !== -1) environments.value[idx] = saved
     } catch (err) {
       toast.error(t('ws.updateEnvFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
     }
   }
@@ -354,7 +354,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       folders.value = f
       endpoints.value = e
     } catch (err) {
-      loadError.value = err instanceof Error ? err.message : String(err)
+      loadError.value = errorText(err)
       throw err
     }
   }
@@ -599,7 +599,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const next = openProjects.value[Math.min(idx, openProjects.value.length - 1)]
     if (next) {
       void switchProject(next.id).catch((err) => {
-        toast.error(t('projectTabs.switchFail'), { message: err instanceof Error ? err.message : String(err) })
+        toast.error(t('projectTabs.switchFail'), { message: errorText(err) })
       })
     } else {
       project.value = null
@@ -864,7 +864,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return true
     } catch (err) {
       toast.error(t('ws.requestCaseSaveFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
       return false
     }
@@ -882,7 +882,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       await api.deleteRequestExample(exampleId)
     } catch (err) {
       toast.error(t('ws.requestCaseDeleteFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
       return
     }
@@ -942,7 +942,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return true
     } catch (err) {
       toast.error(t('ws.caseUpdateFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
       return false
     }
@@ -995,7 +995,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return true
     } catch (err) {
       toast.error(t('ws.testCaseSaveFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
       return false
     }
@@ -1026,7 +1026,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return true
     } catch (err) {
       toast.error(t('ws.caseUpdateFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
       return false
     }
@@ -1045,7 +1045,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return true
     } catch (err) {
       toast.error(t('ws.caseUpdateFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
       return false
     }
@@ -1070,7 +1070,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return true
     } catch (err) {
       toast.error(t('ws.caseUpdateFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
       return false
     }
@@ -1101,7 +1101,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return true
     } catch (err) {
       toast.error(t('ws.caseCloneFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
       return false
     }
@@ -1113,7 +1113,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       await api.deleteTestCase(caseId)
     } catch (err) {
       toast.error(t('ws.caseDeleteFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
       return
     }
@@ -1541,7 +1541,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       toast.success(t('ws.endpointSaved', { name: saved.name }))
       return true
     } catch (err) {
-      toast.error(t('ws.saveFail'), { message: err instanceof Error ? err.message : String(err) })
+      toast.error(t('ws.saveFail'), { message: errorText(err) })
       return false
     }
   }
@@ -1574,7 +1574,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       toast.success(t('ws.undoDeleteDone', { name: snap.label }))
       return true
     } catch (err) {
-      toast.error(t('ws.undoDeleteFail'), { message: err instanceof Error ? err.message : String(err) })
+      toast.error(t('ws.undoDeleteFail'), { message: errorText(err) })
       return false
     }
   }
@@ -2367,7 +2367,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if (!historyLoadFailed.value) {
         historyLoadFailed.value = true
         toast.error(t('ws.historyLoadFail'), {
-          message: err instanceof Error ? err.message : String(err),
+          message: errorText(err),
         })
       }
     }
@@ -2386,7 +2386,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       await api.deleteRequestHistory(id)
       histories.value = histories.value.filter((h) => h.id !== id)
     } catch (err) {
-      toast.error(t('ws.historyDeleteFail'), { message: err instanceof Error ? err.message : String(err) })
+      toast.error(t('ws.historyDeleteFail'), { message: errorText(err) })
     }
   }
 
@@ -2400,7 +2400,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       toast.success(t('ws.historyCleared', { n: removed }))
     } catch (err) {
       toast.error(t('ws.historyClearFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
     }
   }
@@ -2674,3 +2674,4 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 })
 
 import type { Folder as FolderInput } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'

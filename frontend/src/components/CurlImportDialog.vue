@@ -10,6 +10,7 @@ import { useToast } from '../composables/useToast'
 import { useLocaleStore } from '../stores/locale'
 import Modal from './ui/Modal.vue'
 import type { CurlParsed } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{ folderId: string | null }>()
 const emit = defineEmits<{ close: [] }>()
@@ -45,7 +46,7 @@ async function parse(): Promise<void> {
   try {
     parsed.value = await api.parseCurlCommand(normalize(trimmed))
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    error.value = errorText(err)
     parsed.value = null
   } finally {
     parsing.value = false

@@ -17,6 +17,7 @@ import { copyText } from '../../utils/clipboard'
 import { dedupeJsonKeys } from '../../utils/jsonFormat'
 import { highlightCode } from '../../utils/highlight'
 import type { BodySpec, CodeLang, Endpoint } from '../../types/miyoApi'
+import { errorText } from '../../utils/errorText'
 
 const props = defineProps<{
   draft: Endpoint
@@ -79,7 +80,7 @@ async function generate(): Promise<void> {
   } catch (err) {
     if (disposed) return
     code.value = ''
-    toast.error(t('codegen.genFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('codegen.genFail'), { message: errorText(err) })
   } finally {
     if (!disposed) generating.value = false
   }

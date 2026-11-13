@@ -14,6 +14,7 @@ import { useToast } from '../../composables/useToast'
 import type { RemoteProjectEntry } from '../../types/miyoApi'
 import Icon from '../ui/Icon.vue'
 import Modal from '../ui/Modal.vue'
+import { errorText } from '../../utils/errorText'
 
 const props = defineProps<{
   open: boolean
@@ -58,7 +59,7 @@ async function load(): Promise<void> {
     entries.value = await api.syncRemoteListProjects(remote.id)
   } catch (err) {
     toast.error(t('simport.loadFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     loading.value = false
@@ -79,7 +80,7 @@ async function importProject(entry: RemoteProjectEntry): Promise<void> {
     await load()
   } catch (err) {
     toast.error(t('simport.importFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     busyId.value = null

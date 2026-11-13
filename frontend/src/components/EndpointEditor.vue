@@ -68,6 +68,8 @@ import Tooltip from './ui/Tooltip.vue'
 import ToolsDrawer from './ToolsDrawer.vue'
 import VarSuggest from './ui/VarSuggest.vue'
 import type { TabItem } from './ui/Tabs.vue'
+import { errorText } from '../utils/errorText'
+
 import type {
   HttpMethod,
   RequestSpec,
@@ -490,7 +492,7 @@ async function importCurlText(raw: string): Promise<void> {
       toast.success(t('editor.curlAutoImported'))
     }
   } catch (err) {
-    toast.error(t('editor.curlParseFail', { v: err instanceof Error ? err.message : String(err) }))
+    toast.error(t('editor.curlParseFail', { v: errorText(err) }))
   } finally {
     curlPasting.value = false
   }
@@ -620,7 +622,7 @@ async function confirmSaveExample(): Promise<void> {
     await store.saveAsExample(draft.value.id, name, resp)
     showExampleDialog.value = false
   } catch (err) {
-    toast.error(t('editor.exampleSaveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('editor.exampleSaveFail'), { message: errorText(err) })
   }
 }
 
@@ -634,7 +636,7 @@ async function removeExample(ex: ResponseExample): Promise<void> {
     await store.removeExample(draft.value.id, ex.id)
     if (viewingExample.value?.id === ex.id) viewingExample.value = null
   } catch (err) {
-    toast.error(t('editor.exampleDeleteFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('editor.exampleDeleteFail'), { message: errorText(err) })
   }
 }
 

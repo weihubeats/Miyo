@@ -18,6 +18,7 @@ import { formatDateTime } from '../../utils/dateTime'
 import { formatDurationShort } from '../../utils/format'
 import { toneOf } from '../../composables/useScenarioRun'
 import type { ScenarioRunDetail, ScenarioRunSummary, ScenarioStepResult } from '../../types/miyoApi'
+import { errorText } from '../../utils/errorText'
 
 const props = defineProps<{ scenarioId: string }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -76,7 +77,7 @@ async function loadDetails(): Promise<void> {
   } catch (err) {
     if (seq !== detailSeq || !open.value) return
     toast.error(t('integration.historyMissing'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     if (seq === detailSeq) loading.value = false

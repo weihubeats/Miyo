@@ -13,6 +13,7 @@ import { useMiyoApi } from '../../composables/useMiyoApi'
 import { useToast } from '../../composables/useToast'
 import { useLocaleStore } from '../../stores/locale'
 import type { Team } from '../../types/miyoApi'
+import { errorText } from '../../utils/errorText'
 
 const NAME_MAX = 30
 /** 默认团队固定 UUID（迁移 0015），不可删除/改名。 */
@@ -69,7 +70,7 @@ async function createTeam(): Promise<void> {
     await load()
     emit('changed')
   } catch (e) {
-    toast.error(t('team.createFail'), { message: e instanceof Error ? e.message : String(e), duration: 5000 })
+    toast.error(t('team.createFail'), { message: errorText(e), duration: 5000 })
   } finally {
     busy.value = false
   }
@@ -98,7 +99,7 @@ async function confirmRename(team: Team): Promise<void> {
     await load()
     emit('changed')
   } catch (e) {
-    rowErrors.value = { ...rowErrors.value, [team.id]: e instanceof Error ? e.message : String(e) }
+    rowErrors.value = { ...rowErrors.value, [team.id]: errorText(e) }
   } finally {
     busy.value = false
   }
@@ -113,7 +114,7 @@ async function removeTeam(team: Team): Promise<void> {
     await load()
     emit('changed')
   } catch (e) {
-    rowErrors.value = { ...rowErrors.value, [team.id]: e instanceof Error ? e.message : String(e) }
+    rowErrors.value = { ...rowErrors.value, [team.id]: errorText(e) }
   } finally {
     busy.value = false
   }

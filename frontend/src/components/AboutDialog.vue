@@ -18,6 +18,7 @@ import { takePendingUpdate, restorePendingUpdate, skipUpdateVersion } from '../c
 import Icon from './ui/Icon.vue'
 import Modal from './ui/Modal.vue'
 import logo from '../assets/miyo-logo.svg'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [open: boolean] }>()
@@ -34,7 +35,7 @@ async function openGitHub(): Promise<void> {
     await openUrl(GITHUB_URL)
   } catch (err) {
     toast.error(t('about.githubFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -62,7 +63,7 @@ async function openReleaseNotes(): Promise<void> {
     await openUrl(`${GITHUB_URL}/releases/tag/v${pendingVersion.value}`)
   } catch (err) {
     toast.error(t('about.notesFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -120,7 +121,7 @@ async function checkUpdates(): Promise<void> {
     }
   } catch (err) {
     toast.error(t('about.checkFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     checking.value = false

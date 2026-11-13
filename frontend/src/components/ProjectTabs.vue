@@ -14,6 +14,7 @@ import { useToast } from '../composables/useToast'
 import { useLocaleStore } from '../stores/locale'
 import Icon from './ui/Icon.vue'
 import Menu, { type MenuItem } from './ui/Menu.vue'
+import { errorText } from '../utils/errorText'
 
 const props = withDefaults(defineProps<{ projectActions?: boolean }>(), { projectActions: false })
 
@@ -78,7 +79,7 @@ async function switchTo(projectId: string): Promise<void> {
     // 标签高亮 + 内容切换已是充分反馈，成功不弹 toast（避免频繁切换被打扰）
     if (route.path !== '/workspace') router.push('/workspace')
   } catch (err) {
-    toast.error(t('projectTabs.switchFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('projectTabs.switchFail'), { message: errorText(err) })
   }
 }
 

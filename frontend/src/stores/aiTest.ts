@@ -17,6 +17,7 @@ import { useLocaleStore } from './locale'
 import { useToast } from '../composables/useToast'
 import { useMiyoApi } from '../composables/useMiyoApi'
 import { useWorkspaceStore } from './workspace'
+import { errorText } from '../utils/errorText'
 import type {
   AiArtifact,
   AiChatEvent,
@@ -122,7 +123,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
     try {
       scenarios.value = await api.listScenarios(projectId.value)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(errorText(e))
     } finally {
       scenariosLoading.value = false
     }
@@ -176,7 +177,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
       messages.value = await api.aiGetSession(activeSessionId.value)
       ephemeralArtifacts.value = []
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(errorText(e))
     }
   }
 
@@ -228,7 +229,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
       })
     } catch (e) {
       streaming.value = false
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(errorText(e))
     }
   }
 
@@ -239,7 +240,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
     try {
       await api.aiChatApprove(activeSessionId.value, callId, approved)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(errorText(e))
     }
   }
 
@@ -248,7 +249,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
     try {
       await api.aiChatCancel(activeSessionId.value)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(errorText(e))
     }
   }
 
@@ -334,7 +335,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
       activeArtifactType.value = 'dependency_report'
       artifactPanelOpen.value = true
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(errorText(e))
     } finally {
       analyzing.value = false
     }
@@ -348,7 +349,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
       activeArtifactType.value = 'coverage_report'
       artifactPanelOpen.value = true
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(errorText(e))
     } finally {
       analyzing.value = false
     }
@@ -365,7 +366,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
       await send(t('ai.savedNotice', { name: draft.scenario.name }))
       return draft.scenario
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(errorText(e))
       return null
     }
   }
@@ -398,7 +399,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
         })
         saved += 1
       } catch (e) {
-        toast.error(`${d.name}: ${e instanceof Error ? e.message : String(e)}`)
+        toast.error(`${d.name}: ${errorText(e)}`)
       }
     }
     if (saved > 0) toast.success(t('ai.casesSaved', { n: saved }))
@@ -426,7 +427,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
       toast.success(t('ai.fixApplied'))
       return true
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(errorText(e))
       return false
     }
   }
@@ -444,7 +445,7 @@ export const useAiTestStore = defineStore('aiTest', () => {
       toast.success(t('ai.fixReverted'))
       return true
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
+      toast.error(errorText(e))
       return false
     }
   }

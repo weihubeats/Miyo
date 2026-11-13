@@ -12,6 +12,7 @@ import { formatDuration } from '../utils/format'
 import { handleTextareaTab } from '../utils/textareaIndent'
 import Icon from './ui/Icon.vue'
 import type { Endpoint, EndpointResult } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{
   draft: Endpoint | null
@@ -61,7 +62,7 @@ async function runTests(): Promise<void> {
       environment_id: store.activeEnvId,
     })
   } catch (err) {
-    toast.error(t('tests.runFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('tests.runFail'), { message: errorText(err) })
   } finally {
     testing.value = false
   }

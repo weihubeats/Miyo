@@ -22,6 +22,7 @@ import type { useToast } from '../composables/useToast'
 import type { GrpcResponse, Endpoint, ExecuteResponse } from '../types/miyoApi'
 import type { GrpcStreamState } from '../stores/workspace'
 import type { I18nParams } from '../stores/locale'
+import { errorText } from '../utils/errorText'
 
 export interface UseRequestExecutionOptions {
   /** 当前草稿接口（store.activeEndpoint）。 */
@@ -169,7 +170,7 @@ export function useRequestExecution(options: UseRequestExecutionOptions) {
         toast.info(t('editor.cancelled'))
         sendErrors.value.set(targetId, null)
       } else {
-        sendErrors.value.set(targetId, err instanceof Error ? err.message : String(err))
+        sendErrors.value.set(targetId, errorText(err))
         evictOldest(sendErrors.value, targetId)
         responses.value.set(targetId, null)
         evictOldest(responses.value, targetId)
@@ -218,7 +219,7 @@ export function useRequestExecution(options: UseRequestExecutionOptions) {
         toast.info(t('editor.cancelled'))
         sendErrors.value.set(targetId, null)
       } else {
-        sendErrors.value.set(targetId, err instanceof Error ? err.message : String(err))
+        sendErrors.value.set(targetId, errorText(err))
         grpcResponses.value.set(targetId, null)
         evictOldest(grpcResponses.value, targetId)
         triggerFlash()

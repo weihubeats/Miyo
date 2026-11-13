@@ -28,6 +28,7 @@ import SegmentedControl, { type SegmentOption } from './ui/SegmentedControl.vue'
 import Tabs, { type TabItem } from './ui/Tabs.vue'
 import Tooltip from './ui/Tooltip.vue'
 import type { ExecuteResponse, RequestSnapshot } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{
   response: ExecuteResponse
@@ -377,7 +378,7 @@ async function downloadBody(): Promise<void> {
     toast.success(t('response.downloaded'), { message: path })
   } catch (err) {
     toast.error(t('response.downloadFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     downloading.value = false

@@ -28,6 +28,7 @@ import ExportSmokeDialog from './docs/ExportSmokeDialog.vue'
 import { useToast } from '../composables/useToast'
 import { useCollectionRun } from '../composables/useCollectionRun'
 import { useMiyoApi } from '../composables/useMiyoApi'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{ draft: Endpoint | null }>()
 
@@ -503,7 +504,7 @@ async function confirmAddToScenario(): Promise<void> {
     scenarioDialogOpen.value = false
   } catch (err) {
     toast.error(t('ws.caseUpdateFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     scenarioBusy.value = false
@@ -834,7 +835,7 @@ async function runOne(c: TestCase): Promise<void> {
     }
   } catch (err) {
     toast.error(t('cases.runFail', { name: c.name }), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     const next = new Set(runningIds.value)

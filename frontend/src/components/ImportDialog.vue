@@ -14,6 +14,7 @@ import { useLocaleStore } from '../stores/locale'
 import Modal from './ui/Modal.vue'
 import Icon from './ui/Icon.vue'
 import type { ImportedEndpoint, ImportFormat, Project } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const props = withDefaults(
   defineProps<{
@@ -84,7 +85,7 @@ async function parse(): Promise<void> {
     )
   } catch (err) {
     result.value = null
-    toast.error(t('importdlg.parseFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('importdlg.parseFail'), { message: errorText(err) })
   } finally {
     busy.value = false
   }
@@ -129,7 +130,7 @@ async function confirm(): Promise<void> {
     }
     emit('close')
   } catch (err) {
-    toast.error(t('importdlg.importFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('importdlg.importFail'), { message: errorText(err) })
   } finally {
     busy.value = false
   }

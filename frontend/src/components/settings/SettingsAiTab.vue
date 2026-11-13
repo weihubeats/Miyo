@@ -8,6 +8,7 @@ import { onMounted, ref } from 'vue'
 import { useLocaleStore } from '../../stores/locale'
 import { useMiyoApi } from '../../composables/useMiyoApi'
 import { useToast } from '../../composables/useToast'
+import { errorText } from '../../utils/errorText'
 import Icon from '../ui/Icon.vue'
 import type { AiSettingsView } from '../../types/miyoApi'
 
@@ -62,7 +63,7 @@ onMounted(async () => {
       }
     }
   } catch (e) {
-    toast.error(e instanceof Error ? e.message : String(e))
+    toast.error(errorText(e))
   } finally {
     loading.value = false
   }
@@ -83,7 +84,7 @@ async function save(): Promise<void> {
     apiKey.value = ''
     toast.success(t('settings.ai.saved'))
   } catch (e) {
-    toast.error(e instanceof Error ? e.message : String(e))
+    toast.error(errorText(e))
   } finally {
     saving.value = false
   }
@@ -97,7 +98,7 @@ async function testConnection(): Promise<void> {
     await api.aiTestConnection()
     toast.success(t('settings.ai.testOk'))
   } catch (e) {
-    toast.error(e instanceof Error ? e.message : String(e))
+    toast.error(errorText(e))
   } finally {
     testing.value = false
   }

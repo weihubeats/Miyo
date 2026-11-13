@@ -16,6 +16,7 @@ import type { Endpoint, MockRequestLog, MockRule } from '../types/miyoApi'
 import EmptyState from './ui/EmptyState.vue'
 import Icon from './ui/Icon.vue'
 import IconButton from './ui/IconButton.vue'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{ draft: Endpoint | null }>()
 const emit = defineEmits<{ openManager: [] }>()
@@ -51,7 +52,7 @@ async function reload(): Promise<void> {
     const n = await api.mockReload()
     toast.success(t('mockpanel.reloaded', { n }))
   } catch (err) {
-    toast.error(t('mockpanel.reloadFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('mockpanel.reloadFail'), { message: errorText(err) })
   } finally {
     reloading.value = false
   }
@@ -80,7 +81,7 @@ async function clearLogs(): Promise<void> {
     logs.value = []
   } catch (err) {
     toast.error(t('mocklog.clearFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }

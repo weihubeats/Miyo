@@ -15,6 +15,7 @@ import CustomNumberInput from './ui/CustomNumberInput.vue'
 import Icon from './ui/Icon.vue'
 import { formatDuration } from '../utils/format'
 import type { Endpoint, LoadResult } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 // chart.js 体积较大（约 200KB gz）且仅压测面板使用，懒加载以缩减首屏 bundle
 const Line = defineAsyncComponent(async () => {
@@ -185,7 +186,7 @@ async function runLoadTest(): Promise<void> {
     loadResult.value = result
     if (result.cancelled) toast.info(t('loadtest.cancelled', { v: `${result.total}/${total}` }))
   } catch (err) {
-    toast.error(t('loadtest.runFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('loadtest.runFail'), { message: errorText(err) })
   } finally {
     if (activeRunId.value === runId) activeRunId.value = null
     loading.value = false

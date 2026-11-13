@@ -21,6 +21,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { ref } from 'vue'
 import { useProgress } from './useProgress'
 import { tFallback } from '../stores/locale'
+import { errorText } from '../utils/errorText'
 import type {
   AiSessionView,
   AiSettingsView,
@@ -108,11 +109,13 @@ const PLUGIN = 'plugin:miyo'
 export function toFoxError(raw: unknown): Error {
   if (raw && typeof raw === 'object' && 'message' in raw) {
     const { code, message } = raw as CommandError
-    const err = new Error(message)
+    const err = new Error(typeof message === 'string' ? message : errorText(message))
     Object.defineProperty(err, 'code', { value: code, enumerable: true })
     return err
   }
-  return raw instanceof Error ? raw : new Error(String(raw))
+  // 非 {code,message} 形态（裸字符串 / 插件桥接层异常 / undefined）：
+  // 一律经 errorText 归一，绝不产出 "[object Object]"。
+  return raw instanceof Error ? raw : new Error(errorText(raw))
 }
 
 /** 提示去重：同一会话只提示一次，避免批量环境列表解密失败时重复弹出。 */

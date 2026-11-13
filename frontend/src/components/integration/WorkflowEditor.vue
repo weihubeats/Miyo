@@ -67,6 +67,7 @@ import type {
 } from '../../types/miyoApi'
 import type { EditorAssertion, EditorExtract, EditorStep } from './editorTypes'
 import { useScenarioValidation } from '../../composables/useScenarioValidation'
+import { errorText } from '../../utils/errorText'
 
 const props = defineProps<{ scenarioId: string }>()
 const emit = defineEmits<{ (e: 'back'): void }>()
@@ -176,7 +177,7 @@ async function load(): Promise<void> {
     // 加载失败不再静默吞掉后续初始化：提示后返回列表（此前异常上抛会
     // 跳过 onMounted 的历史恢复 / pendingRunId，且 loading 永久卡 true）。
     toast.error(t('integration.loadFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
     emit('back')
   } finally {
@@ -302,7 +303,7 @@ async function save(): Promise<boolean> {
     return true
   } catch (err) {
     toast.error(t('integration.saveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
     return false
   } finally {
@@ -759,7 +760,7 @@ function buildOneRunStep(s: EditorStep): BuiltRunStep | null {
     applyStepOverrides(spec, s.overrides)
   } catch (err) {
     toast.error(t('integration.overridesInvalid'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
     return null
   }
@@ -953,7 +954,7 @@ function applyLifecycleText(): boolean {
     lifecycleError.value = null
     return true
   } catch (err) {
-    lifecycleError.value = err instanceof Error ? err.message : String(err)
+    lifecycleError.value = errorText(err)
     return false
   }
 }
@@ -1421,7 +1422,7 @@ function applyScriptToSteps(): void {
       toast.error(t('importdlg.parseFail'), { message: err.message })
     } else {
       toast.error(t('integration.saveFail'), {
-        message: err instanceof Error ? err.message : String(err),
+        message: errorText(err),
       })
     }
   }
@@ -1438,7 +1439,7 @@ async function exportRunReport(markdown: string): Promise<void> {
     toast.success(t('integration.resultExported'), { message: path })
   } catch (err) {
     toast.error(t('integration.exportFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -1455,7 +1456,7 @@ async function exportScript(): Promise<void> {
     toast.success(t('scenario.scriptExported'), { message: path })
   } catch (err) {
     toast.error(t('scenario.scriptExportFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }

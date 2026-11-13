@@ -31,6 +31,7 @@ import type {
 } from '../types/miyoApi'
 import { formatDateTime } from '../utils/dateTime'
 import type { MenuItem } from '../components/ui/Menu.vue'
+import { errorText } from '../utils/errorText'
 
 /** 菜单打开能力（宿主持有 Menu 实例；组合式不依赖组件实例类型）。 */
 export type MenuOpener = (anchor: HTMLElement, items: MenuItem[]) => void
@@ -463,7 +464,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
         toast.success(t('integration.reportExported'), { message: suggestedName })
       } catch (err) {
         toast.error(t('integration.reportExportFail'), {
-          message: err instanceof Error ? err.message : String(err),
+          message: errorText(err),
         })
       }
     }
@@ -544,7 +545,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
 
   function runErrorToast(err: unknown): void {
     toast.error(t('integration.runStartFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 

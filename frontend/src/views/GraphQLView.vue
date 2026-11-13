@@ -32,6 +32,7 @@ import Modal from '../components/ui/Modal.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
 import type { BodySpec, ExecuteRequestArgs, ExecuteResponse, GraphQLSpec } from '../types/miyoApi'
 import { redactUrlQuery } from '../utils/exportRedact'
+import { errorText } from '../utils/errorText'
 
 const router = useRouter()
 const route = useRoute()
@@ -319,7 +320,7 @@ async function send() {
     pushHistory()
     rememberUrl()
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e)
+    const message = errorText(e)
     statusText.value = message
     sendFailed.value = true
     toast.error(t('graphql.sendFail'), { message, duration: 6000 })

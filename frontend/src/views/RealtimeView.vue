@@ -21,6 +21,7 @@ import EmptyState from '../components/ui/EmptyState.vue'
 import KeyValueTable, { type KVRow } from '../components/ui/KeyValueTable.vue'
 import Tabs, { type TabItem } from '../components/ui/Tabs.vue'
 import type { SseEventPayload, WsEventPayload } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const router = useRouter()
 const api = useMiyoApi()
@@ -73,7 +74,7 @@ async function popout(): Promise<void> {
       toast.error(t('realtime.popoutFail'), { message: String(e.payload) })
     })
   } catch (err) {
-    toast.error(t('realtime.popoutFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('realtime.popoutFail'), { message: errorText(err) })
   }
 }
 
@@ -170,7 +171,7 @@ async function wsConnect(): Promise<void> {
     wsState.value = 'connecting'
     wsPush('sys', 'sys', t('realtime.connecting', { v: wsUrl.value.trim() }))
   } catch (err) {
-    toast.error(t('realtime.wsConnectFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('realtime.wsConnectFail'), { message: errorText(err) })
   } finally {
     wsConnecting.value = false
   }
@@ -198,7 +199,7 @@ async function wsSend(frame: 'text' | 'ping'): Promise<void> {
     wsPush('out', frame, payload)
     wsSendText.value = ''
   } catch (err) {
-    toast.error(t('realtime.sendFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('realtime.sendFail'), { message: errorText(err) })
   }
 }
 
@@ -287,7 +288,7 @@ async function sseConnect(): Promise<void> {
     sseConnId.value = id
     sseStatus.value = 'open'
   } catch (err) {
-    toast.error(t('realtime.sseConnectFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('realtime.sseConnectFail'), { message: errorText(err) })
   } finally {
     sseConnecting.value = false
   }

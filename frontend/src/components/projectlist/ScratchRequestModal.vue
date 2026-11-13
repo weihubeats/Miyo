@@ -14,6 +14,7 @@ import { useToast } from '../../composables/useToast'
 import { useLocaleStore } from '../../stores/locale'
 import { formatBytes, formatDuration } from '../../utils/format'
 import type { BodySpec, ExecuteResponse, HttpMethod } from '../../types/miyoApi'
+import { errorText } from '../../utils/errorText'
 
 const api = useMiyoApi()
 const toast = useToast()
@@ -79,7 +80,7 @@ async function sendScratch(): Promise<void> {
       environment_id: null,
     })
   } catch (e) {
-    toast.error(t('scratch.sendFail'), { message: e instanceof Error ? e.message : String(e), duration: 6000 })
+    toast.error(t('scratch.sendFail'), { message: errorText(e), duration: 6000 })
   } finally {
     scratchSending.value = false
   }

@@ -24,6 +24,7 @@ import { prettyJson } from '../../utils/jsonFormat'
 import { statusTextOf } from '../../utils/testCases'
 import { inferSchema, mockJsonFromSchema } from '../../utils/schemaInfer'
 import type { Endpoint, ResponseExample } from '../../types/miyoApi'
+import { errorText } from '../../utils/errorText'
 
 const props = defineProps<{ examples: ResponseExample[]; draft?: Endpoint | null }>()
 
@@ -129,7 +130,7 @@ async function addManual(): Promise<void> {
   try {
     await persistExample(newExample(t('respex.manualName'), 200, ''))
   } catch (err) {
-    toast.error(t('respex.addFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('respex.addFail'), { message: errorText(err) })
   }
 }
 
@@ -156,7 +157,7 @@ async function fillFromMock(): Promise<void> {
   try {
     await persistExample(newExample(t('respex.mockName'), 200, mockBody))
   } catch (err) {
-    toast.error(t('respex.fillFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('respex.fillFail'), { message: errorText(err) })
   }
 }
 </script>

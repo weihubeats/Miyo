@@ -16,6 +16,7 @@ import IconButton from './ui/IconButton.vue'
 import Modal from './ui/Modal.vue'
 import Popconfirm from './ui/Popconfirm.vue'
 import type { MockRule } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -70,7 +71,7 @@ async function load(): Promise<void> {
   try {
     rules.value = (await api.listMockRules(store.project.id)) ?? []
   } catch (err) {
-    toast.error(t('mockrule.loadFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('mockrule.loadFail'), { message: errorText(err) })
   } finally {
     busy.value = false
   }
@@ -134,7 +135,7 @@ async function save(): Promise<void> {
       // 未运行或重载失败不打断保存流程
     }
   } catch (err) {
-    toast.error(t('mockrule.saveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('mockrule.saveFail'), { message: errorText(err) })
   } finally {
     busy.value = false
   }
@@ -146,7 +147,7 @@ async function remove(rule: MockRule): Promise<void> {
     rules.value = rules.value.filter((r) => r.id !== rule.id)
     if (editing.value?.id === rule.id) editing.value = null
   } catch (err) {
-    toast.error(t('mockrule.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('mockrule.deleteFail'), { message: errorText(err) })
   }
 }
 

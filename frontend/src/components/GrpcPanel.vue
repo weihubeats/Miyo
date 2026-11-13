@@ -20,6 +20,7 @@ import Tooltip from './ui/Tooltip.vue'
 import CustomSelect from './ui/CustomSelect.vue'
 import JsonEditor from './ui/JsonEditor.vue'
 import type { Endpoint, ProtoFile, ServiceCatalog } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{ draft: Endpoint }>()
 
@@ -90,7 +91,7 @@ async function loadCatalog(forceReload = false): Promise<void> {
     catalog.value = result
     catalogEndpointId.value = props.draft.id
   } catch (err) {
-    catalogError.value = err instanceof Error ? err.message : String(err)
+    catalogError.value = errorText(err)
   } finally {
     catalogLoading.value = false
   }
@@ -122,7 +123,7 @@ async function loadProtoFiles(): Promise<void> {
     protoFiles.value = await api.grpcListProtoFiles(store.project.id)
   } catch (err) {
     toast.error(t('grpc.protoLoadFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     protoLoading.value = false
@@ -157,7 +158,7 @@ async function onProtoFilesChosen(event: Event): Promise<void> {
     toast.success(t('grpc.protoImported', { n: String(payloads.length) }))
   } catch (err) {
     toast.error(t('grpc.protoSaveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -169,7 +170,7 @@ async function removeProtoFile(file: ProtoFile): Promise<void> {
     patchSpec({ proto_ids: spec.value.proto_ids.filter((id) => id !== file.id) })
   } catch (err) {
     toast.error(t('grpc.protoDeleteFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }

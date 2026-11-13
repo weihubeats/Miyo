@@ -16,6 +16,7 @@ import type { SyncPullPreview, SyncRemote } from '../types/miyoApi'
 import Icon from './ui/Icon.vue'
 import Modal from './ui/Modal.vue'
 import Popconfirm from './ui/Popconfirm.vue'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{
   open: boolean
@@ -84,7 +85,7 @@ async function loadRemotes(): Promise<void> {
     }
   } catch (err) {
     toast.error(t('sync.loadFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     loading.value = false
@@ -121,7 +122,7 @@ async function createRemote(): Promise<void> {
     await loadRemotes()
   } catch (err) {
     toast.error(t('sync.remoteAddFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     busy.value = false
@@ -137,7 +138,7 @@ async function removeRemote(remote: SyncRemote): Promise<void> {
     await loadRemotes()
   } catch (err) {
     toast.error(t('sync.remoteRemoveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     busy.value = false
@@ -159,7 +160,7 @@ async function push(): Promise<void> {
     await loadRemotes()
   } catch (err) {
     toast.error(t('sync.pushFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     busy.value = false
@@ -174,7 +175,7 @@ async function loadPreview(): Promise<void> {
     previewRemoteId.value = activeRemote.value.id
   } catch (err) {
     toast.error(t('sync.previewFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     busy.value = false
@@ -197,7 +198,7 @@ async function applyPull(): Promise<void> {
     emit('applied')
   } catch (err) {
     toast.error(t('sync.pullFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     busy.value = false

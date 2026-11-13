@@ -18,6 +18,7 @@ import {
 } from '../utils/environment'
 import Icon from './ui/Icon.vue'
 import type { EnvironmentVariable } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{ anchor: HTMLElement | null }>()
 const emit = defineEmits<{ close: []; manage: [] }>()
@@ -143,7 +144,7 @@ async function save(): Promise<void> {
     baseUrlValue.value = envBaseUrl(saved)
     dirty.value = false
   } catch (err) {
-    toast.error(t('envmgr.saveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('envmgr.saveFail'), { message: errorText(err) })
   } finally {
     busy.value = false
   }

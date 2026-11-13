@@ -17,6 +17,7 @@ import type { InjectionKey, Ref } from 'vue'
 import type { useWorkspaceStore } from '../stores/workspace'
 import type { useToast } from '../composables/useToast'
 import type { Endpoint, Folder } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 /** 递归树行内编辑状态（注入共享，见文件头注释）。 */
 export interface TreeEditState {
@@ -105,7 +106,7 @@ export function useTreeOperations(options: UseTreeOperationsOptions) {
       console.error('[EndpointTree.commitEdit]', err)
       toast.error(
         ed.kind === 'create-folder' ? t('tree.createFolderFail') : t('tree.renameFail'),
-        { message: err instanceof Error ? err.message : String(err) },
+        { message: errorText(err) },
       )
     } finally {
       cancelEdit()
@@ -117,7 +118,7 @@ export function useTreeOperations(options: UseTreeOperationsOptions) {
       await store.deleteFolder(id)
     } catch (err) {
       console.error('[EndpointTree.removeFolder]', err)
-      toast.error(t('tree.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
+      toast.error(t('tree.deleteFail'), { message: errorText(err) })
     } finally {
       treeSelection.folders.delete(id)
     }
@@ -128,7 +129,7 @@ export function useTreeOperations(options: UseTreeOperationsOptions) {
       await store.deleteEndpoint(e.id)
     } catch (err) {
       console.error('[EndpointTree.removeEndpoint]', err)
-      toast.error(t('tree.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
+      toast.error(t('tree.deleteFail'), { message: errorText(err) })
     } finally {
       treeSelection.endpoints.delete(e.id)
     }
@@ -139,7 +140,7 @@ export function useTreeOperations(options: UseTreeOperationsOptions) {
       await store.duplicateEndpoint(e.id)
     } catch (err) {
       console.error('[EndpointTree.duplicate]', err)
-      toast.error(t('tree.duplicateFail'), { message: err instanceof Error ? err.message : String(err) })
+      toast.error(t('tree.duplicateFail'), { message: errorText(err) })
     }
   }
 

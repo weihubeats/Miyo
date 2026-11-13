@@ -27,6 +27,7 @@
 import { onErrorCaptured, ref } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useLocaleStore } from '../stores/locale'
+import { errorText } from '../utils/errorText'
 
 const props = withDefaults(
   defineProps<{
@@ -73,7 +74,7 @@ async function onRetry(): Promise<void> {
     errorInfo.value = ''
     detailOpen.value = false
   } catch (e) {
-    errorMessage.value = e instanceof Error ? e.message : String(e)
+    errorMessage.value = errorText(e)
     toast.error(t('errbound.retryFail'), { message: errorMessage.value })
   } finally {
     retrying.value = false

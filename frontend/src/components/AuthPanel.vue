@@ -10,6 +10,8 @@ import { useToast } from '../composables/useToast'
 import { useLocaleStore } from '../stores/locale'
 import { handleTextareaTab } from '../utils/textareaIndent'
 import CustomSelect from './ui/CustomSelect.vue'
+import { errorText } from '../utils/errorText'
+
 import type {
   ApiKeyLocation,
   AuthSpec,
@@ -147,7 +149,7 @@ async function oauthFetch(): Promise<void> {
     req.auth = { ...authAny.value, token } as AuthSpec
     toast.success(t('auth.oauthOk'))
   } catch (err) {
-    toast.error(t('auth.oauthFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('auth.oauthFail'), { message: errorText(err) })
   } finally {
     fetchingToken.value = false
   }
@@ -206,7 +208,7 @@ async function oauthAuthorize(): Promise<void> {
     req.auth = { ...authAny.value, token } as AuthSpec
     toast.success(t('auth.oauthOk'))
   } catch (err) {
-    toast.error(t('auth.oauthFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('auth.oauthFail'), { message: errorText(err) })
   } finally {
     authorizing.value = false
   }

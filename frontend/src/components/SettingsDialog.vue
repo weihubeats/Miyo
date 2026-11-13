@@ -50,6 +50,8 @@ import SettingsMcpTab from './settings/SettingsMcpTab.vue'
 import SettingsAiTab from './settings/SettingsAiTab.vue'
 import CustomSelect from './ui/CustomSelect.vue'
 import EnvWorkspace from './env/EnvWorkspace.vue'
+import { errorText } from '../utils/errorText'
+
 import type {
   LogFile,
   Project,
@@ -232,7 +234,7 @@ async function saveTimeout(sec: number): Promise<void> {
     void useWorkspaceStore().refreshGlobalTimeoutMs()
     toast.success(t('settings.timeoutSaved', { v }))
   } catch (err) {
-    toast.error(t('settings.saveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('settings.saveFail'), { message: errorText(err) })
   }
 }
 
@@ -258,7 +260,7 @@ async function saveTls(): Promise<void> {
     })
     toast.success(t('settings.tlsSaved'))
   } catch (err) {
-    toast.error(t('settings.tlsSaveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('settings.tlsSaveFail'), { message: errorText(err) })
   } finally {
     tlsBusy.value = false
   }
@@ -276,7 +278,7 @@ async function applyProxy(url: string | null): Promise<boolean> {
     await api.setHttpProxy(url)
     return true
   } catch (err) {
-    toast.error(t('settings.proxySaveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('settings.proxySaveFail'), { message: errorText(err) })
     return false
   } finally {
     proxyBusy.value = false
@@ -328,7 +330,7 @@ async function testProxy(): Promise<void> {
       toast.error(r.message)
     }
   } catch (err) {
-    proxyTest.value = { ok: false, message: err instanceof Error ? err.message : String(err) }
+    proxyTest.value = { ok: false, message: errorText(err) }
     toast.error(t('settings.proxyTestFail'), { message: proxyTest.value.message })
   } finally {
     proxyTesting.value = false
@@ -353,7 +355,7 @@ async function setCounter(key: string, value: number, message: string): Promise<
     await api.setSeqCounter(key, Math.max(1, Math.round(value)))
     toast.success(message)
   } catch (err) {
-    toast.error(t('settings.saveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('settings.saveFail'), { message: errorText(err) })
   } finally {
     await loadCounters()
   }
@@ -372,7 +374,7 @@ async function deleteSeq(c: SeqCounter): Promise<void> {
     await api.deleteSeqCounter(c.key)
     toast.success(c.key ? t('settings.seqDeleted', { key: c.key }) : t('settings.seqGlobalDeleted'))
   } catch (err) {
-    toast.error(t('settings.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('settings.deleteFail'), { message: errorText(err) })
   } finally {
     await loadCounters()
   }
@@ -391,7 +393,7 @@ async function addSeq(): Promise<void> {
     newSeqKey.value = ''
     newSeqValue.value = 1
   } catch (err) {
-    toast.error(t('settings.addFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('settings.addFail'), { message: errorText(err) })
   } finally {
     await loadCounters()
   }
@@ -429,7 +431,7 @@ async function pickDataDir(): Promise<void> {
     toast.success(t('settings.dataDirSaved'), { message: t('settings.dataDirRestartHint') })
   } catch (err) {
     toast.error(t('settings.dataDirSaveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -442,7 +444,7 @@ async function resetDataDirToDefault(): Promise<void> {
     toast.success(t('settings.dataDirResetDone'), { message: t('settings.dataDirRestartHint') })
   } catch (err) {
     toast.error(t('settings.dataDirSaveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -480,7 +482,7 @@ async function restartNow(): Promise<void> {
     await relaunch()
   } catch (err) {
     toast.error(t('settings.restartFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 }
@@ -529,7 +531,7 @@ async function exportBackup(): Promise<void> {  if (!project.value) return
     URL.revokeObjectURL(url)
     toast.success(t('settings.backupExportedPlain'))
   } catch (err) {
-    toast.error(t('settings.exportFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('settings.exportFail'), { message: errorText(err) })
   } finally {
     busy.value = false
   }
@@ -560,7 +562,7 @@ async function onImportFile(event: Event): Promise<void> {
     emit('restored', summary.id)
     emit('close')
   } catch (err) {
-    toast.error(t('settings.importFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('settings.importFail'), { message: errorText(err) })
   } finally {
     busy.value = false
   }
@@ -614,7 +616,7 @@ async function saveLogRetention(days: number): Promise<void> {
     toast.success(t('settings.logRetentionSaved'))
   } catch (err) {
     toast.error(t('settings.saveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
     await loadLogRetention()
   } finally {
@@ -642,7 +644,7 @@ async function loadLogTail(): Promise<void> {
   try {
     logContent.value = await api.logTail(logSelected.value, 300)
   } catch (err) {
-    toast.error(t('settings.logReadFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('settings.logReadFail'), { message: errorText(err) })
     logContent.value = ''
   } finally {
     logLoading.value = false

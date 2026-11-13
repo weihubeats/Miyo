@@ -17,6 +17,7 @@ import Icon from './ui/Icon.vue'
 import IconButton from './ui/IconButton.vue'
 import Popconfirm from './ui/Popconfirm.vue'
 import type { CookieEntry } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const api = useMiyoApi()
 const toast = useToast()
@@ -41,7 +42,7 @@ async function reload(): Promise<void> {
     cookies.value = list
   } catch (err) {
     if (seq === reloadSeq) {
-      toast.error(t('cookie.loadFail'), { message: err instanceof Error ? err.message : String(err) })
+      toast.error(t('cookie.loadFail'), { message: errorText(err) })
     }
   } finally {
     if (seq === reloadSeq) loading.value = false
@@ -74,7 +75,7 @@ async function clearDomain(domain: string): Promise<void> {
     toast.success(t('cookie.clearedDomain', { domain, n }))
     await reload()
   } catch (err) {
-    toast.error(t('cookie.clearFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('cookie.clearFail'), { message: errorText(err) })
   }
 }
 
@@ -84,7 +85,7 @@ async function clearAll(): Promise<void> {
     toast.success(t('cookie.clearedAll', { n }))
     await reload()
   } catch (err) {
-    toast.error(t('cookie.clearFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('cookie.clearFail'), { message: errorText(err) })
   }
 }
 

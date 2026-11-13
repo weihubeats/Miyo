@@ -13,6 +13,7 @@ import { useMiyoApi } from '../../composables/useMiyoApi'
 import { useToast } from '../../composables/useToast'
 import { useLocaleStore } from '../../stores/locale'
 import type { Project, Team } from '../../types/miyoApi'
+import { errorText } from '../../utils/errorText'
 
 const NAME_MAX = 50
 const DESC_MAX = 200
@@ -108,7 +109,7 @@ async function confirmCreate(): Promise<void> {
     toast.success(t('workspace.projectCreated'), { message: name })
     emit('created', project)
   } catch (e) {
-    toast.error(t('workspace.projectCreateFail'), { message: e instanceof Error ? e.message : String(e), duration: 6000 })
+    toast.error(t('workspace.projectCreateFail'), { message: errorText(e), duration: 6000 })
   }
 }
 </script>

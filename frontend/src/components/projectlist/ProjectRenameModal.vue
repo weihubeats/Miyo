@@ -11,6 +11,7 @@ import { useMiyoApi } from '../../composables/useMiyoApi'
 import { useToast } from '../../composables/useToast'
 import { useLocaleStore } from '../../stores/locale'
 import type { Project } from '../../types/miyoApi'
+import { errorText } from '../../utils/errorText'
 
 const NAME_MAX = 50
 
@@ -57,7 +58,7 @@ async function confirmRename(): Promise<void> {
     toast.success(t('workspace.projectRenamed'))
     emit('saved', saved)
   } catch (e) {
-    toast.error(t('workspace.projectRenameFail'), { message: e instanceof Error ? e.message : String(e), duration: 6000 })
+    toast.error(t('workspace.projectRenameFail'), { message: errorText(e), duration: 6000 })
   }
 }
 </script>

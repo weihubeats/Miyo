@@ -13,6 +13,7 @@
 import { ref } from 'vue'
 import type { useWorkspaceStore } from '../stores/workspace'
 import type { useToast } from './useToast'
+import { errorText } from '../utils/errorText'
 
 export interface UseCollectionRunOptions {
   store: ReturnType<typeof useWorkspaceStore>
@@ -46,7 +47,7 @@ export function useCollectionRun({ store, toast, t }: UseCollectionRunOptions) {
 
   function failToast(err: unknown): void {
     toast.error(t('cases.runAllFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   }
 

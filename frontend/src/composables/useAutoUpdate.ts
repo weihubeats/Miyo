@@ -14,6 +14,7 @@
 import { readonly, ref, type Ref } from 'vue'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { tFallback } from '../stores/locale'
+import { errorText } from '../utils/errorText'
 
 export const AUTO_UPDATE_STARTUP_DELAY_MS = 8_000
 export const AUTO_UPDATE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000
@@ -284,7 +285,7 @@ export function startAutoUpdate(opts: AutoUpdateOptions = {}): () => void {
       update = await checkFn()
     } catch (err) {
       scheduleRetry()
-      return { status: 'failed', message: err instanceof Error ? err.message : String(err) }
+      return { status: 'failed', message: errorText(err) }
     }
     write(LAST_CHECK_KEY, String(now()))
     return { status: handleUpdateResult(update) ? 'notified' : 'none' }

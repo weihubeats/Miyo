@@ -10,6 +10,7 @@ import { useMiyoApi } from '../../composables/useMiyoApi'
 import { useToast } from '../../composables/useToast'
 import { useLocaleStore } from '../../stores/locale'
 import type { Project } from '../../types/miyoApi'
+import { errorText } from '../../utils/errorText'
 
 const api = useMiyoApi()
 const toast = useToast()
@@ -32,7 +33,7 @@ async function confirmDelete(): Promise<void> {
     toast.success(t('workspace.projectDeleted'), { message: target.name })
     emit('deleted', target.id)
   } catch (e) {
-    toast.error(t('workspace.projectDeleteFail'), { message: e instanceof Error ? e.message : String(e), duration: 6000 })
+    toast.error(t('workspace.projectDeleteFail'), { message: errorText(e), duration: 6000 })
   }
 }
 </script>

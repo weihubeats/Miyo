@@ -30,6 +30,8 @@ import { handleTextareaTab } from '../utils/textareaIndent'
 import { statusTextOf } from '../utils/testCases'
 import { inferSchema, mockJsonFromSchema } from '../utils/schemaInfer'
 import type { SchemaRow } from '../utils/schemaInfer'
+import { errorText } from '../utils/errorText'
+
 import type {
   BodySpec,
   Endpoint,
@@ -427,7 +429,7 @@ async function addResponse(preset?: number): Promise<void> {
     expandedRespId.value = saved.id
     toast.success(t('design.respAdded', { v: status }))
   } catch (err) {
-    toast.error(t('design.addFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('design.addFail'), { message: errorText(err) })
   }
 }
 
@@ -453,7 +455,7 @@ async function saveRespBody(ex: ResponseExample): Promise<void> {
     respDocsEdits.value.delete(ex.id)
     toast.success(t('design.respUpdated', { v: ex.status }))
   } catch (err) {
-    toast.error(t('design.saveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('design.saveFail'), { message: errorText(err) })
   }
 }
 
@@ -463,7 +465,7 @@ async function removeResp(ex: ResponseExample): Promise<void> {
     await store.removeExample(d.value.id, ex.id)
     if (expandedRespId.value === ex.id) expandedRespId.value = null
   } catch (err) {
-    toast.error(t('design.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('design.deleteFail'), { message: errorText(err) })
   }
 }
 

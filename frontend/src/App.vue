@@ -18,6 +18,7 @@ import { useToast } from './composables/useToast'
 import { useProgress } from './composables/useProgress'
 import { useLocaleStore } from './stores/locale'
 import { startAutoUpdate, openAboutSignal, openReleaseSignal } from './composables/useAutoUpdate'
+import { errorText } from './utils/errorText'
 
 const toast = useToast()
 const locale = useLocaleStore()
@@ -82,7 +83,7 @@ function onWindowError(event: ErrorEvent): void {
 function onWindowRejection(event: PromiseRejectionEvent): void {
   const reason = event.reason
   reportGlobalError(
-    reason instanceof Error ? reason.message : String(reason),
+    errorText(reason),
     reason,
     'app.unhandledError',
   )

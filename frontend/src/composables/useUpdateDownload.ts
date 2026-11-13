@@ -12,6 +12,7 @@ import { relaunch } from '@tauri-apps/plugin-process'
 import type { Update } from '@tauri-apps/plugin-updater'
 import { useToast } from './useToast'
 import { useLocaleStore } from '../stores/locale'
+import { errorText } from '../utils/errorText'
 
 export interface UpdateDownloadState {
   /** 是否在下载 / 安装中（下载中禁止关闭弹窗）。 */
@@ -122,7 +123,7 @@ export function useUpdateDownload(): UpdateDownloadState {
       setTimeout(() => relaunch(), 800)
       return true
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorText(err)
       installing.value = false
       progress.value = null
       failMsg.value = t('about.downloadFailed', { msg })

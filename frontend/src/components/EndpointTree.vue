@@ -93,6 +93,7 @@ import Popconfirm from './ui/Popconfirm.vue'
 import DeleteConfirmModal from './DeleteConfirmModal.vue'
 import type { MenuItem } from './ui/Menu.vue'
 import type { Endpoint, Folder } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const props = withDefaults(
   defineProps<{
@@ -362,7 +363,7 @@ async function applyListOrder(ordered: string[]): Promise<void> {
     await store.reorderEndpointsInFolder(props.folderId, ordered)
   } catch (err) {
     console.error('[EndpointTree.reorder]', err)
-    toast.error(t('tree.moveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('tree.moveFail'), { message: errorText(err) })
   }
 }
 
@@ -705,7 +706,7 @@ async function batchDelete(): Promise<void> {
     await store.batchDelete(epIds, folderIds)
   } catch (err) {
     console.error('[EndpointTree.batchDelete]', err)
-    toast.error(t('tree.deleteFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('tree.deleteFail'), { message: errorText(err) })
   }
 }
 
@@ -718,7 +719,7 @@ async function batchMove(targetFolderId: string | null): Promise<void> {
     await store.batchMoveEndpoints(epIds, targetFolderId)
   } catch (err) {
     console.error('[EndpointTree.batchMove]', err)
-    toast.error(t('tree.batchMoveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('tree.batchMoveFail'), { message: errorText(err) })
   }
 }
 

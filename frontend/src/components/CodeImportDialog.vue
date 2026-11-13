@@ -15,6 +15,7 @@ import CustomSelect from './ui/CustomSelect.vue'
 import { SNIPPET_LANGS, detectLang, parseCodeSnippet } from '../utils/codeImport'
 import type { SnippetLang } from '../utils/codeImport'
 import type { CurlParsed } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const props = defineProps<{ folderId: string | null }>()
 const emit = defineEmits<{ close: [] }>()
@@ -64,7 +65,7 @@ async function parse(): Promise<void> {
     }
     resolvedLang.value = target
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    error.value = errorText(err)
     parsed.value = null
   } finally {
     parsing.value = false

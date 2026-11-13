@@ -55,6 +55,7 @@ import { storeToRefs } from 'pinia'
 import { useDashboardStore, emptyProjectStats } from '../stores/dashboard'
 import logo from '../assets/miyo-logo.svg'
 import type { Project, ProjectStat, RecentActivity, Team } from '../types/miyoApi'
+import { errorText } from '../utils/errorText'
 
 const api = useMiyoApi()
 const toast = useToast()
@@ -402,7 +403,7 @@ async function onDragEnd(): Promise<void> {
   try {
     await api.updateProjectsOrder(ordered.map((p) => p.id))
   } catch (e) {
-    toast.error(t('projectlist.orderSaveFail'), { message: e instanceof Error ? e.message : String(e), duration: 4000 })
+    toast.error(t('projectlist.orderSaveFail'), { message: errorText(e), duration: 4000 })
   } finally {
     savingOrder.value = false
   }
@@ -519,7 +520,7 @@ async function load(): Promise<void> {
     await loadCounts()
     void loadActivities()
   } catch (e) {
-    loadError.value = e instanceof Error ? e.message : String(e)
+    loadError.value = errorText(e)
     toast.error(t('projectTabs.loadFail'), { message: loadError.value, duration: 6000 })
   } finally {
     loading.value = false
@@ -647,7 +648,7 @@ async function enter(
     if (focus?.historyId) query.history = focus.historyId
     await router.push({ path: '/workspace', query })
   } catch (e) {
-    toast.error(t('projectlist.enterFail'), { message: e instanceof Error ? e.message : String(e), duration: 6000 })
+    toast.error(t('projectlist.enterFail'), { message: errorText(e), duration: 6000 })
   } finally {
     enteringId.value = null
   }
@@ -704,7 +705,7 @@ async function importDroppedFile(path?: string): Promise<void> {
     droppedText.value = await api.readTextFile(path)
     showImport.value = true
   } catch (e) {
-    toast.error(t('projectlist.readFileFail'), { message: e instanceof Error ? e.message : String(e), duration: 5000 })
+    toast.error(t('projectlist.readFileFail'), { message: errorText(e), duration: 5000 })
   } finally {
     dropBusy.value = false
   }
@@ -779,7 +780,7 @@ async function duplicate(p: Project): Promise<void> {
     patchStat(copy.id, { endpoint_count: 0, scenario_count: 0, request_count: 0 })
     toast.success(t('projectlist.duplicated'), { message: copy.name })
   } catch (e) {
-    toast.error(t('projectlist.duplicateFail'), { message: e instanceof Error ? e.message : String(e), duration: 6000 })
+    toast.error(t('projectlist.duplicateFail'), { message: errorText(e), duration: 6000 })
   }
 }
 

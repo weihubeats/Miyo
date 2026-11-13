@@ -20,6 +20,7 @@ import { useLocaleStore } from '../../stores/locale'
 import { useMiyoApi } from '../../composables/useMiyoApi'
 import { useToast } from '../../composables/useToast'
 import type { Endpoint, ExportFormat, ExportedDoc } from '../../types/miyoApi'
+import { errorText } from '../../utils/errorText'
 
 const props = defineProps<{
   /** 仅导出当前接口时使用。 */
@@ -151,7 +152,7 @@ async function startExport(): Promise<void> {
     })
     emit('close')
   } catch (err) {
-    toast.error(t('workspace.exportFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('workspace.exportFail'), { message: errorText(err) })
   } finally {
     exporting.value = false
   }

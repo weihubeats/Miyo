@@ -14,6 +14,7 @@ import type { McpPermissionStatus, McpToolStatus } from '../../types/miyoApi'
 import CustomNumberInput from '../ui/CustomNumberInput.vue'
 import Modal from '../ui/Modal.vue'
 import Icon from '../ui/Icon.vue'
+import { errorText } from '../../utils/errorText'
 
 const api = useMiyoApi()
 const toast = useToast()
@@ -81,7 +82,7 @@ async function applyMcpEnabled(next: boolean): Promise<void> {
     toast.success(next ? t('settings.mcpEnabledToast') : t('settings.mcpDisabledToast'))
   } catch (err) {
     toast.error(t('settings.saveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
     await loadMcpStatus()
   } finally {
@@ -105,7 +106,7 @@ async function saveMcpPort(port: number): Promise<void> {
     toast.success(t('settings.mcpPortSaved'))
   } catch (err) {
     toast.error(t('settings.saveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
     await loadMcpStatus()
   } finally {
@@ -175,7 +176,7 @@ async function savePermissions(levels: string[], acknowledgeHighRisk = false): P
     await loadMcpPermissions()
   } catch (err) {
     toast.error(t('settings.mcpPermSaveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
     await loadMcpPermissions()
   } finally {
@@ -209,7 +210,7 @@ async function addPattern(): Promise<void> {
     newPattern.value = ''
   } catch (err) {
     toast.error(t('settings.patternSaveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     patternsBusy.value = false
@@ -223,7 +224,7 @@ async function removePattern(pattern: string): Promise<void> {
     sensitivePatterns.value = await api.getSensitivePatterns()
   } catch (err) {
     toast.error(t('settings.patternSaveFail'), {
-      message: err instanceof Error ? err.message : String(err),
+      message: errorText(err),
     })
   } finally {
     patternsBusy.value = false
@@ -243,7 +244,7 @@ async function toggleMcpTool(tool: McpToolStatus): Promise<void> {
     await api.setMcpToolEnabled({ name: tool.name, enabled: !tool.enabled })
     tool.enabled = !tool.enabled
   } catch (err) {
-    toast.error(t('settings.mcpToolSaveFail'), { message: err instanceof Error ? err.message : String(err) })
+    toast.error(t('settings.mcpToolSaveFail'), { message: errorText(err) })
   } finally {
     mcpToolBusy.value = null
   }
