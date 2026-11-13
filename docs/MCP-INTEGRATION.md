@@ -26,13 +26,13 @@ Schema；③ 控制面加路由；④ `miyo-mcp` 的 `validate_tool_call` / `cal
 
 | 等级 | 默认 | 覆盖工具（数） | 说明 |
 | --- | --- | --- | --- |
-| `read` | 启用 | 17 个查询类（项目 / 接口 / 环境 / 场景 / 运行历史 / 上下文） | 读取数据；返回值经统一脱敏 |
+| `read` | 启用 | 22 个查询类（项目 / 接口 / 环境 / 场景 / 运行历史 / 上下文 / AI 分析） | 读取数据；返回值经统一脱敏 |
 | `write` | 启用 | 9 个写入类（save_curl / 场景与步骤增改 / 用例增改） | 落库副作用 |
 | `execute` | 启用 | 3 个执行类（`run_scenario` / `run_test_case` / `cancel_run`） | 引擎编排的受控测试执行 |
 | `network_execute` | **关闭** | `send_endpoint` | 直接向外部发起真实 HTTP 请求——URL 可任意覆盖、不受项目接口约束的自由网络能力，独立风险控制 |
 | `destructive` | **关闭** | `delete_scenario` / `delete_test_case` | 不可恢复删除 |
 
-另加每工具独立开关（`mcp_disabled_tools`，32 个工具逐个停用，停用后 AI 不可见
+另加每工具独立开关（`mcp_disabled_tools`，37 个工具逐个停用，停用后 AI 不可见
 且控制面拒绝调用）。设置页「MCP 服务」提供权限矩阵 + 高风险确认对话框 +
 首次启用权限说明。
 
@@ -40,7 +40,7 @@ Schema；③ 控制面加路由；④ `miyo-mcp` 的 `validate_tool_call` / `cal
 > （目标为项目内已配置接口）；`send_endpoint` 允许覆盖任意 URL——即不受约束的
 > 外部网络能力，因此单独一级。
 
-## 工具清单（32 个）
+## 工具清单（37 个）
 
 | 分组 | 工具 | 用途 |
 | --- | --- | --- |
@@ -68,6 +68,11 @@ Schema；③ 控制面加路由；④ `miyo-mcp` 的 `validate_tool_call` / `cal
 | | `get_test_case` | 单个用例定义 |
 | | `run_test_case` | 执行单个用例（真实请求，落执行历史） |
 | | `list_test_case_runs` / `get_test_case_run` | 用例执行历史与单次详情 |
+| AI 测试中心 | `analyze_api_dependencies` | 接口业务依赖图（场景提取链 high / 响应字段同名匹配 medium）+ 未解析变量清单 |
+| | `analyze_project_test_coverage` | 七维覆盖率报告（无用例 / 无成功运行 / 无异常 / 无边界 / 无响应断言 / 写接口缺幂等 / 未被场景覆盖） |
+| | `generate_test_cases` | 用例草稿（九类：正常 / 缺必填 / 错误类型 / 边界 / 非法 / 权限不足 / 重复 / 资源不存在 / 幂等；**不落库**，保存走 create_test_case） |
+| | `generate_integration_scenario` | 步骤意图 → 场景草稿（自动补提取规则 / 变量依赖图 / 写操作风险清单；**不落库**，保存走 create_scenario） |
+| | `propose_scenario_fix` | 基于失败运行的修复草稿（extract 自动修复 + 断言差异清单 + 重跑建议；**不落库**，应用走 update_scenario） |
 | 其他 | `send_endpoint` / `save_curl` / `get_scenario` 脚本 / `save_scenario_script` / `agent_info` | 兼容保留 |
 
 ## 统一返回协议
@@ -217,3 +222,39 @@ list_projects → list_endpoints → get_endpoint（看清参数与响应结构�
 **setup/teardown 与统计口径**：`results_json` 行 = setup(phase=setup) + 主步骤 +
 teardown(phase=teardown)；成功率 / ok_count / fail_count 只统计主步骤
 （`phase = None`），生命周期失败单独可见不混入。
+
+## AI 测试中心（应用内 AI，v0.0.58+）
+
+Miyo 新增「AI 测试」工作区（`/ai-test`）：内置 OpenAI 兼容 LLM 客户端
+（`crates/miyo-ai`：SSE 流式 + 工具调用循环），在应用内完成
+**自然语言 → API 分析 → 场景生成 → 用户确认 → 保存 → 执行 → 失败分析 → 修复** 的完整闭环。
+
+### 与外部 Agent 的关系
+
+应用内 AI 与外部 MCP Agent **共享同一能力面**：
+
+- 工具执行走 `miyo-agent` 控制面（`ensure_started` + `ControlClient`，分发见
+  `miyo-agent::dispatch::dispatch_tool`），服务端 `ensure_tool_allowed` +
+  脱敏对两条路径同等生效；
+- 工具清单 = 统一 Registry 按（权限等级 + 停用列表）过滤，与 `tools/list` 同规则；
+- 差异仅在交互层：应用内 AI 对 `side_effects=true` 的工具在**聊天内弹确认卡**
+  （`ai_chat_approve` 放行 / 拒绝），拒绝会以明确文案回传模型。
+
+### 模型接入
+
+设置 → AI 模型：Base URL + API Key + 模型名（预设 DeepSeek / Qwen / Kimi /
+GLM / OpenAI / Ollama）。API Key 经 miyo-secret AES-256-GCM 加密落库
+（settings 键 `ai_provider`），掩码回显、不随备份 / 同步导出。
+
+### 持久化
+
+- `ai_sessions` / `ai_messages`（迁移 0028）：聊天会话与消息（含工具调用与
+  产物快照），重启后可回看；
+- `scenario_drafts`：修复 / 生成草稿留档（`base_json` 应用前快照 → 撤销即回写）。
+
+### 失败分析增强
+
+`analyze_run_failure` 输出增强（保持既有字段兼容）：新增
+`VARIABLE_EXTRACT_FAILED` / `NETWORK_UNREACHABLE` 错误类型、根因链
+（`rootCauseSummary` + `rootCause` 标注）、`rerunAdvice`（是否建议直接重跑）、
+`phase`（setup / main / teardown）与连续失败历史对比不变。

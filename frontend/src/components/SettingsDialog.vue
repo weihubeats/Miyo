@@ -47,6 +47,7 @@ import Icon, { type IconName } from './ui/Icon.vue'
 import Popconfirm from './ui/Popconfirm.vue'
 import CustomNumberInput from './ui/CustomNumberInput.vue'
 import SettingsMcpTab from './settings/SettingsMcpTab.vue'
+import SettingsAiTab from './settings/SettingsAiTab.vue'
 import CustomSelect from './ui/CustomSelect.vue'
 import EnvWorkspace from './env/EnvWorkspace.vue'
 import type {
@@ -77,7 +78,7 @@ const LANG_OPTIONS = computed<{ value: LocaleMode; label: string }[]>(() => [
 ])
 
 // ---------- 分类导航 ----------
-type TabId = 'general' | 'network' | 'mcp' | 'shortcuts' | 'sequences' | 'data' | 'environments' | 'logs'
+type TabId = 'general' | 'network' | 'ai' | 'mcp' | 'shortcuts' | 'sequences' | 'data' | 'environments' | 'logs'
 interface TabDef {
   id: TabId
   label: string
@@ -86,6 +87,7 @@ interface TabDef {
 const tabs = computed<TabDef[]>(() => [
   { id: 'general', label: t('settings.general'), icon: 'settings' },
   { id: 'network', label: t('settings.network'), icon: 'globe' },
+  { id: 'ai', label: t('settings.ai.tab'), icon: 'zap' },
   { id: 'mcp', label: t('settings.mcp'), icon: 'plug' },
   { id: 'shortcuts', label: t('settings.shortcuts'), icon: 'keyboard' },
   { id: 'sequences', label: t('settings.sequences'), icon: 'list' },
@@ -1267,6 +1269,7 @@ const projectSummary = computed(() => {
             </section>
 
             <!-- MCP 服务 -->
+            <SettingsAiTab v-if="activeTab === 'ai'" />
             <SettingsMcpTab v-if="activeTab === 'mcp'" />
 
             <!-- 快捷键 -->

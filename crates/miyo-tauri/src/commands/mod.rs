@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod ai;
 pub mod backup;
 pub mod clipboard;
 pub mod codegen;
@@ -28,6 +29,7 @@ pub mod test_case;
 pub mod ws;
 
 pub use agent::*;
+pub use ai::*;
 pub use backup::*;
 pub use clipboard::*;
 pub use codegen::*;

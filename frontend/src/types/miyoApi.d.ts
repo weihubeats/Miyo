@@ -1363,3 +1363,213 @@ export interface GrpcInvokeArgs {
   request_id?: string | null
   force_reload?: boolean
 }
+
+// ---------- AI 测试中心 ----------
+
+/** AI 模型设置回显（apiKey 掩码，明文不出仓）。 */
+export interface AiSettingsView {
+  base_url: string
+  api_key_masked: string
+  api_key_set: boolean
+  model: string
+  temperature: number | null
+  max_tokens: number | null
+}
+
+/** 保存 AI 设置入参（api_key 缺省 = 保持原值）。 */
+export interface SetAiSettingsArgs {
+  baseUrl: string
+  apiKey?: string | null
+  model: string
+  temperature?: number | null
+  maxTokens?: number | null
+}
+
+/** AI 聊天会话摘要。 */
+export interface AiSessionView {
+  id: string
+  project_id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+/** AI 聊天消息（持久化视图；role: user / assistant / tool / artifact）。 */
+export interface AiMessageView {
+  id: string
+  seq: number
+  role: 'user' | 'assistant' | 'tool' | 'artifact' | string
+  content: string | null
+  tool_calls: unknown[] | null
+  tool_call_id: string | null
+  artifact: AiArtifact | null
+  created_at: string
+}
+
+/** 结构化产物（右栏预览面板数据源）。 */
+export interface AiArtifact {
+  type:
+    | 'scenario_draft'
+    | 'test_case_drafts'
+    | 'fix_proposal'
+    | 'coverage_report'
+    | 'dependency_report'
+    | 'failure_analysis'
+  data: unknown
+}
+
+/** miyo:ai-chat 事件载荷（flatten）。 */
+export type AiChatEvent = {
+  sessionId: string
+  type:
+    | 'delta'
+    | 'tool_start'
+    | 'tool_result'
+    | 'pending'
+    | 'artifact'
+    | 'done'
+    | 'error'
+    | 'cancelled'
+  delta?: string
+  callId?: string
+  name?: string
+  args?: unknown
+  ok?: boolean
+  result?: unknown
+  risk?: 'high' | 'network' | 'write'
+  message?: string
+  stopReason?: string
+  iterations?: number
+  artifactType?: AiArtifact['type']
+  data?: unknown
+}
+
+/** 依赖分析报告。 */
+export interface DependencyReport {
+  project_id: string
+  nodes: {
+    endpoint_id: string
+    name: string
+    method: string
+    path: string
+    produces: string[]
+    consumes: string[]
+    var_refs: string[]
+  }[]
+  edges: {
+    from: string
+    to: string
+    via: string[]
+    confidence: 'high' | 'medium'
+    evidence: string
+  }[]
+  unresolved: { endpoint_id: string; name: string; vars: string[] }[]
+  summary: string
+}
+
+/** 覆盖率报告（七维）。 */
+export interface CoverageReport {
+  project_id: string
+  score: number
+  endpoint_total: number
+  dimensions: { key: string; label: string; endpoint_count: number }[]
+  endpoints: {
+    endpoint_id: string
+    name: string
+    method: string
+    path: string
+    issues: string[]
+    case_count: number
+    last_run_status: string
+    scenario_covered: boolean
+  }[]
+  summary: string
+}
+
+/** 测试用例草稿（generate_test_cases 产物；保存走 createTestCase）。 */
+export interface TestCaseDraft {
+  kind: string
+  category: string
+  name: string
+  description: string
+  method: string
+  url_path: string
+  path_variables: { key: string; value: string; enabled: boolean }[]
+  params: { key: string; value: string; enabled: boolean }[]
+  headers: { key: string; value: string; enabled: boolean }[]
+  body_type: string
+  body_content: string
+  assertions: unknown
+  notes: string[]
+}
+
+/** 场景草稿物化结果（generate_integration_scenario 产物）。 */
+export interface ScenarioDraftResult {
+  scenario: Scenario
+  adjustments: string[]
+  warnings: string[]
+  var_dependencies: {
+    step_index: number
+    step_name: string
+    produces: string[]
+    consumes: string[]
+  }[]
+  write_operations: {
+    step_index: number
+    step_name: string
+    method: string
+    url: string
+    risk: string
+  }[]
+}
+
+/** 修复草稿（propose_scenario_fix 产物）。 */
+export interface FixProposal {
+  run_id: string
+  scenario_id: string
+  analysis: {
+    ok: boolean
+    total_steps: number
+    failed: number
+    root_cause_summary: string | null
+    rerun_advice: { should_rerun: boolean; reason: string } | null
+    failed_steps: {
+      index: number
+      name: string
+      method: string
+      error_type: string
+      error: string | null
+      status: number | null
+      possible_causes: string[]
+      suggestions: string[]
+      assertion_failures: unknown[]
+      root_cause: boolean | null
+    }[]
+    disclaimer: string
+  }
+  changes: {
+    step_index: number
+    step_name: string
+    kind: 'extract' | 'assertion_review' | 'manual' | string
+    field: string
+    before: string
+    after: string
+    reason: string
+    risk: string
+  }[]
+  draft_steps: ScenarioStep[] | null
+  notes: string | null
+  disclaimer: string
+}
+
+/** 场景草稿历史条目。 */
+export interface ScenarioDraftView {
+  id: string
+  scenario_id: string
+  base: Scenario
+  draft: Scenario
+  summary: string
+  source: string
+  created_at: string
+  applied_at: string | null
+}

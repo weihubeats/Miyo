@@ -31,6 +31,11 @@ const router = createRouter({
       component: () => import('../views/IntegrationView.vue'),
     },
     {
+      path: '/ai-test',
+      name: 'ai-test',
+      component: () => import('../views/AiTestView.vue'),
+    },
+    {
       path: '/workspace',
       name: 'workspace',
       component: () => import('../views/WorkspaceView.vue'),

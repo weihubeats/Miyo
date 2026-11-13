@@ -22,6 +22,7 @@ const NAV_ITEMS = [
   { key: 'dashboard', labelKey: 'pnav.dashboard', icon: 'gauge' as const, route: '/projects' },
   { key: 'integration', labelKey: 'pnav.integration', icon: 'beaker' as const, route: '/integration' },
   { key: 'realtime', labelKey: 'pnav.realtime', icon: 'globe' as const, route: '/realtime' },
+  { key: 'aiTest', labelKey: 'pnav.aiTest', icon: 'zap' as const, route: '/ai-test' },
 ]
 
 /** 激活态跟随当前路由（实时调试视图打开时高亮对应入口）。 */

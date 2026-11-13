@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-ai-delete-session"
+description = "Enables the ai_delete_session command without any pre-configured scope."
+commands.allow = ["ai_delete_session"]
+
+[[permission]]
+identifier = "deny-ai-delete-session"
+description = "Denies the ai_delete_session command without any pre-configured scope."
+commands.deny = ["ai_delete_session"]

@@ -108,6 +108,8 @@ pub struct AppState {
     /// 脚本沙箱（惰性初始化：首个带脚本的请求才启动工作线程 + QuickJS 引擎；
     /// 初始化失败缓存 `None`，后续请求统一报沙箱错误）。
     pub script_sandbox: std::sync::OnceLock<Option<miyo_http::script_sandbox::ScriptSandbox>>,
+    /// AI 聊天会话运行注册表（取消令牌 + 待确认审批；Arc 供循环任务持有所属权）。
+    pub ai_chats: std::sync::Arc<Mutex<crate::commands::ai::AiChatRegistry>>,
 }
 
 /// 请求热路径的全局设置快照：命中时免去每次请求 2~3 次 settings SELECT +
@@ -194,6 +196,9 @@ impl AppState {
             global_settings_cache: RwLock::new(None),
             settings_gen: AtomicU64::new(0),
             script_sandbox: std::sync::OnceLock::new(),
+            ai_chats: std::sync::Arc::new(Mutex::new(
+                crate::commands::ai::AiChatRegistry::default(),
+            )),
         }
     }
 

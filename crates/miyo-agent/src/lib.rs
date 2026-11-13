@@ -28,9 +28,12 @@
 //! | GET  | `/agent/scenarios/{id}` | 场景详情（步骤 + 接口配置 + 链路变量 + 项目变量） |
 //! | PUT  | `/agent/scenarios/{id}/script` | 写入 / 清除场景自定义脚本 |
 
+pub mod analysis;
 pub mod client;
+pub mod dispatch;
 pub mod import;
 pub mod portfile;
+pub mod redact;
 pub mod registry;
 pub mod server;
 pub mod token;

@@ -508,7 +508,7 @@ pub(crate) fn project_variables_from_json(
         .map_err(|_| AppError::Decryption("项目变量密文已损坏，无法解析".to_string()))
 }
 
-fn encrypt_blob(json: &str) -> Result<String> {
+pub(crate) fn encrypt_blob(json: &str) -> Result<String> {
     miyo_secret::ensure_master_key()
         .and_then(|k| miyo_secret::encrypt(&k, json))
         .map_err(|e| AppError::Decryption(format!("加密失败（敏感数据拒绝明文落库）：{e}")))

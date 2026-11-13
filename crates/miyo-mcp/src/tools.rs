@@ -749,6 +749,34 @@ fn validate_tool_call(params: &Value) -> Result<(), (i64, String)> {
             uuid_req(&args, "runId")?;
             Ok(())
         }
+        // ---- AI 测试中心：分析 / 生成类（只读）----
+        "analyze_api_dependencies" | "analyze_project_test_coverage" => {
+            opt_uuid_arg(&args, "projectId").map_err(|e| (-32602, e))?;
+            Ok(())
+        }
+        "generate_test_cases" => {
+            uuid_req(&args, "endpointId")?;
+            Ok(())
+        }
+        "generate_integration_scenario" => {
+            let req_name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .unwrap_or("");
+            if req_name.is_empty() {
+                return Err((-32602, "缺少必填参数 name（非空字符串）".to_string()));
+            }
+            if !args.get("steps").map(|v| v.is_array()).unwrap_or(false) {
+                return Err((-32602, "缺少必填参数 steps（数组）".to_string()));
+            }
+            opt_uuid_arg(&args, "projectId").map_err(|e| (-32602, e))?;
+            Ok(())
+        }
+        "propose_scenario_fix" => {
+            uuid_req(&args, "runId")?;
+            Ok(())
+        }
         "list_test_cases" => {
             uuid_req(&args, "endpointId")?;
             Ok(())
@@ -1348,6 +1376,68 @@ async fn call_tool(
                     .analyze_run(run_id)
                     .await
                     .map_err(|e| tool_fail("RUN", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        // ---- AI 测试中心：分析 / 生成类（只读，产出草稿不落库）----
+        "analyze_api_dependencies" => {
+            let project_id = opt_uuid_arg(&args, "projectId")
+                .map_err(|e| ToolFailure::new("INVALID_ARGUMENT", e))?;
+            serde_json::to_value(
+                client
+                    .analyze_dependencies(project_id)
+                    .await
+                    .map_err(|e| tool_fail("PROJECT", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "analyze_project_test_coverage" => {
+            let project_id = opt_uuid_arg(&args, "projectId")
+                .map_err(|e| ToolFailure::new("INVALID_ARGUMENT", e))?;
+            serde_json::to_value(
+                client
+                    .analyze_test_coverage(project_id)
+                    .await
+                    .map_err(|e| tool_fail("PROJECT", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "generate_test_cases" => {
+            let endpoint_id = uuid_req(&args, "endpointId")?;
+            serde_json::to_value(
+                client
+                    .generate_test_case_drafts(endpoint_id)
+                    .await
+                    .map_err(|e| tool_fail("TEST_CASE", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "generate_integration_scenario" => {
+            let project_id = opt_uuid_arg(&args, "projectId")
+                .map_err(|e| ToolFailure::new("INVALID_ARGUMENT", e))?;
+            let mut body = args.clone();
+            body["projectId"] = project_id
+                .map(|u| json!(u.to_string()))
+                .unwrap_or(serde_json::Value::Null);
+            serde_json::to_value(
+                client
+                    .generate_scenario_draft(body)
+                    .await
+                    .map_err(|e| tool_fail("SCENARIO", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "propose_scenario_fix" => {
+            let run_id = uuid_req(&args, "runId")?;
+            let notes = args
+                .get("notes")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            serde_json::to_value(
+                client
+                    .propose_fix(run_id, notes)
+                    .await
+                    .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
             .expect("序列化失败")
         }
@@ -3071,5 +3161,196 @@ mod tests {
         let acquired = tokio::time::timeout(std::time::Duration::from_millis(30), g2).await;
         assert!(acquired.is_err(), "同名非并发工具在持有期间不得进入");
         t.await.unwrap();
+    }
+
+    /// AI 测试中心五工具端到端：依赖分析 / 覆盖率 / 用例草稿 / 场景草稿 /
+    /// 修复草稿（含运行不存在的错误码归路）。
+    #[tokio::test]
+    async fn ai_center_tools_via_mcp() {
+        use miyo_core::model::{
+            BodySpec, Endpoint, EndpointStatus, HttpMethod, KeyValue, RequestSpec,
+        };
+        use miyo_storage::repository as repo;
+
+        let (url, db) = spawn_full_control_plane().await;
+        let connect = || {
+            let url = url.clone();
+            Box::pin(async move { Ok(ControlClient::new(url, "tok")) })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+                >
+        };
+        async fn call(
+            connect: &dyn Fn() -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<ControlClient, AppError>> + Send>,
+            >,
+            id: u64,
+            name: &str,
+            args: Value,
+        ) -> (Value, bool) {
+            let line = serde_json::json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": { "name": name, "arguments": args }
+            })
+            .to_string();
+            let reply = handle_line_with(&line, connect).await.remove(0);
+            let parsed: Value = serde_json::from_str(&reply).unwrap();
+            let text = parsed["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap_or_else(|| panic!("工具 {name} 响应缺 content text：{reply}"));
+            let envelope: Value = serde_json::from_str(text)
+                .unwrap_or_else(|e| panic!("工具 {name} 信封解析失败：{e}｜{text}"));
+            let is_err = parsed["result"]["isError"].as_bool().unwrap_or(false);
+            (envelope, is_err)
+        }
+
+        // ---- 种子：项目 + 下单/预览两接口 + 响应示例 ----
+        let project = repo::create_project(&db, "AI 中心", "").await.unwrap();
+        let now = chrono::Utc::now();
+        let create_order = Endpoint {
+            id: Uuid::new_v4(),
+            project_id: project.id,
+            folder_id: None,
+            name: "创建订单".into(),
+            method: HttpMethod::POST,
+            path: "/shop/orders".into(),
+            description: String::new(),
+            status: EndpointStatus::Released,
+            sort_order: 0,
+            request: RequestSpec {
+                body: BodySpec::Json {
+                    raw: r#"{"sku":"S1","quantity":2}"#.into(),
+                },
+                ..Default::default()
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        repo::save_endpoint(&db, &create_order).await.unwrap();
+        let preview = Endpoint {
+            id: Uuid::new_v4(),
+            project_id: project.id,
+            folder_id: None,
+            name: "预览支付".into(),
+            method: HttpMethod::GET,
+            path: "/shop/orders/{orderNo}/pay-preview".into(),
+            description: String::new(),
+            status: EndpointStatus::Released,
+            sort_order: 1,
+            request: RequestSpec {
+                params: vec![KeyValue::new("payToken", "{{payToken}}")],
+                path_variables: vec![KeyValue::new("orderNo", "{{orderNo}}")],
+                ..Default::default()
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        repo::save_endpoint(&db, &preview).await.unwrap();
+        let example = miyo_core::model::ResponseExample {
+            id: Uuid::new_v4(),
+            endpoint_id: create_order.id,
+            name: "成功".into(),
+            status: 201,
+            headers: Default::default(),
+            body: r#"{"orderNo":"SO1","payToken":"pt1"}"#.into(),
+            content_type: "application/json".into(),
+            docs: Default::default(),
+            created_at: now,
+            updated_at: now,
+        };
+        repo::create_response_example(&db, example.endpoint_id, &example)
+            .await
+            .unwrap();
+
+        // 1. analyze_api_dependencies：响应字段同名匹配出边。
+        let (env, is_err) = call(
+            &connect,
+            1,
+            "analyze_api_dependencies",
+            json!({"projectId": project.id.to_string()}),
+        )
+        .await;
+        assert!(!is_err, "{env}");
+        assert_eq!(env["success"], true);
+        assert!(
+            !env["data"]["edges"].as_array().unwrap().is_empty(),
+            "应有依赖边：{env}"
+        );
+        assert_eq!(env["data"]["nodes"].as_array().unwrap().len(), 2);
+
+        // 2. analyze_project_test_coverage：七维 + 评分。
+        let (env, is_err) = call(&connect, 2, "analyze_project_test_coverage", json!({})).await;
+        assert!(!is_err, "{env}");
+        assert_eq!(env["data"]["dimensions"].as_array().unwrap().len(), 7);
+        assert!(env["data"]["score"].is_number());
+
+        // 3. generate_test_cases：草稿不落库。
+        let (env, is_err) = call(
+            &connect,
+            3,
+            "generate_test_cases",
+            json!({"endpointId": create_order.id.to_string()}),
+        )
+        .await;
+        assert!(!is_err, "{env}");
+        let kinds: Vec<&str> = env["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["kind"].as_str().unwrap())
+            .collect();
+        assert!(kinds.contains(&"normal"), "{env}");
+        assert!(kinds.contains(&"missing_required"), "{env}");
+        assert!(
+            kinds.contains(&"duplicate"),
+            "写接口应有重复请求草稿：{env}"
+        );
+        // 不落库：用例数仍为 0。
+        assert!(repo::list_test_cases(&db, create_order.id)
+            .await
+            .unwrap()
+            .is_empty());
+
+        // 4. generate_integration_scenario：物化 + 自动补提取 + 写操作清单。
+        let (env, is_err) = call(
+            &connect,
+            4,
+            "generate_integration_scenario",
+            json!({
+                "projectId": project.id.to_string(),
+                "name": "下单链路",
+                "steps": [
+                    {"endpointId": create_order.id.to_string(),
+                     "extract": [{"name": "orderNo", "path": "$.orderNo"}]},
+                    {"endpointId": preview.id.to_string()}
+                ]
+            }),
+        )
+        .await;
+        assert!(!is_err, "{env}");
+        assert_eq!(
+            env["data"]["scenario"]["steps"].as_array().unwrap().len(),
+            2
+        );
+        assert!(
+            env["data"]["adjustments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a.as_str().unwrap().contains("payToken")),
+            "应自动补充 payToken 提取：{env}"
+        );
+        assert_eq!(env["data"]["writeOperations"].as_array().unwrap().len(), 1);
+
+        // 5. propose_scenario_fix：运行不存在 → 业务错误码（非「未注册」）。
+        let (env, is_err) = call(
+            &connect,
+            5,
+            "propose_scenario_fix",
+            json!({"runId": Uuid::new_v4().to_string()}),
+        )
+        .await;
+        assert!(is_err);
+        assert_eq!(env["error"]["code"], "RUN_NOT_FOUND", "{env}");
     }
 }

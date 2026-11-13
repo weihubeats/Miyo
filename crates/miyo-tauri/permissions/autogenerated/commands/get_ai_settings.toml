@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-get-ai-settings"
+description = "Enables the get_ai_settings command without any pre-configured scope."
+commands.allow = ["get_ai_settings"]
+
+[[permission]]
+identifier = "deny-get-ai-settings"
+description = "Denies the get_ai_settings command without any pre-configured scope."
+commands.deny = ["get_ai_settings"]

@@ -30,5 +30,7 @@ reqwest = { workspace = true }
 tokio-util = { workspace = true }
 # 异步运行任务 panic 兜底（catch_unwind：任务崩溃时状态置 failed 而非卡 running）
 futures = { workspace = true }
+# AI 依赖分析：{{var}} 引用扫描 / Mock 模板占位替换
+regex = { workspace = true }
 
 [dev-dependencies]

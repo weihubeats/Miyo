@@ -14,6 +14,7 @@ members = [
     "crates/miyo-oauth",
     "crates/miyo-smoke",
     "crates/miyo-agent",
+    "crates/miyo-ai",
     "crates/miyo-mcp",
     "crates/miyo-sign",
     "crates/miyo-sync",

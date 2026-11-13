@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-ai-generate-scenario-draft"
+description = "Enables the ai_generate_scenario_draft command without any pre-configured scope."
+commands.allow = ["ai_generate_scenario_draft"]
+
+[[permission]]
+identifier = "deny-ai-generate-scenario-draft"
+description = "Denies the ai_generate_scenario_draft command without any pre-configured scope."
+commands.deny = ["ai_generate_scenario_draft"]

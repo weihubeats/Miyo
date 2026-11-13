@@ -18,6 +18,7 @@ use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 
 use crate::import::endpoint_from_curl;
+use crate::redact::{redact_endpoint_result, redact_test_case, redact_url, redact_vars};
 
 /// 默认端口（4110 起探测；与 Mock 的 4010~4029 错开）。用户可在设置中改起始端口。
 pub const DEFAULT_AGENT_PORT: u16 = 4110;
@@ -438,77 +439,6 @@ const STEP_BODY_LIMIT: usize = 4 * 1024;
 
 /// 历史中每步响应正文的保留上限（与 Tauri 命令层同口径）。
 const HISTORY_BODY_BYTES: usize = 64 * 1024;
-
-/// 变量池脱敏（单源在 [`miyo_sync::redact::redact_vars`]）。
-pub(crate) fn redact_vars(
-    vars: &std::collections::HashMap<String, String>,
-) -> std::collections::HashMap<String, String> {
-    miyo_sync::redact::redact_vars(vars)
-}
-
-/// URL query 脱敏（单源 [`miyo_sync::redact::redact_url_query`]）：日志 /
-/// 历史落库 / MCP 返回共用；凭据在 query 的 URL 不落明文。
-pub(crate) fn redact_url(url: &str) -> String {
-    miyo_sync::redact::redact_url_query(url)
-}
-
-/// 请求快照脱敏（headers / cookies / url query）。
-pub(crate) fn redact_snapshot(snapshot: &mut miyo_http::client::RequestSnapshot) {
-    let mask = |(k, v): &(String, String)| -> (String, String) {
-        if miyo_sync::redact::is_sensitive_key(k) && !v.is_empty() {
-            (k.clone(), miyo_sync::redact::PLACEHOLDER.to_string())
-        } else {
-            (k.clone(), v.clone())
-        }
-    };
-    snapshot.headers = snapshot.headers.iter().map(&mask).collect();
-    snapshot.cookies = snapshot.cookies.iter().map(&mask).collect();
-    snapshot.url = redact_url(&snapshot.url);
-}
-
-/// 运行结果全面脱敏（MCP/Agent 返回与历史落库共用单点）：
-/// URL query、提取值、响应头、响应 body（JSON 保守策略）、请求快照、
-/// 断言 expected/actual 逐一处理。旧历史行（脱敏前落库的明文数据）在
-/// 读取端重过一遍本函数即可兜底。
-pub(crate) fn redact_endpoint_result(r: &mut miyo_test::runner::EndpointResult) {
-    if let Some(url) = &mut r.url {
-        *url = redact_url(url);
-    }
-    r.extracted = redact_vars(&r.extracted);
-    if let Some(resp) = r.response.as_mut() {
-        miyo_sync::redact::redact_header_pairs(&mut resp.headers);
-        let (masked, changed) = miyo_sync::redact::redact_json_text(&resp.body);
-        if changed {
-            resp.body = masked;
-        }
-        if let Some(snapshot) = resp.request.as_mut() {
-            redact_snapshot(snapshot);
-        }
-    }
-    for o in &mut r.outcomes {
-        // 断言 expected/actual 是文本：URL 凭据脱敏 + JWT 形态判定
-        //（JSON 形态文本交给 redact_json_text 保守处理）。
-        for slot in [&mut o.expected, &mut o.actual] {
-            let Some(text) = slot.as_mut() else { continue };
-            let (masked, changed) = miyo_sync::redact::redact_json_text(text);
-            if changed {
-                *text = masked;
-            }
-            let redacted = miyo_sync::redact::redact_message_urls(text);
-            if redacted != *text {
-                *text = redacted;
-            }
-            if miyo_core::sensitive::looks_like_secret(text) {
-                *text = miyo_sync::redact::PLACEHOLDER.to_string();
-            }
-        }
-    }
-}
-
-/// TestCase 返回脱敏（单源 [`miyo_sync::redact::redact_test_case`]）。
-pub(crate) fn redact_test_case(case: &mut miyo_core::model::TestCase) {
-    miyo_sync::redact::redact_test_case(case);
-}
 
 /// POST `/agent/endpoints/{id}/execute` 请求体。全部字段可选——缺省即按
 /// 接口当前配置原样发送（`{{var}}` 由变量池渲染）。
@@ -2314,6 +2244,24 @@ pub fn build_router(state: AgentState) -> Router {
         )
         .route("/agent/test-case-runs/{id}", get(get_test_case_run_handler))
         .route("/agent/tools", get(list_tools_handler))
+        // ---- AI 测试中心：分析 / 生成类（只读，产出草稿不落库）----
+        .route(
+            "/agent/analyze/dependencies",
+            get(analyze_dependencies_handler),
+        )
+        .route(
+            "/agent/analyze/test-coverage",
+            get(analyze_coverage_handler),
+        )
+        .route(
+            "/agent/endpoints/{id}/test-case-drafts",
+            post(generate_test_case_drafts_handler),
+        )
+        .route(
+            "/agent/scenario-drafts",
+            post(generate_scenario_draft_handler),
+        )
+        .route("/agent/runs/{id}/fix-proposal", post(propose_fix_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth))
         .with_state(state)
 }
@@ -4121,254 +4069,111 @@ pub struct RecurringFailure {
 }
 
 /// GET `/agent/runs/{id}/analysis`：失败原因分析（启发式规则，标注为推测）。
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FailedStepAnalysis {
-    pub index: usize,
-    pub name: String,
-    pub method: String,
-    /// 历史对比：同一断言在最近 N 次运行中连续失败（环境漂移 / 接口行为
-    /// 变更的强信号）。None = 首次失败或无历史可比。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recurring: Option<RecurringFailure>,
-    /// 错误类型（REQUEST_ERROR / ASSERTION_FAILED / DEPENDENCY_BLOCKED /
-    /// RUN_CANCELLED / LOOP_TIMEOUT…）。
-    pub error_type: String,
-    pub error: Option<String>,
-    pub status: Option<u16>,
-    /// 可能原因（推测，非确定结论）。
-    pub possible_causes: Vec<String>,
-    /// 建议处理方式。
-    pub suggestions: Vec<String>,
-    /// 失败断言明细。
-    pub assertion_failures: Vec<serde_json::Value>,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FailureAnalysis {
-    pub run_id: uuid::Uuid,
-    pub ok: bool,
-    pub total_steps: i64,
-    pub passed: i64,
-    pub failed: i64,
-    pub skipped: i64,
-    pub cancelled: bool,
-    pub stopped_on_failure: bool,
-    pub failed_steps: Vec<FailedStepAnalysis>,
-    /// 提示：分析为规则推测，修复前请用 get_step_result 核对原始响应。
-    pub disclaimer: String,
-}
-
+/// 分类与加载逻辑在 [`crate::analysis::failure`]（供 Tauri 层复用）。
 async fn analyze_run_handler(
     State(state): State<AgentState>,
     AxumPath(id): AxumPath<uuid::Uuid>,
-) -> ApiResult<FailureAnalysis> {
+) -> ApiResult<crate::analysis::failure::FailureAnalysis> {
     ensure_tool_allowed(&state, "analyze_run_failure").await?;
-    let Some(run) = repo::get_scenario_run(&state.db, id)
+    crate::analysis::failure::analyze_run(&state.db, id)
         .await
-        .map_err(api_error)?
-    else {
-        return Err(api_error(miyo_core::AppError::NotFound(format!(
-            "运行（{id}）不存在"
-        ))));
-    };
-    let mut results: Vec<miyo_test::runner::EndpointResult> =
-        serde_json::from_str(&run.results_json).unwrap_or_default();
-    // 断言 expected/actual 等原值脱敏（读取端重脱敏兜底旧数据）。
-    for r in &mut results {
-        redact_endpoint_result(r);
-    }
+        .map(Json)
+        .map_err(api_error)
+}
 
-    // ---- 历史对比：该场景最近几次运行（不含本次）的失败断言集合 ----
-    // 同一断言（步位次 + 断言描述）连续失败 → 环境漂移 / 接口行为变更信号。
-    let previous_runs = repo::list_scenario_runs(&state.db, run.scenario_id, 10)
+// ---------- AI 测试中心：分析 / 生成类 Handlers（只读，产出草稿不落库） ----------
+
+/// 项目解析查询参数（projectId 可选：唯一项目自动选中）。
+#[derive(Debug, serde::Deserialize)]
+pub struct ProjectQuery {
+    #[serde(rename = "projectId", default)]
+    pub project_id: Option<uuid::Uuid>,
+}
+
+/// GET `/agent/analyze/dependencies?projectId=`（工具 analyze_api_dependencies）。
+async fn analyze_dependencies_handler(
+    State(state): State<AgentState>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<crate::analysis::dependencies::DependencyReport> {
+    ensure_tool_allowed(&state, "analyze_api_dependencies").await?;
+    let project = resolve_project_read(&state.db, q.project_id)
         .await
-        .unwrap_or_default();
-    let mut history: Vec<(String, std::collections::HashSet<String>)> = Vec::new(); // (finished_at, failedAssertionKeys)
-    for prev in previous_runs.iter().filter(|r| r.id != run.id) {
-        let prev_results: Vec<miyo_test::runner::EndpointResult> =
-            serde_json::from_str(&prev.results_json).unwrap_or_default();
-        let keys: std::collections::HashSet<String> = prev_results
-            .iter()
-            .filter(|pr| !pr.ok && !pr.cancelled)
-            .flat_map(|pr| {
-                let idx = pr.step_index.unwrap_or_default();
-                pr.outcomes
-                    .iter()
-                    .filter(|o| !o.passed)
-                    .map(move |o| format!("{idx}::{}", o.description))
-            })
-            .collect();
-        history.push((prev.finished_at.to_rfc3339(), keys));
+        .map_err(api_error)?;
+    let report = crate::analysis::dependencies::analyze_api_dependencies(&state.db, project.id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(report))
+}
+
+/// GET `/agent/analyze/test-coverage?projectId=`（工具 analyze_project_test_coverage）。
+async fn analyze_coverage_handler(
+    State(state): State<AgentState>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<crate::analysis::coverage::CoverageReport> {
+    ensure_tool_allowed(&state, "analyze_project_test_coverage").await?;
+    let project = resolve_project_read(&state.db, q.project_id)
+        .await
+        .map_err(api_error)?;
+    let report = crate::analysis::coverage::analyze_project_test_coverage(&state.db, project.id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(report))
+}
+
+/// POST `/agent/endpoints/{id}/test-case-drafts`（工具 generate_test_cases）。
+async fn generate_test_case_drafts_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+    body: Option<Json<serde_json::Value>>,
+) -> ApiResult<Vec<crate::analysis::testcase_gen::TestCaseDraft>> {
+    ensure_tool_allowed(&state, "generate_test_cases").await?;
+    let _ = body; // 预留参数位；当前生成不需要额外选项
+    let drafts = crate::analysis::testcase_gen::generate_test_case_drafts(&state.db, id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(drafts))
+}
+
+/// POST `/agent/scenario-drafts`（工具 generate_integration_scenario）：
+/// 步骤意图 → 场景草稿（不落库）。projectId 缺省时唯一项目自动选中。
+async fn generate_scenario_draft_handler(
+    State(state): State<AgentState>,
+    Json(mut draft): Json<crate::analysis::scenario_gen::ScenarioDraftRequest>,
+) -> ApiResult<crate::analysis::scenario_gen::ScenarioDraftResult> {
+    ensure_tool_allowed(&state, "generate_integration_scenario").await?;
+    if draft.project_id.is_none() {
+        let project = resolve_project_read(&state.db, None)
+            .await
+            .map_err(api_error)?;
+        draft.project_id = Some(project.id);
     }
-    // 历史按 finished_at 倒序（repo 排序），取连续失败计数：从最近一次往前，
-    // 断言键集合包含当前失败键则计数 +1，首次不含即停。
-    let history_tail: Vec<(String, std::collections::HashSet<String>)> =
-        history.into_iter().take(9).collect();
+    let result = crate::analysis::scenario_gen::materialize_scenario_draft(&state.db, &draft)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(result))
+}
 
-    let mut failed_steps = Vec::new();
-    for r in &results {
-        let status = r.effective_status();
-        if matches!(status, "success") {
-            continue;
-        }
-        #[allow(unused_assignments)]
-        let mut error_type = String::new();
-        let mut causes: Vec<String> = Vec::new();
-        let mut suggestions: Vec<String> = Vec::new();
-        let mut error = r.request_error.clone();
+/// POST `/agent/runs/{id}/fix-proposal` 的请求体。
+#[derive(Debug, serde::Deserialize)]
+pub struct FixProposalBody {
+    /// 用户附加的修复要求（如「只修断言，不动请求参数」）。
+    #[serde(default)]
+    pub notes: Option<String>,
+}
 
-        match status {
-            "blocked" => {
-                error_type = "DEPENDENCY_BLOCKED".into();
-                causes.push(
-                    r.blocked_reason
-                        .clone()
-                        .unwrap_or_else(|| "前序步骤失败，本步依赖的变量未产出".into()),
-                );
-                suggestions.push("先修复失败的前序步骤，再整体重跑（或用从该步重跑能力）".into());
-            }
-            "cancelled" => {
-                error_type = "RUN_CANCELLED".into();
-                causes.push("运行被用户或系统取消".into());
-                suggestions.push("如需继续请重新运行场景".into());
-            }
-            _ if r
-                .request_error
-                .as_deref()
-                .is_some_and(|e| e.contains("循环条件")) =>
-            {
-                error_type = "LOOP_TIMEOUT".into();
-                causes.push("循环条件在最大轮数内未满足（轮询超时）".into());
-                suggestions
-                    .push("检查轮询目标服务的状态变更速度；适当调大 maxLoops / intervalMs".into());
-            }
-            _ if r
-                .request_error
-                .as_deref()
-                .is_some_and(|e| e.contains("http/https")) =>
-            {
-                error_type = "URL_SCHEME_INVALID".into();
-                causes
-                    .push("URL 协议非法（仅允许 http/https）——可能因变量替换产生了意外地址".into());
-                suggestions.push("检查 base_url 与 URL 模板的变量替换结果".into());
-            }
-            _ if r.request_error.is_some() => {
-                error_type = "REQUEST_ERROR".into();
-                let msg = r.request_error.clone().unwrap_or_default();
-                causes.push(format!("请求未成功发送或连接失败：{msg}"));
-                causes.push("目标服务不可达 / 域名或端口错误 / 环境选择错误".into());
-                suggestions
-                    .push("用 send_endpoint 单独探测该接口；确认环境的 Base URL 是否正确".into());
-            }
-            _ => {
-                error_type = "ASSERTION_FAILED".into();
-                let st = r.status.unwrap_or(0);
-                match st {
-                    401 | 403 => {
-                        causes.push("认证失败：Token 缺失 / 过期 / 未被变量替换".into());
-                        suggestions
-                            .push("检查认证配置与 {{token}} 类变量是否来自前序登录步骤".into());
-                    }
-                    404 | 405 => {
-                        causes.push("路径或方法不存在：URL 拼接 / 环境指向错误".into());
-                        suggestions.push("核对实际请求 URL 与接口定义；确认环境 Base URL".into());
-                    }
-                    500..=599 => {
-                        causes.push("服务端错误：可能由请求参数（变量值）不合法引发".into());
-                        suggestions.push("检查请求 Body / Query 中变量替换后的实际值".into());
-                    }
-                    _ => {}
-                }
-                error = Some(format!(
-                    "HTTP {st}：{} 条断言未通过",
-                    r.outcomes.iter().filter(|o| !o.passed).count()
-                ));
-                suggestions
-                    .push("对比断言的预期值与实际值；确认上游返回结构是否与提取假设一致".into());
-            }
-        }
-        // 变量残留检查：URL / 提取值中含未解析 {{ }} → 变量未定义。
-        if let Some(url) = &r.url {
-            if url.contains("{{") {
-                causes.push("请求 URL 仍含 {{占位}}——变量未定义或前序提取失败".into());
-                suggestions
-                    .push("运行前用 validate_scenario 做变量分析；补齐提取规则或环境变量".into());
-            }
-        }
-        let assertion_failures: Vec<serde_json::Value> = r
-            .outcomes
-            .iter()
-            .filter(|o| !o.passed)
-            .map(|o| {
-                serde_json::json!({
-                    "description": o.description,
-                    "expected": o.expected,
-                    "actual": o.actual,
-                    "reason": o.reason,
-                })
-            })
-            .collect();
-        // 连续失败计数：按当前失败断言键在前史中逐次回溯。
-        let idx = r.step_index.unwrap_or_default();
-        let current_keys: std::collections::HashSet<String> = r
-            .outcomes
-            .iter()
-            .filter(|o| !o.passed)
-            .map(|o| format!("{idx}::{}", o.description))
-            .collect();
-        let mut consecutive = 1i64;
-        let mut last_seen = run.finished_at.to_rfc3339();
-        for (at, keys) in &history_tail {
-            if current_keys.is_subset(keys) && !keys.is_empty() {
-                consecutive += 1;
-                last_seen = at.clone();
-            } else {
-                break;
-            }
-        }
-        let recurring = if consecutive >= 2 && !assertion_failures.is_empty() {
-            Some(RecurringFailure {
-                consecutive_runs: consecutive,
-                last_seen_at: last_seen,
-            })
-        } else {
-            None
-        };
-        if let Some(rec) = &recurring {
-            suggestions.push(format!(
-                "该断言已连续 {} 次运行失败（最近 {}）——优先怀疑环境漂移或接口行为变更，而非脚本问题",
-                rec.consecutive_runs, rec.last_seen_at
-            ));
-        }
-        failed_steps.push(FailedStepAnalysis {
-            index: r.step_index.unwrap_or_default(),
-            name: r.endpoint_name.clone(),
-            method: r.method.clone(),
-            recurring,
-            error_type,
-            error,
-            status: r.status,
-            possible_causes: causes,
-            suggestions,
-            assertion_failures,
-        });
-    }
-
-    Ok(Json(FailureAnalysis {
-        run_id: run.id,
-        ok: run.fail_count == 0 && !run.cancelled,
-        total_steps: run.total_steps,
-        passed: run.ok_count,
-        failed: run.fail_count,
-        skipped: run.skipped_count,
-        cancelled: run.cancelled,
-        stopped_on_failure: run.stopped_on_failure,
-        failed_steps,
-        disclaimer:
-            "以上原因为规则推测，非确定结论；修复前请用 get_step_result 核对原始请求与响应。".into(),
-    }))
+/// POST `/agent/runs/{id}/fix-proposal`（工具 propose_scenario_fix）：
+/// 基于失败运行生成修复草稿（不落库）。
+async fn propose_fix_handler(
+    State(state): State<AgentState>,
+    AxumPath(run_id): AxumPath<uuid::Uuid>,
+    body: Option<Json<FixProposalBody>>,
+) -> ApiResult<crate::analysis::fix::FixProposal> {
+    ensure_tool_allowed(&state, "propose_scenario_fix").await?;
+    let notes = body.and_then(|Json(b)| b.notes);
+    crate::analysis::fix::propose_fix_for_run(&state.db, run_id, notes)
+        .await
+        .map(Json)
+        .map_err(api_error)
 }
 
 #[cfg(test)]

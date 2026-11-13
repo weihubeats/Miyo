@@ -60,7 +60,10 @@ const FILE_ALLOWLIST: Record<string, RegExp[]> = {
  *   `t('mockrule.addHeader')` 与 `t('kv.colKey'/'kv.colValue')`。
  * 故 TEMPLATE_ALLOWLIST 保持为空对象（结构保留，供后续真正无法归类的特例）。
  */
-const TEMPLATE_ALLOWLIST: Record<string, RegExp[]> = {}
+const TEMPLATE_ALLOWLIST: Record<string, RegExp[]> = {
+  /** AI 模型设置：模型名示例（模型名是原文内容，各语言显示一致）。 */
+  'src/components/settings/SettingsAiTab.vue': [/^deepseek-chat$/],
+}
 
 /**
  * 模板文本节点里保留原文的专有名词：品牌 / 产品特性、帧与 Cookie 协议属性、

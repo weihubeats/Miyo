@@ -2802,6 +2802,7 @@ dependencies = [
  "miyo-storage",
  "miyo-sync",
  "miyo-test",
+ "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2811,6 +2812,21 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "miyo-ai"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "futures",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -3026,10 +3042,12 @@ name = "miyo-tauri"
 version = "0.0.2"
 dependencies = [
  "arboard",
+ "async-trait",
  "base64 0.23.1",
  "chrono",
  "futures",
  "miyo-agent",
+ "miyo-ai",
  "miyo-backup",
  "miyo-codegen",
  "miyo-core",

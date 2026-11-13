@@ -356,6 +356,95 @@ impl ControlClient {
             .await
     }
 
+    // ---- AI 测试中心：分析 / 生成类工具（只读，产出草稿不落库）----
+
+    /// 接口业务依赖分析（projectId 缺省时唯一项目自动选中）。
+    pub async fn analyze_dependencies(
+        &self,
+        project_id: Option<Uuid>,
+    ) -> Result<serde_json::Value, AppError> {
+        let path = match project_id {
+            Some(id) => format!("/agent/analyze/dependencies?projectId={id}"),
+            None => "/agent/analyze/dependencies".to_string(),
+        };
+        self.get_json(&path).await
+    }
+
+    /// 项目测试覆盖率（七维；projectId 缺省时唯一项目自动选中）。
+    pub async fn analyze_test_coverage(
+        &self,
+        project_id: Option<Uuid>,
+    ) -> Result<serde_json::Value, AppError> {
+        let path = match project_id {
+            Some(id) => format!("/agent/analyze/test-coverage?projectId={id}"),
+            None => "/agent/analyze/test-coverage".to_string(),
+        };
+        self.get_json(&path).await
+    }
+
+    /// 测试用例草稿（不落库）。
+    pub async fn generate_test_case_drafts(
+        &self,
+        endpoint_id: Uuid,
+    ) -> Result<serde_json::Value, AppError> {
+        self.post_json(
+            &format!("/agent/endpoints/{endpoint_id}/test-case-drafts"),
+            serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// 场景草稿物化（不落库）。
+    pub async fn generate_scenario_draft(
+        &self,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, AppError> {
+        self.post_json("/agent/scenario-drafts", body).await
+    }
+
+    /// 修复草稿（不落库）。
+    pub async fn propose_fix(
+        &self,
+        run_id: Uuid,
+        notes: Option<String>,
+    ) -> Result<serde_json::Value, AppError> {
+        self.post_json(
+            &format!("/agent/runs/{run_id}/fix-proposal"),
+            serde_json::json!({ "notes": notes }),
+        )
+        .await
+    }
+
+    /// 通用 POST（应用内 AI 循环的工具分发用：路径 + 透传 body）。
+    pub async fn post_raw_json(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, AppError> {
+        self.post_json(path, body).await
+    }
+
+    /// 通用 PUT（同 [`post_raw_json`]）。
+    pub async fn put_raw_json(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, AppError> {
+        self.put_json(path, body).await
+    }
+
+    /// 通用 DELETE（同 [`post_raw_json`]）。
+    pub async fn delete_raw_json(&self, path: &str) -> Result<serde_json::Value, AppError> {
+        let res = self
+            .http
+            .delete(format!("{}{path}", self.base))
+            .header("Authorization", self.auth())
+            .send()
+            .await
+            .map_err(AppError::from_reqwest)?;
+        decode(res).await
+    }
+
     /// 场景列表（projectId 缺省时：唯一项目自动选中，多项目报错列候选）。
     pub async fn list_scenarios(
         &self,

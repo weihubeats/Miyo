@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-ai-propose-fix"
+description = "Enables the ai_propose_fix command without any pre-configured scope."
+commands.allow = ["ai_propose_fix"]
+
+[[permission]]
+identifier = "deny-ai-propose-fix"
+description = "Denies the ai_propose_fix command without any pre-configured scope."
+commands.deny = ["ai_propose_fix"]

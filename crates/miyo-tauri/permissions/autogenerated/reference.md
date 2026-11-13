@@ -157,6 +157,24 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-sync-pull-apply`
 - `allow-sync-remote-list-projects`
 - `allow-sync-import-project`
+- `allow-get-ai-settings`
+- `allow-set-ai-settings`
+- `allow-ai-test-connection`
+- `allow-ai-list-sessions`
+- `allow-ai-get-session`
+- `allow-ai-delete-session`
+- `allow-ai-chat-send`
+- `allow-ai-chat-approve`
+- `allow-ai-chat-cancel`
+- `allow-ai-analyze-dependencies`
+- `allow-ai-analyze-coverage`
+- `allow-ai-generate-test-case-drafts`
+- `allow-ai-generate-scenario-draft`
+- `allow-ai-propose-fix`
+- `allow-ai-save-scenario-draft`
+- `allow-ai-list-scenario-drafts`
+- `allow-ai-apply-scenario-draft`
+- `allow-ai-revert-scenario-draft`
 
 ## Permission Table
 
@@ -241,6 +259,422 @@ Enables the agent_stop command without any pre-configured scope.
 <td>
 
 Denies the agent_stop command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-analyze-coverage`
+
+</td>
+<td>
+
+Enables the ai_analyze_coverage command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-analyze-coverage`
+
+</td>
+<td>
+
+Denies the ai_analyze_coverage command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-analyze-dependencies`
+
+</td>
+<td>
+
+Enables the ai_analyze_dependencies command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-analyze-dependencies`
+
+</td>
+<td>
+
+Denies the ai_analyze_dependencies command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-apply-scenario-draft`
+
+</td>
+<td>
+
+Enables the ai_apply_scenario_draft command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-apply-scenario-draft`
+
+</td>
+<td>
+
+Denies the ai_apply_scenario_draft command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-chat-approve`
+
+</td>
+<td>
+
+Enables the ai_chat_approve command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-chat-approve`
+
+</td>
+<td>
+
+Denies the ai_chat_approve command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-chat-cancel`
+
+</td>
+<td>
+
+Enables the ai_chat_cancel command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-chat-cancel`
+
+</td>
+<td>
+
+Denies the ai_chat_cancel command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-chat-send`
+
+</td>
+<td>
+
+Enables the ai_chat_send command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-chat-send`
+
+</td>
+<td>
+
+Denies the ai_chat_send command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-delete-session`
+
+</td>
+<td>
+
+Enables the ai_delete_session command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-delete-session`
+
+</td>
+<td>
+
+Denies the ai_delete_session command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-generate-scenario-draft`
+
+</td>
+<td>
+
+Enables the ai_generate_scenario_draft command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-generate-scenario-draft`
+
+</td>
+<td>
+
+Denies the ai_generate_scenario_draft command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-generate-test-case-drafts`
+
+</td>
+<td>
+
+Enables the ai_generate_test_case_drafts command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-generate-test-case-drafts`
+
+</td>
+<td>
+
+Denies the ai_generate_test_case_drafts command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-get-session`
+
+</td>
+<td>
+
+Enables the ai_get_session command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-get-session`
+
+</td>
+<td>
+
+Denies the ai_get_session command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-list-scenario-drafts`
+
+</td>
+<td>
+
+Enables the ai_list_scenario_drafts command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-list-scenario-drafts`
+
+</td>
+<td>
+
+Denies the ai_list_scenario_drafts command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-list-sessions`
+
+</td>
+<td>
+
+Enables the ai_list_sessions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-list-sessions`
+
+</td>
+<td>
+
+Denies the ai_list_sessions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-propose-fix`
+
+</td>
+<td>
+
+Enables the ai_propose_fix command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-propose-fix`
+
+</td>
+<td>
+
+Denies the ai_propose_fix command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-revert-scenario-draft`
+
+</td>
+<td>
+
+Enables the ai_revert_scenario_draft command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-revert-scenario-draft`
+
+</td>
+<td>
+
+Denies the ai_revert_scenario_draft command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-save-scenario-draft`
+
+</td>
+<td>
+
+Enables the ai_save_scenario_draft command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-save-scenario-draft`
+
+</td>
+<td>
+
+Denies the ai_save_scenario_draft command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-ai-test-connection`
+
+</td>
+<td>
+
+Enables the ai_test_connection command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-ai-test-connection`
+
+</td>
+<td>
+
+Denies the ai_test_connection command without any pre-configured scope.
 
 </td>
 </tr>
@@ -1203,6 +1637,32 @@ Enables the get_active_project command without any pre-configured scope.
 <td>
 
 Denies the get_active_project command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-get-ai-settings`
+
+</td>
+<td>
+
+Enables the get_ai_settings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-get-ai-settings`
+
+</td>
+<td>
+
+Denies the get_ai_settings command without any pre-configured scope.
 
 </td>
 </tr>
@@ -3231,6 +3691,32 @@ Enables the set_active_project command without any pre-configured scope.
 <td>
 
 Denies the set_active_project command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-set-ai-settings`
+
+</td>
+<td>
+
+Enables the set_ai_settings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-set-ai-settings`
+
+</td>
+<td>
+
+Denies the set_ai_settings command without any pre-configured scope.
 
 </td>
 </tr>

@@ -1,5 +1,7 @@
 //! Repository / Service 层：Project / Folder / Endpoint / Environment 的 CRUD。
 
+mod ai_sessions;
+mod ai_settings;
 mod endpoints;
 mod environments;
 mod folders;
@@ -12,6 +14,7 @@ mod proto_files;
 mod request_examples;
 mod response_examples;
 mod rows;
+mod scenario_drafts;
 mod scenario_runs;
 mod scenarios;
 mod settings;
@@ -22,6 +25,8 @@ mod test_cases;
 mod test_runs;
 mod ws_messages;
 
+pub use ai_sessions::*;
+pub use ai_settings::*;
 pub use endpoints::*;
 pub use environments::*;
 pub use folders::*;
@@ -33,6 +38,7 @@ pub use projects::*;
 pub use proto_files::*;
 pub use request_examples::*;
 pub use response_examples::*;
+pub use scenario_drafts::*;
 pub use scenario_runs::*;
 pub use scenarios::*;
 pub use settings::*;

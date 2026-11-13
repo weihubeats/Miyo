@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-ai-generate-test-case-drafts"
+description = "Enables the ai_generate_test_case_drafts command without any pre-configured scope."
+commands.allow = ["ai_generate_test_case_drafts"]
+
+[[permission]]
+identifier = "deny-ai-generate-test-case-drafts"
+description = "Denies the ai_generate_test_case_drafts command without any pre-configured scope."
+commands.deny = ["ai_generate_test_case_drafts"]

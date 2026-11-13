@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-ai-get-session"
+description = "Enables the ai_get_session command without any pre-configured scope."
+commands.allow = ["ai_get_session"]
+
+[[permission]]
+identifier = "deny-ai-get-session"
+description = "Denies the ai_get_session command without any pre-configured scope."
+commands.deny = ["ai_get_session"]

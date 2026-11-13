@@ -1,0 +1,22 @@
+[package]
+name = "miyo-ai"
+version = "0.0.1"
+edition = "2021"
+description = "AI 大模型客户端：OpenAI 兼容协议（chat/completions 流式 + 工具调用）与应用内 Agent 循环"
+license = "Apache-2.0"
+repository = "https://github.com/weihubeats/Miyo"
+homepage = "https://weihubeats.github.io/Miyo/"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+axum = { workspace = true }

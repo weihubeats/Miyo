@@ -22,6 +22,9 @@ import { ref } from 'vue'
 import { useProgress } from './useProgress'
 import { tFallback } from '../stores/locale'
 import type {
+  AiSessionView,
+  AiSettingsView,
+  AiMessageView,
   AuthSpec,
   AgentStatusInfo,
   BackupSummary,
@@ -38,6 +41,12 @@ import type {
   EnvironmentVariable,
   ExecuteRequestArgs,
   ExportedEnv,
+  FixProposal,
+  CoverageReport,
+  DependencyReport,
+  ScenarioDraftResult,
+  ScenarioDraftView,
+  TestCaseDraft,
   ImportedEnv,
   ExecuteResponse,
   ExportFormat,
@@ -1015,6 +1024,78 @@ export function useMiyoApi() {
     grpcListProtoFiles,
     grpcSaveProtoFiles,
     grpcDeleteProtoFile,
+
+  // ---------- AI 测试中心 ----------
+  async getAiSettings(): Promise<AiSettingsView> {
+    return invoke('plugin:miyo|get_ai_settings')
+  },
+  async setAiSettings(args: import('../types/miyoApi').SetAiSettingsArgs): Promise<void> {
+    await invoke('plugin:miyo|set_ai_settings', { args })
+  },
+  async aiTestConnection(): Promise<void> {
+    await invoke('plugin:miyo|ai_test_connection')
+  },
+  async aiListSessions(projectId: string): Promise<AiSessionView[]> {
+    return invoke('plugin:miyo|ai_list_sessions', { projectId })
+  },
+  async aiGetSession(sessionId: string): Promise<AiMessageView[]> {
+    return invoke('plugin:miyo|ai_get_session', { sessionId })
+  },
+  async aiDeleteSession(sessionId: string): Promise<void> {
+    await invoke('plugin:miyo|ai_delete_session', { sessionId })
+  },
+  async aiChatSend(args: {
+    sessionId: string
+    message: string
+    projectId?: string | null
+    locale?: string | null
+  }): Promise<void> {
+    await invoke('plugin:miyo|ai_chat_send', {
+      sessionId: args.sessionId,
+      message: args.message,
+      projectId: args.projectId ?? null,
+      locale: args.locale ?? null,
+    })
+  },
+  async aiChatApprove(sessionId: string, callId: string, approved: boolean): Promise<void> {
+    await invoke('plugin:miyo|ai_chat_approve', { sessionId, callId, approved })
+  },
+  async aiChatCancel(sessionId: string): Promise<void> {
+    await invoke('plugin:miyo|ai_chat_cancel', { sessionId })
+  },
+  async aiAnalyzeDependencies(projectId: string): Promise<DependencyReport> {
+    return invoke('plugin:miyo|ai_analyze_dependencies', { projectId })
+  },
+  async aiAnalyzeCoverage(projectId: string): Promise<CoverageReport> {
+    return invoke('plugin:miyo|ai_analyze_coverage', { projectId })
+  },
+  async aiGenerateTestCaseDrafts(endpointId: string): Promise<TestCaseDraft[]> {
+    return invoke('plugin:miyo|ai_generate_test_case_drafts', { endpointId })
+  },
+  async aiGenerateScenarioDraft(draft: Record<string, unknown>): Promise<ScenarioDraftResult> {
+    return invoke('plugin:miyo|ai_generate_scenario_draft', { draft })
+  },
+  async aiProposeFix(runId: string, notes?: string | null): Promise<FixProposal> {
+    return invoke('plugin:miyo|ai_propose_fix', { runId, notes: notes ?? null })
+  },
+  async aiSaveScenarioDraft(args: {
+    scenarioId: string
+    base: unknown
+    draft: unknown
+    summary?: string | null
+    source?: string | null
+  }): Promise<string> {
+    return invoke('plugin:miyo|ai_save_scenario_draft', { args })
+  },
+  async aiListScenarioDrafts(scenarioId: string, limit?: number): Promise<ScenarioDraftView[]> {
+    return invoke('plugin:miyo|ai_list_scenario_drafts', { scenarioId, limit: limit ?? 20 })
+  },
+  async aiApplyScenarioDraft(draftId: string): Promise<void> {
+    await invoke('plugin:miyo|ai_apply_scenario_draft', { draftId })
+  },
+  async aiRevertScenarioDraft(draftId: string): Promise<void> {
+    await invoke('plugin:miyo|ai_revert_scenario_draft', { draftId })
+  },
   }
 }
 
