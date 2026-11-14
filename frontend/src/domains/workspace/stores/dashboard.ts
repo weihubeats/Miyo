@@ -12,7 +12,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { AggregatedProjectStats } from '@/utils/projectStats'
-import type { Project, Team } from '@/types/miyoApi.d'
+import type { Project, ProjectQualityStat, Team } from '@/types/miyoApi.d'
 
 /** 统计的空值骨架（首次进入尚未加载时用）。 */
 export function emptyProjectStats(): AggregatedProjectStats {
@@ -31,6 +31,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const projects = ref<Project[] | null>(null)
   const teams = ref<Team[] | null>(null)
   const stats = ref<AggregatedProjectStats | null>(null)
+  /** 运行质量聚合（项目 id → 最近场景/用例运行结果；null = 未加载）。 */
+  const quality = ref<Record<string, ProjectQualityStat> | null>(null)
 
   /** 是否有可用于首屏渲染的快照（决定要不要走骨架屏）。 */
   function hasSnapshot(): boolean {
@@ -49,5 +51,21 @@ export const useDashboardStore = defineStore('dashboard', () => {
     stats.value = next
   }
 
-  return { projects, teams, stats, hasSnapshot, setProjects, setTeams, setStats }
+  function setQuality(list: ProjectQualityStat[]): void {
+    const map: Record<string, ProjectQualityStat> = {}
+    for (const q of list) map[q.project_id] = q
+    quality.value = map
+  }
+
+  return {
+    projects,
+    teams,
+    stats,
+    quality,
+    hasSnapshot,
+    setProjects,
+    setTeams,
+    setStats,
+    setQuality,
+  }
 })

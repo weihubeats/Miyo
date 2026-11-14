@@ -68,6 +68,7 @@ import type {
   OAuth2Token,
   Project,
   ProjectStat,
+  ProjectQualityStat,
   RecentActivity,
   McpPermissionStatus,
   McpToolStatus,
@@ -232,6 +233,13 @@ export function useMiyoApi() {
 
   /** 项目仪表板统计：单条 IPC 返回全部项目的接口数 + 最近更新接口（替代 N+1）。 */
   const listProjectStats = () => run(() => call<ProjectStat[]>('list_project_stats'))
+
+  /**
+   * 项目运行质量聚合：单条 IPC 返回全部项目的场景/用例最近运行结果分布
+   * （真实落库数据，无运行为 0，前端显示「未运行」）。quiet 在途去重。
+   */
+  const listProjectQuality = () =>
+    quiet<ProjectQualityStat[]>('list_project_quality')
 
   /**
    * 仪表板最近活动：单条 IPC 返回全局跨项目最近请求（含项目名/接口名联查，
@@ -911,6 +919,7 @@ export function useMiyoApi() {
     saveProject,
     updateProjectsOrder,
     listProjectStats,
+    listProjectQuality,
     readTextFile,
     deleteProject,
     setActiveProject,

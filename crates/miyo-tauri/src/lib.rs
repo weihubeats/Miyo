@@ -225,6 +225,7 @@ pub mod plugin {
                 commands::get_projects,
                 commands::update_projects_order,
                 commands::list_project_stats,
+                commands::list_project_quality,
                 commands::save_project,
                 commands::delete_project,
                 commands::set_active_project,

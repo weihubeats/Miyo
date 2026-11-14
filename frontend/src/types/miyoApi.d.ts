@@ -497,7 +497,25 @@ export interface ProjectStat {
   latest_path: string | null
 }
 
-/** 仪表板最近活动（Rust `RecentActivity`，list_recent_activities 命令，snake_case 契约）。 */
+/** 项目运行质量聚合（Rust `ProjectQualityStat`，list_project_quality 命令，snake_case 契约）。 */
+export interface ProjectQualityStat {
+  project_id: string
+  scenarios_total: number
+  /** 有过至少一次运行记录的场景数（0 = 全部未运行）。 */
+  scenarios_ran: number
+  /** 最近一次运行通过 / 失败（含取消）的场景数。 */
+  scenario_last_ok: number
+  scenario_last_fail: number
+  /** 全项目最近一次场景运行失败时刻（RFC3339；无失败为 null）。 */
+  scenario_last_failed_at: string | null
+  cases_total: number
+  /** last_run_status 分布（Success / Failed / Untested）。 */
+  cases_success: number
+  cases_failed: number
+  cases_untested: number
+  /** 全项目最近一次用例运行失败时刻（RFC3339；无失败为 null）。 */
+  case_last_failed_at: string | null
+}
 
 /** 仪表板最近活动（Rust `RecentActivity`，list_recent_activities 命令，snake_case 契约）。 */
 export interface RecentActivity {

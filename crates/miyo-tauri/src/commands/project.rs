@@ -53,6 +53,52 @@ pub async fn list_project_stats(state: State<'_, AppState>) -> CommandResult<Vec
         .collect())
 }
 
+/// 项目运行质量聚合（首页项目卡「测试概览」）：场景/用例的最近运行结果分布。
+///
+/// 字段保持 snake_case（与 [`ProjectStat`] 同一口径约定，前端 miyoApi.d.ts
+/// 按蛇形读取）。全部计数来自真实落库记录，无运行返回 0 / None，
+/// 前端对 0 运行显示「未运行」，不虚构成功率。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectQualityStat {
+    pub project_id: Uuid,
+    pub scenarios_total: i64,
+    /// 有过至少一次运行记录的场景数（0 = 全部未运行）。
+    pub scenarios_ran: i64,
+    /// 最近一次运行通过 / 失败的场景数（含被取消）。
+    pub scenario_last_ok: i64,
+    pub scenario_last_fail: i64,
+    /// 全项目最近一次场景运行失败时刻（RFC3339；无失败为 None）。
+    pub scenario_last_failed_at: Option<String>,
+    pub cases_total: i64,
+    /// last_run_status 分布（Success / Failed / Untested）。
+    pub cases_success: i64,
+    pub cases_failed: i64,
+    pub cases_untested: i64,
+    /// 全项目最近一次用例运行失败时刻（RFC3339；无失败为 None）。
+    pub case_last_failed_at: Option<String>,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_project_quality(state: State<'_, AppState>) -> CommandResult<Vec<ProjectQualityStat>> {
+    let rows = repo::list_project_quality(&state.db).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ProjectQualityStat {
+            project_id: Uuid::parse_str(&r.project_id).unwrap_or_else(|_| Uuid::nil()),
+            scenarios_total: r.scenarios_total,
+            scenarios_ran: r.scenarios_ran,
+            scenario_last_ok: r.scenario_last_ok,
+            scenario_last_fail: r.scenario_last_fail,
+            scenario_last_failed_at: r.scenario_last_failed_at,
+            cases_total: r.cases_total,
+            cases_success: r.cases_success,
+            cases_failed: r.cases_failed,
+            cases_untested: r.cases_untested,
+            case_last_failed_at: r.case_last_failed_at,
+        })
+        .collect())
+}
+
 /// 拖拽排序持久化：按前端拖拽后的 id 顺序（事务）批量更新 sort_order。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn update_projects_order(

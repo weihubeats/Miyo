@@ -9,6 +9,7 @@ const COMMANDS: &[&str] = &[
     "set_active_project",
     "get_active_project",
     "list_project_stats",
+    "list_project_quality",
     "list_endpoints",
     "get_endpoint",
     "save_endpoint",

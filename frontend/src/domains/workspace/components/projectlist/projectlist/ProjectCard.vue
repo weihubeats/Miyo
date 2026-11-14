@@ -2,24 +2,27 @@
 /**
  * ProjectCard：项目卡片（网格模式）。
  *
- * 四行信息层级（统一卡片高度）：
- * 1. 图标 + 名称 + 当前状态（打开中 pill）；
+ * 五行信息层级（统一卡片高度）：
+ * 1. 图标 + 名称 + 当前状态（打开中 pill / 最近运行失败红点）；
  * 2. 描述（最多两行，空描述占位同样占两行保齐）；
  * 3. 指标行：API 数 · 场景数 · 更新时间；
- * 4. 进入项目提示（hover 提亮）。
+ * 4. 质量行：请求成功率 · 场景最近运行 · 用例最近状态（无数据显示 —/未运行，
+ *    数据源 list_project_quality + list_project_stats，全部真实落库数据）；
+ * 5. 进入项目提示（hover 提亮）。
  * 更多操作（⋯）独立悬浮右上角，click.stop 不触发卡片跳转；
  * hover 轻微提亮边框，删除走父级 ProjectDeleteModal 二次确认。
  */
+import { computed } from 'vue'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import { useLocaleStore } from '@/stores/locale'
-import type { Project } from '@/types/miyoApi.d'
+import type { Project, ProjectQualityStat } from '@/types/miyoApi.d'
 import { avatarStyle, initials, timeAgo } from '@/domains/workspace/components/projectlist/projectlist/projectMeta'
 
 const locale = useLocaleStore()
 const t = locale.t
 
-defineProps<{
+const props = defineProps<{
   project: Project
   count: number
   /** 场景数（list_project_stats 后发字段，缺省按 0） */
@@ -29,7 +32,59 @@ defineProps<{
   menuOpen: boolean
   /** 手动排序模式下显示拖拽手柄 */
   draggable: boolean
+  /** 请求历史成功 / 失败数（list_project_stats；无记录 0） */
+  okCount?: number
+  failCount?: number
+  /** 运行质量聚合（list_project_quality；未加载为 null → 质量行隐藏） */
+  quality?: ProjectQualityStat | null
 }>()
+
+/** 请求成功率文案（无请求记录显示 —，不虚构 0%）。 */
+const reqRateText = computed(() => {
+  const ok = props.okCount ?? 0
+  const fail = props.failCount ?? 0
+  if (ok + fail === 0) return t('pcard.reqRate', { rate: '—' })
+  const rate = Math.round((ok / (ok + fail)) * 100)
+  return t('pcard.reqRate', { rate: `${rate}%` })
+})
+
+/** 场景最近运行文案（未运行显示「未运行」，不虚构成功率）。 */
+const sceneQualText = computed(() => {
+  const q = props.quality
+  if (!q || q.scenarios_ran === 0) return t('pcard.notRun')
+  return t('pcard.runSplit', { ok: q.scenario_last_ok, fail: q.scenario_last_fail })
+})
+
+/** 用例最近状态文案（全部 Untested 同样显示未运行）。 */
+const caseQualText = computed(() => {
+  const q = props.quality
+  if (!q || q.cases_success + q.cases_failed === 0) return t('pcard.notRun')
+  return t('pcard.runSplit', { ok: q.cases_success, fail: q.cases_failed })
+})
+
+/** 质量行是否展示：项目里根本没有场景/用例/请求时不占位。 */
+const hasQualityRow = computed(() => {
+  const q = props.quality
+  return !!q && (q.scenarios_total > 0 || q.cases_total > 0 || (props.okCount ?? 0) + (props.failCount ?? 0) > 0)
+})
+
+/** 最近运行存在失败（场景或用例）：卡片头红点提示。 */
+const hasRecentFail = computed(() => {
+  const q = props.quality
+  return !!q && (q.scenario_last_fail > 0 || q.cases_failed > 0)
+})
+const recentFailTitle = computed(() => {
+  const q = props.quality
+  if (!q) return ''
+  const parts: string[] = []
+  if (q.scenario_last_fail > 0) {
+    parts.push(t('pcard.sceneFailDetail', { n: q.scenario_last_fail, time: q.scenario_last_failed_at ? timeAgo(q.scenario_last_failed_at) : '' }))
+  }
+  if (q.cases_failed > 0) {
+    parts.push(t('pcard.caseFailDetail', { n: q.cases_failed, time: q.case_last_failed_at ? timeAgo(q.case_last_failed_at) : '' }))
+  }
+  return parts.join('\n')
+})
 
 const emit = defineEmits<{
   open: []
@@ -68,6 +123,12 @@ const emit = defineEmits<{
         <span class="status-dot" aria-hidden="true"></span>
         {{ t('pcard.statusActive') }}
       </span>
+      <span
+        v-else-if="hasRecentFail"
+        class="proj-faildot"
+        :title="recentFailTitle"
+        aria-hidden="true"
+      ></span>
     </div>
     <p class="proj-desc" :class="{ empty: !project.description }">
       {{ project.description || t('pcard.noDesc') }}
@@ -78,6 +139,15 @@ const emit = defineEmits<{
       <span class="metric"><Icon name="play" :size="11" />{{ t('pcard.scenarioCount', { n: scenarioCount }) }}</span>
       <span class="metric-sep">·</span>
       <span class="metric"><Icon name="clock" :size="12" />{{ t('pcard.updatedAgo', { v: timeAgo(project.updated_at) }) }}</span>
+    </div>
+    <div v-if="hasQualityRow" class="proj-metrics qual">
+      <span class="metric"><Icon name="gauge" :size="11" />{{ reqRateText }}</span>
+      <span class="metric-sep">·</span>
+      <span class="metric"><Icon name="play" :size="10" />{{ t('pcard.sceneQuality', { v: sceneQualText }) }}</span>
+      <span class="metric-sep">·</span>
+      <span class="metric" :class="{ warn: (quality?.cases_failed ?? 0) > 0 }">
+        <Icon name="check" :size="11" />{{ t('pcard.caseQuality', { v: caseQualText }) }}
+      </span>
     </div>
     <div class="proj-foot">
       <span class="proj-open-hint">
@@ -173,7 +243,7 @@ const emit = defineEmits<{
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 2px 8px rgba(0, 0, 0, 0.3);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   letter-spacing: 0.02em;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
@@ -201,9 +271,18 @@ const emit = defineEmits<{
   font-size: var(--fs-xxs);
   font-weight: 600;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--success-tint);
   color: var(--success);
+}
+/* 最近运行失败红点（场景/用例最近一次运行有失败；hover 见 title 明细） */
+.proj-faildot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--danger) 55%, transparent);
 }
 .proj-status .status-dot {
   width: 5px;
@@ -216,7 +295,7 @@ const emit = defineEmits<{
 /* ---- 第 2 行：描述（固定两行高，齐卡片高度） ---- */
 .proj-desc {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   /* 固定两行高（2 × 1.5em）：一行描述 / 空描述也占满，卡片底边对齐 */
   height: 36px;
@@ -257,6 +336,14 @@ const emit = defineEmits<{
   white-space: nowrap;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+
+/* 质量行：同排版，失败值染危险色（场景/用例最近运行 ✗ > 0） */
+.proj-metrics.qual .metric.warn {
+  color: var(--danger);
+}
+.proj-metrics.qual .metric.warn svg {
+  color: var(--danger);
 }
 
 /* 更新时间在最右：空间不足时先牺牲它，API / 场景数保持可读 */
@@ -305,7 +392,7 @@ const emit = defineEmits<{
   justify-content: center;
   width: 16px;
   height: 20px;
-  border-radius: 5px;
+  border-radius: var(--radius);
   color: var(--text-3);
   cursor: grab;
   opacity: 0;
@@ -364,7 +451,7 @@ const emit = defineEmits<{
   border-radius: var(--radius-sm);
   background: none;
   color: var(--text-1);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   text-align: left;
   cursor: pointer;

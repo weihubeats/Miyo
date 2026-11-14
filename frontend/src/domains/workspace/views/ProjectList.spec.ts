@@ -9,7 +9,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import ProjectList from '@/domains/workspace/views/ProjectList.vue'
 import { useLocaleStore } from '@/stores/locale'
-import type { Project, ProjectStat, RecentActivity } from '@/types/miyoApi'
+import type { Project, ProjectQualityStat, ProjectStat, RecentActivity } from '@/types/miyoApi'
 
 const routerMock = vi.hoisted(() => ({ push: vi.fn() }))
 
@@ -39,6 +39,7 @@ const apiMock = vi.hoisted(() => ({
   getProjects: vi.fn(async () => backend.projects.map((p) => ({ ...p }))),
   listTeams: vi.fn(async () => []),
   listProjectStats: vi.fn(async (): Promise<ProjectStat[]> => []),
+  listProjectQuality: vi.fn(async (): Promise<ProjectQualityStat[]> => []),
   listRecentActivities: vi.fn(async (): Promise<RecentActivity[]> => []),
   saveProject: vi.fn(async (p: Project) => {
     backend.projects.push(p)

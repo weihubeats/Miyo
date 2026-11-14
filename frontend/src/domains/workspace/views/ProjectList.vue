@@ -17,6 +17,7 @@ import { ensureSwapMounted } from '@/utils/sortable'
 import Sortable from 'sortablejs'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useToast } from '@/composables/useToast'
+import { useShortcuts, shortcutDef } from '@/composables/useShortcuts'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useLocaleStore } from '@/stores/locale'
 import { hasPendingUpdate, pendingUpdateVersion } from '@/domains/workspace/composables/useAutoUpdate'
@@ -54,7 +55,7 @@ import { useWindowDrag } from '@/domains/workspace/composables/useWindowDrag'
 import { storeToRefs } from 'pinia'
 import { useDashboardStore, emptyProjectStats } from '@/domains/workspace/stores/dashboard'
 import logo from '@/assets/miyo-logo.svg'
-import type { Project, ProjectStat, RecentActivity, Team } from '@/types/miyoApi.d'
+import type { Project, ProjectQualityStat, ProjectStat, RecentActivity, Team } from '@/types/miyoApi.d'
 import { errorText } from '@/utils/errorText'
 
 const api = useMiyoApi()
@@ -79,6 +80,32 @@ const stats = ref<AggregatedProjectStats>(dashboard.stats ?? emptyProjectStats()
 /** 模板与排序用的计数视图（场景 / 请求数由总览 computed 直接读 stats）。 */
 const counts = computed(() => stats.value.counts)
 const scenarioCounts = computed(() => stats.value.scenarioCounts)
+const okCounts = computed(() => stats.value.okCounts)
+const failCounts = computed(() => stats.value.failCounts)
+
+/**
+ * 运行质量聚合（项目卡质量行 / 失败红点）：真实落库数据，未运行显示
+ * 「未运行」。快照复用 dashboard store（返回首页不闪），失败静默降级。
+ */
+const qualityMap = ref<Record<string, ProjectQualityStat>>(
+  dashboard.quality ? { ...dashboard.quality } : {},
+)
+function qualityOf(id: string): ProjectQualityStat | null {
+  return qualityMap.value[id] ?? null
+}
+function loadQuality(): void {
+  api
+    .listProjectQuality()
+    .then((list) => {
+      const map: Record<string, ProjectQualityStat> = {}
+      for (const q of list) map[q.project_id] = q
+      qualityMap.value = map
+      dashboard.setQuality(list)
+    })
+    .catch(() => {
+      // 静默：质量行不渲染（与统计失败同策略，不清零误导）
+    })
+}
 
 /** 统计是否仍未落定（首次加载 / 失败后未重试成功）：用于区分「真 0」与「未加载」。 */
 const statsReady = ref(dashboard.stats !== null)
@@ -246,10 +273,18 @@ function toggleTeam(teamId: string): void {
 }
 
 // ---------- 过滤 / 排序 ----------
+/** 搜索命中：名称 + 描述 + 所属团队名（开发者常按团队/用途找项目）。 */
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return [...(projects.value ?? [])]
-  return (projects.value ?? []).filter((p) => p.name.toLowerCase().includes(q))
+  const list = projects.value ?? []
+  if (!q) return [...list]
+  const teamNameById = new Map((teams.value ?? []).map((tm) => [tm.id, tm.name.toLowerCase()]))
+  return list.filter(
+    (p) =>
+      p.name.toLowerCase().includes(q) ||
+      p.description.toLowerCase().includes(q) ||
+      (teamNameById.get(p.team_id ?? '') ?? '').includes(q),
+  )
 })
 
 /** 组内排序：manual 保持数据库顺序（拖拽持久化），其余按所选维度。 */
@@ -343,16 +378,14 @@ function closeFilters(): void {
 // ---------- 搜索快捷键（⌘K / Ctrl+K 聚焦；Esc 清空） ----------
 const searchEl = ref<HTMLInputElement | null>(null)
 
-function onGlobalKeydown(e: KeyboardEvent): void {
-  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'k') return
-  // 只在仪表板内生效：其它输入框（弹窗/编辑器）里的 ⌘K 交给组件自己处理
-  e.preventDefault()
-  searchEl.value?.focus()
-  searchEl.value?.select()
-}
-
-onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
+// 快捷键走全局注册表（useShortcuts）：帮助面板自动收录、键位可自定义、
+// 卸载自动注销。路由级注册——离开仪表板即失效，工作区的 ⌘K 命令面板互不抢占。
+useShortcuts([
+  shortcutDef('dashboard.search-focus', () => {
+    searchEl.value?.focus()
+    searchEl.value?.select()
+  }),
+])
 
 /** 结果统计：无筛选时给全量概览，筛选中给匹配/总数。 */
 const resultSummary = computed(() => {
@@ -518,6 +551,7 @@ async function load(): Promise<void> {
       .then((list) => (teams.value = list))
       .catch(() => {})
     await loadCounts()
+    void loadQuality()
     void loadActivities()
   } catch (e) {
     loadError.value = errorText(e)
@@ -546,6 +580,7 @@ async function refreshSilently(): Promise<void> {
       .then((l) => (teams.value = l))
       .catch(() => {})
     await loadCounts()
+    void loadQuality()
     void loadActivities()
   } catch {
     // 静默：保留快照，下一次进入或手动重试再拉
@@ -856,7 +891,7 @@ useWindowDrag(topBarEl)
                     {{ t('projectlist.heroSub') }}
                     <button
                       v-if="statsError"
-                      class="stats-retry"
+                      class="stats-retry miyo-btn miyo-btn-sm miyo-btn-danger"
                       type="button"
                       @click="loadCounts"
                     >
@@ -904,7 +939,7 @@ useWindowDrag(topBarEl)
                   <span class="stat-label">{{ t('projectlist.recentActivity') }}</span>
                   <button
                     v-if="activitiesState === 'error'"
-                    class="stats-retry"
+                    class="stats-retry miyo-btn miyo-btn-sm miyo-btn-danger"
                     type="button"
                     @click="loadActivities"
                   >
@@ -956,21 +991,21 @@ useWindowDrag(topBarEl)
               <div class="stat-body">
                 <span class="stat-label">{{ t('projectlist.quickStart') }}</span>
                 <div class="quick-grid">
-                  <button class="quick-btn primary" type="button" :title="t('projectlist.scratchHint')" @click="showScratch = true">
+                  <button class="miyo-btn miyo-btn-primary" type="button" :title="t('projectlist.scratchHint')" @click="showScratch = true">
                     <Icon name="send" :size="13" /> {{ t('projectlist.quickRequest') }}
                   </button>
-                  <button class="quick-btn ghost" type="button" :title="t('projectlist.newProject')" @click="showCreate = true">
+                  <button class="miyo-btn" type="button" :title="t('projectlist.newProject')" @click="showCreate = true">
                     <Icon name="plus" :size="13" /> {{ t('projectlist.createProject') }}
                   </button>
                   <button
-                    class="quick-btn ghost"
+                    class="miyo-btn"
                     type="button"
                     :title="t('projectlist.importHint')"
                     @click="droppedText = ''; showImport = true"
                   >
                     <Icon name="download" :size="13" /> {{ t('projectlist.importProject') }}
                   </button>
-                  <button class="quick-btn ghost" type="button" :title="t('pnav.realtimeHint')" @click="router.push('/realtime')">
+                  <button class="miyo-btn" type="button" :title="t('pnav.realtimeHint')" @click="router.push('/realtime')">
                     <Icon name="globe" :size="13" /> {{ t('pnav.realtime') }}
                   </button>
                 </div>
@@ -1041,13 +1076,13 @@ useWindowDrag(topBarEl)
                   <Icon name="list" :size="14" />
                 </button>
               </div>
-              <button v-if="hasActiveFilters" class="clear-btn" type="button" @click="closeFilters">
+              <button v-if="hasActiveFilters" class="clear-btn miyo-btn" type="button" @click="closeFilters">
                 <Icon name="x" :size="12" /> {{ t('projectlist.clearFilters') }}
               </button>
-              <button class="team-mgr-btn" type="button" @click="showTeamMgr = true">
+              <button class="miyo-btn" type="button" @click="showTeamMgr = true">
                 <Icon name="users" :size="14" /> {{ t('team.manage') }}
               </button>
-              <button class="btn-new" type="button" @click="showCreate = true">
+              <button class="miyo-btn miyo-btn-primary" type="button" @click="showCreate = true">
                 <Icon name="plus" :size="14" /> {{ t('projectlist.newProject') }}
               </button>
             </div>
@@ -1081,7 +1116,7 @@ useWindowDrag(topBarEl)
                 </div>
                 <div class="team-divider-actions">
                   <button
-                    class="team-add ghost"
+                    class="team-add miyo-btn miyo-btn-sm miyo-btn-ghost"
                     type="button"
                     :title="t('projectlist.teamSyncHint')"
                     @click="openImportForTeam(g.team)"
@@ -1089,7 +1124,7 @@ useWindowDrag(topBarEl)
                     <Icon name="refresh" :size="12" /> {{ t('projectlist.teamSync') }}
                   </button>
                   <button
-                    class="team-add"
+                    class="team-add miyo-btn miyo-btn-sm miyo-btn-ghost"
                     type="button"
                     :title="t('projectlist.teamQuickAdd')"
                     @click="openCreateForTeam(g.team.id)"
@@ -1110,6 +1145,9 @@ useWindowDrag(topBarEl)
                   :project="p"
                   :count="counts[p.id] ?? 0"
                   :scenario-count="scenarioCounts[p.id] ?? 0"
+                  :ok-count="okCounts[p.id] ?? 0"
+                  :fail-count="failCounts[p.id] ?? 0"
+                  :quality="qualityOf(p.id)"
                   :active="isActive(p)"
                   :menu-open="menuOpenId === p.id"
                   :draggable="dragEnabled"
@@ -1132,6 +1170,9 @@ useWindowDrag(topBarEl)
                   :project="p"
                   :count="counts[p.id] ?? 0"
                   :scenario-count="scenarioCounts[p.id] ?? 0"
+                  :ok-count="okCounts[p.id] ?? 0"
+                  :fail-count="failCounts[p.id] ?? 0"
+                  :quality="qualityOf(p.id)"
                   :active="isActive(p)"
                   :menu-open="menuOpenId === p.id"
                   @open="onCardOpen(p)"
@@ -1310,7 +1351,7 @@ useWindowDrag(topBarEl)
 }
 
 .top-title {
-  font-size: 14px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1);
   letter-spacing: 0.01em;
@@ -1452,7 +1493,7 @@ useWindowDrag(topBarEl)
 
 .hero-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1);
   letter-spacing: 0.01em;
@@ -1580,7 +1621,7 @@ useWindowDrag(topBarEl)
   font-weight: 700;
   line-height: 1.2;
   padding: 4px 0;
-  border-radius: 6px;
+  border-radius: var(--radius);
   border: 1px solid transparent;
   letter-spacing: 0.03em;
   color: var(--text-3);
@@ -1603,7 +1644,7 @@ useWindowDrag(topBarEl)
 }
 
 .tl-name {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-1);
   overflow: hidden;
@@ -1689,68 +1730,12 @@ useWindowDrag(topBarEl)
   font-family: var(--font-mono);
 }
 
-/* ---- 快速开始：紧凑 2×2 操作入口 ---- */
+/* ---- 快速开始：紧凑 2×2 操作入口（按钮视觉走全局 miyo-btn 系，不再自绘） ---- */
 .quick-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-top: 8px;
-}
-
-.quick-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: var(--radius);
-  font-size: 12px;
-  font-weight: 600;
-  font-family: inherit;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    border-color var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease),
-    transform var(--dur) var(--ease);
-}
-.quick-btn:active {
-  transform: translateY(1px);
-}
-
-/* 主 CTA：紫渐变光晕（与全局 miyo-btn-primary 同语言） */
-.quick-btn.primary {
-  border: 1px solid transparent;
-  background: var(--grad-primary);
-  color: #fff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 3px 12px var(--primary-glow);
-}
-.quick-btn.primary:hover {
-  border-color: transparent;
-  background: var(--grad-primary-hover);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    0 5px 16px var(--primary-glow-hover);
-}
-.quick-btn.primary:active {
-  background: var(--grad-primary);
-  box-shadow: 0 2px 8px var(--primary-glow);
-}
-
-/* 次要动作：中性描边样式 */
-.quick-btn.ghost {
-  border: 1px solid var(--border-strong);
-  background: color-mix(in srgb, var(--text-1) 3%, transparent);
-  color: var(--text-2);
-}
-.quick-btn.ghost:hover {
-  background: var(--bg-hover);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  color: var(--accent);
 }
 
 /* ---------- 底部 Dropzone：拖入导入 + 点击创建 ---------- */
@@ -1807,7 +1792,7 @@ useWindowDrag(topBarEl)
   margin: 0;
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1866,7 +1851,7 @@ useWindowDrag(topBarEl)
   align-items: center;
   justify-content: center;
   width: 32px;
-  height: 28px;
+  height: var(--h-sm);
   padding: 0;
   border: none;
   border-radius: var(--radius-md);
@@ -1886,29 +1871,7 @@ useWindowDrag(topBarEl)
   color: var(--accent);
 }
 
-.clear-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  color: var(--text-2);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  transition:
-    color var(--dur) var(--ease),
-    border-color var(--dur) var(--ease),
-    background var(--dur) var(--ease);
-}
-.clear-btn:hover {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
-  background: var(--danger-tint);
-}
+/* .clear-btn 仅存类名作为测试/结构钩子，视觉全部由 miyo-btn 承担 */
 
 .toolbar-filter-clear {
   display: inline-flex;
@@ -1941,29 +1904,16 @@ useWindowDrag(topBarEl)
   background: var(--bg-hover);
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   line-height: 1.4;
 }
 .toolbar-filter:focus-within .toolbar-kbd {
   display: none;
 }
 
+/* 行内重试：视觉走 miyo-btn-sm + miyo-btn-danger，仅保留文本流外边距 */
 .stats-retry {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
   margin-left: 8px;
-  border: none;
-  background: none;
-  color: var(--danger);
-  font-size: var(--fs-xxs);
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-}
-
-.stats-retry:hover {
-  background: var(--bg-hover);
 }
 
 .toolbar-filter {
@@ -1972,7 +1922,7 @@ useWindowDrag(topBarEl)
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 36px;
+  height: var(--h-lg);
   padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1995,7 +1945,7 @@ useWindowDrag(topBarEl)
   background: none;
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 .toolbar-filter-input::placeholder {
   color: var(--text-3);
@@ -2008,60 +1958,10 @@ useWindowDrag(topBarEl)
 }
 .toolbar-team :deep(.cs-trigger),
 .toolbar-sort :deep(.cs-trigger) {
-  height: 36px;
+  height: var(--h-lg);
 }
 
-.btn-new {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 36px;
-  padding: 0 16px;
-  border: none;
-  border-radius: var(--radius-lg);
-  background: var(--grad-primary);
-  color: #fff;
-  font-size: 12.5px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  box-shadow: 0 4px 14px var(--primary-glow);
-  transition:
-    background var(--dur) var(--ease),
-    transform var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease);
-}
-.btn-new:hover {
-  background: var(--grad-primary-hover);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    0 6px 18px var(--primary-glow-hover);
-}
-.btn-new:active {
-  transform: translateY(1px);
-}
-.team-mgr-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 36px;
-  padding: 0 12px;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text-2);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-.team-mgr-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-}
+/* 「新建项目」主 CTA 与「团队管理」次按钮的视觉走全局 miyo-btn / miyo-btn-primary */
 
 /* ---------- 项目卡片网格（卡片自身样式见 ProjectCard） ---------- */
 /* auto-fill + minmax(var(--card-min), 1fr)：列数按**内容区实际宽度**决定
@@ -2149,7 +2049,7 @@ useWindowDrag(topBarEl)
 }
 .team-name {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   color: var(--text-1);
   overflow: hidden;
@@ -2162,39 +2062,21 @@ useWindowDrag(topBarEl)
   font-family: var(--font-mono);
   color: var(--text-3);
   background: var(--bg-hover);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 /* 单团队视角的括号计数：纯弱化文本，无胶囊底 */
 .team-count-text {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
-/* 极简 Ghost「＋ 新建」：hover 才染 accent 色 */
+/* 极简 Ghost「＋ 新建」：视觉走 miyo-btn-sm + miyo-btn-ghost，仅保留 flex 布局职责 */
 .team-add {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
   flex-shrink: 0;
-  padding: 4px 8px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-3);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  transition:
-    color var(--dur) var(--ease),
-    background var(--dur) var(--ease);
-}
-.team-add:hover {
-  color: var(--accent);
-  background: var(--accent-tint);
 }
 .team-empty {
   margin: 0;
   padding: 4px 0 12px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -2250,7 +2132,7 @@ useWindowDrag(topBarEl)
 :global(.sortable-ghost) {
   background-color: color-mix(in srgb, var(--accent) 5%, transparent) !important;
   border: 2px dashed color-mix(in srgb, var(--accent) 40%, transparent) !important;
-  border-radius: 0.75rem !important;
+  border-radius: var(--radius-lg) !important;
   box-shadow: none !important;
   opacity: 1;
   cursor: grabbing;
@@ -2270,7 +2152,7 @@ useWindowDrag(topBarEl)
 :global(.sortable-drag) {
   z-index: var(--z-dropzone);
   border-radius: var(--radius-lg) !important;
-  background: rgba(38, 38, 38, 0.95) !important;
+  background: color-mix(in srgb, var(--bg-elevated) 95%, transparent) !important;
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   border: 1px solid var(--accent) !important;
@@ -2305,14 +2187,14 @@ useWindowDrag(topBarEl)
 
 .empty-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-1);
 }
 
 .empty-hint {
   margin: 0 0 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   max-width: 380px;
 }

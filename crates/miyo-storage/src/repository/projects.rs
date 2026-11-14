@@ -105,6 +105,92 @@ pub async fn list_endpoint_stats(db: &SqlitePool) -> Result<Vec<ProjectEndpointS
     Ok(stats)
 }
 
+/// 项目级运行质量聚合（首页项目卡「测试概览」）：场景与用例的最近运行结果。
+///
+/// 口径（只统计真实落库数据，无运行记录返回 0/NULL，前端显示「未运行」）：
+/// - 场景：每场景最近一次运行（窗口函数 rn=1，与 scenario_runs 的
+///   `latest_run_summaries_for_project` 同范式），成功 = 未取消且零失败且有通过
+///   步骤；取消或有失败计失败。
+///   全 skipped 的运行不计入任一侧（既不算通过也不算失败）。
+/// - 用例：`test_cases.last_run_status` 汇总（'Untested'/'Success'/'Failed'，
+///   由 update_test_case_run_summary 回写），最近失败时间取 Failed 行的
+///   last_run_at 最大值。
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ProjectQualityStatRow {
+    pub project_id: String,
+    pub scenarios_total: i64,
+    /// 有过至少一次运行记录的场景数。
+    pub scenarios_ran: i64,
+    /// 最近一次运行通过的场景数。
+    pub scenario_last_ok: i64,
+    /// 最近一次运行失败/被取消的场景数。
+    pub scenario_last_fail: i64,
+    /// 全项目最近一次场景运行失败的时刻（RFC3339；无失败为 NULL）。
+    pub scenario_last_failed_at: Option<String>,
+    pub cases_total: i64,
+    pub cases_success: i64,
+    pub cases_failed: i64,
+    pub cases_untested: i64,
+    /// 全项目最近一次用例运行失败的时刻（RFC3339；无失败为 NULL）。
+    pub case_last_failed_at: Option<String>,
+}
+
+pub async fn list_project_quality(db: &SqlitePool) -> Result<Vec<ProjectQualityStatRow>> {
+    let rows: Vec<ProjectQualityStatRow> = sqlx::query_as(
+        "SELECT p.id AS project_id,
+                COALESCE(s.scenarios_total, 0) AS scenarios_total,
+                COALESCE(s.scenarios_ran, 0) AS scenarios_ran,
+                COALESCE(s.last_ok, 0) AS scenario_last_ok,
+                COALESCE(s.last_fail, 0) AS scenario_last_fail,
+                s.last_failed_at AS scenario_last_failed_at,
+                COALESCE(c.cases_total, 0) AS cases_total,
+                COALESCE(c.cases_success, 0) AS cases_success,
+                COALESCE(c.cases_failed, 0) AS cases_failed,
+                COALESCE(c.cases_untested, 0) AS cases_untested,
+                c.last_failed_at AS case_last_failed_at
+         FROM projects p
+         LEFT JOIN (
+             SELECT sc.project_id,
+                    COUNT(*) AS scenarios_total,
+                    COUNT(r.scenario_id) AS scenarios_ran,
+                    SUM(CASE WHEN r.cancelled = 0 AND r.fail_count = 0 AND r.ok_count > 0
+                             THEN 1 ELSE 0 END) AS last_ok,
+                    SUM(CASE WHEN r.cancelled = 1 OR r.fail_count > 0
+                             THEN 1 ELSE 0 END) AS last_fail,
+                    MAX(CASE WHEN r.cancelled = 1 OR r.fail_count > 0
+                             THEN r.finished_at END) AS last_failed_at
+             FROM scenarios sc
+             LEFT JOIN (
+                 SELECT sr.scenario_id, sr.ok_count, sr.fail_count, sr.cancelled,
+                        sr.finished_at,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY sr.scenario_id ORDER BY sr.finished_at DESC
+                        ) AS rn
+                 FROM scenario_runs sr
+             ) r ON r.scenario_id = sc.id AND r.rn = 1
+             GROUP BY sc.project_id
+         ) s ON s.project_id = p.id
+         LEFT JOIN (
+             SELECT e.project_id,
+                    COUNT(*) AS cases_total,
+                    SUM(CASE WHEN tc.last_run_status = 'Success' THEN 1 ELSE 0 END)
+                        AS cases_success,
+                    SUM(CASE WHEN tc.last_run_status = 'Failed' THEN 1 ELSE 0 END)
+                        AS cases_failed,
+                    SUM(CASE WHEN tc.last_run_status = 'Untested' THEN 1 ELSE 0 END)
+                        AS cases_untested,
+                    MAX(CASE WHEN tc.last_run_status = 'Failed' THEN tc.last_run_at END)
+                        AS last_failed_at
+             FROM test_cases tc
+             JOIN endpoints e ON e.id = tc.request_id
+             GROUP BY e.project_id
+         ) c ON c.project_id = p.id",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}
+
 /// 拖拽排序持久化：按给定 id 顺序（事务）批量重写 sort_order。
 /// 任一 id 不存在则整体回滚并报错，避免前端的脏顺序污染数据库。
 pub async fn update_projects_order(db: &SqlitePool, project_ids: &[Uuid]) -> Result<()> {
@@ -393,5 +479,179 @@ mod tests {
             .map(|p| p.id.to_string())
             .collect();
         assert_eq!(ids, [c.id.to_string(), a.id.to_string(), b.id.to_string()]);
+    }
+
+    /// 质量聚合：场景按「每场景最近一次运行」判定通过/失败（旧运行不参与），
+    /// 用例按 last_run_status 分布；无运行记录显示为未运行而非 0 成功率。
+    #[tokio::test]
+    async fn list_project_quality_aggregates_latest_runs() {
+        use crate::repository::scenario_runs::save_scenario_run;
+        use crate::repository::test_case_runs::save_test_case_run;
+        use crate::repository::test_cases::{create_test_case, update_test_case_run_summary};
+        use miyo_core::model::{ScenarioRun, TestCase, TestCaseStatus};
+
+        let db = memory_pool().await.expect("建库");
+        let quiet = create_project(&db, "安静项目", "").await.unwrap();
+        let active = create_project(&db, "活跃项目", "").await.unwrap();
+
+        // 活跃项目：场景 A 最近失败、场景 B 最近通过（各跑两次，只看最新一次）。
+        let scenario = |name: &str| Scenario {
+            setup: Vec::new(),
+            teardown: Vec::new(),
+            teardown_enabled: true,
+            data_sets: Vec::new(),
+            id: Uuid::new_v4(),
+            project_id: active.id,
+            name: name.into(),
+            description: String::new(),
+            category: String::new(),
+            sort_order: 0,
+            steps: Vec::new(),
+            script: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let sa = scenario("场景A");
+        let sb = scenario("场景B");
+        save_scenario(&db, &sa).await.unwrap();
+        save_scenario(&db, &sb).await.unwrap();
+
+        let run = |scenario_id: Uuid, ok: i64, fail: i64, cancelled: bool| ScenarioRun {
+            id: Uuid::new_v4(),
+            scenario_id,
+            environment_id: None,
+            finished_at: chrono::Utc::now(),
+            duration_ms: Some(10.0),
+            total_steps: ok + fail,
+            ok_count: ok,
+            fail_count: fail,
+            skipped_count: 0,
+            cancelled,
+            stopped_on_failure: false,
+            results_json: "{}".into(),
+            variables_json: "{}".into(),
+            meta_json: None,
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        save_scenario_run(&db, &run(sa.id, 3, 0, false))
+            .await
+            .unwrap(); // 旧：通过
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        save_scenario_run(&db, &run(sa.id, 1, 2, false))
+            .await
+            .unwrap(); // 新：失败
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        save_scenario_run(&db, &run(sb.id, 2, 0, false))
+            .await
+            .unwrap(); // 通过
+
+        // 活跃项目：用例 1 通过、用例 2 失败、用例 3 未运行；安静项目无用例。
+        let endpoint = endpoint_for(active.id, "被测接口", HttpMethod::GET, "/case");
+        save_endpoint(&db, &endpoint).await.unwrap();
+        let mk_case = |name: &str| TestCase {
+            id: Uuid::new_v4(),
+            request_id: endpoint.id,
+            name: name.into(),
+            category: "正向".into(),
+            folder: String::new(),
+            method: HttpMethod::GET,
+            url_path: "/case".into(),
+            path_variables: Vec::new(),
+            params: Vec::new(),
+            headers: Vec::new(),
+            body_type: "none".into(),
+            body_content: String::new(),
+            assertions: serde_json::json!([]),
+            extractors: serde_json::json!([]),
+            auth: None,
+            timeout_ms: None,
+            disable_cookies: false,
+            sort_order: 0,
+            last_run_status: TestCaseStatus::Untested,
+            last_run_at: None,
+            last_run_ok: None,
+            last_run_fail: None,
+            created_at: chrono::Utc::now(),
+        };
+        let c1 = mk_case("用例1");
+        let c2 = mk_case("用例2");
+        let c3 = mk_case("用例3");
+        for c in [&c1, &c2, &c3] {
+            create_test_case(&db, c).await.unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        update_test_case_run_summary(
+            &db,
+            c1.id,
+            TestCaseStatus::Success,
+            chrono::Utc::now(),
+            Some(2),
+            Some(0),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let failed_at = chrono::Utc::now();
+        update_test_case_run_summary(
+            &db,
+            c2.id,
+            TestCaseStatus::Failed,
+            failed_at,
+            Some(0),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        save_test_case_run(
+            &db,
+            &miyo_core::model::TestCaseRun {
+                id: Uuid::new_v4(),
+                case_id: c2.id,
+                endpoint_id: Some(endpoint.id),
+                environment_id: None,
+                started_at: failed_at,
+                finished_at: failed_at,
+                duration_ms: Some(5.0),
+                status: TestCaseStatus::Failed,
+                status_code: Some(500),
+                ok_count: 0,
+                fail_count: 1,
+                error: None,
+                results_json: "{}".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let rows = list_project_quality(&db).await.unwrap();
+        assert_eq!(rows.len(), 2);
+
+        let quiet_row = rows
+            .iter()
+            .find(|r| r.project_id == quiet.id.to_string())
+            .unwrap();
+        assert_eq!(quiet_row.scenarios_total, 0);
+        assert_eq!(quiet_row.scenarios_ran, 0);
+        assert_eq!(quiet_row.scenario_last_ok, 0);
+        assert_eq!(quiet_row.scenario_last_fail, 0);
+        assert!(quiet_row.scenario_last_failed_at.is_none());
+        assert_eq!(quiet_row.cases_total, 0);
+        assert!(quiet_row.case_last_failed_at.is_none());
+
+        let active_row = rows
+            .iter()
+            .find(|r| r.project_id == active.id.to_string())
+            .unwrap();
+        assert_eq!(active_row.scenarios_total, 2);
+        assert_eq!(active_row.scenarios_ran, 2);
+        // 场景 A 只看最新一次（失败），场景 B 通过 → 1 通过 / 1 失败。
+        assert_eq!(active_row.scenario_last_ok, 1);
+        assert_eq!(active_row.scenario_last_fail, 1);
+        assert!(active_row.scenario_last_failed_at.is_some());
+        assert_eq!(active_row.cases_total, 3);
+        assert_eq!(active_row.cases_success, 1);
+        assert_eq!(active_row.cases_failed, 1);
+        assert_eq!(active_row.cases_untested, 1);
+        assert!(active_row.case_last_failed_at.is_some());
     }
 }

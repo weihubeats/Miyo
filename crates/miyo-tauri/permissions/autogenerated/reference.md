@@ -13,6 +13,7 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-set-active-project`
 - `allow-get-active-project`
 - `allow-list-project-stats`
+- `allow-list-project-quality`
 - `allow-list-endpoints`
 - `allow-get-endpoint`
 - `allow-save-endpoint`
@@ -2495,6 +2496,32 @@ Enables the list_mock_rules command without any pre-configured scope.
 <td>
 
 Denies the list_mock_rules command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-list-project-quality`
+
+</td>
+<td>
+
+Enables the list_project_quality command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-project-quality`
+
+</td>
+<td>
+
+Denies the list_project_quality command without any pre-configured scope.
 
 </td>
 </tr>

@@ -14,6 +14,7 @@ permissions = [
     "allow-set-active-project",
     "allow-get-active-project",
     "allow-list-project-stats",
+    "allow-list-project-quality",
     "allow-list-endpoints",
     "allow-get-endpoint",
     "allow-save-endpoint",
