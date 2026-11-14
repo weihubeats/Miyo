@@ -84,7 +84,7 @@ function importToEditor(): void {
     </p>
     <textarea
       v-model="command"
-      class="miyo-input curl-input"
+      class="miyo-textarea curl-input"
       spellcheck="false"
       placeholder="curl -X POST 'https://api.example.com/users' -H 'Content-Type: application/json' -d '{&quot;name&quot;: &quot;alice&quot;}'"
     ></textarea>
@@ -138,7 +138,7 @@ function importToEditor(): void {
 <style scoped>
 .modal-hint {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
@@ -146,9 +146,7 @@ function importToEditor(): void {
   width: 100%;
   min-height: 90px;
   margin-top: 10px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  resize: vertical;
+  font-size: var(--fs-xs);
 }
 
 .modal-actions {
@@ -164,7 +162,7 @@ function importToEditor(): void {
   background: var(--danger-tint);
   border: 1px solid var(--danger-tint);
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .preview {
@@ -182,14 +180,14 @@ function importToEditor(): void {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 
 .preview-method {
   font-weight: 700;
   font-size: var(--fs-xxs);
   padding: 2px 7px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--info-tint);
   color: var(--info);
 }
@@ -208,7 +206,7 @@ function importToEditor(): void {
 .preview-body {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -217,7 +215,7 @@ function importToEditor(): void {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   background: var(--warning-tint);

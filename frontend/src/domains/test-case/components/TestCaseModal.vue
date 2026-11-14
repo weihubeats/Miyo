@@ -82,7 +82,7 @@ function confirm(): void {
         <span class="tcm-label">{{ t('testcase.name') }}</span>
         <input
           v-model="nameInput"
-          class="tcm-input"
+          class="tcm-input miyo-input"
           v-focus-end
           type="text"
           :placeholder="t('testcase.namePh')"
@@ -102,7 +102,7 @@ function confirm(): void {
         <span class="tcm-label">{{ t('testcase.folder') }}</span>
         <input
           v-model="folderInput"
-          class="tcm-input"
+          class="tcm-input miyo-input"
           type="text"
           :list="FOLDER_DATALIST_ID"
           :placeholder="t('testcase.folderPh')"
@@ -145,27 +145,12 @@ function confirm(): void {
 }
 
 .tcm-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
-.tcm-input {
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-family: inherit;
-  font-size: 13px;
-  color: var(--text-1);
-  background: var(--bg-1);
-  outline: none;
-  transition: border-color var(--dur) var(--ease);
-}
-.tcm-input:focus {
-  border-color: var(--accent);
-}
-.tcm-input::placeholder {
-  color: var(--text-3);
-}
+/* 输入框视觉（边框/底色/字号/高度/focus/placeholder）由 miyo-input 全局类单源提供；
+   tcm-input 仅作 DOM 选择器钩子保留（TestCasesPanel.spec.ts 依赖）。 */
 
 .tcm-actions {
   display: flex;

@@ -284,6 +284,7 @@ function shortRev(rev?: string | null): string {
           <span>{{ t('sync.remoteUrl') }}</span>
           <input
             v-model="formUrl"
+            class="miyo-input"
             :placeholder="t('sync.phUrl')"
             :class="{ invalid: !!urlError }"
           />
@@ -293,11 +294,11 @@ function shortRev(rev?: string | null): string {
         <div class="sync-row">
           <label class="sync-field">
             <span>{{ t('sync.branch') }}</span>
-            <input v-model="formBranch" :placeholder="t('sync.phBranch')" />
+            <input v-model="formBranch" class="miyo-input" :placeholder="t('sync.phBranch')" />
           </label>
           <label class="sync-field">
             <span>{{ t('sync.path') }}</span>
-            <input v-model="formPath" :placeholder="t('sync.phPath')" />
+            <input v-model="formPath" class="miyo-input" :placeholder="t('sync.phPath')" />
           </label>
         </div>
       </template>
@@ -306,11 +307,11 @@ function shortRev(rev?: string | null): string {
       <template v-else-if="formKind === 's3'">
         <label class="sync-field">
           <span>{{ t('sync.bucket') }}</span>
-          <input v-model="formBucket" disabled :placeholder="t('sync.phBucket')" />
+          <input v-model="formBucket" disabled class="miyo-input" :placeholder="t('sync.phBucket')" />
         </label>
         <label class="sync-field">
           <span>{{ t('sync.prefix') }}</span>
-          <input v-model="formPrefix" disabled :placeholder="t('sync.phPrefix')" />
+          <input v-model="formPrefix" disabled class="miyo-input" :placeholder="t('sync.phPrefix')" />
         </label>
       </template>
 
@@ -318,11 +319,11 @@ function shortRev(rev?: string | null): string {
       <template v-else>
         <label class="sync-field">
           <span>{{ t('sync.dsnRef') }}</span>
-          <input v-model="formDsnRef" disabled :placeholder="t('sync.phDsnRef')" />
+          <input v-model="formDsnRef" disabled class="miyo-input" :placeholder="t('sync.phDsnRef')" />
         </label>
         <label class="sync-field">
           <span>{{ t('sync.table') }}</span>
-          <input v-model="formTable" disabled :placeholder="t('sync.phTable')" />
+          <input v-model="formTable" disabled class="miyo-input" :placeholder="t('sync.phTable')" />
         </label>
       </template>
 
@@ -358,31 +359,31 @@ function shortRev(rev?: string | null): string {
     <template #footer>
       <div v-if="!projectId" class="sync-actions">
         <div class="sync-spacer" />
-        <button class="sync-btn" type="button" @click="emit('update:open', false)">
+        <button class="miyo-btn" type="button" @click="emit('update:open', false)">
           {{ t('common.close') }}
         </button>
       </div>
       <div v-else class="sync-actions">
-        <button class="sync-btn ghost" type="button" :disabled="busy" @click="showForm = !showForm">
+        <button class="miyo-btn miyo-btn-ghost" type="button" :disabled="busy" @click="showForm = !showForm">
           <Icon name="plus" :size="14" /> {{ t('sync.addRemote') }}
         </button>
-        <button v-if="showForm" class="sync-btn primary" type="button" :disabled="busy || kindComingSoon || !urlValid" @click="createRemote">
+        <button v-if="showForm" class="miyo-btn miyo-btn-primary" type="button" :disabled="busy || kindComingSoon || !urlValid" @click="createRemote">
           {{ t('common.save') }}
         </button>
         <div class="sync-spacer" />
-        <button class="sync-btn" type="button" :disabled="busy || !activeRemote" @click="loadPreview">
+        <button class="miyo-btn" type="button" :disabled="busy || !activeRemote" @click="loadPreview">
           <Icon name="download" :size="14" /> {{ t('sync.pull') }}
         </button>
         <button
           v-if="preview"
-          class="sync-btn primary"
+          class="miyo-btn miyo-btn-primary"
           type="button"
           :disabled="busy"
           @click="applyPull"
         >
           {{ t('sync.applyPull') }}
         </button>
-        <button class="sync-btn primary" type="button" :disabled="busy || !activeRemote" @click="push">
+        <button class="miyo-btn miyo-btn-primary" type="button" :disabled="busy || !activeRemote" @click="push">
           <Icon name="upload" :size="14" /> {{ t('sync.push') }}
         </button>
       </div>
@@ -435,7 +436,7 @@ function shortRev(rev?: string | null): string {
 .sync-url {
   margin: 0;
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   word-break: break-all;
 }
 .sync-meta {
@@ -452,7 +453,7 @@ function shortRev(rev?: string | null): string {
   border-radius: var(--radius-sm);
 }
 .sync-del:hover {
-  color: var(--danger, #e5484d);
+  color: var(--danger);
   background: var(--bg-elevated);
 }
 .sync-form {
@@ -475,14 +476,14 @@ function shortRev(rev?: string | null): string {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   cursor: pointer;
 }
 .sync-kind-tab.active {
   background: var(--bg-elevated);
   color: var(--text-1);
-  border-color: var(--accent, #6e56cf);
+  border-color: var(--accent);
 }
 .sync-soon {
   padding: 1px 5px;
@@ -494,7 +495,7 @@ function shortRev(rev?: string | null): string {
 }
 .sync-hint.soon,
 .sync-hint.warn {
-  color: var(--warning, #f5a623);
+  color: var(--warning);
 }
 .sync-field {
   display: flex;
@@ -506,20 +507,13 @@ function shortRev(rev?: string | null): string {
   color: var(--text-3);
   font-size: var(--fs-xxs);
 }
-.sync-field input {
-  padding: 6px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  color: var(--text-1);
-  font-size: 13px;
-}
+/* 表单输入视觉走全局 miyo-input，仅保留 invalid 状态覆写 */
 .sync-field input.invalid {
-  border-color: var(--danger, #e5484d);
+  border-color: var(--danger);
 }
 .sync-hint.error {
   margin-top: 4px;
-  color: var(--danger, #e5484d);
+  color: var(--danger);
 }
 .sync-row {
   display: flex;
@@ -543,13 +537,13 @@ function shortRev(rev?: string | null): string {
 .sync-redact-title {
   margin: 0 0 6px;
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .sync-preview-rev {
   margin-left: 6px;
   color: var(--text-3);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
 }
 .sync-diff {
   list-style: none;
@@ -557,23 +551,23 @@ function shortRev(rev?: string | null): string {
   padding: 0;
   max-height: 160px;
   overflow-y: auto;
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
 }
 .diff-add {
-  color: var(--success, #30a46c);
+  color: var(--success);
 }
 .diff-mod {
-  color: var(--warning, #f5a623);
+  color: var(--warning);
 }
 .diff-del {
-  color: var(--danger, #e5484d);
+  color: var(--danger);
 }
 .sync-redact ul {
   margin: 0;
   padding-left: 16px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .sync-actions {
   display: flex;
@@ -584,28 +578,5 @@ function shortRev(rev?: string | null): string {
 .sync-spacer {
   flex: 1;
 }
-.sync-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  color: var(--text-1);
-  font-size: 13px;
-  cursor: pointer;
-}
-.sync-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.sync-btn.primary {
-  background: var(--accent, #6e56cf);
-  border-color: transparent;
-  color: #fff;
-}
-.sync-btn.ghost {
-  background: transparent;
-}
+/* 底栏动作按钮视觉走全局 miyo-btn 系（close/primary/ghost），不再自绘 */
 </style>

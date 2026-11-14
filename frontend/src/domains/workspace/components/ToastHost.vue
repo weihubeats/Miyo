@@ -66,7 +66,7 @@ function onAction(item: ToastItem): void {
           <div class="miyo-toast-title">{{ item.title }}</div>
           <div v-if="item.message" class="miyo-toast-message">{{ item.message }}</div>
         </div>
-        <button v-if="item.action" class="miyo-toast-action" type="button" @click="onAction(item)">
+        <button v-if="item.action" class="miyo-toast-action miyo-btn miyo-btn-sm" type="button" @click="onAction(item)">
           {{ item.action.label }}
         </button>
         <button
@@ -144,7 +144,7 @@ function onAction(item: ToastItem): void {
 }
 
 .miyo-toast-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--miyo-text);
   line-height: 1.4;
@@ -152,7 +152,7 @@ function onAction(item: ToastItem): void {
 
 .miyo-toast-message {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--miyo-text-secondary);
   line-height: 1.45;
   word-break: break-all;
@@ -175,25 +175,10 @@ function onAction(item: ToastItem): void {
   background: var(--miyo-hover);
 }
 
+/* Toast 动作按钮视觉走全局 miyo-btn-sm，仅保留在 Toast 内的 flex 布局职责 */
 .miyo-toast-action {
   flex: none;
   align-self: center;
-  padding: 4px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--bg-hover);
-  color: var(--text-1);
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    border-color var(--dur) var(--ease);
-}
-.miyo-toast-action:hover {
-  background: var(--accent-tint);
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .miyo-toast-enter-active,

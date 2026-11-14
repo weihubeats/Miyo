@@ -555,13 +555,13 @@ const histogramBars = computed(() => {
 }
 
 .histogram-count {
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   font-family: var(--font-mono);
   color: var(--text-2);
 }
 
 .histogram-label {
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -594,7 +594,7 @@ const histogramBars = computed(() => {
 }
 
 .metric-value {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   font-family: var(--font-mono);
   color: var(--text-1);
@@ -619,13 +619,13 @@ const histogramBars = computed(() => {
   border-radius: var(--radius);
   background: var(--danger-tint);
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   word-break: break-all;
 }
 
 .load-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

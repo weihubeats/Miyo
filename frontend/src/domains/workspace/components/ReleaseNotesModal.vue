@@ -144,12 +144,12 @@ function guardClose(): boolean {
   width: 100%;
   height: 6px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-3);
 }
 .rn-progress-bar {
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent);
   transition: width 0.2s ease;
 }
@@ -171,9 +171,9 @@ function guardClose(): boolean {
 }
 .rn-error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.45;
-  color: var(--danger, #f85149);
+  color: var(--danger);
   word-break: break-all;
 }
 .rn-actions {
@@ -217,7 +217,7 @@ body .rn-modal .m-foot {
 /* 标题：加粗等宽（文字随 --text-1 主题令牌），与右侧关闭 Icon 垂直对齐（m-head 已 flex center） */
 body .rn-modal .m-title {
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1);
 }

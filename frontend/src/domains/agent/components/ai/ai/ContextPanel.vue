@@ -25,14 +25,14 @@ function runScenario(id: string): void {
   <aside class="ctx-panel">
     <!-- 分析入口 -->
     <div class="ctx-actions">
-      <button class="ctx-action" :disabled="ai.analyzing" @click="ai.loadDependencies()">
+      <button class="ctx-action miyo-btn" :disabled="ai.analyzing" @click="ai.loadDependencies()">
         <Icon name="network" :size="13" />
         <span>{{ t('ai.dependencyBtn') }}</span>
         <span v-if="ai.dependencyReport" class="ctx-count">
           {{ ai.dependencyReport.edges.length }}
         </span>
       </button>
-      <button class="ctx-action" :disabled="ai.analyzing" @click="ai.loadCoverage()">
+      <button class="ctx-action miyo-btn" :disabled="ai.analyzing" @click="ai.loadCoverage()">
         <Icon name="gauge" :size="13" />
         <span>{{ t('ai.coverageBtn') }}</span>
         <span v-if="ai.coverageReport" class="ctx-count">{{ ai.coverageReport.score }}</span>
@@ -92,22 +92,10 @@ function runScenario(id: string): void {
   display: flex;
   gap: var(--sp-2);
 }
+/* 视觉（边框/底色/字号/高度/hover）由 miyo-btn 全局类单源提供；此处只留布局职责。 */
 .ctx-action {
   flex: 1;
-  display: flex;
-  align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-2);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-}
-.ctx-action:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text-1);
 }
 .ctx-count {
   margin-left: auto;

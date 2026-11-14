@@ -702,7 +702,7 @@ onBeforeUnmount(() => {
         </span>
         <button
           type="button"
-          class="save-btn"
+          class="save-btn miyo-btn miyo-btn-primary"
           :disabled="saveBusy"
           @click="onSaveClick"
         >
@@ -761,7 +761,7 @@ onBeforeUnmount(() => {
             <span class="fld-label">{{ t('design.description') }}</span>
             <textarea
               v-model="d.description"
-              class="desc-area"
+              class="desc-area miyo-textarea"
               rows="3"
               :placeholder="t('design.descriptionPh')"
               spellcheck="false"
@@ -816,7 +816,7 @@ onBeforeUnmount(() => {
             <textarea
               v-if="bodyMode === 'json' && bodyJsonView === 'text'"
               v-model="bodyRaw"
-              class="body-json mono"
+              class="body-json miyo-textarea mono"
               spellcheck="false"
               placeholder='{ "field": "value" }'
               @keydown="onCodeKeydown"
@@ -843,7 +843,7 @@ onBeforeUnmount(() => {
                 v-for="p in STATUS_PRESETS"
                 :key="p.status"
                 type="button"
-                class="resp-preset"
+                class="resp-preset miyo-btn miyo-btn-sm miyo-btn-ghost"
                 :class="{ err: p.status >= 400 }"
                 :disabled="responses.some((e) => e.status === p.status)"
                 @click="addResponse(p.status)"
@@ -884,7 +884,7 @@ onBeforeUnmount(() => {
                 />
                 <textarea
                   v-else
-                  class="body-json mono"
+                  class="body-json miyo-textarea mono"
                   :value="respTextOf(ex)"
                   spellcheck="false"
                   :placeholder="t('design.respBodyPh')"
@@ -1001,7 +1001,7 @@ onBeforeUnmount(() => {
 }
 
 .crumb-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -1017,7 +1017,7 @@ onBeforeUnmount(() => {
 .method-pill {
   flex-shrink: 0;
   padding: 2px 9px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   font-weight: 700;
@@ -1066,42 +1066,7 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 6px color-mix(in srgb, var(--warning) 60%, transparent);
 }
 
-/* 主保存按钮：主题紫实底 */
-.save-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 16px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: var(--accent);
-  color: #fff;
-  font-family: inherit;
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition:
-    background var(--dur) var(--ease),
-    transform var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease);
-}
-.save-btn:hover {
-  background: var(--accent-hover);
-  box-shadow: var(--shadow);
-}
-.save-btn:active {
-  transform: translateY(1px);
-}
-.save-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-  transform: none;
-}
-.save-btn:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
+/* 主保存按钮：视觉收敛到全局 miyo-btn-primary（类名保留供 spec 定位） */
 
 /* ---- 双栏布局 ---- */
 
@@ -1131,7 +1096,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
   padding: 16px 18px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 
 /* ---- 基本信息 ---- */
@@ -1163,7 +1128,7 @@ onBeforeUnmount(() => {
 .path-group {
   display: flex;
   align-items: stretch;
-  height: 32px;
+  height: var(--h-md);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   overflow: hidden;
@@ -1229,25 +1194,12 @@ onBeforeUnmount(() => {
   background: var(--bg-code);
   color: var(--text-1);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
+/* 描述多行输入：视觉收敛到全局 miyo-textarea，仅留布局 */
 .desc-area {
   width: 100%;
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-code);
-  color: var(--text-1);
-  font-family: inherit;
-  font-size: 12.5px;
-  line-height: 1.6;
-  resize: vertical;
-  transition: border-color var(--dur) var(--ease);
-}
-.desc-area:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 /* ---- 请求定义 ---- */
@@ -1272,7 +1224,7 @@ onBeforeUnmount(() => {
   padding: 12px;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -1280,23 +1232,11 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
 }
 
+/* JSON 代码面多行输入：视觉收敛到全局 miyo-textarea；代码面底色保留 --bg-code */
 .body-json {
   width: 100%;
   min-height: 150px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  /* 代码面走 --bg-code：深浅双主题同源（原 #0a0a0a + 组件级浅色覆写） */
   background: var(--bg-code);
-  color: var(--text-1);
-  font-size: 12px;
-  line-height: 1.6;
-  resize: vertical;
-  transition: border-color var(--dur) var(--ease);
-}
-.body-json:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 /* ---- 返回响应 ---- */
@@ -1333,7 +1273,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius);
   background: var(--bg-code);
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   text-align: left;
   transition:
@@ -1398,7 +1338,7 @@ onBeforeUnmount(() => {
 
 .resp-empty {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -1411,40 +1351,18 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--border);
 }
 
-.resp-preset {
-  padding: 2px 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-code);
-  color: var(--success);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xxs);
-  cursor: pointer;
-  transition:
-    border-color var(--dur) var(--ease),
-    background var(--dur) var(--ease);
-}
+/* 状态码预设快加按钮：视觉收敛到全局 miyo-btn-sm/ghost，仅留 err 语义色 */
 .resp-preset.err {
   color: var(--danger);
-}
-.resp-preset:not(:disabled):hover {
-  border-color: var(--accent);
-  background: var(--accent-tint);
-}
-.resp-preset:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 .resp-status-input {
   width: 76px;
-  height: 26px;
 }
 
 .resp-name-input {
   flex: 1;
   min-width: 120px;
-  height: 26px;
 }
 
 /* ---- 右侧实时预览 ---- */
@@ -1455,7 +1373,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   position: sticky;
   top: 62px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 
 .preview-head {
@@ -1476,7 +1394,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-code);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.65;
   color: var(--text-1);
   white-space: pre-wrap;
@@ -1490,7 +1408,7 @@ onBeforeUnmount(() => {
   padding: 20px 12px;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   text-align: center;
 }

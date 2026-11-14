@@ -101,7 +101,7 @@ function removeRow(index: number): void {
           <tr v-for="(row, i) in rows" :key="rowKey(row)">
             <td class="col-key">
               <input
-                class="pdt-input mono"
+                class="pdt-input miyo-input miyo-input-sm mono"
                 :value="row.key"
                 :placeholder="keyPlaceholder ?? t('paramtable.colKey')"
                 spellcheck="false"
@@ -145,7 +145,7 @@ function removeRow(index: number): void {
             </td>
             <td class="col-desc">
               <input
-                class="pdt-input"
+                class="pdt-input miyo-input miyo-input-sm"
                 :value="row.description"
                 :placeholder="t('paramtable.descPh')"
                 spellcheck="false"
@@ -154,7 +154,7 @@ function removeRow(index: number): void {
             </td>
             <td v-if="showExample" class="col-example">
               <input
-                class="pdt-input mono"
+                class="pdt-input miyo-input miyo-input-sm mono"
                 :value="row.example ?? ''"
                 :placeholder="t('paramtable.colExample')"
                 spellcheck="false"
@@ -173,7 +173,7 @@ function removeRow(index: number): void {
         </tbody>
       </table>
     </div>
-    <button type="button" class="pdt-add" @click="addRow">{{ t('paramtable.add') }}</button>
+    <button type="button" class="pdt-add miyo-btn miyo-btn-sm miyo-btn-ghost" @click="addRow">{{ t('paramtable.add') }}</button>
   </div>
 </template>
 
@@ -191,7 +191,7 @@ function removeRow(index: number): void {
 .pdt-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 
 .pdt-table th {
@@ -247,52 +247,30 @@ th.col-en {
   text-align: center;
 }
 
-/* 行内输入：无边框融入表格，聚焦浮现描边 */
+/* 行内输入：视觉收敛到全局 miyo-input-sm，仅留铺满单元格的布局职责 */
 .pdt-input {
   width: 100%;
-  height: 26px;
-  padding: 0 7px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-1);
-  font-family: inherit;
-  font-size: 12px;
-  transition:
-    border-color var(--dur) var(--ease),
-    background var(--dur) var(--ease);
 }
 .pdt-input.mono {
   font-family: var(--font-mono);
 }
-.pdt-input::placeholder {
-  color: var(--text-3);
-}
-.pdt-input:hover {
-  border-color: var(--border);
-}
-.pdt-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--bg-code);
-  box-shadow: 0 0 0 2px var(--accent-tint);
-}
 
+/* 原生 select：不换组件，视觉收敛到 var token（高度与 miyo-input-sm 对齐） */
 .pdt-select {
   width: 100%;
-  height: 26px;
+  height: var(--h-sm);
   padding: 0 4px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text-1);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   cursor: pointer;
   transition: border-color var(--dur) var(--ease);
 }
 .pdt-select:hover {
-  border-color: var(--border);
+  border-color: var(--accent);
 }
 .pdt-select:focus {
   outline: none;
@@ -310,29 +288,12 @@ th.col-en {
 .pdt-empty {
   padding: 14px 8px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
+/* 添加参数：视觉收敛到全局 miyo-btn-sm/ghost，仅留布局 */
 .pdt-add {
   align-self: flex-start;
-  padding: 3px 10px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--accent);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-.pdt-add:hover {
-  background: var(--accent-tint);
-}
-.pdt-add:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 </style>

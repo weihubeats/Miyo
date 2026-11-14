@@ -244,7 +244,7 @@ const listTitle = computed(() => t('mockrule.listTitle', { n: rules.value.length
       </button>
       <textarea
         v-model="editing.response_body_template"
-        class="miyo-input rule-body"
+        class="miyo-textarea rule-body"
         spellcheck="false"
         :placeholder="t('mockrule.bodyPh')"
       ></textarea>
@@ -295,7 +295,7 @@ const listTitle = computed(() => t('mockrule.listTitle', { n: rules.value.length
 }
 
 .rule-sub {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-2);
   margin-top: 4px;
@@ -303,9 +303,6 @@ const listTitle = computed(() => t('mockrule.listTitle', { n: rules.value.length
 
 .rule-body {
   min-height: 90px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  resize: vertical;
 }
 
 .rule-list {
@@ -321,7 +318,7 @@ const listTitle = computed(() => t('mockrule.listTitle', { n: rules.value.length
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 
 .rule-method {
@@ -353,7 +350,7 @@ const listTitle = computed(() => t('mockrule.listTitle', { n: rules.value.length
 
 .rule-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -361,7 +358,7 @@ const listTitle = computed(() => t('mockrule.listTitle', { n: rules.value.length
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 .rule-enabled input {

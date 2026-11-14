@@ -205,7 +205,7 @@ async function removeTeam(team: Team): Promise<void> {
 <style scoped>
 .team-sub {
   margin: 0 0 12px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .team-list {
@@ -229,7 +229,7 @@ async function removeTeam(team: Team): Promise<void> {
   color: var(--text-3);
 }
 .team-row-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
 }
 .team-row-tag {
@@ -245,8 +245,8 @@ async function removeTeam(team: Team): Promise<void> {
 .team-row-error {
   flex-basis: 100%;
   margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--danger, #e5484d);
+  font-size: var(--fs-xs);
+  color: var(--danger);
 }
 .team-rename-input {
   flex: 1;
@@ -268,7 +268,7 @@ async function removeTeam(team: Team): Promise<void> {
   color: var(--text-1);
 }
 .team-btn.danger:hover {
-  color: var(--danger, #e5484d);
+  color: var(--danger);
 }
 .team-create {
   display: flex;

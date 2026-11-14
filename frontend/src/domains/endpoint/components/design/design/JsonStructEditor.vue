@@ -185,7 +185,7 @@ const canAdd = computed(() => isContainer(root.value) || root.value.type === 'ob
 <template>
   <div class="jse" :class="{ disabled }">
     <div class="jse-toolbar">
-      <button type="button" class="jse-add" :disabled="disabled || !canAdd" @click="addChild(root)">
+      <button type="button" class="jse-add miyo-btn miyo-btn-sm miyo-btn-ghost" :disabled="disabled || !canAdd" @click="addChild(root)">
         {{ t('design.addField') }}
       </button>
     </div>
@@ -201,7 +201,7 @@ const canAdd = computed(() => isContainer(root.value) || root.value.type === 'ob
         :style="{ paddingLeft: `${8 + row.depth * 18}px` }"
       >
         <input
-          class="jse-key mono"
+          class="jse-key miyo-input miyo-input-sm mono"
           :value="row.node.key"
           :placeholder="t('design.fieldKeyPh')"
           :disabled="disabled"
@@ -228,7 +228,7 @@ const canAdd = computed(() => isContainer(root.value) || root.value.type === 'ob
           />
         </label>
         <input
-          class="jse-desc"
+          class="jse-desc miyo-input miyo-input-sm"
           :value="row.node.description"
           :placeholder="t('design.fieldDescPh')"
           :disabled="disabled"
@@ -237,7 +237,7 @@ const canAdd = computed(() => isContainer(root.value) || root.value.type === 'ob
         />
         <input
           v-if="isScalar(row.node)"
-          class="jse-value mono"
+          class="jse-value miyo-input miyo-input-sm mono"
           :value="row.node.value"
           :placeholder="t('design.fieldExamplePh')"
           :disabled="disabled"
@@ -280,26 +280,7 @@ const canAdd = computed(() => isContainer(root.value) || root.value.type === 'ob
   justify-content: flex-start;
 }
 
-.jse-add {
-  padding: 3px 10px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--accent);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-.jse-add:hover:not(:disabled) {
-  background: var(--accent-tint);
-}
-.jse-add:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
+/* 添加字段：视觉收敛到全局 miyo-btn-sm/ghost */
 
 .jse-tree {
   display: flex;
@@ -329,47 +310,31 @@ const canAdd = computed(() => isContainer(root.value) || root.value.type === 'ob
   background: var(--bg-hover);
 }
 
+/* 行内输入：视觉收敛到全局 miyo-input-sm，仅留列宽/伸缩布局职责 */
 .jse-key {
   width: 130px;
   flex-shrink: 0;
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-1);
-  font-size: 12px;
-}
-.jse-key:hover:not(:disabled) {
-  border-color: var(--border);
-}
-.jse-key:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--bg-code);
-}
-.jse-key::placeholder {
-  color: var(--text-3);
 }
 
 .jse-type {
   width: 78px;
   flex-shrink: 0;
-  height: 26px;
+  height: var(--h-sm);
   padding: 0 4px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text-1);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   cursor: pointer;
 }
 .jse-type:hover:not(:disabled) {
-  border-color: var(--border);
+  border-color: var(--accent);
 }
 .jse-type:focus {
   outline: none;
+  border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-tint);
 }
 
@@ -389,47 +354,10 @@ const canAdd = computed(() => isContainer(root.value) || root.value.type === 'ob
 .jse-desc {
   flex: 1;
   min-width: 80px;
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-1);
-  font-family: inherit;
-  font-size: 12px;
-}
-.jse-desc:hover:not(:disabled) {
-  border-color: var(--border);
-}
-.jse-desc:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--bg-code);
-}
-.jse-desc::placeholder {
-  color: var(--text-3);
 }
 
 .jse-value {
   width: 110px;
   flex-shrink: 0;
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-}
-.jse-value:hover:not(:disabled) {
-  border-color: var(--border);
-}
-.jse-value:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--bg-code);
-}
-.jse-value::placeholder {
-  color: var(--text-3);
 }
 </style>

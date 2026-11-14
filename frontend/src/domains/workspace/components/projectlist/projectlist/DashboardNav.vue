@@ -88,10 +88,10 @@ function onNav(item: (typeof NAV_ITEMS)[number]): void {
   height: 36px;
   padding: 0 12px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: none;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -127,10 +127,10 @@ function onNav(item: (typeof NAV_ITEMS)[number]): void {
 /* 「测试中」标记：未选中 amber 描边，选中（紫底）提亮为半透明白底保证可读 */
 .nav-beta {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   line-height: 1.5;
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
   color: var(--warning);
   background: var(--warning-tint);

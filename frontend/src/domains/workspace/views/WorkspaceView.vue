@@ -934,12 +934,12 @@ onBeforeUnmount(() => {
 
 /* ---- 顶栏右区操作：统一 h-8、rounded-lg、gap-2（边框走变量，深浅主题可见） ---- */
 .tb-right .tb-action {
-  height: 32px;
+  height: var(--h-md);
   padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-hover);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   gap: 6px;
   color: var(--text-2);
 }
@@ -953,7 +953,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: stretch;
   flex-shrink: 0;
-  height: 32px;
+  height: var(--h-md);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-hover);
@@ -1031,7 +1031,7 @@ onBeforeUnmount(() => {
 .sidebar-top :deep(.ib) {
   flex-shrink: 0;
   width: 24px;
-  height: 24px;
+  height: var(--h-xs);
   color: var(--text-3);
 }
 
@@ -1074,7 +1074,7 @@ onBeforeUnmount(() => {
 
 .miyo-heading {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-md);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1135,12 +1135,12 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
+  height: var(--h-md);
   margin: 8px 12px 0;
   padding: 0 10px;
   flex-shrink: 0;
   border: 1px solid var(--sidebar-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: var(--sidebar-search-bg);
   transition:
     border-color var(--dur) var(--ease),
@@ -1165,7 +1165,7 @@ onBeforeUnmount(() => {
   outline: none;
   background: transparent;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 .ss-input::placeholder {
@@ -1180,7 +1180,7 @@ onBeforeUnmount(() => {
   width: 18px;
   height: 18px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-3);
   cursor: pointer;
@@ -1216,7 +1216,7 @@ onBeforeUnmount(() => {
 .sidebar-tabs :deep(.tabs) {
   border-bottom: none;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-card);
   padding: 2px;
   gap: 2px;
@@ -1227,10 +1227,10 @@ onBeforeUnmount(() => {
   flex: 0 1 auto;
   min-width: 0;
   justify-content: center;
-  height: 28px;
+  height: var(--h-sm);
   padding: 0 9px;
   border-radius: var(--radius);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 .sidebar-tabs :deep(.tab.active) {
@@ -1273,7 +1273,7 @@ onBeforeUnmount(() => {
 }
 
 .form-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 

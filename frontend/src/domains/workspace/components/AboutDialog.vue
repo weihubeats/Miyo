@@ -174,11 +174,11 @@ function skipVersion(): void {
       <div class="a-subtitle">{{ t('about.subtitle') }}</div>
 
       <div class="a-links">
-        <button class="a-link" type="button" @click="openGitHub">
+        <button class="a-link miyo-btn miyo-btn-sm miyo-btn-ghost" type="button" @click="openGitHub">
           <Icon name="globe" :size="12" /> {{ t('about.github') }}
         </button>
         <span class="a-dot" aria-hidden="true"></span>
-        <button class="a-link" type="button" :disabled="checking" @click="checkUpdates">
+        <button class="a-link miyo-btn miyo-btn-sm miyo-btn-ghost" type="button" :disabled="checking" @click="checkUpdates">
           <Icon name="refresh" :size="12" /> {{ checking ? t('about.checking') : t('about.check') }}
         </button>
       </div>
@@ -187,7 +187,7 @@ function skipVersion(): void {
         <div class="a-update-title">
           {{ t('about.newVersion') }} <span class="a-update-version">v{{ pendingVersion }}</span>
         </div>
-        <button class="a-notes-link" type="button" @click="openReleaseNotes">
+        <button class="a-notes-link miyo-btn miyo-btn-sm miyo-btn-ghost" type="button" @click="openReleaseNotes">
           {{ t('about.releaseNotes') }}
         </button>
         <p v-if="pendingNotes" class="a-update-notes">{{ pendingNotes }}</p>
@@ -211,10 +211,10 @@ function skipVersion(): void {
         </template>
         <template v-else>
           <p v-if="failMsg" class="a-update-error">{{ failMsg }}</p>
-          <button class="a-update-btn" type="button" @click="installUpdate">
+          <button class="a-update-btn miyo-btn miyo-btn-sm miyo-btn-primary" type="button" @click="installUpdate">
             {{ t('about.install') }}
           </button>
-          <button class="a-skip-btn" type="button" @click="skipVersion">
+          <button class="a-skip-btn miyo-btn miyo-btn-sm miyo-btn-ghost" type="button" @click="skipVersion">
             {{ t('about.skip') }}
           </button>
         </template>
@@ -260,16 +260,16 @@ function skipVersion(): void {
 
 .a-version {
   padding: 1px 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--accent);
-  background: var(--accent-tint, rgba(168, 85, 247, 0.14));
+  background: var(--accent-tint);
 }
 
 .a-subtitle {
   margin-top: 4px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
@@ -280,31 +280,7 @@ function skipVersion(): void {
   margin: 14px 0 4px;
 }
 
-.a-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: none;
-  background: none;
-  padding: 0;
-  font-family: inherit;
-  font-size: 12.5px;
-  color: var(--accent);
-  text-decoration: none;
-  cursor: pointer;
-  transition:
-    color var(--dur) var(--ease),
-    opacity var(--dur) var(--ease);
-}
-.a-link:hover {
-  color: var(--accent-hover, var(--accent));
-  opacity: 0.85;
-}
-.a-link:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
+/* 链接式按钮视觉走全局 miyo-btn-sm + miyo-btn-ghost，不再自绘 */
 
 .a-dot {
   width: 3px;
@@ -324,9 +300,9 @@ function skipVersion(): void {
   width: 100%;
   margin-top: 10px;
   padding: 12px;
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
-  border-radius: 10px;
-  background: var(--bg-2, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -334,7 +310,7 @@ function skipVersion(): void {
 }
 
 .a-update-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
 }
 
@@ -347,7 +323,7 @@ function skipVersion(): void {
   max-height: 96px;
   overflow-y: auto;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-2);
   white-space: pre-wrap;
@@ -357,14 +333,14 @@ function skipVersion(): void {
 .a-update-progress {
   width: 100%;
   height: 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-3);
   overflow: hidden;
 }
 
 .a-update-progress-bar {
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent);
   transition: width 0.2s ease;
 }
@@ -388,26 +364,7 @@ function skipVersion(): void {
   color: var(--text-2);
 }
 
-.a-notes-link {
-  border: none;
-  background: none;
-  padding: 0;
-  font-family: inherit;
-  font-size: 12px;
-  color: var(--accent);
-  cursor: pointer;
-  text-decoration: none;
-  transition: color var(--dur) var(--ease);
-}
-.a-notes-link:hover {
-  color: var(--accent-hover, var(--accent));
-  text-decoration: underline;
-}
-.a-notes-link:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
+/* 更新卡内链接/安装/跳过按钮视觉走全局 miyo-btn 系，不再自绘 */
 
 .a-update-hint {
   font-size: var(--fs-xxs);
@@ -419,40 +376,10 @@ function skipVersion(): void {
   max-height: 56px;
   overflow-y: auto;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.45;
-  color: var(--danger, #f85149);
+  color: var(--danger);
   text-align: left;
   word-break: break-all;
-}
-
-.a-update-btn {
-  padding: 5px 16px;
-  border: none;
-  border-radius: 7px;
-  font-family: inherit;
-  font-size: 12.5px;
-  color: #fff;
-  background: var(--accent);
-  cursor: pointer;
-  transition: background var(--dur) var(--ease);
-}
-
-.a-update-btn:hover {
-  background: var(--accent-hover, var(--accent));
-}
-
-.a-skip-btn {
-  border: none;
-  background: none;
-  padding: 0;
-  font-family: inherit;
-  font-size: 12px;
-  color: var(--text-3);
-  cursor: pointer;
-}
-.a-skip-btn:hover {
-  color: var(--text-1);
-  text-decoration: underline;
 }
 </style>

@@ -278,7 +278,7 @@ defineExpose({ openManager })
 .env-sel :deep(.cs-trigger) {
   gap: 8px;
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   border-radius: var(--radius-md);
 }
@@ -335,7 +335,7 @@ defineExpose({ openManager })
 }
 
 .env-display-name {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--text-1);
   min-width: 0;
@@ -372,11 +372,11 @@ defineExpose({ openManager })
   outline: none;
   background: transparent;
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 .es-search-input::placeholder {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .es-search-empty {
@@ -415,7 +415,7 @@ defineExpose({ openManager })
   flex: 1;
 }
 .env-opt-name {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   line-height: 1.3;
   color: var(--text-1);
@@ -483,7 +483,7 @@ defineExpose({ openManager })
   border-radius: var(--radius-sm);
   background: transparent;
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   cursor: pointer;
   transition:

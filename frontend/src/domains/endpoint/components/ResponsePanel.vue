@@ -21,6 +21,7 @@ import { EDITOR_INDENT } from '@/constants/editorTheme'
 import { formatBytes, formatDuration } from '@/utils/format'
 import FindBar from '@/components/ui/FindBar.vue'
 import Icon from '@/components/ui/Icon.vue'
+import IconButton from '@/components/ui/IconButton.vue'
 import JsonTree from '@/components/ui/JsonTree.vue'
 import Menu, { type MenuItem } from '@/components/ui/Menu.vue'
 import MethodText from '@/components/ui/MethodText.vue'
@@ -492,6 +493,8 @@ interface LineRow {
   n: number
   key: string
   html: string
+  /** 原始行文本（行级复制用；与高亮 html 同源）。 */
+  text: string
 }
 
 /**
@@ -530,6 +533,7 @@ const prettyRows = computed<LineRow[]>(() => {
         : off
           ? highlightText(ln, q)
           : highlightPrettyText(ln, q),
+    text: ln,
   }))
 })
 
@@ -539,8 +543,16 @@ const rawRows = computed<LineRow[]>(() => {
     n: i + 1,
     key: rowKey(i, ln),
     html: ln.length > LINE_HIGHLIGHT_LIMIT ? escapeHtml(ln) : highlightText(ln, q),
+    text: ln,
   }))
 })
+
+/** 行级复制：hover 行内复制按钮（JSONPath 精确复制走 tree 视图行悬停）。 */
+async function copyLine(text: string): Promise<void> {
+  const ok = await copyText(text)
+  if (ok) toast.success(t('response.copied'))
+  else toast.error(t('response.copyFail'))
+}
 
 /** ⌘F / Ctrl+F 打开查找（输入框内不拦截）；Esc 退出全屏。 */
 function onWindowKeydown(e: KeyboardEvent): void {
@@ -673,14 +685,13 @@ onUnmounted(() => {
       </div>
       <span class="rp-toolbar-spacer"></span>
       <Tooltip :content="collapsed ? t('response.expand') : t('response.collapse')" placement="bottom">
-        <button
+        <IconButton
           class="rp-icon-btn"
-          type="button"
-          :aria-label="collapsed ? t('response.expand') : t('response.collapse')"
+          :name="collapsed ? 'chevron-down' : 'chevron-up'"
+          :size="13"
+          :label="collapsed ? t('response.expand') : t('response.collapse')"
           @click="toggleCollapsed"
-        >
-          <Icon :name="collapsed ? 'chevron-down' : 'chevron-up'" :size="13" />
-        </button>
+        />
       </Tooltip>
       <!-- 面板高度拖拽把手（视觉 affordance）：按下向宿主上报，拖拽热区仍在整条分割带 -->
       <span
@@ -712,47 +723,52 @@ onUnmounted(() => {
           :content="t('response.wrap')"
           placement="bottom"
         >
-          <button
+          <IconButton
             class="rp-icon-btn"
-            type="button"
+            name="text-wrap"
+            :size="15"
             :class="{ active: wrapLines }"
-            :aria-label="t('response.wrap')"
+            :label="t('response.wrap')"
             @click="toggleWrap"
-          >
-            <Icon name="text-wrap" :size="15" />
-          </button>
+          />
         </Tooltip>
         <Tooltip :content="t('response.findHint')" placement="bottom">
-          <button
+          <IconButton
             class="rp-icon-btn"
-            type="button"
+            name="search"
+            :size="16"
             :class="{ active: findOpen }"
-            :aria-label="t('response.findHint')"
+            :label="t('response.findHint')"
             @click="toggleFind"
-          >
-            <Icon name="search" :size="16" />
-          </button>
+          />
         </Tooltip>
         <Tooltip :content="t('response.copyBody')" placement="bottom">
-          <button class="rp-icon-btn" type="button" :aria-label="t('response.copyBody')" @click="copyBody">
-            <Icon name="copy" :size="16" />
-          </button>
+          <IconButton
+            class="rp-icon-btn"
+            name="copy"
+            :size="16"
+            :label="t('response.copyBody')"
+            @click="copyBody"
+          />
         </Tooltip>
         <Tooltip :content="t('response.downloadBody')" placement="bottom">
-          <button
+          <IconButton
             class="rp-icon-btn"
-            type="button"
-            :aria-label="t('response.downloadBody')"
+            name="download"
+            :size="16"
             :disabled="downloading"
+            :label="t('response.downloadBody')"
             @click="downloadBody"
-          >
-            <Icon name="download" :size="16" />
-          </button>
+          />
         </Tooltip>
         <Tooltip :content="t('common.moreActions')" placement="bottom">
-          <button class="rp-icon-btn" type="button" :aria-label="t('common.moreActions')" @click="openMoreMenu">
-            <Icon name="more-horizontal" :size="15" />
-          </button>
+          <IconButton
+            class="rp-icon-btn"
+            name="more-horizontal"
+            :size="15"
+            :label="t('common.moreActions')"
+            @click="openMoreMenu"
+          />
         </Tooltip>
       </span>
     </div>
@@ -824,6 +840,9 @@ onUnmounted(() => {
           <div v-for="row in prettyRows" :key="row.key" class="rp-line">
             <span class="rp-line-gutter">{{ row.n }}</span>
             <span class="rp-line-text" v-html="row.html"></span>
+            <button class="rp-line-copy" type="button" :title="t('response.copyLine')" @click="copyLine(row.text)">
+              <Icon name="copy" :size="11" />
+            </button>
           </div>
           <button
             v-if="hasMorePretty"
@@ -838,6 +857,9 @@ onUnmounted(() => {
           <div v-for="row in rawRows" :key="row.key" class="rp-line">
             <span class="rp-line-gutter">{{ row.n }}</span>
             <span class="rp-line-text" v-html="row.html"></span>
+            <button class="rp-line-copy" type="button" :title="t('response.copyLine')" @click="copyLine(row.text)">
+              <Icon name="copy" :size="11" />
+            </button>
           </div>
           <button v-if="hasMoreRaw" class="rp-more" type="button" @click="showMoreLines">
             {{ t('response.showMore', { shown: visibleLines, total: rawLines.length }) }}
@@ -1015,7 +1037,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: var(--font-mono);
   line-height: 1.4;
   letter-spacing: 0.02em;
@@ -1080,7 +1102,7 @@ onUnmounted(() => {
 .rp-truncated {
   flex-shrink: 0;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: var(--fs-xxs);
   font-weight: 600;
   color: var(--warning);
@@ -1114,36 +1136,18 @@ onUnmounted(() => {
   background: var(--bg-hover);
   color: var(--text-1);
 }
-.rp-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-.rp-icon-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-}
+/* 响应工具栏图标按钮：视觉收敛到全局 IconButton，仅留强调色与激活态 */
 .rp-icon-btn svg {
   color: var(--accent);
 }
 .rp-icon-btn.active {
   color: var(--accent);
-  background: var(--accent-tint, var(--bg-hover));
+  background: var(--accent-tint);
 }
 
 /* ---- 查找 ---- */
 :deep(.rp-find-mark) {
-  background: var(--accent-tint, rgba(99, 102, 241, 0.25));
+  background: var(--accent-tint);
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
@@ -1183,6 +1187,36 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-1);
+}
+
+/* 行级复制按钮：hover 显示（不抢正文空间），绝对定位不参与折行 */
+.rp-line {
+  position: relative;
+}
+.rp-line-copy {
+  position: absolute;
+  right: 2px;
+  top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.rp-line:hover .rp-line-copy,
+.rp-line-copy:focus-visible {
+  opacity: 1;
+}
+.rp-line-copy:hover {
+  color: var(--accent);
 }
 
 /* 自动换行关闭：单行不折行 + 容器横向滚动（保留横向滚动能力） */
@@ -1242,14 +1276,14 @@ onUnmounted(() => {
 .rp-preview-note {
   margin: 0;
   padding: 14px 16px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
 .rp-empty {
   margin: 0;
   padding: 14px 16px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -1316,7 +1350,7 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   word-break: break-all;
   overflow-wrap: anywhere;
@@ -1398,7 +1432,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   font-weight: 700;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 
@@ -1419,7 +1453,7 @@ onUnmounted(() => {
 
 .rp-flag {
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: var(--fs-xxs);
   font-weight: 600;
   color: var(--info);

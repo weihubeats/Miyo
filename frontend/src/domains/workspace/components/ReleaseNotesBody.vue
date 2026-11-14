@@ -69,7 +69,7 @@ const notesHtml = computed(() => renderMarkdownLite(props.notes))
 .rn-notes :deep(h6) {
   margin: 10px 0 4px;
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 .rn-notes :deep(h3:first-child),
@@ -97,7 +97,7 @@ const notesHtml = computed(() => renderMarkdownLite(props.notes))
 }
 .rn-notes :deep(code) {
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--text-1) 8%, transparent);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -106,7 +106,7 @@ const notesHtml = computed(() => renderMarkdownLite(props.notes))
   margin: 0 0 6px;
   padding: 8px;
   overflow-x: auto;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg-elevated);
 }
 .rn-notes :deep(pre code) {

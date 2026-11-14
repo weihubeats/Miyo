@@ -164,7 +164,7 @@ const canConfirm = computed(
 
     <textarea
       v-model="text"
-      class="miyo-input import-text"
+      class="miyo-textarea import-text"
       spellcheck="false"
       :placeholder="t('importdlg.textPh')"
     ></textarea>
@@ -235,7 +235,7 @@ const canConfirm = computed(
 <style scoped>
 .import-hint {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
@@ -247,21 +247,18 @@ const canConfirm = computed(
 }
 .import-name-label {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .import-name-row .miyo-input {
   flex: 1;
-  height: 30px;
 }
 
 .import-text {
   width: 100%;
   min-height: 140px;
   margin-top: 10px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  resize: vertical;
+  font-size: var(--fs-xs);
 }
 
 .import-tools {
@@ -288,7 +285,7 @@ const canConfirm = computed(
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--warning);
 }
 
@@ -303,7 +300,7 @@ const canConfirm = computed(
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
 }
@@ -320,7 +317,7 @@ const canConfirm = computed(
 .import-row {
   display: flex;
   gap: 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 
 .import-method {

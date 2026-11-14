@@ -447,7 +447,7 @@ function onKeydown(event: KeyboardEvent): void {
 .qs-method {
   flex: none;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   font-weight: 700;
 }
 

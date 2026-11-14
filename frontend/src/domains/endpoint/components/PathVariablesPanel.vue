@@ -61,7 +61,7 @@ function extract(): void {
   <div class="panel">
     <KeyValueTable :model-value="rows" searchable @update:model-value="apply">
       <template #toolbar-actions>
-        <button class="pv-extract" type="button" @click="extract">
+        <button class="pv-extract miyo-btn miyo-btn-sm miyo-btn-ghost" type="button" @click="extract">
           {{ t('editor.pathExtract') }}
         </button>
       </template>
@@ -77,26 +77,7 @@ function extract(): void {
   gap: 6px;
 }
 
-/* 抽取按钮（KeyValueTable 工具栏插槽）：与过滤条同排的弱按钮 */
-.pv-extract {
-  height: 22px;
-  padding: 0 8px;
-  border: none;
-  background: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-xs);
-  font-family: inherit;
-  color: var(--text-2);
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-.pv-extract:hover {
-  background: var(--bg-hover);
-  color: var(--accent);
-}
+/* 抽取按钮（KeyValueTable 工具栏插槽）：视觉收敛到全局 miyo-btn-sm/ghost，类名保留供 spec 定位 */
 
 .pv-hint {
   margin: 0;

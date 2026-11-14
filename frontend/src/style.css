@@ -36,7 +36,8 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
-  /* 字号工具类（text-xxs / text-xs…，值锚定 --fs-* 单源） */
+  /* 字号工具类（text-2xxs / text-xxs / text-xs…，值锚定 --fs-* 单源） */
+  --text-2xxs: var(--fs-2xxs);
   --text-xxs: var(--fs-xxs);
   /* Method 语义色（映射方法变量，深/浅主题自动跟随； text/bg/border-method-* 工具类） */
   --color-method-get: var(--get);
@@ -167,7 +168,8 @@
   --h-md: 32px;
   --h-lg: 36px;
 
-  /* ---- 字号（正文 13 / 辅助 12 / 标题 14/16/20，微标签 11） ---- */
+  /* ---- 字号（正文 13 / 辅助 12 / 标题 14/16/20，微标签 11，微徽章 10） ---- */
+  --fs-2xxs: 10px;
   --fs-xxs: 11px;
   --fs-xs: 12px;
   --fs-sm: 13px;
@@ -875,7 +877,7 @@ kbd,
   flex: none;
   padding: 1px 8px;
   border-radius: var(--radius-pill);
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   font-weight: 600;
   line-height: 1.6;
   letter-spacing: 0.02em;

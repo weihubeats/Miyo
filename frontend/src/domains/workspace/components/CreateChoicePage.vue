@@ -117,7 +117,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onDocKeydown))
 }
 
 .cc-label {
-  font-size: 14px;
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 </style>

@@ -11,6 +11,7 @@
 import { useLocaleStore } from '@/stores/locale'
 import { methodTone } from '@/utils/methodTone'
 import Icon from '@/components/ui/Icon.vue'
+import IconButton from '@/components/ui/IconButton.vue'
 import Modal from '@/components/ui/Modal.vue'
 
 defineProps<{
@@ -40,14 +41,13 @@ const t = useLocaleStore().t
     @update:open="emit('update:open', $event)"
   >
     <!-- 右上快捷关闭（容器 position: relative 定位，见文末样式） -->
-    <button
+    <IconButton
       class="dc-close"
-      type="button"
-      :aria-label="t('common.close')"
+      name="x"
+      :size="14"
+      :label="t('common.close')"
       @click="emit('update:open', false)"
-    >
-      <Icon name="x" :size="14" />
-    </button>
+    />
     <div class="dc-head">
       <span class="dc-badge"><Icon name="alert-triangle" :size="16" /></span>
       <div class="dc-texts">
@@ -63,10 +63,10 @@ const t = useLocaleStore().t
 
     <template #footer>
       <div class="dc-actions">
-        <button class="dc-cancel" type="button" @click="emit('update:open', false)">
+        <button class="miyo-btn miyo-btn-ghost" type="button" @click="emit('update:open', false)">
           {{ t('common.cancel') }}
         </button>
-        <button class="dc-confirm" type="button" @click="emit('confirm')">
+        <button class="miyo-btn miyo-btn-danger-solid" type="button" @click="emit('confirm')">
           {{ confirmLabel || t('confirm.delete') }}
         </button>
       </div>
@@ -81,16 +81,16 @@ const t = useLocaleStore().t
   gap: 16px;
 }
 
-/* 警告徽章：圆角红底 red-500/15 + 危险图标色（--danger-fg 随主题） */
+/* 警告徽章：圆角红底（--danger-tint 随主题）+ 危险图标色（--danger-fg 随主题） */
 .dc-badge {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 8px;
-  border-radius: 12px;
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--danger-fg, #f87171);
+  border-radius: var(--radius-lg);
+  background: var(--danger-tint);
+  color: var(--danger-fg);
 }
 
 .dc-texts {
@@ -101,7 +101,7 @@ const t = useLocaleStore().t
 
 .dc-title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--text-1);
   word-break: break-word;
@@ -109,7 +109,7 @@ const t = useLocaleStore().t
 
 .dc-message {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   color: var(--text-2);
   word-break: break-word;
@@ -123,7 +123,7 @@ const t = useLocaleStore().t
   margin-top: 12px;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: var(--bg-code);
 }
 
@@ -132,9 +132,9 @@ const t = useLocaleStore().t
   padding: 2px 8px;
   border-width: 1px;
   border-style: solid; /* 描边色由 methodTone 的 border-method-*／20 类提供，此处不设色避免压过工具类 */
-  border-radius: 6px;
+  border-radius: var(--radius);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -142,7 +142,7 @@ const t = useLocaleStore().t
   min-width: 0;
   overflow: hidden;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -155,58 +155,11 @@ const t = useLocaleStore().t
   width: 100%;
 }
 
-/* 右上快捷关闭：随主题（--text-3 → hover --text-1） */
+/* 右上快捷关闭（IconButton）：只留弹窗角定位 */
 .dc-close {
   position: absolute;
   top: 16px;
   right: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  border: none;
-  background: none;
-  color: var(--text-3);
-  cursor: pointer;
-  transition: color var(--dur) var(--ease);
-}
-.dc-close:hover {
-  color: var(--text-1);
-}
-
-.dc-cancel {
-  padding: 6px 14px;
-  border: none;
-  border-radius: 8px;
-  background: none;
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-2);
-  cursor: pointer;
-  transition: all var(--dur) var(--ease);
-}
-.dc-cancel:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-}
-
-/* 高危按钮：红底 + 红描边 + 柔化红晕（原深红双层阴影浅色下糊成脏块），减弱纯红刺眼感 */
-.dc-confirm {
-  padding: 6px 16px;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 8px;
-  background: var(--danger);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  color: #fff;
-  box-shadow: 0 8px 16px -8px rgba(220, 38, 38, 0.5);
-  cursor: pointer;
-  transition: all var(--dur) var(--ease);
-}
-.dc-confirm:hover {
-  background: color-mix(in srgb, var(--danger) 88%, #fff);
 }
 </style>
 

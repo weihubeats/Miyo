@@ -126,7 +126,7 @@ function shortTime(iso: string): string {
           <span v-if="e.exists_locally" class="simport-exists">{{ t('simport.exists') }}</span>
           <button
             v-else
-            class="simport-import"
+            class="simport-import miyo-btn miyo-btn-sm"
             type="button"
             :disabled="busyId === e.project_id"
             @click="importProject(e)"
@@ -144,14 +144,14 @@ function shortTime(iso: string): string {
 .simport-sub {
   margin: 0 0 12px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
 .simport-hint {
   margin: 0;
   padding: 24px 0;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-align: center;
 }
 .simport-list {
@@ -187,7 +187,7 @@ function shortTime(iso: string): string {
 }
 .simport-name {
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -202,27 +202,8 @@ function shortTime(iso: string): string {
   font-size: var(--fs-xxs);
   flex-shrink: 0;
 }
+/* 行内导入按钮视觉走全局 miyo-btn-sm，仅保留 flex 布局职责 */
 .simport-import {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
   flex-shrink: 0;
-  padding: 4px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  color: var(--text-1);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-.simport-import:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.simport-import:disabled {
-  opacity: 0.6;
-  cursor: default;
 }
 </style>

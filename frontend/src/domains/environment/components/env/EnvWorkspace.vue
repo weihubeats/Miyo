@@ -1182,7 +1182,7 @@ defineExpose({
     <p class="em-import-hint">{{ t('envmgr.importHint') }}</p>
     <textarea
       v-model="importText"
-      class="miyo-input em-import-input"
+      class="miyo-textarea em-import-input"
       spellcheck="false"
       placeholder='{"name": "prod", "values": [{"key": "base_url", "value": "https://…"}]}'
     ></textarea>
@@ -1277,7 +1277,7 @@ defineExpose({
 
 .em-confirm-text {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-2);
 }
@@ -1380,7 +1380,7 @@ defineExpose({
 }
 
 .em-global-name {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
@@ -1389,7 +1389,7 @@ defineExpose({
   font-size: var(--fs-xxs);
   color: var(--accent);
   background: var(--accent-tint);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0 6px;
   line-height: 1.6;
 }
@@ -1400,7 +1400,7 @@ defineExpose({
   letter-spacing: 0.04em;
   color: var(--text-3);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0 6px;
   line-height: 1.5;
 }
@@ -1449,7 +1449,7 @@ defineExpose({
 }
 
 .em-row-name {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--text-1);
   min-width: 0;
@@ -1480,7 +1480,7 @@ defineExpose({
   line-height: 1.6;
   color: var(--success);
   background: var(--success-tint);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0 6px;
   flex-shrink: 0;
 }
@@ -1533,15 +1533,12 @@ defineExpose({
 /* 环境导入弹窗 */
 .em-import-hint {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .em-import-input {
   width: 100%;
   min-height: 110px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  resize: vertical;
 }
 .em-import-actions {
   display: flex;
@@ -1554,7 +1551,7 @@ defineExpose({
   border-radius: var(--radius-sm);
   background: var(--danger-tint);
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .em-import-preview {
   margin-top: 10px;
@@ -1569,7 +1566,7 @@ defineExpose({
 .em-import-row {
   display: flex;
   gap: 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 .em-import-label {
   width: 44px;
@@ -1607,7 +1604,7 @@ defineExpose({
   font-size: var(--fs-xxs);
   line-height: 1.6;
   padding: 0 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -1637,7 +1634,7 @@ defineExpose({
 
 .em-editor-title {
   flex: 1;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -1671,7 +1668,7 @@ defineExpose({
 }
 
 .em-section-title {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -1714,7 +1711,7 @@ defineExpose({
 
 .em-empty {
   margin: auto;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   text-align: center;
 }
@@ -1741,7 +1738,7 @@ defineExpose({
   font-size: var(--fs-xxs);
   color: var(--warning);
   background: var(--warning-tint);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 2px 8px;
 }
 

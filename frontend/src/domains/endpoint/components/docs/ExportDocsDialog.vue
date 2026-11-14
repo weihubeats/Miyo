@@ -275,7 +275,7 @@ async function startExport(): Promise<void> {
   gap: 3px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-panel);
   color: inherit;
   text-align: left;
@@ -297,7 +297,7 @@ async function startExport(): Promise<void> {
 }
 
 .scope-title {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -323,7 +323,7 @@ async function startExport(): Promise<void> {
   width: 100%;
   padding: 9px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-panel);
   text-align: left;
   cursor: pointer;
@@ -357,7 +357,7 @@ async function startExport(): Promise<void> {
 }
 
 .fmt-title {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -392,7 +392,7 @@ async function startExport(): Promise<void> {
   height: 22px;
   padding: 0 12px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--text-2);
   font-family: var(--font-mono);

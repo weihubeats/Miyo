@@ -86,7 +86,7 @@ function onBulkKeydown(e: KeyboardEvent): void {
       <textarea
         ref="bulkArea"
         v-model="bulkText"
-        class="bulk-area miyo-mono"
+        class="bulk-area miyo-textarea miyo-mono"
         autofocus
         spellcheck="false"
         :placeholder="t('params.bulkPh')"
@@ -107,7 +107,7 @@ function onBulkKeydown(e: KeyboardEvent): void {
       @update:model-value="applyParams"
     >
       <template #toolbar-actions>
-        <button class="bulk-btn" type="button" @click="enterBulk()">
+        <button class="miyo-btn miyo-btn-sm miyo-btn-ghost" type="button" @click="enterBulk()">
           {{ t('params.bulkEdit') }}
         </button>
       </template>
@@ -122,26 +122,7 @@ function onBulkKeydown(e: KeyboardEvent): void {
   gap: 6px;
 }
 
-/* 批量编辑按钮（KeyValueTable 工具栏插槽）：与过滤条同排的弱按钮 */
-.bulk-btn {
-  height: 22px;
-  padding: 0 8px;
-  border: none;
-  background: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-xs);
-  font-family: inherit;
-  color: var(--text-2);
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-.bulk-btn:hover {
-  background: var(--bg-hover);
-  color: var(--accent);
-}
+/* 批量编辑按钮（KeyValueTable 工具栏插槽）：视觉收敛到全局 miyo-btn-sm/ghost */
 
 .bulk-wrap {
   display: flex;
@@ -152,8 +133,6 @@ function onBulkKeydown(e: KeyboardEvent): void {
 .bulk-area {
   width: 100%;
   min-height: 140px;
-  resize: vertical;
-  font-size: 12px;
   line-height: 1.6;
 }
 

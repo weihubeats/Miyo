@@ -1420,10 +1420,10 @@ onUnmounted(() => {
   gap: 6px;
   padding: 5px 14px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: none;
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
   transition:
@@ -1443,13 +1443,13 @@ onUnmounted(() => {
 .sub-nav-badge {
   min-width: 16px;
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-family: var(--font-mono);
   font-size: var(--fs-xxs);
   line-height: 16px;
   text-align: center;
   color: var(--accent);
-  background: var(--accent-tint, rgba(168, 85, 247, 0.16));
+  background: var(--accent-tint);
 }
 
 .save-group {
@@ -1457,10 +1457,10 @@ onUnmounted(() => {
   align-items: stretch;
 }
 .save-main {
-  border-radius: 7px 0 0 7px;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
 }
 .save-arrow {
-  border-radius: 0 7px 7px 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
   border-left: 1px solid var(--border-strong);
   padding: 0 7px;
 }
@@ -1520,7 +1520,7 @@ onUnmounted(() => {
   border-radius: var(--radius);
   font-family: var(--font-mono);
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.04em;
   line-height: 1.4;
 }
@@ -1564,7 +1564,7 @@ onUnmounted(() => {
   border-radius: 0;
   box-shadow: none;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-2);
   /* 右侧预留复制按钮 + caret 位，防域名文字钻入按钮下 */
@@ -1614,7 +1614,7 @@ onUnmounted(() => {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius);
   padding: 0;
   background: transparent;
   color: var(--text-3);
@@ -1670,7 +1670,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 .base-url-opt-name {
@@ -1684,7 +1684,7 @@ onUnmounted(() => {
   text-align: right;
 }
 .base-url-manage {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: var(--font-ui);
   color: var(--text-3);
 }
@@ -1767,7 +1767,7 @@ onUnmounted(() => {
   transform: translateY(-50%);
   width: 26px;
   height: 26px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--text-2);
   cursor: pointer;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
@@ -1792,7 +1792,7 @@ onUnmounted(() => {
   background: none;
   color: inherit;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 0;
 }
 
@@ -1824,7 +1824,7 @@ onUnmounted(() => {
   height: 20px;
   padding: 0 8px;
   border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-card);
   font-size: var(--fs-xxs);
   color: var(--text-1);
@@ -1926,7 +1926,7 @@ onUnmounted(() => {
 }
 .req-loading-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -2445,7 +2445,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--miyo-text-muted);
 }
 
@@ -2476,11 +2476,11 @@ onUnmounted(() => {
   gap: 8px;
   border: 1px solid var(--miyo-border);
   background: var(--miyo-input-bg);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 5px 10px;
   cursor: pointer;
-  color: var(--miyo-text, #f9fafb);
-  font-size: 12.5px;
+  color: var(--miyo-text);
+  font-size: var(--fs-xs);
   text-align: left;
 }
 
@@ -2515,9 +2515,9 @@ onUnmounted(() => {
   padding: 10px 12px;
   background: var(--miyo-input-bg);
   border: 1px solid var(--miyo-border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 240px;
@@ -2530,7 +2530,7 @@ onUnmounted(() => {
   background: var(--danger-tint);
   border: 1px solid var(--danger-border);
   color: var(--danger);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 
 /* ---- 响应容器：flex:1 填满分割条以下所有空间 ---- */
@@ -2570,7 +2570,7 @@ onUnmounted(() => {
 
 .name-hint {
   margin: 0 0 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 

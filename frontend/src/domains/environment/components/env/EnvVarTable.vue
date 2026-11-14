@@ -170,12 +170,12 @@ function applyBatch(): void {
         <Icon name="search" :size="12" />
         <input v-model="search" class="evt-search-input" :placeholder="t('envmgr.searchPh')" spellcheck="false" />
       </div>
-      <button class="evt-tool-btn" type="button" :title="t('envmgr.batchImportTitle')" @click="openBatch">
+      <button class="evt-tool-btn miyo-btn miyo-btn-sm miyo-btn-ghost" type="button" :title="t('envmgr.batchImportTitle')" @click="openBatch">
         <Icon name="file-plus" :size="12" />
         {{ t('envmgr.batchImport') }}
       </button>
       <button
-        class="evt-tool-btn"
+        class="evt-tool-btn miyo-btn miyo-btn-sm miyo-btn-ghost"
         :class="{ on: hideSensitive }"
         type="button"
         :title="t('envmgr.maskToggleTip')"
@@ -297,7 +297,7 @@ function applyBatch(): void {
       <p class="evt-batch-hint">{{ t('envmgr.batchImportHint') }}</p>
       <textarea
         v-model="batchText"
-        class="miyo-input evt-batch-input"
+        class="miyo-textarea evt-batch-input"
         spellcheck="false"
         :placeholder="'token = abc123\nhost: https://api.example.com'"
       ></textarea>
@@ -370,34 +370,11 @@ function applyBatch(): void {
   outline: none;
   background: none;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 
-.evt-tool-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: var(--h-sm);
-  padding: 0 8px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  font-family: inherit;
-  font-size: var(--fs-xxs);
-  color: var(--text-3);
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-
-.evt-tool-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-}
-
+/* 工具行文字钮：视觉收敛到全局 miyo-btn-sm/ghost，仅留激活态语义色 */
 .evt-tool-btn.on {
   color: var(--accent);
 }
@@ -477,7 +454,7 @@ function applyBatch(): void {
 
 .evt-no-match {
   padding: 10px 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   text-align: center;
 }
@@ -485,21 +462,18 @@ function applyBatch(): void {
 /* 批量导入弹窗 */
 .evt-batch-hint {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
 .evt-batch-input {
   width: 100%;
   min-height: 120px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  resize: vertical;
 }
 
 .evt-batch-none {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -509,6 +483,6 @@ function applyBatch(): void {
   border-radius: var(--radius-sm);
   background: var(--accent-tint);
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 </style>

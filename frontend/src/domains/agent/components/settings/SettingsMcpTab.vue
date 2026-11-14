@@ -503,12 +503,12 @@ onMounted(() => {
   <template #footer>
     <button
       type="button"
-      class="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-white/5"
+      class="miyo-btn"
       @click="permExplainOpen = false"
     >{{ t('common.cancel') }}</button>
     <button
       type="button"
-      class="rounded-lg bg-purple-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-500/90"
+      class="miyo-btn miyo-btn-primary"
       @click="confirmPermExplain"
     >{{ t('settings.mcpPermFirstConfirm') }}</button>
   </template>
@@ -525,7 +525,7 @@ onMounted(() => {
   <template #footer>
     <button
       type="button"
-      class="rounded-lg border border-zinc-200 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-white/5"
+      class="miyo-btn"
       @click="pendingHighRiskConfirm = false"
     >{{ t('common.cancel') }}</button>
     <button

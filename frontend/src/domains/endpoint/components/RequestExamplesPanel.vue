@@ -91,12 +91,12 @@ function shortTime(iso: string): string {
     <div class="rex-save">
       <input
         v-model="nameInput"
-        class="rex-name"
+        class="rex-name miyo-input"
         type="text"
         :placeholder="draft ? `${draft.method} ${draft.path}` : t('examples.namePh')"
         @keyup.enter="saveCurrent"
       />
-      <button class="rex-save-btn" type="button" :disabled="!draft" @click="saveCurrent">
+      <button class="rex-save-btn miyo-btn miyo-btn-primary" type="button" :disabled="!draft" @click="saveCurrent">
         {{ t('examples.saveCurrent') }}
       </button>
     </div>
@@ -147,46 +147,14 @@ function shortTime(iso: string): string {
   gap: 8px;
 }
 
+/* 名称输入 / 保存按钮：视觉收敛到全局 miyo-input / miyo-btn-primary，仅留布局 */
 .rex-name {
   flex: 1;
   min-width: 0;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-1);
-  background: var(--bg-1);
-  outline: none;
-  transition: border-color var(--dur) var(--ease);
-}
-.rex-name:focus {
-  border-color: var(--accent);
-}
-.rex-name::placeholder {
-  color: var(--text-3);
 }
 
 .rex-save-btn {
   flex-shrink: 0;
-  padding: 6px 14px;
-  border: none;
-  border-radius: var(--radius);
-  font-family: inherit;
-  font-size: 12.5px;
-  color: #fff;
-  background: var(--accent);
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    opacity var(--dur) var(--ease);
-}
-.rex-save-btn:hover:not(:disabled) {
-  background: var(--accent-hover, var(--accent));
-}
-.rex-save-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .rex-list {
@@ -202,7 +170,7 @@ function shortTime(iso: string): string {
   border-bottom: 1px solid var(--border);
 }
 .rex-row:hover {
-  background: var(--hover);
+  background: var(--bg-hover);
 }
 
 .rex-main {
@@ -211,7 +179,7 @@ function shortTime(iso: string): string {
 }
 
 .rex-title {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   white-space: nowrap;
   overflow: hidden;

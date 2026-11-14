@@ -223,7 +223,7 @@ const others = (): MockRule[] =>
 }
 
 .mkp-title {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -255,7 +255,7 @@ const others = (): MockRule[] =>
   gap: 10px;
   padding: 7px 10px;
   border-bottom: 1px solid var(--border);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 .mkp-row:last-child {
   border-bottom: none;
@@ -271,7 +271,7 @@ const others = (): MockRule[] =>
 
 .mkp-path {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 
@@ -290,7 +290,7 @@ const others = (): MockRule[] =>
   color: var(--text-3);
 }
 .mkp-status.on {
-  color: var(--ok);
+  color: var(--success);
 }
 
 .mkp-code {
@@ -322,7 +322,7 @@ const others = (): MockRule[] =>
   font-size: var(--fs-xxs);
   color: var(--text-3);
   background: var(--bg-hover);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0 7px;
 }
 
@@ -361,7 +361,7 @@ const others = (): MockRule[] =>
 .mkp-log-time {
   flex: none;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   color: var(--text-3);
 }
 

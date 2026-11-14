@@ -212,10 +212,10 @@ async function fillFromMock(): Promise<void> {
         compact
       />
       <div class="rep-empty-actions">
-        <button type="button" class="rep-mini-btn" @click="addManual">
+        <button type="button" class="miyo-btn miyo-btn-sm" @click="addManual">
           <Icon name="plus" :size="12" /> {{ t('respex.addManual') }}
         </button>
-        <button type="button" class="rep-mini-btn" @click="fillFromMock">{{ t('respex.fillFromMock') }}</button>
+        <button type="button" class="miyo-btn miyo-btn-sm" @click="fillFromMock">{{ t('respex.fillFromMock') }}</button>
       </div>
     </template>
   </section>
@@ -256,7 +256,7 @@ async function fillFromMock(): Promise<void> {
 .rep-picker-item {
   padding: 2px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-card);
   color: var(--text-2);
   font-size: var(--fs-xs);
@@ -307,38 +307,15 @@ async function fillFromMock(): Promise<void> {
 .rep-empty-body {
   margin: 0;
   padding: 14px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
-/* ---- 空态快捷按钮（neutral-800 微型按钮） ---- */
+/* ---- 空态快捷按钮：视觉收敛到全局 miyo-btn-sm ---- */
 
 .rep-empty-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.rep-mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-card);
-  color: var(--text-1);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    border-color var(--dur) var(--ease);
-}
-.rep-mini-btn:hover {
-  background: var(--bg-hover);
-}
-.rep-mini-btn:active {
-  background: var(--bg-active);
 }
 </style>

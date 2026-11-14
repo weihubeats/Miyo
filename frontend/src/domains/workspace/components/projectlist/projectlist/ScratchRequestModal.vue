@@ -116,7 +116,7 @@ async function sendScratch(): Promise<void> {
     <textarea
       v-if="scratchMethod !== 'GET'"
       v-model="scratchBody"
-      class="miyo-input scratch-ta"
+      class="miyo-textarea scratch-ta"
       :placeholder="t('scratch.bodyPh')"
       spellcheck="false"
     ></textarea>
@@ -147,20 +147,16 @@ async function sendScratch(): Promise<void> {
   flex-shrink: 0;
 }
 
+/* URL 输入视觉走全局 miyo-input，仅保留布局职责 */
 .scratch-url {
   flex: 1;
   min-width: 0;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
 }
 
 .scratch-ta {
   width: 100%;
   min-height: 90px;
   margin-top: 8px;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  resize: vertical;
 }
 
 .scratch-res {
@@ -182,7 +178,7 @@ async function sendScratch(): Promise<void> {
 
 .sr-status {
   padding: 1px 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   font-weight: 700;
@@ -211,7 +207,7 @@ async function sendScratch(): Promise<void> {
   overflow: auto;
   padding: 10px 12px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   color: var(--text-1);
   white-space: pre-wrap;

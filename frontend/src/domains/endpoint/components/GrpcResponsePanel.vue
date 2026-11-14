@@ -299,7 +299,7 @@ function metaRows(metadata: [string, string][]): Array<{ key: string; value: str
 }
 .grpc-error-msg {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--danger);
   padding: 6px 10px;
   border: 1px solid var(--danger-border);
@@ -328,7 +328,7 @@ function metaRows(metadata: [string, string][]): Array<{ key: string; value: str
   display: flex;
   gap: 10px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .meta-row + .meta-row {
   border-top: 1px solid var(--border);
@@ -360,7 +360,7 @@ function metaRows(metadata: [string, string][]): Array<{ key: string; value: str
   background: transparent;
   text-align: left;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .stream-item + .stream-item {
@@ -392,14 +392,14 @@ function metaRows(metadata: [string, string][]): Array<{ key: string; value: str
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   padding: 10px;
 }
 .stream-dot {
   width: 8px;
   height: 8px;
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--grpc);
   animation: grpc-pulse 1.2s ease-in-out infinite;
 }
@@ -422,7 +422,7 @@ function metaRows(metadata: [string, string][]): Array<{ key: string; value: str
   padding: 8px 10px;
   border: 1px solid var(--border-editor);
   border-radius: var(--radius);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: var(--font-mono, monospace);
   color: var(--text-1);
   overflow-x: auto;

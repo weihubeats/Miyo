@@ -1751,7 +1751,7 @@ const projectSummary = computed(() => {
   padding: 3px 10px;
   border: 1px solid var(--border);
   border-bottom-width: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg-hover);
   color: var(--text-1);
   font-family: var(--font-mono);
@@ -1779,9 +1779,9 @@ const projectSummary = computed(() => {
   align-items: center;
   justify-content: center;
   width: 24px;
-  height: 24px;
+  height: var(--h-xs);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--text-3);
   cursor: pointer;

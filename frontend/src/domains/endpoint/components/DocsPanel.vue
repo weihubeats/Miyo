@@ -200,7 +200,7 @@ const showExport = ref(false)
         <span class="method-pill" :class="`m-${draft.method.toLowerCase()}`">{{ draft.method }}</span>
         <code class="head-path" v-tooltip-overflow>{{ draft.path }}</code>
         <div class="head-actions">
-          <button class="head-export" type="button" @click="showExport = true">
+          <button class="miyo-btn miyo-btn-sm" type="button" @click="showExport = true">
             <Icon name="download" :size="13" /> {{ t('docs.exportDocs') }}
           </button>
           <button class="miyo-btn miyo-btn-sm" type="button" @click="copyPath">
@@ -370,10 +370,10 @@ const showExport = ref(false)
 .method-pill {
   flex-shrink: 0;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   padding: 3px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   border: 1px solid color-mix(in srgb, var(--m) 22%, transparent);
   background: color-mix(in srgb, var(--m) 10%, transparent);
   color: var(--m);
@@ -416,27 +416,7 @@ const showExport = ref(false)
   flex-shrink: 0;
 }
 
-/* 导出文档入口：中性暗底按钮（区别于主操作「跳转调试」） */
-.head-export {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--text-1);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    border-color var(--dur) var(--ease);
-}
-.head-export:hover {
-  background: var(--bg-hover);
-}
+/* 导出文档入口 / 复制 Path / 跳转调试：视觉收敛到全局 miyo-btn-sm */
 
 .head-sub {
   display: flex;
@@ -458,7 +438,7 @@ const showExport = ref(false)
 .head-status {
   flex-shrink: 0;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: var(--fs-xxs);
   color: var(--info);
   background: var(--info-tint);
@@ -477,7 +457,7 @@ const showExport = ref(false)
 
 .head-desc {
   margin: 6px 0 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-word;
@@ -537,7 +517,7 @@ const showExport = ref(false)
 
 .meta-item dd {
   margin: 3px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -605,7 +585,7 @@ const showExport = ref(false)
 
 .auth-badge {
   padding: 2px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--accent);
@@ -615,7 +595,7 @@ const showExport = ref(false)
 
 .auth-detail {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -627,7 +607,7 @@ const showExport = ref(false)
 .kv-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 
 .kv-table th {
@@ -659,13 +639,13 @@ const showExport = ref(false)
 
 .kv-key {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 
 .kv-val {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   word-break: break-all;
 }
@@ -683,7 +663,7 @@ const showExport = ref(false)
   border-radius: var(--radius);
   background: var(--bg-code);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-1);
   white-space: pre-wrap;
@@ -695,7 +675,7 @@ const showExport = ref(false)
 .schema-empty {
   margin: 0;
   padding: 4px 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

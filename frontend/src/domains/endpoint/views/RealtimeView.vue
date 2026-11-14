@@ -418,7 +418,7 @@ onUnmounted(() => {
 
       <!-- 折叠区：自定义请求头（握手携带）+ WS 子协议 -->
       <div class="rt-adv">
-        <button class="rt-adv-toggle" type="button" :aria-expanded="wsHeadersOpen" @click="wsHeadersOpen = !wsHeadersOpen">
+        <button class="rt-adv-toggle miyo-btn miyo-btn-sm miyo-btn-ghost" type="button" :aria-expanded="wsHeadersOpen" @click="wsHeadersOpen = !wsHeadersOpen">
           <Icon :name="wsHeadersOpen ? 'chevron-down' : 'chevron-right'" :size="12" />
           {{ t('realtime.headersToggle', { n: headerCount(wsHeaders) }) }}
         </button>
@@ -510,7 +510,7 @@ onUnmounted(() => {
 
       <!-- 折叠区：自定义请求头（订阅请求携带） -->
       <div class="rt-adv">
-        <button class="rt-adv-toggle" type="button" :aria-expanded="sseHeadersOpen" @click="sseHeadersOpen = !sseHeadersOpen">
+        <button class="rt-adv-toggle miyo-btn miyo-btn-sm miyo-btn-ghost" type="button" :aria-expanded="sseHeadersOpen" @click="sseHeadersOpen = !sseHeadersOpen">
           <Icon :name="sseHeadersOpen ? 'chevron-down' : 'chevron-right'" :size="12" />
           {{ t('realtime.headersToggle', { n: headerCount(sseHeaders) }) }}
         </button>
@@ -563,13 +563,13 @@ onUnmounted(() => {
 .rt-url {
   flex: 1;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 .rt-check {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   white-space: nowrap;
 }
@@ -580,10 +580,10 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .rt-status {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   padding: 2px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
   color: var(--text-3);
 }
@@ -607,27 +607,7 @@ onUnmounted(() => {
   flex-wrap: wrap;
   flex-shrink: 0;
 }
-.rt-adv-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 8px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  color: var(--text-2);
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-.rt-adv-toggle:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-}
+/* 折叠开关：视觉收敛到全局 miyo-btn-sm/ghost */
 .rt-adv-hint {
   font-size: var(--fs-xxs);
   color: var(--text-3);
@@ -652,8 +632,6 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   max-width: 360px;
-  font-family: var(--font-mono);
-  font-size: 12px;
 }
 
 .rt-log {
@@ -665,7 +643,7 @@ onUnmounted(() => {
   background: var(--bg-card);
   padding: 8px 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .rt-line {
   display: flex;

@@ -666,7 +666,6 @@ async function copyCode() {
 .miyo-input-sm {
   flex: 1;
   min-width: 0;
-  padding: 4px 8px;
 }
 
 .miyo-btn-ghost {
@@ -695,7 +694,7 @@ async function copyCode() {
   border-bottom: 2px solid transparent;
   color: var(--text-2);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .miyo-tab:hover {
@@ -745,14 +744,14 @@ async function copyCode() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   font-weight: 600;
 }
 
 .hint-inline {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .vars-invalid {
@@ -779,7 +778,7 @@ async function copyCode() {
   margin: 0;
   padding: 10px 12px;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   white-space: pre;
   tab-size: 2;
@@ -831,7 +830,7 @@ async function copyCode() {
 }
 
 :deep(.hl-n) {
-  color: #c084fc;
+  color: var(--patch);
 }
 
 :deep(.hl-p) {
@@ -850,7 +849,7 @@ async function copyCode() {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
@@ -892,7 +891,7 @@ async function copyCode() {
   color: var(--danger);
   font-weight: 600;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 
 .gql-resp {
@@ -917,14 +916,14 @@ async function copyCode() {
   border-bottom: 1px solid var(--border);
   background: var(--accent-soft);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .resp-pre {
   margin: 0;
   padding: 10px 12px;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
@@ -937,7 +936,7 @@ async function copyCode() {
 
 .hint {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-align: center;
   margin-top: var(--s-2);
 }
@@ -974,7 +973,7 @@ async function copyCode() {
   flex: 1;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-word;
@@ -990,7 +989,7 @@ async function copyCode() {
   border: 1px solid var(--border);
   border-radius: var(--r-s);
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   white-space: pre;
   overflow: auto;
