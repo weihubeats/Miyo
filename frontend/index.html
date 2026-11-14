@@ -8,6 +8,14 @@
   </head>
   <body>
     <div id="app"></div>
+    <script>
+      // 浏览器截图/验收辅助（dev-only）：?miyo-e2e=1 时加载 public 下的 IPC
+      // 数据桩（固定 fixture），让界面脱离 Tauri 后端也能渲染。生产构建不会
+      // 带查询参数，本分支永不激活；桩文件也从未被应用代码引用。
+      if (new URLSearchParams(location.search).has('miyo-e2e')) {
+        document.write('<script src="/dev-screenshot-stub.js"><\/script>');
+      }
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
