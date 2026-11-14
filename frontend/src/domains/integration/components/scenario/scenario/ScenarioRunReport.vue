@@ -13,12 +13,14 @@
  *   错误 / 断言明细 / 提取值 / 响应正文速览 / 可展开的请求响应详情；
  * - 点击结果行的定位按钮（或行首方法 + 名称）定位到编排区对应步骤卡。
  */
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useLocaleStore } from '@/stores/locale'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
+import SplitPanes from '@/components/ui/SplitPanes.vue'
 import RequestDetail from '@/domains/endpoint/components/RequestDetail.vue'
 import ResponsePanel from '@/domains/endpoint/components/ResponsePanel.vue'
+import { useOverlayFullscreen } from '@/composables/useOverlayFullscreen'
 import { formatDurationShort } from '@/utils/format'
 import { formatDateTime } from '@/utils/dateTime'
 import { methodBadgeTone } from '@/utils/methodTone'
@@ -86,6 +88,31 @@ function toggleOpen(): void {
   emit('update:open', !props.open)
 }
 
+// ---------- 展开行左右分栏（请求 | 响应），宽度全行共享并记忆 ----------
+const SPLIT_KEY = 'miyo.wf-run-split'
+const SPLIT_DEFAULT = 340
+const splitWidth = ref((() => {
+  try {
+    const n = Number(localStorage.getItem(SPLIT_KEY))
+    return Number.isFinite(n) && n >= 240 ? Math.round(n) : SPLIT_DEFAULT
+  } catch {
+    return SPLIT_DEFAULT
+  }
+})())
+watch(splitWidth, (w) => {
+  try {
+    localStorage.setItem(SPLIT_KEY, String(Math.round(w)))
+  } catch {
+    /* 存储不可用仅本会话生效 */
+  }
+})
+function resetSplit(): void {
+  splitWidth.value = SPLIT_DEFAULT
+}
+
+// ---------- 全屏查看运行结果（CSS 覆盖视口 + Esc 经 escStack 退出） ----------
+const { fullscreen, toggle: toggleFullscreen } = useOverlayFullscreen()
+
 // ---------- 汇总补充：断言通过数（跨步累计） ----------
 const assertSummary = computed(() => {
   const results = props.runResult?.results ?? []
@@ -134,7 +161,11 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
 
 <template>
   <!-- ===== 执行结果 Dock（可折叠；支持历史回看 / 重开恢复） ===== -->
-  <section v-if="running || runResult" class="se-report" :class="{ fail: finalState?.tone === 'fail' }">
+  <section
+    v-if="running || runResult"
+    class="se-report"
+    :class="{ fail: finalState?.tone === 'fail', fullscreen }"
+  >
     <div class="se-report-headrow">
       <button type="button" class="se-report-head" @click="toggleOpen">
         <Icon name="gauge" :size="13" />
@@ -194,6 +225,12 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
         :title="t('scenario.history')"
         :disabled="!hasHistory"
         @click.stop="emit('history', $event)"
+      />
+      <IconButton
+        :name="fullscreen ? 'minimize-2' : 'maximize-2'"
+        :size="13"
+        :title="fullscreen ? t('response.exitFullscreen') : t('response.fullscreen')"
+        @click.stop="toggleFullscreen"
       />
     </div>
     <div v-if="open" class="se-report-body">
@@ -261,17 +298,29 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
             </code>
           </div>
           <div v-if="respOpenRows.has(row.pos) && row.result" class="se-rresp">
-            <RequestDetail
-              v-if="row.result.response"
-              :response="row.result.response"
-              :url="row.result.url ?? undefined"
-            />
-            <p v-else-if="row.result.request_error" class="se-rerr">{{ row.result.request_error }}</p>
-            <ResponsePanel
-              v-if="row.result.response"
-              :response="row.result.response"
-              :load-full-body="row.result.response.body_omitted ? fullBodyLoader(row.pos) : undefined"
-            />
+            <SplitPanes
+              v-model:width="splitWidth"
+              class="se-rsplit"
+              :min="240"
+              :stack-below="720"
+              @reset="resetSplit"
+            >
+              <template #first>
+                <RequestDetail
+                  v-if="row.result.response"
+                  :response="row.result.response"
+                  :url="row.result.url ?? undefined"
+                />
+                <p v-else-if="row.result.request_error" class="se-rerr">{{ row.result.request_error }}</p>
+              </template>
+              <template #second>
+                <ResponsePanel
+                  v-if="row.result.response"
+                  :response="row.result.response"
+                  :load-full-body="row.result.response.body_omitted ? fullBodyLoader(row.pos) : undefined"
+                />
+              </template>
+            </SplitPanes>
           </div>
         </div>
         <p v-if="livePending" class="se-pending-hint">
@@ -336,15 +385,28 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
           </code>
         </div>
         <!-- 请求参数 + 响应详情：复用单请求的查看组件（请求快照 / 正文预览 /
-             按需取全文）；请求级错误时也给出可展开的入口，避免只剩一行红字。 -->
+             按需取全文）；请求级错误时也给出可展开的入口，避免只剩一行红字。
+             窄容器（<720px）自动回退上下堆叠。 -->
         <div v-if="respOpenRows.has(i) && (r.response || r.request_error)" class="se-rresp">
-          <RequestDetail v-if="r.response" :response="r.response" :url="r.url ?? undefined" />
-          <p v-else-if="r.request_error" class="se-rerr">{{ r.request_error }}</p>
-          <ResponsePanel
-            v-if="r.response"
-            :response="r.response"
-            :load-full-body="r.response.body_omitted ? fullBodyLoader(i) : undefined"
-          />
+          <SplitPanes
+            v-model:width="splitWidth"
+            class="se-rsplit"
+            :min="240"
+            :stack-below="720"
+            @reset="resetSplit"
+          >
+            <template #first>
+              <RequestDetail v-if="r.response" :response="r.response" :url="r.url ?? undefined" />
+              <p v-else-if="r.request_error" class="se-rerr">{{ r.request_error }}</p>
+            </template>
+            <template #second>
+              <ResponsePanel
+                v-if="r.response"
+                :response="r.response"
+                :load-full-body="r.response.body_omitted ? fullBodyLoader(i) : undefined"
+              />
+            </template>
+          </SplitPanes>
         </div>
       </div>
       <p v-if="runResult?.results.length" class="se-locate-hint">
@@ -363,6 +425,27 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-panel);
+}
+
+/* 全屏查看：覆盖视口（CSS 全屏，Esc 经 escStack 退出；见 useOverlayFullscreen） */
+.se-report.fullscreen {
+  position: fixed;
+  inset: 14px;
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-lg);
+}
+.se-report.fullscreen .se-report-headrow {
+  flex: none;
+}
+.se-report.fullscreen .se-report-body {
+  flex: 1;
+  min-height: 0;
+}
+.se-report.fullscreen .se-report-scroll {
+  flex: 1;
+  min-height: 0;
 }
 
 .se-report.fail {
@@ -576,20 +659,29 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
   word-break: break-all;
 }
 
-/* 响应详情：复用 ResponsePanel（弹性布局，需给界内固定高度）。 */
+/* 响应详情：请求 | 响应左右分栏（SplitPanes，<720px 容器自动上下堆叠）；
+   复用 ResponsePanel（弹性布局，需给界内固定高度）。 */
 .se-rresp {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
   border-top: 1px dashed var(--border);
   padding-top: 8px;
 }
 
-.se-rresp > :deep(.response-panel),
-.se-rresp > .response-panel {
+.se-rsplit {
   flex: 1;
   min-height: 320px;
+}
+.se-rsplit :deep(.response-panel),
+.se-rsplit .response-panel {
+  flex: 1;
+  min-height: 0;
+}
+.se-rsplit :deep(.rqd) {
+  flex: none;
+  max-height: 100%;
+  overflow-y: auto;
 }
 
 /* 行内响应正文速览：常显一段（不展开也能看到返回了什么） */

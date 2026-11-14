@@ -22,6 +22,7 @@ import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
 import RequestDetail from '@/domains/endpoint/components/RequestDetail.vue'
 import ResponsePanel from '@/domains/endpoint/components/ResponsePanel.vue'
 import { methodBadgeTone } from '@/utils/methodTone'
+import { useOverlayFullscreen } from '@/composables/useOverlayFullscreen'
 import { formatDateTime } from '@/utils/dateTime'
 import { formatDurationShort } from '@/utils/format'
 import { isSensitiveVarName } from '@/utils/scenarioVars'
@@ -43,6 +44,9 @@ const props = defineProps<{
   /** 正文 IPC 截断时的按需全文加载器（仅实时运行有）。 */
   fullBodyLoader?: (i: number) => (() => Promise<string | null>) | undefined
 }>()
+
+// 全屏查看运行结果（CSS 覆盖视口；Esc 经 escStack 退出，见 useOverlayFullscreen）
+const { fullscreen, toggle: toggleFullscreen } = useOverlayFullscreen()
 
 const emit = defineEmits<{
   (e: 'back'): void
@@ -311,7 +315,7 @@ const varTag = (n: string) => `{{${n}}}`
 </script>
 
 <template>
-  <div class="rv-root">
+  <div class="rv-root" :class="{ fullscreen }">
     <!-- ===== 顶部执行概览 ===== -->
     <header class="rv-overview">
       <IconButton name="chevron-right" :size="14" :title="t('integration.resultBackToEdit')" @click="emit('back')" />
@@ -335,6 +339,12 @@ const varTag = (n: string) => `{{${n}}}`
       <div class="rv-spacer"></div>
       <IconButton name="refresh" :size="14" :title="t('integration.resultRerun')" @click="emit('rerun')" />
       <IconButton name="download" :size="14" :title="t('integration.resultExport')" :disabled="!result" @click="onExport" />
+      <IconButton
+        :name="fullscreen ? 'minimize-2' : 'maximize-2'"
+        :size="14"
+        :title="fullscreen ? t('response.exitFullscreen') : t('response.fullscreen')"
+        @click="toggleFullscreen"
+      />
     </header>
 
     <div class="rv-body" v-if="result">
@@ -498,6 +508,16 @@ const varTag = (n: string) => `{{${n}}}`
   color: var(--text-1);
 }
 
+/* 全屏查看：覆盖视口（Esc 经 escStack 退出；见 useOverlayFullscreen） */
+.rv-root.fullscreen {
+  position: fixed;
+  inset: 14px;
+  z-index: var(--z-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
 /* ---- 概览 ---- */
 .rv-overview {
   flex: none;
@@ -530,7 +550,7 @@ const varTag = (n: string) => `{{${n}}}`
   flex: none;
   font-size: var(--fs-xxs);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .rv-final.ok {
@@ -557,10 +577,10 @@ const varTag = (n: string) => `{{${n}}}`
 
 .rv-chip {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   font-weight: 600;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .rv-chip.total {
@@ -706,7 +726,7 @@ const varTag = (n: string) => `{{${n}}}`
 
 .rv-phase-head {
   padding: 6px 10px 2px;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -716,14 +736,14 @@ const varTag = (n: string) => `{{${n}}}`
 .rv-step-no {
   flex: none;
   width: 16px;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   color: var(--text-3);
 }
 
 .rv-step-method {
   flex: none;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   font-weight: 700;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
@@ -742,9 +762,9 @@ const varTag = (n: string) => `{{${n}}}`
 
 .rv-step-status {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .rv-step-status.ok {
@@ -785,7 +805,7 @@ const varTag = (n: string) => `{{${n}}}`
 .rv-step-meta {
   display: flex;
   gap: 10px;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   color: var(--text-3);
   font-family: var(--font-mono);
 }
@@ -928,7 +948,7 @@ const varTag = (n: string) => `{{${n}}}`
   font-family: var(--font-mono);
   font-size: var(--fs-xxs);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-code);
   border: 1px solid var(--border);
   word-break: break-all;

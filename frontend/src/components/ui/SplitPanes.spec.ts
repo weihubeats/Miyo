@@ -74,4 +74,19 @@ describe('SplitPanes', () => {
     expect(w.find('.sp-first').attributes('style')).toContain('800px')
     w.unmount()
   })
+
+  it('widthOn=second：宽度落在次栏，拖拽方向反转（左拖=加宽）', async () => {
+    const w = mount(SplitPanes, {
+      props: { width: 420, min: 220, widthOn: 'second' },
+      slots: { first: '<div>列表</div>', second: '<div>详情</div>' },
+    })
+    expect(w.find('.sp-second').attributes('style')).toContain('420px')
+    expect(w.find('.sp-first').attributes('style')).toBeUndefined()
+
+    await w.find('.sp-divider').trigger('mousedown', { clientX: 500 })
+    fire('mousemove', 440) // 左移 60 → 次栏加宽 60
+    fire('mouseup', 440)
+    expect(w.emitted('update:width')?.[0]).toEqual([480])
+    w.unmount()
+  })
 })

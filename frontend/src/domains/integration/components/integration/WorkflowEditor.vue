@@ -48,6 +48,7 @@ import Menu, { type MenuItem } from '@/components/ui/Menu.vue'
 import Modal from '@/components/ui/Modal.vue'
 import Popconfirm from '@/components/ui/Popconfirm.vue'
 import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
+import SplitPanes from '@/components/ui/SplitPanes.vue'
 const JsonCodeMirror = lazyComponent(() => import('@/components/ui/JsonCodeMirror.vue'))
 import ScenarioRunReport from '@/domains/integration/components/scenario/scenario/ScenarioRunReport.vue'
 import ScenarioVarsPanel from '@/domains/integration/components/scenario/scenario/ScenarioVarsPanel.vue'
@@ -991,6 +992,13 @@ onBeforeUnmount(() => {
   run.dispose()
   sortInstance?.destroy()
   sortInstance = null
+  if (elapsedTimer != null) window.clearInterval(elapsedTimer)
+  window.removeEventListener('resize', syncDetailMax)
+})
+
+onMounted(() => {
+  syncDetailMax()
+  window.addEventListener('resize', syncDetailMax)
 })
 
 // ---------- 拖拽排序（SortableJS，与旧 ScenarioEditor 同款收口） ----------
@@ -1411,6 +1419,103 @@ function locateStep(pos: number): void {
   }
 }
 
+/** 连线上的变量 chip 点击 → 定位到定义该变量的步骤卡（scenarioFlow.definedBy）。 */
+function locateVarSource(varName: string): void {
+  const at = flowGraph.value.definedBy.get(varName)
+  if (at !== undefined && at >= 0) locateStep(at)
+}
+
+// ---------- 右栏详情宽度（拖拽 + 记忆，SplitPanes widthOn=second） ----------
+const DETAIL_WIDTH_KEY = 'miyo.wf-detail-width'
+const DETAIL_WIDTH_DEFAULT = 420
+const DETAIL_WIDTH_MIN = 320
+const DETAIL_WIDTH_MAX = 900
+
+function readDetailWidth(): number {
+  try {
+    const raw = localStorage.getItem(DETAIL_WIDTH_KEY)
+    const n = raw ? Number(raw) : NaN
+    if (!Number.isFinite(n)) return DETAIL_WIDTH_DEFAULT
+    return Math.min(Math.max(Math.round(n), DETAIL_WIDTH_MIN), DETAIL_WIDTH_MAX)
+  } catch {
+    return DETAIL_WIDTH_DEFAULT
+  }
+}
+const detailWidth = ref(readDetailWidth())
+watch(detailWidth, (w) => {
+  try {
+    localStorage.setItem(DETAIL_WIDTH_KEY, String(Math.round(w)))
+  } catch {
+    /* 隐私模式等存储不可用：仅本次会话内生效 */
+  }
+})
+/** 详情栏上限随窗口收缩（1366px 小窗不给拖到挤压流程列表）。 */
+const detailMaxWidth = ref(DETAIL_WIDTH_MAX)
+function syncDetailMax(): void {
+  detailMaxWidth.value = Math.max(DETAIL_WIDTH_MIN + 80, Math.round(window.innerWidth * 0.6))
+}
+
+// ---------- 运行跟随：在途步骤自动滚入视口，用户手动滚动即暂停 ----------
+const followRun = ref(true)
+/** 最小在途位次（并行批内多步在途时跟随最先进入的）。 */
+const firstInFlightPos = computed(() => {
+  let min = -1
+  for (const k of run.inFlight.value.keys()) {
+    if (min === -1 || k < min) min = k
+  }
+  return min
+})
+watch(firstInFlightPos, (pos) => {
+  if (!run.running.value || !followRun.value || pos < 0 || viewMode.value !== 'manual') return
+  const stepIdx = run.runStepIndexes.value[pos]
+  const s = steps.value[stepIdx]
+  if (!s) return
+  void nextTick(() => {
+    const el = stepsEl.value?.querySelector(`[data-step-key="${s.key}"]`)
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  })
+})
+/** 新一轮运行开始时恢复跟随；用户滚轮滚动（运行中）暂停到本轮结束。 */
+watch(
+  () => run.running.value,
+  (now, was) => {
+    if (now && !was) followRun.value = true
+  },
+)
+
+// ---------- 在途步骤耗时（本地秒级计时；进度事件不带开始时刻） ----------
+const flightStart = ref<Map<number, number>>(new Map())
+watch(run.inFlight, (m) => {
+  const now = Date.now()
+  const next = new Map<number, number>()
+  for (const k of m.keys()) next.set(k, flightStart.value.get(k) ?? now)
+  flightStart.value = next
+})
+const elapsedTick = ref(0)
+let elapsedTimer: number | null = null
+watch(
+  () => run.running.value,
+  (r) => {
+    if (r && elapsedTimer == null) {
+      elapsedTimer = window.setInterval(() => {
+        elapsedTick.value++
+      }, 1000)
+    } else if (!r && elapsedTimer != null) {
+      window.clearInterval(elapsedTimer)
+      elapsedTimer = null
+    }
+  },
+)
+/** 在途步骤已用时间文案（mm:ss / Ns）；读 elapsedTick 触发每秒重算。 */
+function flightElapsed(pos: number): string {
+  void elapsedTick.value
+  const start = flightStart.value.get(pos)
+  if (start === undefined) return ''
+  const sec = Math.max(0, Math.floor((Date.now() - start) / 1000))
+  if (sec < 60) return `${sec}s`
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
+}
+
 /** 结果面板运行位次 → 步骤名 / 方法（ScenarioRunReport 占位回调）。 */
 function runStepName(pos: number): string {
   const s = steps.value[run.runStepIndexes.value[pos]]
@@ -1583,6 +1688,16 @@ function runStepMethod(pos: number): string {
 
     <!-- ===== 编排视图 ===== -->
     <div v-else-if="viewMode === 'manual'" class="wf-main">
+      <!-- 左流程 / 右详情可拖分栏：详情宽度记忆到 miyo.wf-detail-width -->
+      <SplitPanes
+        v-model:width="detailWidth"
+        class="wf-split"
+        width-on="second"
+        :min="320"
+        :max="detailMaxWidth"
+        @reset="detailWidth = 420"
+      >
+        <template #first>
       <section class="wf-flow">
         <div class="wf-flow-head">
           <span class="wf-flow-title">{{ t('integration.libTitle') }}</span>
@@ -1662,12 +1777,14 @@ function runStepMethod(pos: number): string {
             >
               <span class="wf-edge-line"></span>
               <span v-if="edgeInto.get(i)!.vars.length" class="wf-edge-chips">
-                <span
+                <button
                   v-for="v in edgeVarsLabel(edgeInto.get(i)!).shown"
                   :key="v"
+                  type="button"
                   class="wf-edge-chip"
-                  :title="t('integration.flowVarsTitle', { name: v })"
-                >{{ v }}</span>
+                  :title="t('integration.flowVarsLocateTitle', { name: v })"
+                  @click="locateVarSource(v)"
+                >{{ v }}</button>
                 <span v-if="edgeVarsLabel(edgeInto.get(i)!).more" class="wf-edge-chip more">
                   +{{ edgeVarsLabel(edgeInto.get(i)!).more }}
                 </span>
@@ -1688,6 +1805,7 @@ function runStepMethod(pos: number): string {
                 selected: selectedKey === s.key,
                 disabled: !s.enabled,
                 invalid: stepIssues(i).some((x) => x.severity === 'error'),
+                failed: run.stepTone(i) === 'fail',
                 batch: s.parallel,
               }"
               role="button"
@@ -1710,6 +1828,10 @@ function runStepMethod(pos: number): string {
               class="wf-step-tone"
               :class="`tone-${run.stepTone(i)}`"
             >{{ t(run.STEP_TONE_TEXT[run.stepTone(i) as NonNullable<ReturnType<typeof run.stepTone>>]) }}</span>
+            <span
+              v-if="run.stepTone(i) === 'run' && flightElapsed(run.runStepIndexes.value.indexOf(i))"
+              class="wf-step-elapsed num"
+            >{{ flightElapsed(run.runStepIndexes.value.indexOf(i)) }}</span>
             <span class="wf-step-badges">
               <span v-if="s.loop" class="wf-badge wf-badge-accent" :title="loopBadgeTitle(s.loop)">
                 {{ t('integration.loopBadge', { n: loopBadgeCount(s.loop) }) }}
@@ -1793,7 +1915,8 @@ function runStepMethod(pos: number): string {
           @toggle-row="run.toggleRespRow"
         />
       </section>
-
+        </template>
+        <template #second>
       <!-- ===== 右栏：步骤详情 ===== -->
       <aside class="wf-detail" :class="{ empty: !selectedStep }">
         <template v-if="selectedStep">
@@ -2246,9 +2369,11 @@ function runStepMethod(pos: number): string {
         </template>
         <div v-else class="wf-detail-placeholder">
           <Icon name="pencil" :size="18" />
-          <p>{{ t('integration.stepSelect') }}</p>
+          <p>{{ t('scenario.stepSelect') }}</p>
         </div>
       </aside>
+        </template>
+      </SplitPanes>
     </div>
   </div>
 </template>
@@ -2320,8 +2445,13 @@ function runStepMethod(pos: number): string {
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 12px;
   padding: 10px 12px;
+}
+
+/* 左流程 / 右详情分栏容器（SplitPanes 分割线取代旧 gap:12px） */
+.wf-split {
+  flex: 1;
+  min-width: 0;
 }
 
 .wf-flow {
@@ -2430,12 +2560,24 @@ function runStepMethod(pos: number): string {
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 0 5px;
+  border: none;
   border-radius: var(--radius-sm);
   background: var(--accent-tint);
   color: var(--accent);
   font-size: var(--fs-xxs);
   font-family: var(--font-mono);
   line-height: 15px;
+  cursor: pointer;
+  transition: filter var(--dur) var(--ease);
+}
+.wf-edge-chip:hover {
+  filter: brightness(1.2);
+}
+.wf-edge-chip.more {
+  cursor: default;
+}
+.wf-edge-chip.more:hover {
+  filter: none;
 }
 
 .wf-edge-chip.ext {
@@ -2469,6 +2611,30 @@ function runStepMethod(pos: number): string {
 
 .wf-step.invalid {
   border-color: var(--danger);
+}
+
+/* 运行失败态：卡片级红左缘 + 危险淡底（区别于校验问题的纯红描边），
+   让「哪一步挂了」在长列表里一眼可见 */
+.wf-step.failed {
+  border-color: var(--danger-border);
+  background: var(--danger-tint);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.wf-step.failed.selected {
+  border-color: var(--danger);
+  background: var(--danger-tint);
+}
+
+/* 在途步骤实时耗时（秒级跳动，等宽数字防抖动） */
+.wf-step-elapsed {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xxs);
+  color: var(--accent);
+  background: var(--accent-tint);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+  line-height: 15px;
 }
 
 .wf-step-issue {
@@ -2839,7 +3005,7 @@ function runStepMethod(pos: number): string {
   flex: none;
   cursor: grab;
   color: var(--text-3);
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   letter-spacing: -2px;
   user-select: none;
 }
@@ -2889,18 +3055,18 @@ function runStepMethod(pos: number): string {
 
 .wf-step-side {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--warning-tint);
   color: var(--warning);
 }
 
 .wf-step-tone {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .wf-step-tone.tone-ok {
@@ -2945,9 +3111,9 @@ function runStepMethod(pos: number): string {
 }
 
 .wf-badge {
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
   color: var(--text-3);
   font-family: var(--font-mono);
@@ -2992,8 +3158,8 @@ function runStepMethod(pos: number): string {
 .wf-ds-chip {
   padding: 3px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 11px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xxs);
   color: var(--text-2);
   background: var(--bg-hover);
 }
@@ -3117,9 +3283,10 @@ function runStepMethod(pos: number): string {
 }
 
 /* ---- 右栏详情 ---- */
+/* 详情栏：宽度由 SplitPanes（.sp-second 内联样式）控制，这里只负责撑满与外观 */
 .wf-detail {
-  flex: none;
-  width: 420px;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -3148,9 +3315,9 @@ function runStepMethod(pos: number): string {
 
 .wf-detail-kind {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
   color: var(--text-3);
 }
@@ -3233,10 +3400,5 @@ function runStepMethod(pos: number): string {
   color: var(--warning);
 }
 
-/* 窄屏收窄右栏 */
-@media (max-width: 1180px) {
-  .wf-detail {
-    width: 340px;
-  }
-}
+/* 窄屏不再硬编码右栏宽：宽度由 SplitPanes 记忆值 + 动态上限（窗口 60%）接管 */
 </style>

@@ -11,15 +11,17 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const props = withDefaults(
   defineProps<{
-    /** 首栏宽度（px，v-model:width）。 */
+    /** 首栏宽度（px，v-model:width；widthOn='second' 时为次栏宽度）。 */
     width: number
     min?: number
     /** 首栏最大宽度（px）；0 表示不限。 */
     max?: number
     /** 容器宽度低于该值时改为上下堆叠；0 表示不启用。 */
     stackBelow?: number
+    /** 宽度作用在哪一栏：first=左栏定宽（默认），second=右栏定宽（编辑器详情栏）。 */
+    widthOn?: 'first' | 'second'
   }>(),
-  { min: 220, max: 0, stackBelow: 0 },
+  { min: 220, max: 0, stackBelow: 0, widthOn: 'first' },
 )
 
 const emit = defineEmits<{
@@ -54,7 +56,7 @@ function clamp(v: number): number {
   return Math.min(Math.max(v, props.min), props.max || Number.POSITIVE_INFINITY)
 }
 
-/** 渲染宽度：夹紧到 [min, max]（超储的旧记忆宽度不撑破布局）。 */
+/** 渲染宽度：夹紧到 [min, max]（超储的旧记忆宽度不撑破布局）；堆叠态不定宽。 */
 const firstStyle = computed(() =>
   stacked.value ? undefined : { width: `${Math.round(clamp(props.width))}px` },
 )
@@ -76,7 +78,10 @@ function onDividerMousedown(e: MouseEvent): void {
 
 function onDragMove(e: MouseEvent): void {
   if (!dragging) return
-  emit('update:width', clamp(dragStartWidth + (e.clientX - dragStartX)))
+  // second 定宽时分割线在左侧：向左拖（x 变小）= 加宽。
+  const delta =
+    props.widthOn === 'second' ? dragStartX - e.clientX : e.clientX - dragStartX
+  emit('update:width', clamp(dragStartWidth + delta))
 }
 
 function onDragEnd(): void {
@@ -91,12 +96,15 @@ function onDragEnd(): void {
 function onDividerKeydown(e: KeyboardEvent): void {
   if (stacked.value) return
   const step = e.shiftKey ? 48 : 16
+  // 方向跟分割线走：first 定宽时 ← = 分割线左移 = 减宽；
+  // second 定宽时相反（← = 分割线左移 = 次栏加宽）。
+  const dir = props.widthOn === 'second' ? -1 : 1
   if (e.key === 'ArrowLeft') {
     e.preventDefault()
-    emit('update:width', clamp(props.width - step))
+    emit('update:width', clamp(props.width - dir * step))
   } else if (e.key === 'ArrowRight') {
     e.preventDefault()
-    emit('update:width', clamp(props.width + step))
+    emit('update:width', clamp(props.width + dir * step))
   } else if (e.key === 'Enter') {
     e.preventDefault()
     emit('reset')
@@ -106,7 +114,7 @@ function onDividerKeydown(e: KeyboardEvent): void {
 
 <template>
   <div ref="rootEl" class="sp" :class="{ stacked }">
-    <div class="sp-first" :style="firstStyle">
+    <div class="sp-first" :style="widthOn === 'first' ? firstStyle : undefined">
       <slot name="first" />
     </div>
     <div
@@ -122,7 +130,7 @@ function onDividerKeydown(e: KeyboardEvent): void {
       @keydown="onDividerKeydown"
       @dblclick="emit('reset')"
     ></div>
-    <div class="sp-second">
+    <div class="sp-second" :style="widthOn === 'second' ? firstStyle : undefined">
       <slot name="second" />
     </div>
   </div>
