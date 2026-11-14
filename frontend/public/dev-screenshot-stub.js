@@ -107,7 +107,7 @@
       if (eventNames[hid] !== name) return;
       var cb = window['_' + hid];
       if (typeof cb === 'function') {
-        try { cb({ event: name, id: 0, payload: payload }) } catch (e) { /* 单个监听器异常不扩散 */ }
+        try { cb({ event: name, id: 0, payload: payload }) } catch { /* 单个监听器异常不扩散 */ }
       }
     });
   }
@@ -159,7 +159,7 @@
       if (bare.indexOf('plugin:event|') === 0) {
         // listen/unlisten：记录 handler id → 事件名（定向广播用）
         if (bare === 'listen' || bare.endsWith('|listen')) {
-          try { eventNames[String(args.handler)] = String(args.event) } catch (e) { /* 忽略 */ }
+          try { eventNames[String(args.handler)] = String(args.event) } catch { /* 忽略 */ }
         }
         return Promise.resolve(Math.floor(Math.random() * 1e9));
       }
