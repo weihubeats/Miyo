@@ -210,7 +210,7 @@ defineExpose({ openAt, close })
 <style scoped>
 .cp-pop {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-toast);
   width: 360px;
   max-width: calc(100vw - 16px);
   padding: 10px 10px 6px;

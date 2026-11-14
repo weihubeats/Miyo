@@ -202,10 +202,10 @@ onBeforeUnmount(() => {
 }
 
 /* 悬停预览卡片：配色全走主题令牌（深/浅各一套），层级同 Tooltip / Menu
-   （z-index 300），高过顶栏与弹窗，且不会被顶栏 overflow 裁剪（fixed + Teleport） */
+   （--z-popover），高过顶栏与弹窗，且不会被顶栏 overflow 裁剪（fixed + Teleport） */
 .miyo-update-card {
   position: fixed;
-  z-index: 300;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   gap: 8px;

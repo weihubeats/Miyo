@@ -56,9 +56,10 @@
   --z-popconfirm: 200;   /* 确认气泡（压过 Modal 内容） */
   --z-popover: 300;      /* 右键菜单 / Tooltip */
   --z-tip: 400;          /* 溢出 Tooltip 气泡（指令注入） */
-  --z-overlay: 900;      /* 全局快速预览（EnvironmentQuickView） */
+  --z-overlay: 900;      /* 全局快速预览 / 命令面板等全屏遮罩（QuickSearch） */
   --z-dropzone: 999;     /* 首页拖拽导入覆盖层 */
-  --z-toast: 1000;       /* Toast / 下拉弹层 / 变量建议（最顶） */
+  --z-toast: 1000;       /* Toast / 下拉弹层 / 变量建议（最顶交互层） */
+  --z-progress: 1100;    /* 全局顶部加载条（非交互指示，不与 Toast 抢点击区） */
   /* ---- 色板（app 深埋，panel 全局背景，card 核心输入/输出卡片浮起） ---- */
   --bg-app: #0e0e10;
   --bg-panel: #141416;
@@ -152,12 +153,13 @@
   --info-border: rgba(59, 130, 246, 0.35);
   --mask: rgba(10, 12, 16, 0.55);
 
-  /* ---- 圆角 4/6/8/10/16 ---- */
+  /* ---- 圆角 4/6/8/10/16（pill 供徽章/胶囊，勿再写 999px 字面量） ---- */
   --radius-sm: 4px;
   --radius: 6px;
   --radius-md: 8px;
   --radius-lg: 10px;
   --radius-xl: 16px;
+  --radius-pill: 999px;
 
   /* ---- 控件高度 24/28/32/36 ---- */
   --h-xs: 24px;
@@ -437,12 +439,14 @@ body {
       opacity: 0.55;
     }
   }
-  /* 旋转 spinner（发送按钮 / 用例运行 / 导出菜单 / 抽屉 / 加载环）、
-   * gRPC 流运行指示灯、快捷键录制态、发送条脉冲、骨架条。 */
+  /* 旋转 spinner（发送按钮 / 用例运行 / 导出菜单 / 抽屉 / 加载环 / 统一 Spinner）、
+   * gRPC 流运行指示灯、快捷键录制态、发送条脉冲、骨架条、运行态徽章呼吸点。 */
   .btn-spinner,
   .drw-spinner,
   .tcp-spinner,
   .ce-spin,
+  .miyo-spinner,
+  .miyo-status.tone-run .st-dot,
   .req-loading-ring,
   .req-progress::after,
   .stream-dot,
@@ -637,6 +641,12 @@ kbd,
   transition:
     border-color var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease);
+}
+/* 单行输入高度锚定控件阶梯（与 .miyo-btn 同高 --h-md，对齐统一交互规范）；
+ * textarea 不参与（.miyo-textarea 自治高度）。 */
+.miyo-input {
+  height: var(--h-md);
+  padding: 0 10px;
 }
 .miyo-input::placeholder,
 .miyo-textarea::placeholder {
@@ -847,12 +857,100 @@ kbd,
   display: inline-flex;
   align-items: center;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: var(--fs-xxs);
   line-height: 1.6;
   background: var(--info-tint);
   color: var(--info);
   border: 1px solid var(--info-border);
+}
+
+/* ---- 状态徽章单源（StatusBadge 组件 + 各面板自绘徽章统一迁入）----
+ * tone 对齐 useScenarioRun 的 StepTone 七态 + warn/info 两个通用态。
+ * 徽章本体只管排版，色彩按 tone 引用语义 tint 变量（深浅主题自动跟随）。 */
+.miyo-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  background: var(--bg-hover);
+  color: var(--text-3);
+}
+/* 状态点：可选前置圆点（.with-dot 时渲染），运行态自带呼吸 */
+.miyo-status .st-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  flex: none;
+}
+.miyo-status.tone-ok {
+  background: var(--success-tint);
+  color: var(--success);
+}
+.miyo-status.tone-fail {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.miyo-status.tone-warn {
+  background: var(--warning-tint);
+  color: var(--warning);
+}
+.miyo-status.tone-info {
+  background: var(--info-tint);
+  color: var(--info);
+}
+.miyo-status.tone-run {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.miyo-status.tone-wait,
+.miyo-status.tone-skip {
+  background: var(--bg-hover);
+  color: var(--text-3);
+}
+.miyo-status.tone-blocked,
+.miyo-status.tone-cancel {
+  background: var(--warning-tint);
+  color: var(--warning);
+}
+.miyo-status.tone-run .st-dot {
+  animation: miyo-status-breathe 1.4s ease-in-out infinite;
+}
+@keyframes miyo-status-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ---- Spinner 单源（Spinner.vue + 各处内联旋转环统一迁入）----
+ * currentColor 上色、1em 尺寸跟随字号，边框双环。 */
+.miyo-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex: none;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  opacity: 0.85;
+  animation: miyo-spin 0.7s linear infinite;
+}
+@keyframes miyo-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .miyo-panel {
@@ -1070,7 +1168,7 @@ body.dragging-dnd {
   flex-shrink: 0;
 }
 
-/* 动效偏好：统一在「减少动态效果（分层策略）」基线块处理（:focus-visible 之后）。
+/* 动效偏好：统一在「减少动态效果（分层策略）」基线块处理（:focus-visible 之后）。 */
 
 /* ---- 环境工作区共享表格（EnvWorkspace 参数表使用 em-col-*；变量表的 grid 列
         布局在 EnvVarTable scoped 内。跨组件类按规范放全局） ---- */

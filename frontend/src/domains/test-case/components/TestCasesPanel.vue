@@ -1675,7 +1675,7 @@ watch(
   font-size: var(--fs-xs);
 }
 .tcp-status-meta.tone-ok {
-  color: var(--ok);
+  color: var(--success);
 }
 .tcp-status-meta.tone-warn {
   color: var(--warning);
@@ -1684,7 +1684,7 @@ watch(
   color: var(--danger);
 }
 .tcp-status-meta.tone-info {
-  color: var(--miyo-info, #38bdf8);
+  color: var(--info);
 }
 
 .tcp-dot {

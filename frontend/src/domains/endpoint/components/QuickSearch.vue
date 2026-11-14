@@ -355,7 +355,7 @@ function onKeydown(event: KeyboardEvent): void {
 .qs-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 400;
+  z-index: var(--z-overlay);
   background: var(--mask);
   display: flex;
   justify-content: center;

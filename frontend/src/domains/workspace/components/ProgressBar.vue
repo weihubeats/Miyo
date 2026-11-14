@@ -32,7 +32,7 @@ const t = locale.t
   left: 0;
   right: 0;
   height: 2px;
-  z-index: 2000;
+  z-index: var(--z-progress);
   pointer-events: none;
 }
 

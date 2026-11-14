@@ -20,8 +20,10 @@ const props = withDefaults(
     modelValue?: string
     tabs: TabItem[]
     size?: 'sm' | 'md'
+    /** 等宽铺满容器（抽屉头部分页签用）。 */
+    fill?: boolean
   }>(),
-  { modelValue: '', size: 'md' },
+  { modelValue: '', size: 'md', fill: false },
 )
 
 const emit = defineEmits<{
@@ -66,7 +68,7 @@ function onKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div class="tabs" :class="`size-${size}`" role="tablist" @keydown="onKeydown">
+  <div class="tabs" :class="[`size-${size}`, { fill }]" role="tablist" @keydown="onKeydown">
     <button
       v-for="t in tabs"
       :key="t.key"
@@ -97,6 +99,11 @@ function onKeydown(event: KeyboardEvent): void {
   overflow-x: auto;
   overflow-y: hidden;
   border-bottom: 1px solid var(--border);
+}
+/* 等宽变体：页签平分容器宽（内容居中） */
+.tabs.fill .tab {
+  flex: 1;
+  justify-content: center;
 }
 .tabs.size-md .tab {
   height: 34px;
