@@ -68,6 +68,14 @@ export const SHORTCUT_DEFAULTS: ShortcutDefault[] = [
     binding: { mod: 'ctrl', shift: false, alt: false, key: 'k' },
   },
   {
+    id: 'dashboard.search-focus',
+    group: 'shortcutGroup.common',
+    description: 'shortcut.dashboardSearch',
+    // 搜索框聚焦本身是搜索入口：任何输入态下都能唤起。
+    inInput: true,
+    binding: { mod: 'ctrl', shift: false, alt: false, key: 'k' },
+  },
+  {
     id: 'editor.save',
     group: 'shortcutGroup.editor',
     description: 'shortcut.save',

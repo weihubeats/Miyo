@@ -711,6 +711,10 @@ async function onImport(): Promise<void> {
   background: var(--bg-panel);
   cursor: pointer;
   min-width: 0;
+  /* 长列表渲染优化：屏外行跳过布局/绘制（场景数无上限，列表平铺渲染）。
+     行高估算用于滚动条占位；分组嵌套结构不适合虚拟滚动（见 useVirtualList）。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 46px;
 }
 
 .lib-row:hover {

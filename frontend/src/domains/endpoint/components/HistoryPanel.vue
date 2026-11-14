@@ -13,6 +13,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { useLocaleStore } from '@/stores/locale'
 import { formatDurationShort } from '@/utils/format'
 import { methodTone } from '@/utils/methodTone'
+import { useVirtualList } from '@/composables/useVirtualList'
 import type { RequestHistory } from '@/types/miyoApi.d'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Icon from '@/components/ui/Icon.vue'
@@ -51,6 +52,14 @@ function cycleStatusFilter(): void {
   statusFilter.value =
     statusFilter.value === 'all' ? '2xx' : statusFilter.value === '2xx' ? '4xx5xx' : 'all'
 }
+
+// ---------- 虚拟滚动（固定行高；<80 行自动回退全量渲染，见 useVirtualList） ----------
+const listEl = ref<HTMLElement | null>(null)
+const { virtualItems, offsetY, totalHeight, onScroll, enabled } = useVirtualList(
+  listEl,
+  filtered,
+  { itemHeight: 60, threshold: 80 },
+)
 
 onMounted(() => {
   void store.loadHistories()
@@ -161,55 +170,64 @@ function shortTime(iso: string): string {
       </button>
     </div>
 
-    <div class="hp-list">
-      <div v-for="h in filtered" :key="h.id" class="hp-item">
-        <button
-          class="hp-row"
-          :class="{ active: activeId === h.id }"
-          type="button"
-          @click="restore(h)"
+    <div ref="listEl" class="hp-list" @scroll="onScroll">
+      <!-- 虚拟滚动：总高占位 + 平移窗口（<80 行自动回退全量渲染） -->
+      <div :style="enabled ? { height: `${totalHeight}px`, position: 'relative' } : undefined">
+        <div
+          :style="enabled
+            ? { position: 'absolute', left: 0, right: 0, top: 0, transform: `translateY(${offsetY}px)` }
+            : undefined"
         >
-        <span class="hp-line1">
-          <span class="hp-method" :class="methodTone(h.method)">{{ h.method }}</span>
-          <span class="hp-url" v-tooltip-overflow="h.url">{{ shortUrl(h.url) }}</span>
-          <span
-            v-if="h.status != null"
-            class="hp-status"
-            :class="(h.status ?? 0) >= 400 ? 'err' : 'ok'"
-          >
-            {{ h.status }}
-          </span>
-        </span>
-        <span class="hp-line2">
-          <span class="hp-meta" :class="durationCls(h.duration_ms)">
-            {{ formatDurationShort(h.duration_ms ?? 0) }}
-          </span>
-          <span class="hp-meta hp-time">{{ shortTime(h.created_at) }}</span>
-        </span>
-        </button>
-        <IconButton
-          v-if="h.method !== 'GRPC'"
-          class="hp-replay"
-          name="play"
-          :size="12"
-          tone="accent"
-          :title="t('history.replay')"
-          @click="replay(h)"
-        />
-        <Popconfirm
-          :title="t('ws.historyDeleteConfirm')"
-          :confirm-text="t('common.delete')"
-          danger
-          @confirm="store.deleteHistory(h.id)"
-        >
-          <IconButton
-            class="hp-del"
-            name="trash"
-            :size="12"
-            tone="danger"
-            :title="t('ws.historyDelete')"
-          />
-        </Popconfirm>
+          <div v-for="it in virtualItems" :key="it.data.id" class="hp-item">
+            <button
+              class="hp-row"
+              :class="{ active: activeId === it.data.id }"
+              type="button"
+              @click="restore(it.data)"
+            >
+            <span class="hp-line1">
+              <span class="hp-method" :class="methodTone(it.data.method)">{{ it.data.method }}</span>
+              <span class="hp-url" v-tooltip-overflow="it.data.url">{{ shortUrl(it.data.url) }}</span>
+              <span
+                v-if="it.data.status != null"
+                class="hp-status"
+                :class="(it.data.status ?? 0) >= 400 ? 'err' : 'ok'"
+              >
+                {{ it.data.status }}
+              </span>
+            </span>
+            <span class="hp-line2">
+              <span class="hp-meta" :class="durationCls(it.data.duration_ms)">
+                {{ formatDurationShort(it.data.duration_ms ?? 0) }}
+              </span>
+              <span class="hp-meta hp-time">{{ shortTime(it.data.created_at) }}</span>
+            </span>
+            </button>
+            <IconButton
+              v-if="it.data.method !== 'GRPC'"
+              class="hp-replay"
+              name="play"
+              :size="12"
+              tone="accent"
+              :title="t('history.replay')"
+              @click="replay(it.data)"
+            />
+            <Popconfirm
+              :title="t('ws.historyDeleteConfirm')"
+              :confirm-text="t('common.delete')"
+              danger
+              @confirm="store.deleteHistory(it.data.id)"
+            >
+              <IconButton
+                class="hp-del"
+                name="trash"
+                :size="12"
+                tone="danger"
+                :title="t('ws.historyDelete')"
+              />
+            </Popconfirm>
+          </div>
+        </div>
       </div>
       <EmptyState
         v-if="!store.histories.length"
@@ -223,7 +241,7 @@ function shortTime(iso: string): string {
       </p>
       <button
         v-if="store.historyHasMore && store.histories.length"
-        class="hp-more"
+        class="hp-more miyo-btn miyo-btn-sm"
         type="button"
         :disabled="loadingMore"
         @click="loadMore"
@@ -337,31 +355,10 @@ function shortTime(iso: string): string {
   text-align: center;
 }
 
-/* ---- 加载更多：列表尾部整宽弱按钮 ---- */
+/* ---- 加载更多：列表尾部整宽弱按钮（视觉收敛到全局 miyo-btn-sm，仅留布局） ---- */
 .hp-more {
   flex-shrink: 0;
   width: 100%;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  color: var(--text-2);
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-.hp-more:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-  color: var(--text-1);
-}
-.hp-more:disabled {
-  opacity: 0.6;
-  cursor: default;
 }
 
 /* ---- 列表：卡片间距 4px ---- */
@@ -381,10 +378,10 @@ function shortTime(iso: string): string {
   display: flex;
   align-items: center;
   gap: 2px;
-  /* 长列表渲染优化：屏外行跳过布局/绘制（500 条保留上限下显著省渲染）。
-     contain-intrinsic-size 按行高估算，防滚动条跳动。 */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 44px;
+  /* 固定行高（虚拟滚动步进 60 = 56 行高 + 4 间距；见 useVirtualList）。
+     两行内容恒定：URL / 状态 / 时间均单行截断，不会撑破。 */
+  height: 56px;
+  flex: none;
 }
 
 /** 行内操作钮（重放 / 删除）：hover 才出现（与树行「⋯」同节奏） */
