@@ -98,6 +98,51 @@
   window.addEventListener('unhandledrejection', function (e) {
     (window.__E2E_ERRORS = window.__E2E_ERRORS || []).push('REJ: ' + ((e.reason && e.reason.stack) || String(e.reason)));
   });
+  window.__E2E_IPC_LOG = [];
+  // 模拟事件回放：按事件名精确派发（真实 Tauri 运行时经 plugin:event|listen
+  // 注册 handler，此处记录 handler → 事件名映射后定向广播）。
+  var eventNames = Object.create(null);
+  function fireTauriEvent(name, payload) {
+    Object.keys(eventNames).forEach(function (hid) {
+      if (eventNames[hid] !== name) return;
+      var cb = window['_' + hid];
+      if (typeof cb === 'function') {
+        try { cb({ event: name, id: 0, payload: payload }) } catch (e) { /* 单个监听器异常不扩散 */ }
+      }
+    });
+  }
+  function replayWs(connId) {
+    fireTauriEvent('miyo:ws-event', { connection_id: connId, kind: 'state', state: 'open' });
+    var frames = [
+      ['in', 'text', '{"type":"welcome","server":"miyo-echo","ts":1731560400000}'],
+      ['in', 'text', '{"type":"presence","users":["alice","bob","cw"]}'],
+      ['out', 'text', 'hello from miyo'],
+      ['in', 'text', '{"type":"echo","payload":"hello from miyo"}'],
+      ['in', 'ping', 'aGVsbG8='],
+      ['in', 'binary', 'eyJiaW4iOiB0cnVlLCAibmFtZSI6ICJwYXlsb2FkLTAxIn0='],
+      ['out', 'text', '{"action":"subscribe","channel":"orders"}'],
+      ['in', 'text', '{"type":"subscribed","channel":"orders","seq":42}'],
+    ];
+    frames.forEach(function (f, i) {
+      setTimeout(function () {
+        // f = [dir, kind, text]；载荷形状对齐 WsEventPayload（flat，snake_case）
+        fireTauriEvent('miyo:ws-event', { connection_id: connId, kind: 'message', direction: f[0], frame: f[1], text: f[2] });
+      }, 260 + i * 220);
+    });
+  }
+  function replaySse(connId) {
+    fireTauriEvent('miyo:sse-event', { connection_id: connId, kind: 'open' });
+    var chunks = [
+      'event: message\ndata: {"step":1,"text":"realtime 实时流验收"}\nid: 1001\n\n',
+      'event: message\ndata: {"step":2,"text":"第二帧，含中文与 emoji"}\nid: 1002\n\n',
+      'event: tick\ndata: {"t": 1731560400}\nid: 1003\n\n',
+    ];
+    chunks.forEach(function (c, i) {
+      setTimeout(function () {
+        fireTauriEvent('miyo:sse-event', { connection_id: connId, kind: 'chunk', chunk: c });
+      }, 300 + i * 260);
+    });
+  }
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main', windowLabel: 'main' } },
     plugins: {},
@@ -106,13 +151,40 @@
       window['_' + id] = cb;
       return id;
     },
-    invoke: function (cmd) {
+    invoke: function (cmd, args) {
       var bare = String(cmd);
       var idx = bare.indexOf('|');
       if (idx >= 0 && bare.slice(0, idx) === 'plugin:miyo') bare = bare.slice(idx + 1);
       window.__E2E_IPC_LOG.push(bare);
-      if (bare.indexOf('plugin:event|') === 0) return Promise.resolve(Math.floor(Math.random() * 1e9));
+      if (bare.indexOf('plugin:event|') === 0) {
+        // listen/unlisten：记录 handler id → 事件名（定向广播用）
+        if (bare === 'listen' || bare.endsWith('|listen')) {
+          try { eventNames[String(args.handler)] = String(args.event) } catch (e) { /* 忽略 */ }
+        }
+        return Promise.resolve(Math.floor(Math.random() * 1e9));
+      }
       if (bare === 'list_scenario_summaries') return Promise.resolve(JSON.parse(JSON.stringify(FIXTURES.list_scenarios)));
+      if (bare === 'ws_connect') {
+        var id = 'ws-' + Math.floor(Math.random() * 1e6);
+        setTimeout(function () { replayWs(id) }, 200);
+        return Promise.resolve(id);
+      }
+      if (bare === 'sse_connect') {
+        var sid = 'sse-' + Math.floor(Math.random() * 1e6);
+        setTimeout(function () { replaySse(sid) }, 200);
+        return Promise.resolve(sid);
+      }
+      if (bare === 'ws_send') {
+        // echo：文本帧回显一帧进向（帧日志能看到收发对）
+        var sendArgs = args || {};
+        var cid = sendArgs.connectionId || sendArgs.connection_id;
+        if (sendArgs.frame === 'text') {
+          setTimeout(function () {
+            fireTauriEvent('miyo:ws-event', { connection_id: cid, kind: 'message', direction: 'in', frame: 'text', text: 'echo: ' + sendArgs.payload });
+          }, 350);
+        }
+        return Promise.resolve(null);
+      }
       if (bare in FIXTURES) return Promise.resolve(JSON.parse(JSON.stringify(FIXTURES[bare])));
       return Promise.resolve(null);
     },

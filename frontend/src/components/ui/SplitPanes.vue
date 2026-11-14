@@ -113,7 +113,7 @@ function onDividerKeydown(e: KeyboardEvent): void {
 </script>
 
 <template>
-  <div ref="rootEl" class="sp" :class="{ stacked }">
+  <div ref="rootEl" class="sp" :class="[`width-${widthOn}`, { stacked }]">
     <div class="sp-first" :style="widthOn === 'first' ? firstStyle : undefined">
       <slot name="first" />
     </div>
@@ -157,6 +157,14 @@ function onDividerKeydown(e: KeyboardEvent): void {
 }
 .sp.stacked .sp-first,
 .sp.stacked .sp-second {
+  flex: 1;
+}
+/* 非堆叠：定宽栏由内联样式控制，另一栏吃掉全部剩余宽度
+   （缺这条时次栏按内容宽收缩，右侧留大片死空间） */
+.sp:not(.stacked).width-first .sp-second {
+  flex: 1;
+}
+.sp:not(.stacked).width-second .sp-first {
   flex: 1;
 }
 
