@@ -216,7 +216,7 @@ describe('TestCasesPanel', () => {
     const d = draft()
     const wrapper = mountPanel(d)
     await wrapper.findAll('.tcp-name-btn')[0].trigger('click')
-    expect(document.querySelectorAll('.drw').length).toBeGreaterThan(0)
+    expect(document.querySelectorAll('.d-drawer').length).toBeGreaterThan(0)
     expect(store.openTestCaseInDebug).not.toHaveBeenCalled()
     expect(store.applyTestCaseToDraft).not.toHaveBeenCalled()
   })
@@ -241,7 +241,7 @@ describe('TestCasesPanel', () => {
     await wrapper.findAll('.tcp-col-ops button')[0].trigger('click')
     const items3 = Array.from(document.querySelectorAll('.miyo-menu-item'))
     ;(items3.find((m) => m.textContent === '编辑用例') as HTMLButtonElement).click()
-    expect(document.querySelectorAll('.drw').length).toBeGreaterThan(0)
+    expect(document.querySelectorAll('.d-drawer').length).toBeGreaterThan(0)
     // 克隆
     await wrapper.findAll('.tcp-col-ops button')[0].trigger('click')
     const items4 = Array.from(document.querySelectorAll('.miyo-menu-item'))

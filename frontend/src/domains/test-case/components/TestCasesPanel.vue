@@ -1441,10 +1441,10 @@ watch(
   gap: 6px;
   padding: 4px 10px;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: none;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
   transition:
@@ -1502,7 +1502,7 @@ watch(
   background: transparent;
   padding: 0;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 .tcp-search-input::placeholder {
@@ -1625,7 +1625,7 @@ watch(
   display: inline-flex;
   align-items: center;
   padding: 1px 7px;
-  border-radius: 5px;
+  border-radius: var(--radius);
   border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
   background: color-mix(in srgb, currentColor 12%, transparent);
   font-family: var(--font-mono);
@@ -1636,7 +1636,7 @@ watch(
 
 .tcp-name-text {
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   white-space: nowrap;
   overflow: hidden;
@@ -1650,7 +1650,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
@@ -1664,7 +1664,7 @@ watch(
   width: 148px;
   flex-shrink: 1;
   min-width: 96px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: var(--font-mono);
 }
 
@@ -2004,7 +2004,7 @@ watch(
   font-size: var(--fs-xxs);
   color: var(--text-3);
   background: var(--bg-hover);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 1px 7px;
 }
 

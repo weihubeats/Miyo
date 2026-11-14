@@ -2,17 +2,18 @@
 /**
  * TestCaseDrawer：测试用例详情 / 编辑抽屉（右侧滑出，原地运行，三 Tab）。
  *
+ * - 宿主为 ui/Drawer 共享组件：焦点陷阱 / Esc 栈仲裁 / 开关动画统一；
+ *   keepMounted 常驻（关闭不卸载，Tab / 历史缓存 / 展开态保留，重开不闪）；
  * - Tab：请求配置（复用调试器 Params/Headers/Auth/Body/PathVariables 面板，
  *   「伪 Endpoint」注入，先例 StepRequestEditor）｜断言与提取（共享 AssertionList /
  *   ExtractList）｜执行结果（引擎结果 + 执行历史 + 两次对比）；
- * - 宽度：默认 680px，左缘拖拽（min 560 / max 75vw），全屏切换；
+ * - 宽度：默认 680px，左缘拖拽 + 键盘调宽（记忆 miyo.case-drawer-width），全屏切换；
  * - 关闭：ESC / ✕ / 遮罩；有未保存修改时先出「放弃修改 / 继续编辑」确认条；
  * - 继承 vs 覆盖：用例是保存时的接口快照，与当前接口逐节比对展示「继承 / 覆盖」，
  *   一键「同步自接口」把接口当前配置重灌进用例（显式动作，不静默）；
- * - 底部操作栏 sticky：导出代码 + 立即运行（可取消）｜取消 / 保存修改。
+ * - 底部操作栏：导出代码 + 立即运行（可取消）｜保存修改（Drawer footer 插槽）。
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { pushEscHandler } from '@/utils/escStack'
+import { computed, ref, watch } from 'vue'
 import { useToast } from '@/composables/useToast'
 import type {
   AuthSpec,
@@ -38,8 +39,12 @@ import { statusTextOf } from '@/utils/testCases'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import AssertionList from '@/domains/test-case/components/assertion/assertion/AssertionList.vue'
 import CodeExportMenu from '@/domains/endpoint/components/CodeExportMenu.vue'
+import CollapsibleSection from '@/components/ui/CollapsibleSection.vue'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
+import Drawer from '@/components/ui/Drawer.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import SplitPanes from '@/components/ui/SplitPanes.vue'
+import Tabs from '@/components/ui/Tabs.vue'
 import EnvironmentSelector from '@/domains/environment/components/EnvironmentSelector.vue'
 import ExtractList from '@/domains/test-case/components/assertion/assertion/ExtractList.vue'
 import Icon from '@/components/ui/Icon.vue'
@@ -147,6 +152,10 @@ const tabOptions = computed(() => [
   { value: 'checks', label: t('casedrawer.tabChecks'), badge: assertions.value.length + extractors.value.length || undefined },
   { value: 'result', label: t('casedrawer.tabResult'), badge: resultTabBadge.value },
 ])
+/** 共享 Tabs 组件的页签模型（key/label/count，badge → count）。 */
+const tabItems = computed(() =>
+  tabOptions.value.map((o) => ({ key: o.value, label: o.label, count: o.badge })),
+)
 
 /** 请求配置内的分段（复用调试器面板组）。 */
 type ConfigSection = 'params' | 'path' | 'headers' | 'auth' | 'body'
@@ -233,81 +242,71 @@ watch(
 
 
 
-// ---------- 关闭（ESC / ✕ / 遮罩）+ 脏检查 ----------
-function attemptClose(): void {
-  if (isDirty.value) {
-    confirmClose.value = true
-    return
-  }
-  emit('update:open', false)
-}
-
+// ---------- 关闭（ESC / ✕ / 遮罩统一经 Drawer.guardClose）+ 脏检查 ----------
 function discardAndClose(): void {
   confirmClose.value = false
   emit('update:open', false)
 }
 
-// ESC 层级仲裁：抽屉打开时压栈（后开先关——抽屉里的下拉/菜单按 ESC 只关子弹层）。
-// 查找条 / 下拉弹层自己处理 ESC：此时消费事件但不关抽屉（防止穿透关掉更外层弹窗）。
-function escHandler(): boolean {
+/**
+ * 关闭拦截（Drawer 在 Esc / ✕ / 遮罩点击时调用）：
+ * - 脏数据 → 弹「放弃修改 / 继续编辑」确认条并放行本轮（返回 false 阻止关闭）；
+ * - 查找条 / 下拉弹层打开时返回 false 静默放行（它们自己处理 Esc，不关抽屉
+ *   也不弹确认——迁移自旧 escHandler 的穿透防护）。
+ */
+function guardDrawerClose(): boolean {
   const target = document.activeElement as HTMLElement | null
   if (target && typeof target.closest === 'function' && target.closest('.findbar, .cs-pop')) {
-    return true
+    return false
   }
-  attemptClose()
+  if (isDirty.value) {
+    confirmClose.value = true
+    return false
+  }
+  confirmClose.value = false
   return true
 }
 
-let offEsc: (() => void) | null = null
-watch(
-  () => props.open,
-  (open) => {
-    offEsc?.()
-    offEsc = null
-    // 打开期间锁背景滚动（与 ui/Modal / ui/Drawer 行为一致）。
-    document.body.style.overflow = open ? 'hidden' : ''
-    if (open) offEsc = pushEscHandler(escHandler)
-  },
-  { immediate: true },
-)
-onBeforeUnmount(() => {
-  offEsc?.()
-  offEsc = null
-  document.body.style.overflow = ''
-})
-
-// ---------- 宽度：左缘拖拽（min 560 / max 75vw）+ 全屏 ----------
+// ---------- 宽度：Drawer 左缘拖拽 + 键盘调宽，记忆 miyo.case-drawer-width ----------
 const DRAWER_MIN = 560
 const DRAWER_DEFAULT = 680
-const width = ref(DRAWER_DEFAULT)
-const fullscreen = ref(false)
-let resizing = false
+const CASE_WIDTH_KEY = 'miyo.case-drawer-width'
 
-function onResizeDown(e: MouseEvent): void {
-  if (e.button !== 0 || fullscreen.value) return
-  e.preventDefault()
-  resizing = true
-  window.addEventListener('mousemove', onResizeMove)
-  window.addEventListener('mouseup', onResizeUp)
+function readDrawerWidth(): number {
+  try {
+    const n = Number(localStorage.getItem(CASE_WIDTH_KEY))
+    return Number.isFinite(n) && n >= DRAWER_MIN ? Math.round(n) : DRAWER_DEFAULT
+  } catch {
+    return DRAWER_DEFAULT
+  }
 }
+const drawerWidth = ref(readDrawerWidth())
+watch(drawerWidth, (w) => {
+  try {
+    localStorage.setItem(CASE_WIDTH_KEY, String(Math.round(w)))
+  } catch {
+    /* 存储不可用仅本会话生效 */
+  }
+})
 
-function onResizeMove(e: MouseEvent): void {
-  if (!resizing) return
-  const max = Math.floor(window.innerWidth * 0.75)
-  width.value = Math.min(max, Math.max(DRAWER_MIN, window.innerWidth - e.clientX))
-}
-
-function onResizeUp(): void {
-  resizing = false
-  window.removeEventListener('mousemove', onResizeMove)
-  window.removeEventListener('mouseup', onResizeUp)
-}
-
-function toggleFullscreen(): void {
-  fullscreen.value = !fullscreen.value
-}
-
-onBeforeUnmount(() => onResizeUp())
+/** 结果 Tab 请求|响应分栏宽度（记忆 miyo.case-drawer-split）。 */
+const CASE_SPLIT_KEY = 'miyo.case-drawer-split'
+const CASE_SPLIT_DEFAULT = 340
+const resultSplitWidth = ref((() => {
+  try {
+    const n = Number(localStorage.getItem(CASE_SPLIT_KEY))
+    return Number.isFinite(n) && n >= 240 ? Math.round(n) : CASE_SPLIT_DEFAULT
+  } catch {
+    return CASE_SPLIT_DEFAULT
+  }
+})())
+watch(resultSplitWidth, (w) => {
+  try {
+    localStorage.setItem(CASE_SPLIT_KEY, String(Math.round(w)))
+  } catch {
+    /* 存储不可用仅本会话生效 */
+  }
+})
 
 // ---------- Method / URL ----------
 // 方法切换的副作用只在用户显式操作时发生（onMethodChange / syncFromEndpoint）：
@@ -502,9 +501,10 @@ watch([historyOpen, () => props.testCase?.id], ([open]) => {
   if (open) void loadHistory()
 })
 
-function toggleHistory(): void {
-  historyOpen.value = !historyOpen.value
-  if (historyOpen.value) compareIds.value = null
+/** 折叠分区开合（保留旧 toggle 的语义：展开时清空对比选择）。 */
+function setHistoryOpen(v: boolean): void {
+  historyOpen.value = v
+  if (v) compareIds.value = null
 }
 
 /** 打开某条历史详情：summary 行先占位，全文拉到后替换。 */
@@ -603,89 +603,72 @@ const compareResults = computed(() => {
 </script>
 
 <template>
-  <Teleport to="body">
-    <Transition name="drw">
-      <div v-if="open" class="drw-mask" @mousedown.self="attemptClose">
-        <div
-          class="drw"
-          :class="{ 'is-fullscreen': fullscreen, 'is-resizing': resizing }"
-          :style="fullscreen ? undefined : { width: `${width}px` }"
-          role="dialog"
-          aria-modal="true"
-        >
-          <!-- 左缘宽度拖拽 -->
-          <div
-            v-if="!fullscreen"
-            class="drw-resizer"
-            :title="t('casedrawer.resizeHint')"
-            @mousedown="onResizeDown"
-          ></div>
+  <Drawer
+    :open="open"
+    layer="drawer"
+    keep-mounted
+    resizable
+    fullscreenable
+    :resizable-width="drawerWidth"
+    :min-width="560"
+    :guard-close="guardDrawerClose"
+    @update:open="(v: boolean) => emit('update:open', v)"
+    @update:resizable-width="(w: number) => (drawerWidth = w)"
+    @reset-width="drawerWidth = 680"
+  >
+    <template #header>
+      <!-- 顶部标题：名称 / 分类 / 环境（全屏与关闭由 Drawer 渲染） -->
+      <div class="drw-header">
+        <div class="drw-title-row">
+          <Icon name="beaker" :size="15" class="drw-title-icon" />
+          <input v-model="name" class="drw-name" type="text" :placeholder="t('cases.colName')" spellcheck="false" />
+          <EnvironmentSelector variant="solo" :manage="false" />
+        </div>
+        <div class="drw-meta-row">
+          <CustomSelect
+            class="drw-category"
+            :model-value="category"
+            :options="TEST_CASE_CATEGORIES.map((c) => ({ value: c, label: caseCategoryLabel(c) }))"
+            size="sm"
+            :pop-min-width="110"
+            @update:model-value="(v) => (category = String(v ?? '正向') as TestCaseCategory)"
+          />
+          <input
+            v-model="folder"
+            class="miyo-input drw-folder"
+            type="text"
+            :placeholder="t('testcase.folderPh')"
+            spellcheck="false"
+            maxlength="60"
+          />
+          <span v-if="isDirty" class="drw-dirty" :title="t('casedrawer.dirtyHint')">
+            <Icon name="dot" :size="9" /> {{ t('casedrawer.dirty') }}
+          </span>
+        </div>
+        <!-- Tab 行（共享 Tabs，等宽铺满） -->
+        <Tabs
+          class="drw-tabs"
+          size="sm"
+          fill
+          :model-value="tab"
+          :tabs="tabItems"
+          @update:model-value="(v: string) => (tab = v as DrawerTab)"
+        />
+        <!-- 未保存确认条 -->
+        <div v-if="confirmClose" class="drw-confirm">
+          <span>{{ t('casedrawer.unsavedConfirm') }}</span>
+          <button class="miyo-btn miyo-btn-sm miyo-btn-danger" type="button" @click="discardAndClose">
+            {{ t('casedrawer.discard') }}
+          </button>
+          <button class="miyo-btn miyo-btn-sm" type="button" @click="confirmClose = false">
+            {{ t('casedrawer.keepEditing') }}
+          </button>
+        </div>
+      </div>
+    </template>
 
-          <!-- 顶部标题（固定）：名称 / 分类 / 环境 / 全屏 / 关闭 -->
-          <div class="drw-header">
-            <div class="drw-title-row">
-              <Icon name="beaker" :size="15" class="drw-title-icon" />
-              <input v-model="name" class="drw-name" type="text" :placeholder="t('cases.colName')" spellcheck="false" />
-              <EnvironmentSelector variant="solo" :manage="false" />
-              <IconButton
-                :name="fullscreen ? 'minimize-2' : 'maximize-2'"
-                :size="14"
-                :title="fullscreen ? t('casedrawer.exitFullscreen') : t('casedrawer.fullscreen')"
-                @click="toggleFullscreen"
-              />
-              <IconButton name="x" :size="15" :title="t('common.close')" @click="attemptClose" />
-            </div>
-            <div class="drw-meta-row">
-              <CustomSelect
-                class="drw-category"
-                :model-value="category"
-                :options="TEST_CASE_CATEGORIES.map((c) => ({ value: c, label: caseCategoryLabel(c) }))"
-                size="sm"
-                :pop-min-width="110"
-                @update:model-value="(v) => (category = String(v ?? '正向') as TestCaseCategory)"
-              />
-              <input
-                v-model="folder"
-                class="miyo-input drw-folder"
-                type="text"
-                :placeholder="t('testcase.folderPh')"
-                spellcheck="false"
-                maxlength="60"
-              />
-              <span v-if="isDirty" class="drw-dirty" :title="t('casedrawer.dirtyHint')">
-                <Icon name="dot" :size="9" /> {{ t('casedrawer.dirty') }}
-              </span>
-            </div>
-            <!-- Tab 行 -->
-            <div class="drw-tabs">
-              <button
-                v-for="opt in tabOptions"
-                :key="opt.value"
-                class="drw-tab"
-                :class="{ active: tab === opt.value }"
-                type="button"
-                @click="tab = opt.value as DrawerTab"
-              >
-                {{ opt.label }}
-                <span v-if="opt.badge" class="drw-tab-badge">{{ opt.badge }}</span>
-              </button>
-            </div>
-            <!-- 未保存确认条 -->
-            <div v-if="confirmClose" class="drw-confirm">
-              <span>{{ t('casedrawer.unsavedConfirm') }}</span>
-              <button class="miyo-btn miyo-btn-sm miyo-btn-danger" type="button" @click="discardAndClose">
-                {{ t('casedrawer.discard') }}
-              </button>
-              <button class="miyo-btn miyo-btn-sm" type="button" @click="confirmClose = false">
-                {{ t('casedrawer.keepEditing') }}
-              </button>
-            </div>
-          </div>
-
-          <!-- 内容区（独立滚动） -->
-          <div class="drw-body">
-            <!-- ===== 请求配置 ===== -->
-            <div v-show="tab === 'config'" class="drw-pane">
+    <!-- ===== 请求配置 ===== -->
+    <div v-show="tab === 'config'" class="drw-pane">
               <div class="drw-urlrow">
                 <CustomSelect
                   class="drw-method"
@@ -710,7 +693,7 @@ const compareResults = computed(() => {
 
               <div class="drw-inherit-row">
                 <button
-                  class="drw-sync-btn"
+                  class="drw-sync-btn miyo-btn miyo-btn-sm miyo-btn-ghost"
                   type="button"
                   :disabled="!endpoint"
                   :title="t('casedrawer.syncHint')"
@@ -818,48 +801,74 @@ const compareResults = computed(() => {
                 <p>{{ t('caselog.emptyHint') }}</p>
               </div>
 
-              <!-- 断言明细 -->
-              <div v-if="viewRunResult && outcomes.length" class="drw-outcomes">
-                <div v-for="(o, i) in outcomes" :key="i" class="drw-outcome" :class="{ fail: !o.passed }">
-                  <span class="drw-outcome-mark">{{ o.passed ? '✓' : '✕' }}</span>
-                  <span class="drw-outcome-desc" :title="o.description">{{ o.description }}</span>
-                  <span v-if="o.expected != null" class="drw-outcome-pair">
-                    {{ t('caselog.expected') }} <code>{{ o.expected }}</code>
-                  </span>
-                  <span v-if="o.actual != null" class="drw-outcome-pair">
-                    {{ t('caselog.actual') }} <code>{{ o.actual }}</code>
-                  </span>
-                  <span v-if="!o.passed && o.reason" class="drw-outcome-reason" :title="o.reason">{{ o.reason }}</span>
+              <!-- 断言明细（可折叠分区） -->
+              <CollapsibleSection
+                v-if="viewRunResult && outcomes.length"
+                :title="t('casedrawer.secOutcomes')"
+                :count="outcomes.length"
+                dense
+              >
+                <div class="drw-outcomes">
+                  <div v-for="(o, i) in outcomes" :key="i" class="drw-outcome" :class="{ fail: !o.passed }">
+                    <span class="drw-outcome-mark">{{ o.passed ? '✓' : '✕' }}</span>
+                    <span class="drw-outcome-desc" :title="o.description">{{ o.description }}</span>
+                    <span v-if="o.expected != null" class="drw-outcome-pair">
+                      {{ t('caselog.expected') }} <code>{{ o.expected }}</code>
+                    </span>
+                    <span v-if="o.actual != null" class="drw-outcome-pair">
+                      {{ t('caselog.actual') }} <code>{{ o.actual }}</code>
+                    </span>
+                    <span v-if="!o.passed && o.reason" class="drw-outcome-reason" :title="o.reason">{{ o.reason }}</span>
+                  </div>
                 </div>
-              </div>
+              </CollapsibleSection>
 
-              <!-- 提取值 -->
-              <div v-if="viewRunResult && extractedEntries.length" class="drw-extracted">
-                <span class="drw-sec-title-sm">{{ t('caselog.extracted') }}</span>
-                <code v-for="[k, v] in extractedEntries" :key="k" class="drw-extracted-item">
-                  {{ k }} = {{ v }}
-                </code>
-              </div>
+              <!-- 提取值（可折叠分区） -->
+              <CollapsibleSection
+                v-if="viewRunResult && extractedEntries.length"
+                :title="t('caselog.extracted')"
+                :count="extractedEntries.length"
+                dense
+              >
+                <div class="drw-extracted">
+                  <code v-for="[k, v] in extractedEntries" :key="k" class="drw-extracted-item">
+                    {{ k }} = {{ v }}
+                  </code>
+                </div>
+              </CollapsibleSection>
 
-              <!-- 请求快照 + 响应（变量替换后的真值） -->
+              <!-- 请求快照 + 响应（变量替换后的真值）：左右分栏，窄容器回退上下 -->
               <template v-if="viewRunResult?.response">
-                <RequestDetail :response="viewRunResult.response" :url="viewRunResult.url ?? undefined" />
-                <div class="drw-response-wrap">
-                  <ResponsePanel :response="viewRunResult.response as unknown as import('@/types/miyoApi.d').ExecuteResponse" />
-                </div>
+                <SplitPanes
+                  v-model:width="resultSplitWidth"
+                  class="drw-rsplit"
+                  :min="260"
+                  :stack-below="720"
+                  @reset="resultSplitWidth = 340"
+                >
+                  <template #first>
+                    <RequestDetail :response="viewRunResult.response" :url="viewRunResult.url ?? undefined" />
+                  </template>
+                  <template #second>
+                    <div class="drw-response-wrap">
+                      <ResponsePanel :response="viewRunResult.response as unknown as import('@/types/miyoApi.d').ExecuteResponse" />
+                    </div>
+                  </template>
+                </SplitPanes>
               </template>
 
-              <!-- 执行历史 -->
-              <div class="drw-history">
-                <button class="drw-history-toggle" type="button" @click="toggleHistory">
-                  <Icon :name="historyOpen ? 'chevron-down' : 'chevron-right'" :size="12" />
-                  {{ t('caselog.title') }}
-                  <span v-if="history.length" class="drw-tab-badge">{{ history.length }}</span>
-                  <template v-if="comparePair && compareResults">
-                    <span class="drw-history-compare-hint">{{ t('caselog.comparing', { a: compareResults.labelA, b: compareResults.labelB }) }}</span>
-                  </template>
-                </button>
-                <div v-if="historyOpen" class="drw-history-list">
+              <!-- 执行历史（可折叠分区，默认收起） -->
+              <CollapsibleSection
+                :title="t('caselog.title')"
+                :count="history.length || undefined"
+                dense
+                :open="historyOpen"
+                @update:open="setHistoryOpen"
+              >
+                <p v-if="comparePair && compareResults" class="drw-history-compare-hint">
+                  {{ t('caselog.comparing', { a: compareResults.labelA, b: compareResults.labelB }) }}
+                </p>
+                <div class="drw-history-list">
                   <div v-if="historyLoading" class="drw-history-loading">
                     <Skeleton :lines="3" width="92%" height="14px" />
                   </div>
@@ -899,105 +908,57 @@ const compareResults = computed(() => {
                     </button>
                   </template>
                 </div>
-              </div>
+              </CollapsibleSection>
             </div>
-          </div>
 
-          <!-- 底部操作栏（固定） -->
-          <div class="drw-footer">
-            <CodeExportMenu
-              class="drw-export"
-              :method="method"
-              :url="exportUrl"
-              :headers="caseEndpoint?.request.headers ?? []"
-              :body="caseEndpoint?.request.body ?? ({ mode: 'none' } as BodySpec)"
-              :auth="(auth ?? { type: 'none' }) as AuthSpec"
-              :disabled="!urlPath.trim()"
-              placement="top"
-            />
-            <div class="drw-footer-main">
-              <button
-                v-if="running && activeRunId"
-                class="miyo-btn miyo-btn-sm miyo-btn-danger"
-                type="button"
-                @click="cancelRun"
-              >
-                {{ t('common.cancel') }}
-              </button>
-              <button
-                class="miyo-btn miyo-btn-sm miyo-btn-primary"
-                type="button"
-                :disabled="running || !urlPath.trim()"
-                @click="run"
-              >
-                <Icon name="play" :size="13" />
-                {{ running ? t('casedrawer.sending') : t('casedrawer.runNow') }}
-              </button>
-              <button
-                class="miyo-btn miyo-btn-sm"
-                type="button"
-                :disabled="saving || !name.trim() || !urlPath.trim()"
-                @click="save"
-              >
-                {{ t('casedrawer.save') }}
-              </button>
-            </div>
-          </div>
-        </div>
+    <!-- 底部操作栏（Drawer footer 固定） -->
+    <template #footer>
+      <CodeExportMenu
+        class="drw-export"
+        :method="method"
+        :url="exportUrl"
+        :headers="caseEndpoint?.request.headers ?? []"
+        :body="caseEndpoint?.request.body ?? ({ mode: 'none' } as BodySpec)"
+        :auth="(auth ?? { type: 'none' }) as AuthSpec"
+        :disabled="!urlPath.trim()"
+        placement="top"
+      />
+      <div class="drw-footer-main">
+        <button
+          v-if="running && activeRunId"
+          class="miyo-btn miyo-btn-sm miyo-btn-danger"
+          type="button"
+          @click="cancelRun"
+        >
+          {{ t('common.cancel') }}
+        </button>
+        <button
+          class="miyo-btn miyo-btn-sm miyo-btn-primary"
+          type="button"
+          :disabled="running || !urlPath.trim()"
+          @click="run"
+        >
+          <Icon name="play" :size="13" />
+          {{ running ? t('casedrawer.sending') : t('casedrawer.runNow') }}
+        </button>
+        <button
+          class="miyo-btn miyo-btn-sm"
+          type="button"
+          :disabled="saving || !name.trim() || !urlPath.trim()"
+          @click="save"
+        >
+          {{ t('casedrawer.save') }}
+        </button>
       </div>
-    </Transition>
-  </Teleport>
+    </template>
+  </Drawer>
 </template>
 
 <style scoped>
-.drw-mask {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-drawer);
-  background: var(--mask);
-  backdrop-filter: blur(2px);
-}
-
-.drw {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
+/* 头部内容：Drawer d-head 已提供 padding 与分隔线，这里只管纵向排布 */
+.drw-header {
   display: flex;
   flex-direction: column;
-  max-width: 100vw;
-  background: var(--bg-panel);
-  border-left: 1px solid var(--border);
-  box-shadow: var(--shadow-drawer);
-}
-.drw.is-fullscreen {
-  width: 100vw !important;
-  border-left: none;
-}
-
-/* 左缘拖拽把手：透明叠加在边框上，hover 高亮 */
-.drw-resizer {
-  position: absolute;
-  left: -4px;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  cursor: col-resize;
-  z-index: 2;
-}
-.drw-resizer:hover,
-.drw.is-resizing {
-  cursor: col-resize;
-}
-.drw-resizer:hover {
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-/* ---- 头部（固定） ---- */
-.drw-header {
-  flex: none;
-  padding: 10px 14px 0;
-  border-bottom: 1px solid var(--border);
 }
 
 .drw-title-row {
@@ -1015,7 +976,7 @@ const compareResults = computed(() => {
   border: none;
   background: none;
   font-family: inherit;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-1);
   outline: none;
@@ -1034,7 +995,7 @@ const compareResults = computed(() => {
 .drw-folder {
   flex: 1;
   min-width: 0;
-  height: 26px;
+  height: var(--h-sm);
   font-size: var(--fs-xs);
 }
 .drw-dirty {
@@ -1044,46 +1005,6 @@ const compareResults = computed(() => {
   flex-shrink: 0;
   font-size: var(--fs-xxs);
   color: var(--warning);
-}
-
-/* Tab 行 */
-.drw-tabs {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-top: 8px;
-}
-.drw-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 7px 12px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: none;
-  font-family: inherit;
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-  cursor: pointer;
-  transition: color var(--dur) var(--ease);
-}
-.drw-tab:hover {
-  color: var(--text-1);
-}
-.drw-tab.active {
-  color: var(--text-1);
-  border-bottom-color: var(--accent);
-}
-.drw-tab-badge {
-  min-width: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--accent-tint);
-  color: var(--accent);
-  font-size: var(--fs-xxs);
-  font-family: var(--font-mono);
-  text-align: center;
-  line-height: 16px;
 }
 
 /* 未保存确认条 */
@@ -1101,14 +1022,6 @@ const compareResults = computed(() => {
 }
 .drw-confirm span {
   margin-right: auto;
-}
-
-/* ---- 内容区（独立滚动） ---- */
-.drw-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 12px 14px;
 }
 
 .drw-pane {
@@ -1152,26 +1065,7 @@ const compareResults = computed(() => {
   flex-wrap: wrap;
 }
 .drw-sync-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: none;
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  color: var(--text-2);
-  cursor: pointer;
-  transition: all var(--dur) var(--ease);
-}
-.drw-sync-btn:hover:not(:disabled) {
-  color: var(--text-1);
-  border-color: var(--border-strong);
-}
-.drw-sync-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  flex: none;
 }
 .drw-inherit-flags {
   display: inline-flex;
@@ -1181,7 +1075,7 @@ const compareResults = computed(() => {
 }
 .drw-inherit-tag {
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: var(--fs-xxs);
   color: var(--text-3);
   background: var(--bg-2);
@@ -1316,12 +1210,12 @@ const compareResults = computed(() => {
 }
 .drw-result-status {
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: var(--fs-lg);
   font-weight: 700;
 }
 .drw-result-chip {
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-2);
   border: 1px solid var(--border);
   font-size: var(--fs-xxs);
@@ -1426,6 +1320,7 @@ const compareResults = computed(() => {
 }
 
 .drw-response-wrap {
+  flex: 1;
   min-height: 220px;
   display: flex;
   flex-direction: column;
@@ -1434,25 +1329,26 @@ const compareResults = computed(() => {
   overflow: hidden;
 }
 
+/* 结果区请求 | 响应分栏容器（<720px 自动上下堆叠） */
+.drw-rsplit {
+  flex: 1;
+  min-height: 260px;
+}
+.drw-rsplit :deep(.rqd) {
+  flex: none;
+  max-height: 100%;
+  overflow-y: auto;
+}
+.drw-rsplit .drw-response-wrap :deep(.response-panel) {
+  flex: 1;
+  min-height: 0;
+}
+
 /* 执行历史 */
 .drw-history {
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-.drw-history-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  padding: 3px 0;
-  border: none;
-  background: none;
-  font-family: inherit;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-1);
-  cursor: pointer;
 }
 .drw-history-compare-hint {
   font-weight: 400;
@@ -1550,21 +1446,4 @@ const compareResults = computed(() => {
   transform: rotate(180deg);
 }
 
-/* ---- 动画（保留原 drw 过渡） ---- */
-.drw-enter-active,
-.drw-leave-active {
-  transition: opacity 0.18s ease;
-}
-.drw-enter-active .drw,
-.drw-leave-active .drw {
-  transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1);
-}
-.drw-enter-from,
-.drw-leave-to {
-  opacity: 0;
-}
-.drw-enter-from .drw,
-.drw-leave-to .drw {
-  transform: translateX(100%);
-}
 </style>

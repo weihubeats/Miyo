@@ -161,7 +161,7 @@ describe('TestCaseDrawer（三 Tab 重构版）', () => {
 
   it('断言与提取 Tab：共享列表渲染存量规则，可添加新行', async () => {
     mountDrawer()
-    await clickEl('.drw-tab:nth-of-type(2)')
+    await clickEl('.drw-tabs .tab:nth-of-type(2)')
     // 提取规则：存量 1 行（orderNo）
     expect($$('.xtr-row')).toHaveLength(1)
     // 断言规则：存量 1 行（status）
@@ -318,12 +318,13 @@ describe('TestCaseDrawer（三 Tab 重构版）', () => {
     const src = readFileSync(join(process.cwd(), 'src/domains/test-case/components/TestCaseDrawer.vue'), 'utf8')
     expect(src).toContain('DRAWER_MIN = 560')
     expect(src).toContain('DRAWER_DEFAULT = 680')
-    expect(src).toContain('window.innerWidth * 0.75')
-    // 全屏切换（标题行倒数第二个 IconButton 是全屏钮，最后是关闭钮）
-    expect($('.drw.is-fullscreen')).toBeNull()
-    const titleBtns = $$('.drw-title-row button')
-    await clickElChain(titleBtns[titleBtns.length - 2])
-    expect($('.drw.is-fullscreen')).toBeTruthy()
+    // 宽度记忆到 localStorage（拖拽与键盘调宽由共享 Drawer 承担）
+    expect(src).toContain("'miyo.case-drawer-width'")
+    // 全屏切换（Drawer 头部动作区第一个按钮是全屏钮，最后是关闭钮）
+    expect($('.d-drawer.is-fullscreen')).toBeNull()
+    const headBtns = $$('.d-drawer .d-head-actions .ib')
+    await clickElChain(headBtns[0]!)
+    expect($('.d-drawer.is-fullscreen')).toBeTruthy()
   })
   /** 对已取得的元素触发点击（Teleport 内容不在 wrapper 内）。 */
   async function clickElChain(el: HTMLElement): Promise<void> {
@@ -339,8 +340,8 @@ describe('TestCaseDrawer（三 Tab 重构版）', () => {
 
   it('执行历史：打开历史列表（空态）', async () => {
     mountDrawer()
-    await clickEl('.drw-tab:nth-of-type(3)')
-    await clickEl('.drw-history-toggle')
+    await clickEl('.drw-tabs .tab:nth-of-type(3)')
+    await clickEl('.sec-head')
     expect(api.listTestCaseRuns).toHaveBeenCalledWith('c1', 50)
     expect($('.drw-history-empty')).toBeTruthy()
   })
