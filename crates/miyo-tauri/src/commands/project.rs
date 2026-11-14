@@ -79,7 +79,9 @@ pub struct ProjectQualityStat {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub async fn list_project_quality(state: State<'_, AppState>) -> CommandResult<Vec<ProjectQualityStat>> {
+pub async fn list_project_quality(
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<ProjectQualityStat>> {
     let rows = repo::list_project_quality(&state.db).await?;
     Ok(rows
         .into_iter()
