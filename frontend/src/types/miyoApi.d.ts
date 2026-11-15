@@ -187,6 +187,8 @@ export interface StepOverrides {
   headers?: Partial<KeyValue>[]
   path_variables?: Partial<KeyValue>[]
   body?: BodySpec
+  /** 步骤级超时（毫秒；null = 不改动，清除靠删除该键）。 */
+  timeout_ms?: number | null
 }
 
 /** 集成测试场景（Rust `Scenario`）：项目级接口链路。 */
@@ -393,6 +395,8 @@ export interface ScenarioRunMeta {
 /** 场景运行历史详情（Rust `ScenarioRunDetail`；results 与实时运行同形，
  * 响应正文 64KB 内保留可回看；meta 供按当时配置重跑）。 */
 export interface ScenarioRunDetail extends ScenarioRunSummary {
+  /** 开始时间（meta.startedAt 恢复；旧行缺 meta 时为 null）。 */
+  started_at?: string | null
   results: ScenarioStepResult[]
   variables: Record<string, string>
   meta?: ScenarioRunMeta | null

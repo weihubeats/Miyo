@@ -3,4 +3,12 @@
 /**
  * 场景运行历史条目（IPC 摘要；results_json / variables_json 不下发）。
  */
-export type ScenarioRunSummary = { id: string, finished_at: string, duration_ms: number | null, total_steps: number, ok_count: number, fail_count: number, skipped_count: number, cancelled: boolean, stopped_on_failure: boolean, };
+export type ScenarioRunSummary = { id: string, 
+/**
+ * 归属场景（项目级运行流的打开 / 分组用）。
+ */
+scenario_id: string, 
+/**
+ * 本次运行使用的环境（列表 / 历史行的环境徽章；None = 未选环境）。
+ */
+environment_id: string | null, finished_at: string, duration_ms: number | null, total_steps: number, ok_count: number, fail_count: number, skipped_count: number, cancelled: boolean, stopped_on_failure: boolean, };

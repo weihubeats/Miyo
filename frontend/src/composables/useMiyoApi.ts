@@ -548,6 +548,23 @@ export function useMiyoApi() {
   const clearScenarioRuns = (scenarioId: string) =>
     run(() => call<number>('clear_scenario_runs', { scenarioId }))
 
+  /** 项目级最近运行摘要（历史面板「全部运行」流；不读大 JSON 列）。 */
+  const listRecentScenarioRuns = (projectId: string, limit?: number) =>
+    run(() =>
+      call<ScenarioRunSummary[]>('list_recent_scenario_runs', { projectId, limit }),
+    )
+
+  /** 项目级运行聚合统计（历史面板统计条：总数 / 成功 / 失败 / 取消）。 */
+  const projectScenarioRunStats = (projectId: string) =>
+    run(() =>
+      call<{
+        totalRuns: number
+        okRuns: number
+        failRuns: number
+        cancelledRuns: number
+      }>('project_scenario_run_stats', { projectId }),
+    )
+
   // ---------- 代码生成 ----------
   const codegenRender = (args: {
     lang: CodeLang
@@ -976,6 +993,8 @@ export function useMiyoApi() {
     getScenarioRun,
     deleteScenarioRun,
     clearScenarioRuns,
+    listRecentScenarioRuns,
+    projectScenarioRunStats,
     codegenRender,
     listRequestHistories,
     listRecentActivities,

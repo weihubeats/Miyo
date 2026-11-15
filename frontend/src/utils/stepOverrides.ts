@@ -51,6 +51,16 @@ export function applyStepOverrides(spec: RequestSpec, overrides: StepOverrides |
   if (obj.body != null) {
     spec.body = obj.body as RequestSpec['body']
   }
+
+  // 步骤级超时覆盖（毫秒；与 miyo-core::apply_step_overrides 同语义——
+  // null = 不改动，清除靠编辑器删除 overrides 键）。
+  if (obj.timeout_ms !== undefined && obj.timeout_ms !== null) {
+    const ms = obj.timeout_ms
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0 || !Number.isInteger(ms)) {
+      throw new Error('integration.overridesInvalid')
+    }
+    spec.timeout_ms = ms
+  }
 }
 
 /** 应用 url 覆盖（返回最终 URL 模板）。 */

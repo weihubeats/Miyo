@@ -29,6 +29,8 @@ function deferred<T>() {
 function summary(id: string): ScenarioRunSummary {
   return {
     id,
+    scenario_id: 'sc-1',
+    environment_id: null,
     finished_at: `2026-01-01T00:0${id.length}:00Z`,
     duration_ms: 100,
     total_steps: 2,

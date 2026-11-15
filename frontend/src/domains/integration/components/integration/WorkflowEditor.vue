@@ -23,6 +23,7 @@ import { useMiyoApi } from '@/composables/useMiyoApi'
 import { lazyComponent } from '@/composables/lazyComponent'
 import { useToast } from '@/composables/useToast'
 import { useTauriEvent } from '@/composables/useTauriEvent'
+import { useOverlayFullscreen } from '@/composables/useOverlayFullscreen'
 import {
   useScenarioRun,
   type BuiltRunStep,
@@ -36,6 +37,7 @@ import { applyStepOverrides, applyUrlOverride } from '@/utils/stepOverrides'
 import { envColorClass, mergedVariableMap } from '@/utils/environment'
 import { applyPathVars } from '@/utils/pathVariables'
 import { methodBadgeTone } from '@/utils/methodTone'
+import { formatDateTime } from '@/utils/dateTime'
 import { generateScenarioScript, type ScriptAuth, type ScriptStep } from '@/utils/scenarioScript'
 import { EXPORT_PLACEHOLDER, isSensitiveKeyName, redactJsonText, redactUrlQuery } from '@/utils/exportRedact'
 import { parseScenarioScript, ScriptParseError } from '@/utils/scenarioScriptParse'
@@ -57,6 +59,7 @@ import AssertionList from '@/domains/test-case/components/assertion/assertion/As
 import StepRequestEditor from '@/domains/integration/components/integration/StepRequestEditor.vue'
 import RunResultView from '@/domains/integration/components/integration/RunResultView.vue'
 import RunCompareModal from '@/domains/integration/components/integration/RunCompareModal.vue'
+import RunHistoryPanel from '@/domains/integration/components/integration/RunHistoryPanel.vue'
 import type {
   Endpoint,
   Scenario,
@@ -1067,6 +1070,39 @@ async function onHistorySelect(item: MenuItem): Promise<void> {
   if (run.runIsHistory.value) viewMode.value = 'result'
 }
 
+// ---------- 执行历史面板（筛选 × 对比 × 按筛选导出） ----------
+const historyPanelOpen = ref(false)
+
+/** 面板里点开某条历史：恢复到结果视图（复用 run.restoreRun 的序号仲裁）。 */
+async function onHistoryPanelOpenRun(payload: { scenarioId: string; runId: string }): Promise<void> {
+  const outcome = await run.restoreRun(payload.runId)
+  if (outcome.status === 'missing') {
+    toast.warning(t('integration.historyMissing'))
+    void run.loadHistory()
+    return
+  }
+  if (outcome.status === 'applied') viewMode.value = 'result'
+}
+
+/** 面板按筛选结果导出报告（HTML / JUnit XML）。 */
+async function onHistoryPanelExport(payload: { format: 'html' | 'junit_xml'; runIds: string[] }): Promise<void> {
+  if (!payload.runIds.length || !scenario.value) return
+  try {
+    const { content, suggestedName } = await api.exportScenarioReport({
+      scenarioId: props.scenarioId,
+      scenarioName: scenario.value.name,
+      runIds: payload.runIds,
+      format: payload.format,
+    })
+    await reportWriteHook(suggestedName, content)
+    toast.success(t('integration.reportExported'), { message: suggestedName })
+  } catch (err) {
+    const raw = errorText(err)
+    if (raw === 'cancelled') return
+    toast.error(t('integration.reportExportFail'), { message: raw })
+  }
+}
+
 /**
  * 步骤 → 脚本入参。`redact`（导出用）= 敏感值以占位符生成：
  * 真实 Token / 密码不写入导出的 .mjs（脚本会离开本机）；应用内
@@ -1526,10 +1562,93 @@ function runStepMethod(pos: number): string {
   return s ? stepMethod(s) : 'GET'
 }
 
+// ---------- 编辑器全屏（CSS 覆盖视口；Esc 经 escStack 退出） ----------
+const { fullscreen: editorFullscreen, toggle: toggleEditorFullscreen } = useOverlayFullscreen()
+
+// ---------- 左栏折叠（折叠后详情占满全宽；宽度记忆到 localStorage） ----------
+const FLOW_COLLAPSED_KEY = 'miyo.wf-flow-collapsed'
+const flowCollapsed = ref(((): boolean => {
+  try {
+    return localStorage.getItem(FLOW_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+})())
+watch(flowCollapsed, (v) => {
+  try {
+    localStorage.setItem(FLOW_COLLAPSED_KEY, v ? '1' : '0')
+  } catch {
+    /* 存储不可用：仅本次会话生效 */
+  }
+})
+/** 概览校验摘要入口：恢复左栏并展开校验面板。 */
+function expandAndShowValidate(): void {
+  flowCollapsed.value = false
+  validateOpen.value = true
+}
+
+// ---------- 步骤级超时（内联写 spec.timeout_ms；引用式写 overrides.timeout_ms） ----------
+const stepTimeoutText = computed({
+  get: () => {
+    const s = selectedStep.value
+    if (!s) return ''
+    if (s.kind === 'inline') {
+      return s.inline.spec.timeout_ms == null ? '' : String(s.inline.spec.timeout_ms)
+    }
+    return s.overrides?.timeout_ms == null ? '' : String(s.overrides.timeout_ms)
+  },
+  set: (v: string) => {
+    const s = selectedStep.value
+    if (!s) return
+    const n = Number.parseInt(v, 10)
+    const val = Number.isFinite(n) && n > 0 ? n : null
+    if (s.kind === 'inline') {
+      s.inline.spec.timeout_ms = val
+    } else {
+      const ov = ensureOverrides(s)
+      if (val == null) delete ov.timeout_ms
+      else ov.timeout_ms = val
+    }
+  },
+})
+
+// ---------- 场景概览（未选中步骤时右栏展示） ----------
+const stepTimeoutHint = computed(() => {
+  const s = selectedStep.value
+  if (!s) return ''
+  if (stepTimeoutOf(s) != null) return t('integration.timeoutSetHint')
+  return t('integration.timeoutFallbackHint')
+})
+const overviewStats = computed(() => {
+  const enabled = steps.value.filter((s) => s.enabled).length
+  return {
+    total: steps.value.length,
+    enabled,
+    condition: steps.value.filter((s) => s.condition).length,
+    loop: steps.value.filter((s) => s.loop).length,
+    extract: steps.value.reduce((acc, s) => acc + s.extract.length, 0),
+    assert: steps.value.reduce((acc, s) => acc + s.assertions.length, 0),
+    datasets: scenario.value?.data_sets?.length ?? 0,
+    setup: scenario.value?.setup?.length ?? 0,
+    teardown: scenario.value?.teardown?.length ?? 0,
+  }
+})
+const overviewCreatedAt = computed(() =>
+  scenario.value?.created_at ? formatDateTime(scenario.value.created_at) : '',
+)
+const overviewUpdatedAt = computed(() =>
+  scenario.value?.updated_at ? formatDateTime(scenario.value.updated_at) : '',
+)
+/** 覆盖策略检测用到 timeout_ms 之外的字段；这里单列 timeout 覆盖标记。 */
+function stepTimeoutOf(s: EditorStep): number | null {
+  if (s.kind === 'inline') return s.inline.spec.timeout_ms ?? null
+  return s.overrides?.timeout_ms ?? null
+}
+
 </script>
 
 <template>
-  <div class="wf-root">
+  <div class="wf-root" :class="{ fullscreen: editorFullscreen }">
     <Menu ref="menuRef" @select="onMenuSelect" />
     <Modal
       v-model:open="confirmRunOpen"
@@ -1553,6 +1672,16 @@ function runStepMethod(pos: number): string {
     </Modal>
 
     <RunCompareModal v-model:open="compareOpen" :scenario-id="props.scenarioId" />
+
+    <!-- 执行历史面板：筛选（状态×环境×时间）/ 打开详情 / 删除 / 按筛选导出 -->
+    <RunHistoryPanel
+      v-model:open="historyPanelOpen"
+      :scenario-id="props.scenarioId"
+      :scenario-name="name.trim() || t('integration.newName')"
+      @open-run="onHistoryPanelOpenRun"
+      @compare="compareOpen = true"
+      @export="onHistoryPanelExport"
+    />
 
     <!-- 单步 / 从步骤执行：无运行时快照时手填前置变量，绝不隐式传空变量 -->
     <Modal
@@ -1609,7 +1738,20 @@ function runStepMethod(pos: number): string {
 
     <!-- ===== 顶栏 ===== -->
     <header class="wf-topbar">
-      <IconButton name="chevron-right" :size="14" :title="t('integration.back')" @click="emit('back')" />
+      <IconButton
+        v-if="editorFullscreen"
+        name="chevron-right"
+        :size="14"
+        :title="t('integration.back')"
+        @click="toggleEditorFullscreen"
+      />
+      <IconButton
+        v-else
+        name="chevron-right"
+        :size="14"
+        :title="t('integration.back')"
+        @click="emit('back')"
+      />
       <input v-model="name" class="wf-name" type="text" :placeholder="t('integration.editorNamePh')" spellcheck="false" />
       <input v-model="category" class="wf-category" type="text" :placeholder="t('integration.categoryLabel')" spellcheck="false" />
       <SegmentedControl v-model="viewMode" :options="VIEW_OPTIONS" size="sm" />
@@ -1626,8 +1768,15 @@ function runStepMethod(pos: number): string {
         @update:model-value="(v) => (run.execStrategy.value = String(v ?? 'stop'))"
       />
       <IconButton name="history" :size="14" :title="t('integration.history')" :disabled="!run.runHistory.value.length" @click.stop="run.openHistoryMenu($event)" />
+      <IconButton name="list" :size="14" :title="t('integration.histPanelBtn')" :disabled="!run.runHistory.value.length" @click="historyPanelOpen = true" />
       <IconButton name="layout-grid" :size="14" :title="t('integration.compare')" :disabled="!run.runHistory.value.length" @click="compareOpen = true" />
       <IconButton name="download" :size="14" :title="t('integration.exportScript')" @click="exportScript" />
+      <IconButton
+        :name="editorFullscreen ? 'minimize-2' : 'maximize-2'"
+        :size="14"
+        :title="editorFullscreen ? t('response.exitFullscreen') : t('response.fullscreen')"
+        @click="toggleEditorFullscreen"
+      />
       <button class="miyo-btn miyo-btn-sm" type="button" :disabled="saving" @click="save">
         <Icon name="save" :size="12" /> {{ t('integration.save') }}
       </button>
@@ -1688,10 +1837,12 @@ function runStepMethod(pos: number): string {
 
     <!-- ===== 编排视图 ===== -->
     <div v-else-if="viewMode === 'manual'" class="wf-main">
-      <!-- 左流程 / 右详情可拖分栏：详情宽度记忆到 miyo.wf-detail-width -->
+      <!-- 左流程 / 右详情可拖分栏：详情宽度记忆到 miyo.wf-detail-width；
+           左栏折叠时隐藏流程区，详情占满全宽（flow-collapsed CSS 覆盖内联宽度） -->
       <SplitPanes
         v-model:width="detailWidth"
         class="wf-split"
+        :class="{ 'flow-collapsed': flowCollapsed }"
         width-on="second"
         :min="320"
         :max="detailMaxWidth"
@@ -1714,6 +1865,12 @@ function runStepMethod(pos: number): string {
           >
             <Icon name="file-plus" :size="12" /> {{ t('integration.addFromEndpoint') }}
           </button>
+          <IconButton
+            name="minimize-2"
+            :size="13"
+            :title="t('integration.flowCollapse')"
+            @click="flowCollapsed = true"
+          />
         </div>
 
         <!-- 运行前校验面板：有阻断才自动展开；可收起，面板内可「仍然运行」 -->
@@ -1921,6 +2078,13 @@ function runStepMethod(pos: number): string {
       <aside class="wf-detail" :class="{ empty: !selectedStep }">
         <template v-if="selectedStep">
           <div class="wf-detail-head">
+            <IconButton
+              v-if="flowCollapsed"
+              name="maximize-2"
+              :size="13"
+              :title="t('integration.flowExpand')"
+              @click="flowCollapsed = false"
+            />
             <input v-model="selectedStep.name" class="miyo-input wf-detail-name" type="text" :placeholder="t('integration.stepUntitled', { n: steps.indexOf(selectedStep) + 1 })" spellcheck="false" />
             <span class="wf-detail-kind">{{ selectedStep.kind === 'inline' ? t('integration.stepKindInline') : t('integration.stepKindRef') }}</span>
             <IconButton name="x" :size="13" :title="t('common.close')" @click="selectStep(null)" />
@@ -2199,6 +2363,26 @@ function runStepMethod(pos: number): string {
                     />
                   </div>
                 </div>
+
+                <!-- 步骤级超时：内联写 spec.timeout_ms；引用式写 overrides.timeout_ms（不改接口本体）。
+                     留空 = 沿用接口级 → 全局 → 默认 300s 三级兜底 -->
+                <div class="wf-ctrl-block">
+                  <div class="wf-ctrl-head">
+                    <span class="wf-ctrl-label">{{ t('integration.timeoutTitle') }}</span>
+                  </div>
+                  <div class="wf-rule-row">
+                    <input
+                      v-model="stepTimeoutText"
+                      class="miyo-input wf-ctrl-num"
+                      type="text"
+                      inputmode="numeric"
+                      spellcheck="false"
+                      :placeholder="t('integration.timeoutPh')"
+                    />
+                    <span class="wf-ctrl-inline-label">{{ t('integration.timeoutUnit') }}</span>
+                  </div>
+                  <p class="wf-ctrl-hint">{{ stepTimeoutHint }}</p>
+                </div>
               </div>
             </div>
             <ExtractList
@@ -2367,9 +2551,62 @@ function runStepMethod(pos: number): string {
             </div>
           </div>
         </template>
-        <div v-else class="wf-detail-placeholder">
-          <Icon name="pencil" :size="18" />
-          <p>{{ t('scenario.stepSelect') }}</p>
+        <!-- 未选中步骤：场景概览（统计 / 校验入口 / 描述编辑 / 快捷操作） -->
+        <div v-else class="wf-overview">
+          <div class="wf-overview-head">
+            <IconButton
+              v-if="flowCollapsed"
+              name="maximize-2"
+              :size="13"
+              :title="t('integration.flowExpand')"
+              @click="flowCollapsed = false"
+            />
+            <span class="wf-overview-title">{{ t('integration.overviewTitle') }}</span>
+          </div>
+          <p class="wf-overview-hint">{{ t('scenario.stepSelect') }}</p>
+
+          <div class="wf-overview-stats">
+            <span class="wf-ov-chip">{{ t('integration.ovSteps', { n: overviewStats.total }) }}</span>
+            <span class="wf-ov-chip ok">{{ t('integration.ovEnabled', { n: overviewStats.enabled }) }}</span>
+            <span v-if="overviewStats.condition" class="wf-ov-chip">{{ t('integration.ovCondition', { n: overviewStats.condition }) }}</span>
+            <span v-if="overviewStats.loop" class="wf-ov-chip">{{ t('integration.ovLoop', { n: overviewStats.loop }) }}</span>
+            <span v-if="overviewStats.extract" class="wf-ov-chip">{{ t('scenario.stepExtractBadge', { n: overviewStats.extract }) }}</span>
+            <span v-if="overviewStats.assert" class="wf-ov-chip">{{ t('integration.ovAssert', { n: overviewStats.assert }) }}</span>
+            <span v-if="overviewStats.datasets" class="wf-ov-chip">{{ t('integration.ovDatasets', { n: overviewStats.datasets }) }}</span>
+            <span v-if="overviewStats.setup" class="wf-ov-chip">{{ t('integration.ovSetup', { n: overviewStats.setup }) }}</span>
+            <span v-if="overviewStats.teardown" class="wf-ov-chip">{{ t('integration.ovTeardown', { n: overviewStats.teardown }) }}</span>
+          </div>
+
+          <!-- 校验摘要：有问题时给出入口（点击展开左栏校验面板） -->
+          <div v-if="issues.length" class="wf-overview-validate" role="button" tabindex="0" @click="expandAndShowValidate" @keydown.enter="expandAndShowValidate">
+            <Icon name="alert-triangle" :size="13" />
+            <span>{{ t('integration.ovValidate', { e: errorCount, w: warnCount }) }}</span>
+          </div>
+
+          <div class="wf-overview-desc">
+            <span class="wf-overview-label">{{ t('integration.ovDescLabel') }}</span>
+            <textarea
+              v-model="description"
+              class="miyo-input wf-overview-textarea"
+              rows="3"
+              spellcheck="false"
+              :placeholder="t('integration.ovDescPh')"
+            ></textarea>
+          </div>
+
+          <div class="wf-overview-actions">
+            <button class="miyo-btn miyo-btn-sm" type="button" @click="addInlineStep">
+              <Icon name="plus" :size="12" /> {{ t('integration.addStep') }}
+            </button>
+            <button class="miyo-btn miyo-btn-sm" type="button" :disabled="!workspace.endpoints.length" @click="(e) => openEndpointMenu(e.currentTarget as HTMLElement)">
+              <Icon name="file-plus" :size="12" /> {{ t('integration.addFromEndpoint') }}
+            </button>
+          </div>
+
+          <div v-if="overviewCreatedAt" class="wf-overview-times">
+            <span>{{ t('integration.ovCreatedAt', { time: overviewCreatedAt }) }}</span>
+            <span v-if="overviewUpdatedAt">{{ t('integration.ovUpdatedAt', { time: overviewUpdatedAt }) }}</span>
+          </div>
         </div>
       </aside>
         </template>
@@ -2386,6 +2623,16 @@ function runStepMethod(pos: number): string {
   flex-direction: column;
   background: var(--bg-app);
   color: var(--text-1);
+}
+
+/* 编辑器全屏：覆盖视口（Esc 经 escStack 退出；见 useOverlayFullscreen） */
+.wf-root.fullscreen {
+  position: fixed;
+  inset: 14px;
+  z-index: var(--z-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
 }
 
 /* ---- 顶栏 ---- */
@@ -2452,6 +2699,21 @@ function runStepMethod(pos: number): string {
 .wf-split {
   flex: 1;
   min-width: 0;
+}
+
+/* 左栏折叠：隐藏流程区与分割线，详情占满全宽
+  （!important 压过 SplitPanes 的内联定宽样式） */
+.wf-split.flow-collapsed :deep(.sp-first) {
+  display: none;
+}
+
+.wf-split.flow-collapsed :deep(.sp-divider) {
+  display: none;
+}
+
+.wf-split.flow-collapsed :deep(.sp-second) {
+  flex: 1 1 auto !important;
+  width: auto !important;
 }
 
 .wf-flow {
@@ -3337,6 +3599,98 @@ function runStepMethod(pos: number): string {
   gap: 8px;
   color: var(--text-3);
   font-size: var(--fs-xxs);
+}
+
+/* ---- 场景概览（未选中步骤时右栏；容器 empty 居中布局内限宽） ---- */
+.wf-overview {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.wf-overview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wf-overview-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.wf-overview-hint {
+  margin: 0;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+}
+
+.wf-overview-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wf-ov-chip {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xxs);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+
+.wf-ov-chip.ok {
+  background: var(--success-tint);
+  color: var(--success);
+}
+
+.wf-overview-validate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--warning-tint);
+  color: var(--warning);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.wf-overview-desc {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wf-overview-label {
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+}
+
+.wf-overview-textarea {
+  resize: vertical;
+  min-height: 56px;
+}
+
+.wf-overview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.wf-overview-times {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xxs);
+  color: var(--text-3);
 }
 
 /* 提取 / 断言行编辑 */

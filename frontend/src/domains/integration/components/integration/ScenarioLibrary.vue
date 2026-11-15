@@ -9,6 +9,7 @@
  * - 新建（可选分类）+ 导入（openDialog 选文件 → readTextFile → 解析入库）。
  */
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { useLocaleStore } from '@/stores/locale'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -21,6 +22,7 @@ import { buildScenarioExport, parseScenarioImport } from '@/utils/scenarioIO'
 import { formatDateTime } from '@/utils/dateTime'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import RunHistoryPanel from '@/domains/integration/components/integration/RunHistoryPanel.vue'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import Modal from '@/components/ui/Modal.vue'
@@ -38,10 +40,13 @@ const store = useIntegrationStore()
 const workspace = useWorkspaceStore()
 const api = useMiyoApi()
 const toast = useToast()
+const router = useRouter()
 
-// ---------- 搜索 + 分类过滤 + 排序 ----------
+// ---------- 搜索 + 分类过滤 + 状态过滤 + 排序 ----------
 const search = ref('')
 const categoryFilter = ref<string | null>(null)
+/** 最近执行状态过滤：全部 | 通过 | 失败 | 未运行。 */
+const statusFilter = ref<'all' | 'ok' | 'fail' | 'none'>('all')
 /** 排序：默认（编排序）| 名称 | 最近执行时间倒序。 */
 const sortBy = ref<'default' | 'name' | 'recent'>('default')
 
@@ -57,11 +62,25 @@ const categories = computed(() => {
 
 const hasCategory = computed(() => store.libraryItems.some((s) => s.category.trim()))
 
+/** 最近一次执行的结果判定（状态过滤用）。 */
+function lastRunResult(item: (typeof store.libraryItems)[number]): 'ok' | 'fail' | 'cancel' | null {
+  const r = item.last_run
+  if (!r) return null
+  if (r.cancelled) return 'cancel'
+  return r.fail_count > 0 ? 'fail' : 'ok'
+}
+
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
   const list = store.libraryItems.filter((s) => {
     if (categoryFilter.value === '' && s.category.trim()) return false
     if (categoryFilter.value && s.category.trim() !== categoryFilter.value) return false
+    if (statusFilter.value !== 'all') {
+      const res = lastRunResult(s)
+      if (statusFilter.value === 'ok' && res !== 'ok') return false
+      if (statusFilter.value === 'fail' && res !== 'fail') return false
+      if (statusFilter.value === 'none' && res !== null) return false
+    }
     if (!q) return true
     return (
       s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
@@ -83,11 +102,30 @@ const filtered = computed(() => {
 // ---------- 最近执行状态 ----------
 type RunTone = 'ok' | 'fail' | 'cancel' | null
 
-function runTone(item: (typeof store.libraryItems)[number]): RunTone {
+/** 环境徽章：last_run.environment_id → 环境名（已删环境回退短 id）。 */
+const envNameById = computed(() => {
+  const m = new Map<string, string>()
+  for (const e of workspace.environments) m.set(e.id, e.name)
+  return m
+})
+
+function envBadgeName(item: (typeof store.libraryItems)[number]): string | null {
+  const id = item.last_run?.environment_id
+  if (!id) return null
+  return envNameById.value.get(id) ?? id.slice(0, 8)
+}
+
+/** 最近一次运行成功率：ok / (ok + fail + skip)；从未运行返回 null。 */
+function successRate(item: (typeof store.libraryItems)[number]): number | null {
   const r = item.last_run
   if (!r) return null
-  if (r.cancelled) return 'cancel'
-  return r.fail_count > 0 ? 'fail' : 'ok'
+  const total = r.ok_count + r.fail_count + r.skipped_count
+  if (total <= 0) return null
+  return Math.round((r.ok_count / total) * 100)
+}
+
+function runTone(item: (typeof store.libraryItems)[number]): RunTone {
+  return lastRunResult(item)
 }
 
 function runSummaryText(r: ScenarioRunSummary | null | undefined): string {
@@ -98,6 +136,19 @@ function runSummaryText(r: ScenarioRunSummary | null | undefined): string {
     r.skipped_count > 0 ? t('scenario.summarySkip', { n: r.skipped_count }) : null,
   ].filter(Boolean)
   return `${t('integration.libLastRun', { time: formatDateTime(r.finished_at) })} · ${parts.join(' / ')}`
+}
+
+// ---------- AI 创建入口（空态引导：AI 生成场景草稿后一键应用） ----------
+function goAiCreate(): void {
+  void router.push('/ai-test')
+}
+
+// ---------- 项目级执行历史面板 ----------
+const historyPanelOpen = ref(false)
+
+/** 面板里点开某条运行：直达对应场景的结果视图（编辑器恢复该次运行）。 */
+function onHistoryOpenRun(payload: { scenarioId: string; runId: string }): void {
+  store.openScenarioRun(payload.scenarioId, payload.runId)
 }
 
 // ---------- 新建 / 复制 ----------
@@ -430,6 +481,7 @@ async function onImport(): Promise<void> {
         </button>
       </div>
       <IconButton name="upload" :size="14" :title="t('integration.libImport')" @click="onImport" />
+      <IconButton name="history" :size="14" :title="t('integration.histProjectTitle')" @click="historyPanelOpen = true" />
       <CustomSelect
         class="lib-sort"
         :model-value="String(sortBy)"
@@ -441,6 +493,19 @@ async function onImport(): Promise<void> {
         size="sm"
         :pop-min-width="130"
         @update:model-value="(v) => (sortBy = String(v ?? 'default') as 'default' | 'name' | 'recent')"
+      />
+      <CustomSelect
+        class="lib-status-filter"
+        :model-value="String(statusFilter)"
+        :options="[
+          { value: 'all', label: t('integration.libStatusAll') },
+          { value: 'ok', label: t('integration.libStatusOk') },
+          { value: 'fail', label: t('integration.libStatusFail') },
+          { value: 'none', label: t('integration.libStatusNone') },
+        ]"
+        size="sm"
+        :pop-min-width="110"
+        @update:model-value="(v) => (statusFilter = String(v ?? 'all') as 'all' | 'ok' | 'fail' | 'none')"
       />
       <button class="miyo-btn miyo-btn-sm miyo-btn-primary" type="button" @click="onCreate">
         <Icon name="plus" :size="13" /> {{ t('integration.libNew') }}
@@ -493,11 +558,18 @@ async function onImport(): Promise<void> {
           <span v-if="s.category" class="lib-cat-tag" :title="s.category">{{ s.category }}</span>
         </div>
         <span class="lib-meta">{{ t('integration.libSteps', { n: s.steps.length }) }}</span>
-        <span v-if="s.last_run" class="lib-meta num" :title="runSummaryText(s.last_run)">
-          <span :class="{ 'lib-fail': s.last_run.fail_count > 0 }">✓{{ s.last_run.ok_count }}</span>
-          <span v-if="s.last_run.fail_count > 0" class="lib-fail"> ✗{{ s.last_run.fail_count }}</span>
-          · {{ formatDurationShort(s.last_run.duration_ms ?? 0) }}
+        <span v-if="successRate(s) !== null" class="lib-rate" :class="{ 'lib-rate-bad': (successRate(s) ?? 100) < 100 }" :title="runSummaryText(s.last_run)">
+          {{ successRate(s) }}%
         </span>
+        <span v-else class="lib-meta">—</span>
+        <span v-if="s.last_run" class="lib-meta num" :title="runSummaryText(s.last_run)">
+          {{ formatDurationShort(s.last_run.duration_ms ?? 0) }}
+        </span>
+        <span v-else class="lib-meta">—</span>
+        <span v-if="envBadgeName(s)" class="lib-env" :title="t('integration.libEnvBadge', { name: envBadgeName(s) ?? '' })">
+          {{ envBadgeName(s) }}
+        </span>
+        <span v-else class="lib-meta">—</span>
         <span class="lib-meta lib-time" :title="runSummaryText(s.last_run)">
           {{ s.last_run ? formatDateTime(s.last_run.finished_at) : t('integration.libLastRunNone') }}
         </span>
@@ -549,11 +621,22 @@ async function onImport(): Promise<void> {
         <button class="miyo-btn miyo-btn-sm miyo-btn-primary" type="button" @click="onCreate">
           <Icon name="plus" :size="13" /> {{ t('integration.libNew') }}
         </button>
+        <button class="miyo-btn miyo-btn-sm" type="button" @click="goAiCreate">
+          <Icon name="zap" :size="13" /> {{ t('integration.libEmptyAi') }}
+        </button>
         <button class="miyo-btn miyo-btn-sm" type="button" @click="onImport">
           <Icon name="upload" :size="13" /> {{ t('integration.libImport') }}
         </button>
       </div>
+      <p class="lib-empty-hint">{{ t('integration.libEmptyFromEndpoint') }}</p>
     </EmptyState>
+
+  <!-- 项目级执行历史：全部场景的最近运行流（筛选 / 直达详情 / 删除） -->
+  <RunHistoryPanel
+    v-model:open="historyPanelOpen"
+    :project-id="store.projectId"
+    @open-run="onHistoryOpenRun"
+  />
   </div>
 <!-- 矩阵结果：逐行对比（行点击 → 打开该行运行详情） -->
 <Modal v-model:open="matrixResultOpen" :title="t('integration.matrixResultTitle')" width="520px">
@@ -799,6 +882,38 @@ async function onImport(): Promise<void> {
   width: 130px;
 }
 
+.lib-status-filter {
+  flex: none;
+  width: 110px;
+}
+
+.lib-rate {
+  flex: none;
+  width: 44px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xxs);
+  color: var(--success);
+}
+
+.lib-rate-bad {
+  color: var(--danger);
+}
+
+.lib-env {
+  flex: none;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+
 .lib-fail {
   color: var(--danger);
 }
@@ -825,5 +940,11 @@ async function onImport(): Promise<void> {
 .lib-empty-actions {
   display: flex;
   gap: 8px;
+}
+
+.lib-empty-hint {
+  margin: 0;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
 }
 </style>
