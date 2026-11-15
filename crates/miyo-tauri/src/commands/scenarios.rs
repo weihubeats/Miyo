@@ -953,6 +953,10 @@ pub async fn export_scenario_report(
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScenarioRunSummary {
     pub id: String,
+    /// 归属场景（项目级运行流的打开 / 分组用）。
+    pub scenario_id: String,
+    /// 本次运行使用的环境（列表 / 历史行的环境徽章；None = 未选环境）。
+    pub environment_id: Option<String>,
     pub finished_at: chrono::DateTime<chrono::Utc>,
     pub duration_ms: Option<f64>,
     pub total_steps: i64,
@@ -967,6 +971,8 @@ impl ScenarioRunSummary {
     fn from_record(r: miyo_core::model::ScenarioRun) -> Self {
         ScenarioRunSummary {
             id: r.id.to_string(),
+            scenario_id: r.scenario_id.to_string(),
+            environment_id: r.environment_id.map(|u| u.to_string()),
             finished_at: r.finished_at,
             duration_ms: r.duration_ms,
             total_steps: r.total_steps,
@@ -1011,6 +1017,8 @@ pub async fn list_scenario_summaries(
         .map(|scenario| {
             let last_run = latest.get(&scenario.id).map(|r| ScenarioRunSummary {
                 id: r.id.clone(),
+                scenario_id: scenario.id.to_string(),
+                environment_id: r.environment_id.clone(),
                 finished_at: r.finished_at,
                 duration_ms: r.duration_ms,
                 total_steps: r.total_steps,
@@ -1031,6 +1039,8 @@ pub async fn list_scenario_summaries(
 pub struct ScenarioRunDetail {
     #[serde(flatten)]
     pub summary: ScenarioRunSummary,
+    /// 开始时间（meta.startedAt 恢复；旧行缺 meta 时为 None）。
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub results: Vec<miyo_test::runner::EndpointResult>,
     pub variables: HashMap<String, String>,
     /// 运行元信息（meta_json 解析：startedAt / 当时配置快照 steps / 初始变量
@@ -1228,6 +1238,8 @@ pub async fn list_scenario_runs(
         .into_iter()
         .map(|r| ScenarioRunSummary {
             id: r.id,
+            scenario_id: r.scenario_id,
+            environment_id: r.environment_id,
             finished_at: r.finished_at,
             duration_ms: r.duration_ms,
             total_steps: r.total_steps,
@@ -1238,6 +1250,58 @@ pub async fn list_scenario_runs(
             stopped_on_failure: r.stopped_on_failure,
         })
         .collect())
+}
+
+/// 项目级最近运行摘要（历史面板顶部「全部运行」流；不读大 JSON 列）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_recent_scenario_runs(
+    state: State<'_, AppState>,
+    project_id: Uuid,
+    limit: Option<i64>,
+) -> CommandResult<Vec<ScenarioRunSummary>> {
+    let runs =
+        repo::list_recent_run_summaries_for_project(&state.db, project_id, limit.unwrap_or(50))
+            .await?;
+    Ok(runs
+        .into_iter()
+        .map(|r| ScenarioRunSummary {
+            id: r.id,
+            scenario_id: r.scenario_id,
+            environment_id: r.environment_id,
+            finished_at: r.finished_at,
+            duration_ms: r.duration_ms,
+            total_steps: r.total_steps,
+            ok_count: r.ok_count,
+            fail_count: r.fail_count,
+            skipped_count: r.skipped_count,
+            cancelled: r.cancelled,
+            stopped_on_failure: r.stopped_on_failure,
+        })
+        .collect())
+}
+
+/// 项目级运行聚合统计（历史面板统计条：总数 / 成功 / 失败 / 取消）。
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ScenarioRunProjectStatsDto {
+    pub total_runs: i64,
+    pub ok_runs: i64,
+    pub fail_runs: i64,
+    pub cancelled_runs: i64,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn project_scenario_run_stats(
+    state: State<'_, AppState>,
+    project_id: Uuid,
+) -> CommandResult<ScenarioRunProjectStatsDto> {
+    let s = repo::project_run_stats(&state.db, project_id).await?;
+    Ok(ScenarioRunProjectStatsDto {
+        total_runs: s.total_runs,
+        ok_runs: s.ok_runs,
+        fail_runs: s.fail_runs,
+        cancelled_runs: s.cancelled_runs,
+    })
 }
 
 /// 取单条运行历史详情（回看；不存在返回 `null`）。
@@ -1256,12 +1320,20 @@ pub async fn get_scenario_run(
             .map_err(|e| CommandError::validation(format!("运行历史结果解析失败：{e}")))?;
     let variables: HashMap<String, String> = serde_json::from_str(&run.variables_json)
         .map_err(|e| CommandError::validation(format!("运行历史变量解析失败：{e}")))?;
-    let meta = run
+    // started_at 从 meta_json 恢复（meta 不在的旧行回退 None）。
+    let meta: Option<serde_json::Value> = run
         .meta_json
         .as_deref()
         .and_then(|m| serde_json::from_str(m).ok());
+    let started_at = meta
+        .as_ref()
+        .and_then(|m| m.get("startedAt"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc));
     Ok(Some(ScenarioRunDetail {
         summary: ScenarioRunSummary::from_record(run),
+        started_at,
         results,
         variables,
         meta,

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-project-scenario-run-stats"
+description = "Enables the project_scenario_run_stats command without any pre-configured scope."
+commands.allow = ["project_scenario_run_stats"]
+
+[[permission]]
+identifier = "deny-project-scenario-run-stats"
+description = "Denies the project_scenario_run_stats command without any pre-configured scope."
+commands.deny = ["project_scenario_run_stats"]

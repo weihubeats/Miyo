@@ -59,6 +59,8 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-run-scenario`
 - `allow-cancel-scenario-run`
 - `allow-list-scenario-runs`
+- `allow-list-recent-scenario-runs`
+- `allow-project-scenario-run-stats`
 - `allow-list-scenario-summaries`
 - `allow-delete-scenario-run`
 - `allow-clear-scenario-runs`
@@ -2581,6 +2583,32 @@ Denies the list_recent_activities command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-list-recent-scenario-runs`
+
+</td>
+<td>
+
+Enables the list_recent_scenario_runs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-recent-scenario-runs`
+
+</td>
+<td>
+
+Denies the list_recent_scenario_runs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-list-request-examples`
 
 </td>
@@ -3198,6 +3226,32 @@ Enables the parse_curl_command command without any pre-configured scope.
 <td>
 
 Denies the parse_curl_command command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-project-scenario-run-stats`
+
+</td>
+<td>
+
+Enables the project_scenario_run_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-project-scenario-run-stats`
+
+</td>
+<td>
+
+Denies the project_scenario_run_stats command without any pre-configured scope.
 
 </td>
 </tr>

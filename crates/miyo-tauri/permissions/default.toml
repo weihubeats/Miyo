@@ -60,6 +60,8 @@ permissions = [
     "allow-run-scenario",
     "allow-cancel-scenario-run",
     "allow-list-scenario-runs",
+    "allow-list-recent-scenario-runs",
+    "allow-project-scenario-run-stats",
     "allow-list-scenario-summaries",
     "allow-delete-scenario-run",
     "allow-clear-scenario-runs",

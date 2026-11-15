@@ -463,6 +463,17 @@ pub fn apply_step_overrides(
         }
     }
 
+    // ---- 步骤级超时覆盖（毫秒；引用式步骤不改接口本体只改本步；
+    //      null = 不改动，清除靠编辑器删除 overrides.timeout_ms 键）----
+    if let Some(timeout) = obj.get("timeout_ms") {
+        if !timeout.is_null() {
+            let ms = timeout
+                .as_u64()
+                .ok_or_else(|| "overrides.timeout_ms 必须是非负整数（毫秒）".to_string())?;
+            spec.timeout_ms = Some(ms);
+        }
+    }
+
     Ok(())
 }
 
@@ -512,5 +523,24 @@ mod override_tests {
         assert!(apply_step_overrides(&mut spec, &json!({"params": [{"value": "x"}]})).is_err());
         // body 非法
         assert!(apply_step_overrides(&mut spec, &json!({"body": {"mode": 1}})).is_err());
+    }
+
+    #[test]
+    fn overrides_timeout_ms_step_level() {
+        let mut spec = RequestSpec::default();
+        apply_step_overrides(&mut spec, &json!({"timeout_ms": 5000})).unwrap();
+        assert_eq!(spec.timeout_ms, Some(5000));
+
+        // null = 不改动（与 body 覆盖同语义：键删除才是清除，编辑器清空时删键）
+        apply_step_overrides(&mut spec, &json!({"timeout_ms": null})).unwrap();
+        assert_eq!(spec.timeout_ms, Some(5000));
+
+        // 未传键同样不改动
+        apply_step_overrides(&mut spec, &json!({"headers": []})).unwrap();
+        assert_eq!(spec.timeout_ms, Some(5000));
+
+        // 非整数拒绝
+        assert!(apply_step_overrides(&mut spec, &json!({"timeout_ms": "5s"})).is_err());
+        assert!(apply_step_overrides(&mut spec, &json!({"timeout_ms": -1})).is_err());
     }
 }

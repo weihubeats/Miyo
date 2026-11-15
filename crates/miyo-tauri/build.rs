@@ -56,6 +56,8 @@ const COMMANDS: &[&str] = &[
     "cancel_scenario_run",
     "list_scenario_runs",
     "get_scenario_run",
+    "list_recent_scenario_runs",
+    "project_scenario_run_stats",
     "list_scenario_summaries",
     "delete_scenario_run",
     "clear_scenario_runs",

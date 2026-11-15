@@ -65,6 +65,8 @@ pub async fn list_scenario_runs(
 pub struct ScenarioRunSummaryRow {
     pub id: String,
     pub scenario_id: String,
+    /// 本次运行使用的环境（列表 / 历史行的环境徽章；NULL = 未选环境）。
+    pub environment_id: Option<String>,
     pub finished_at: chrono::DateTime<chrono::Utc>,
     pub duration_ms: Option<f64>,
     pub total_steps: i64,
@@ -82,10 +84,10 @@ pub async fn latest_run_summaries_for_project(
     project_id: Uuid,
 ) -> Result<Vec<ScenarioRunSummaryRow>> {
     let rows: Vec<ScenarioRunSummaryRow> = sqlx::query_as(
-        "SELECT id, scenario_id, finished_at, duration_ms, total_steps,
+        "SELECT id, scenario_id, environment_id, finished_at, duration_ms, total_steps,
                 ok_count, fail_count, skipped_count, cancelled, stopped_on_failure
          FROM (
-             SELECT id, scenario_id, finished_at, duration_ms, total_steps,
+             SELECT id, scenario_id, environment_id, finished_at, duration_ms, total_steps,
                     ok_count, fail_count, skipped_count, cancelled, stopped_on_failure,
                     ROW_NUMBER() OVER (
                         PARTITION BY scenario_id ORDER BY finished_at DESC
@@ -110,7 +112,7 @@ pub async fn list_scenario_run_summaries(
     limit: i64,
 ) -> Result<Vec<ScenarioRunSummaryRow>> {
     let rows: Vec<ScenarioRunSummaryRow> = sqlx::query_as(
-        "SELECT id, scenario_id, finished_at, duration_ms, total_steps,
+        "SELECT id, scenario_id, environment_id, finished_at, duration_ms, total_steps,
                 ok_count, fail_count, skipped_count, cancelled, stopped_on_failure
          FROM scenario_runs WHERE scenario_id = ? ORDER BY finished_at DESC LIMIT ?",
     )
@@ -176,4 +178,52 @@ pub async fn prune_scenario_runs(db: &SqlitePool, scenario_id: Uuid, keep: i64) 
     .execute(db)
     .await?;
     Ok(())
+}
+
+/// 项目级最近运行记录（执行历史面板顶部「项目全部运行」流；不读大 JSON 列）。
+pub async fn list_recent_run_summaries_for_project(
+    db: &SqlitePool,
+    project_id: Uuid,
+    limit: i64,
+) -> Result<Vec<ScenarioRunSummaryRow>> {
+    let rows: Vec<ScenarioRunSummaryRow> = sqlx::query_as(
+        "SELECT id, scenario_id, environment_id, finished_at, duration_ms, total_steps,
+                ok_count, fail_count, skipped_count, cancelled, stopped_on_failure
+         FROM scenario_runs
+         WHERE scenario_id IN (SELECT id FROM scenarios WHERE project_id = ?)
+         ORDER BY finished_at DESC LIMIT ?",
+    )
+    .bind(project_id.to_string())
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}
+
+/// 项目级运行聚合（历史面板统计条：成功 / 失败 / 取消 / 总运行数）。
+/// 只扫摘要列，不碰大 JSON。
+#[derive(Debug, sqlx::FromRow)]
+pub struct ScenarioRunProjectStats {
+    pub total_runs: i64,
+    pub ok_runs: i64,
+    pub fail_runs: i64,
+    pub cancelled_runs: i64,
+}
+
+pub async fn project_run_stats(
+    db: &SqlitePool,
+    project_id: Uuid,
+) -> Result<ScenarioRunProjectStats> {
+    let stats: ScenarioRunProjectStats = sqlx::query_as(
+        "SELECT COUNT(*) AS total_runs,
+                COALESCE(SUM(CASE WHEN fail_count = 0 AND cancelled = 0 THEN 1 ELSE 0 END), 0) AS ok_runs,
+                COALESCE(SUM(CASE WHEN fail_count > 0 THEN 1 ELSE 0 END), 0) AS fail_runs,
+                COALESCE(SUM(CASE WHEN cancelled = 1 THEN 1 ELSE 0 END), 0) AS cancelled_runs
+         FROM scenario_runs
+         WHERE scenario_id IN (SELECT id FROM scenarios WHERE project_id = ?)",
+    )
+    .bind(project_id.to_string())
+    .fetch_one(db)
+    .await?;
+    Ok(stats)
 }

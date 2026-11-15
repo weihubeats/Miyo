@@ -1299,6 +1299,104 @@ async fn latest_run_summaries_for_project_one_row_per_scenario() {
     assert_eq!(detail.finished_at, a_row.finished_at);
 }
 
+/// 项目级最近运行流 + 聚合统计（执行历史面板的数据源）：
+/// - list_recent_run_summaries_for_project：跨场景新→旧全量流、limit 生效、
+///   环境列透传（列表环境徽章）、跨项目隔离；
+/// - project_run_stats：成功（无失败且未取消）/ 失败 / 取消 / 总数口径正确。
+#[tokio::test]
+async fn project_recent_runs_and_stats() {
+    let db = pool().await;
+
+    let project = repo::create_project(&db, "项目级历史", "").await.unwrap();
+    let other = repo::create_project(&db, "别的项目", "").await.unwrap();
+    let mk_scenario = |pid: Uuid, name: &str| miyo_core::model::Scenario {
+        setup: Vec::new(),
+        teardown: Vec::new(),
+        teardown_enabled: true,
+        data_sets: Vec::new(),
+        id: Uuid::new_v4(),
+        project_id: pid,
+        name: name.into(),
+        description: String::new(),
+        category: String::new(),
+        sort_order: 0,
+        steps: vec![],
+        script: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    let s1 = mk_scenario(project.id, "场景一");
+    let s2 = mk_scenario(project.id, "场景二");
+    let foreign = mk_scenario(other.id, "别家的");
+    for s in [&s1, &s2, &foreign] {
+        repo::save_scenario(&db, s).await.unwrap();
+    }
+
+    let env_id = Uuid::new_v4();
+    let run_of = |sid: Uuid, offset: i64, ok: i64, fail: i64, cancelled: bool| {
+        miyo_core::model::ScenarioRun {
+            id: Uuid::new_v4(),
+            scenario_id: sid,
+            environment_id: Some(env_id),
+            finished_at: chrono::Utc::now() + chrono::Duration::minutes(offset),
+            duration_ms: Some(10.0),
+            total_steps: 2,
+            ok_count: ok,
+            fail_count: fail,
+            skipped_count: 0,
+            cancelled,
+            stopped_on_failure: false,
+            results_json: "[]".into(),
+            variables_json: "{}".into(),
+            meta_json: None,
+        }
+    };
+
+    // s1：一条成功（ok，最新）、一条取消（旧）；s2：一条失败；foreign 一条成功。
+    let s1_ok = run_of(s1.id, 5, 2, 0, false);
+    repo::save_scenario_run(&db, &s1_ok).await.unwrap();
+    repo::save_scenario_run(&db, &run_of(s1.id, 1, 0, 0, true))
+        .await
+        .unwrap();
+    repo::save_scenario_run(&db, &run_of(s2.id, 2, 1, 1, false))
+        .await
+        .unwrap();
+    repo::save_scenario_run(&db, &run_of(foreign.id, 1, 2, 0, false))
+        .await
+        .unwrap();
+
+    // 项目级流：3 条（foreign 隔离）、新→旧、环境列透传。
+    let recent = repo::list_recent_run_summaries_for_project(&db, project.id, 50)
+        .await
+        .unwrap();
+    assert_eq!(recent.len(), 3);
+    assert!(recent[0].finished_at >= recent[1].finished_at);
+    assert_eq!(recent[0].id, s1_ok.id.to_string());
+    assert_eq!(
+        recent[0].environment_id.as_deref(),
+        Some(env_id.to_string().as_str())
+    );
+
+    // limit 生效。
+    let limited = repo::list_recent_run_summaries_for_project(&db, project.id, 1)
+        .await
+        .unwrap();
+    assert_eq!(limited.len(), 1);
+
+    // 聚合统计：成功=1（仅 s1_ok：无失败且未取消）、失败=1、取消=1、总数=3。
+    let stats = repo::project_run_stats(&db, project.id).await.unwrap();
+    assert_eq!(stats.total_runs, 3);
+    assert_eq!(stats.ok_runs, 1);
+    assert_eq!(stats.fail_runs, 1);
+    assert_eq!(stats.cancelled_runs, 1);
+
+    // 空项目统计：全 0（COUNT 行仍在，COALESCE 兜底）。
+    let empty = repo::create_project(&db, "空项目", "").await.unwrap();
+    let zero = repo::project_run_stats(&db, empty.id).await.unwrap();
+    assert_eq!(zero.total_runs, 0);
+    assert_eq!(zero.ok_runs, 0);
+}
+
 /// 用例执行历史：save → list（新→旧）→ get → 摘要回写 → prune 保留上限 → 级联删除。
 #[tokio::test]
 async fn test_case_run_history_roundtrip() {

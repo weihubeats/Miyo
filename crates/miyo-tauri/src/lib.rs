@@ -349,6 +349,8 @@ pub mod plugin {
                 commands::cancel_scenario_run,
                 commands::list_scenario_runs,
                 commands::get_scenario_run,
+                commands::list_recent_scenario_runs,
+                commands::project_scenario_run_stats,
                 commands::list_scenario_summaries,
                 commands::delete_scenario_run,
                 commands::clear_scenario_runs,
