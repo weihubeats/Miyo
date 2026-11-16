@@ -20,7 +20,7 @@ vi.mock('vue-router', () => ({ useRouter: () => routerMock }))
 vi.mock('@/composables/useMiyoApi', () => ({ useMiyoApi: () => apiMock }))
 
 import RealtimeView from '@/domains/endpoint/views/RealtimeView.vue'
-import CustomSelect from '@/components/ui/CustomSelect.vue'
+import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import { useLocaleStore } from '@/stores/locale'
 
 beforeEach(() => {
@@ -60,7 +60,8 @@ describe('RealtimeView', () => {
 
   it('切换到 SSE 页签展示订阅入口与空日志提示', async () => {
     const wrapper = mountView()
-    const tabs = wrapper.findAll('[role="tab"]')
+    // 协议页签限定在顶栏 SegmentedControl（详情面板另有 role=tab 页签组）
+    const tabs = wrapper.findAll('.rt-seg [role="tab"]')
     expect(tabs.map((t) => t.text())).toEqual(['WebSocket', 'SSE'])
     await tabs[1]!.trigger('click')
     expect(wrapper.text()).toContain('未订阅')
@@ -131,8 +132,13 @@ describe('RealtimeView', () => {
       payload: '{"amount": 100}',
     })
 
-    // 二进制帧：UTF-8 base64 编码（经帧类型选择器切到 binary）
-    wrapper.findComponent(CustomSelect).vm.$emit('update:modelValue', 'binary')
+    // 二进制帧：UTF-8 base64 编码（经发送区 SegmentedControl 切到 binary；
+    // 页面有两个 SegmentedControl —— 顶栏协议页签 + 发送区帧类型，需限定后者）
+    const sendKindSeg = wrapper
+      .findAllComponents(SegmentedControl)
+      .find((c) => c.classes().includes('rt-send-kind'))
+    expect(sendKindSeg).toBeTruthy()
+    sendKindSeg!.vm.$emit('update:modelValue', 'binary')
     await wrapper.vm.$nextTick()
     await input.setValue('中文二进制')
     await input.trigger('keydown.enter')
@@ -156,6 +162,87 @@ describe('RealtimeView', () => {
     expect(vm.sendHistory).toEqual(['{"amount": 100}', '中文二进制', 'heartbeat'])
     // 出站帧进日志（binary 帧日志显示编码后的 payload）
     expect((vm.wsLog as { dir: string }[]).filter((m) => m.dir === 'out')).toHaveLength(3)
+    wrapper.unmount()
+  })
+
+  it('⌘/Ctrl+Enter 发送（capture 于编辑器容器），处理后不二次触发 input Enter', async () => {
+    const wrapper = mountView()
+    const vm = wrapper.vm as unknown as {
+      __testSetConn: (state: 'idle' | 'connecting' | 'open' | 'closed' | 'error', connId: string | null) => void
+    }
+    vm.__testSetConn('open', 'conn-1')
+    await wrapper.vm.$nextTick()
+
+    const input = wrapper.find('.rt-send-input')
+    await input.setValue('hello')
+    await input.trigger('keydown', { key: 'Enter', metaKey: true })
+    await wrapper.vm.$nextTick()
+    // capture 处理 + stopPropagation：只发一次（input 的 keydown.enter 不再触发）
+    expect(apiMock.wsSend).toHaveBeenCalledTimes(1)
+    expect(apiMock.wsSend).toHaveBeenLastCalledWith({ connection_id: 'conn-1', frame: 'text', payload: 'hello' })
+    // ⌘L 清空编辑器
+    await input.setValue('again')
+    await input.trigger('keydown', { key: 'l', metaKey: true })
+    await wrapper.vm.$nextTick()
+    expect((input.element as HTMLInputElement).value).toBe('')
+    wrapper.unmount()
+  })
+
+  it('JSON 模式：SegmentedControl 切换 + 非法 JSON 显示行内提示（仍可发送）', async () => {
+    const wrapper = mountView()
+    const vm = wrapper.vm as unknown as {
+      __testSetConn: (state: 'idle' | 'connecting' | 'open' | 'closed' | 'error', connId: string | null) => void
+    }
+    vm.__testSetConn('open', 'conn-1')
+    await wrapper.vm.$nextTick()
+
+    const seg = wrapper
+      .findAllComponents(SegmentedControl)
+      .find((c) => c.classes().includes('rt-send-kind'))
+    seg!.vm.$emit('update:modelValue', 'json')
+    await wrapper.vm.$nextTick()
+
+    // JSON 模式渲染 CodeMirror 编辑器（懒加载），先不校验非法提示的编辑器形状
+    const cmHost = wrapper.find('.rt-send-cm')
+    expect(cmHost.exists()).toBe(true)
+
+    // 非法 JSON：直接改 vm 状态（CodeMirror 与 v-model 同步在 jsdom 可异步）
+    const v = wrapper.vm as unknown as { wsSendText: string; jsonInvalid: boolean }
+    v.wsSendText = '{bad'
+    await wrapper.vm.$nextTick()
+    expect(v.jsonInvalid).toBe(true)
+    expect(wrapper.find('.rt-send-warn').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('消息模板：保存当前内容 → 菜单出现模板项 → 应用回填编辑器', async () => {
+    const wrapper = mountView()
+    const v = wrapper.vm as unknown as { wsSendText: string; templates: string[] }
+
+    // 空内容时模板钮禁用
+    const starBtn = wrapper.findAll('button').find((b) => b.attributes('title')?.includes('消息模板'))
+    expect(starBtn).toBeTruthy()
+
+    v.wsSendText = '{"ping":1}'
+    await wrapper.vm.$nextTick()
+    await starBtn!.trigger('click')
+    const menu = document.querySelector('.miyo-menu')!
+    const items = [...menu.querySelectorAll('.miyo-menu-item')]
+    expect(items.at(-1)!.textContent).toContain('保存当前内容为模板')
+    ;(items.at(-1) as HTMLButtonElement).click()
+    await wrapper.vm.$nextTick()
+    expect(v.templates).toEqual(['{"ping":1}'])
+    expect(localStorage.getItem('miyo.realtime.templates')).toContain('ping')
+
+    // 再次打开：模板项在列表，点击回填
+    await starBtn!.trigger('click')
+    const menu2 = document.querySelector('.miyo-menu')!
+    const items2 = [...menu2.querySelectorAll('.miyo-menu-item')]
+    expect(items2[0]!.textContent).toContain('{"ping":1}')
+    ;(items2[0] as HTMLButtonElement).click()
+    await wrapper.vm.$nextTick()
+    // 应用后编辑器内容 = 模板
+    expect(v.wsSendText).toBe('{"ping":1}')
     wrapper.unmount()
   })
 })

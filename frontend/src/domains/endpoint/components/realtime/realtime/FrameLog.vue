@@ -3,9 +3,11 @@
  * FrameLog：实时调试帧日志列表（WS / SSE 共用）。
  *
  * - 统一帧形状 FrameItem（宿主把 WS message / SSE chunk 都映射进来）；
- * - 过滤：关键字（内容/类型/事件名）+ 方向 chips（全部/收/发/系统）；
+ * - 过滤：关键字（内容/类型/事件名）+ 方向 chips（全部/收/发/系统）+ 帧类型下拉；
  * - 虚拟滚动：定高 28px 行 + useVirtualList（<80 行回退全量渲染）；
  * - 自动滚底：新帧贴底；用户上滚（离底 > 40px）即暂停，工具按钮恢复并跳底；
+ * - 暂停展示：冻结当前视图继续缓冲新帧（数据仍进宿主日志），恢复时补齐；
+ * - 工具：清空（emit clear）/ 导出（emit export，宿主落盘）；
  * - 行点击 → emit('select')，选中行高亮由父级传 selectedSeq 回填；
  * - a11y：容器 role=log + aria-live=polite（辅助技术可感知新帧）。
  */
@@ -15,6 +17,8 @@ import { useVirtualList } from '@/composables/useVirtualList'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import CustomSelect from '@/components/ui/CustomSelect.vue'
+import Menu, { type MenuItem } from '@/components/ui/Menu.vue'
 
 /** 统一帧形状：WS message / SSE chunk / 系统事件映射后的最小渲染单元。 */
 export interface FrameItem {
@@ -38,10 +42,16 @@ const props = defineProps<{
   selectedSeq?: number | null
   /** 无任何帧时的空态文案（标题）。 */
   emptyTitle: string
+  /** 数据源切换标识（如所属页签）：变化时重置冻结视图与类型过滤。 */
+  resetKey?: string | number
 }>()
 
 const emit = defineEmits<{
   select: [item: FrameItem]
+  /** 清空当前日志（宿主负责落空）。 */
+  clear: []
+  /** 导出当前日志（宿主负责选目录 + 写文件）。 */
+  export: [format: 'json' | 'txt']
 }>()
 
 const locale = useLocaleStore()
@@ -50,11 +60,41 @@ const t = locale.t
 // ---------- 过滤 ----------
 const query = ref('')
 const dirFilter = ref<'all' | 'in' | 'out' | 'sys'>('all')
+const kindFilter = ref('all')
+
+/** 帧类型下拉：由当前帧集合推导（全部类型 / 实际出现过的类型）。 */
+const kindOptions = computed(() => {
+  const kinds = [...new Set(props.items.map((m) => m.kind))]
+  return [
+    { value: 'all', label: t('realtime.kindAll') },
+    ...kinds.map((k) => ({ value: k, label: k })),
+  ]
+})
+
+/** 暂停展示：冻结视图（frozen 非空 = 暂停中），新帧继续进宿主日志。 */
+const frozen = ref<FrameItem[] | null>(null)
+const paused = computed(() => frozen.value !== null)
+/** 暂停期间到达、尚未进视图的帧数（恢复后自动补齐）。 */
+const pendingCount = computed(() =>
+  paused.value ? Math.max(0, props.items.length - (frozen.value?.length ?? 0)) : 0,
+)
+function togglePause(): void {
+  if (paused.value) {
+    frozen.value = null
+    follow.value = true
+    requestAnimationFrame(scrollToBottom)
+  } else {
+    frozen.value = [...props.items]
+  }
+}
+
+const viewItems = computed<FrameItem[]>(() => frozen.value ?? props.items)
 
 const filtered = computed(() => {
   const q = query.value.trim().toLowerCase()
-  return props.items.filter((m) => {
+  return viewItems.value.filter((m) => {
     if (dirFilter.value !== 'all' && m.dir !== dirFilter.value) return false
+    if (kindFilter.value !== 'all' && m.kind !== kindFilter.value) return false
     if (!q) return true
     return (
       m.text.toLowerCase().includes(q) ||
@@ -71,6 +111,25 @@ const DIRS: { key: 'all' | 'in' | 'out' | 'sys'; label: string }[] = [
   { key: 'out', label: t('realtime.dirOut') },
   { key: 'sys', label: t('realtime.dirSys') },
 ]
+
+// 数据源切换（页签）→ 重置冻结视图与类型过滤；日志被清空（长度骤减）→ 解除冻结。
+watch(
+  () => props.resetKey,
+  () => {
+    frozen.value = null
+    follow.value = true
+  },
+)
+watch(
+  () => props.items,
+  (items) => {
+    // 清空 / 头部裁剪导致可见帧变少：冻结快照已失效，直接解冻
+    if (frozen.value && items.length < frozen.value.length) frozen.value = null
+    if (kindFilter.value !== 'all' && !items.some((m) => m.kind === kindFilter.value)) {
+      kindFilter.value = 'all'
+    }
+  },
+)
 
 // ---------- 虚拟滚动 + 自动滚底 ----------
 const listEl = ref<HTMLElement | null>(null)
@@ -96,12 +155,12 @@ function scrollToBottom(): void {
 watch(
   () => filtered.value.length,
   () => {
-    if (follow.value && enabled.value) requestAnimationFrame(scrollToBottom)
+    if (follow.value && enabled.value && !paused.value) requestAnimationFrame(scrollToBottom)
   },
 )
 function onListScroll(): void {
   onScroll()
-  if (enabled.value && !isNearBottom()) follow.value = false
+  if (enabled.value && !paused.value && !isNearBottom()) follow.value = false
 }
 function resumeFollow(): void {
   follow.value = true
@@ -109,10 +168,22 @@ function resumeFollow(): void {
 }
 
 // 过滤条件变化后重置跟随（用户主动动过滤 = 想看最新匹配）
-watch([query, dirFilter], () => {
+watch([query, dirFilter, kindFilter], () => {
   follow.value = true
   requestAnimationFrame(scrollToBottom)
 })
+
+// ---------- 导出 ----------
+const menuRef = ref<InstanceType<typeof Menu> | null>(null)
+function openExportMenu(e: MouseEvent): void {
+  menuRef.value?.openAt(e.currentTarget as HTMLElement, [
+    { key: 'json', label: t('realtime.exportJson'), icon: 'file' as const },
+    { key: 'txt', label: t('realtime.exportTxt'), icon: 'file' as const },
+  ])
+}
+function onMenuSelect(item: MenuItem): void {
+  emit('export', item.key as 'json' | 'txt')
+}
 
 function copyFrame(item: FrameItem): void {
   void navigator.clipboard.writeText(item.text).catch(() => {})
@@ -149,7 +220,24 @@ function dirGlyph(dir: FrameItem['dir']): string {
           {{ d.label }}
         </button>
       </div>
+      <CustomSelect
+        v-model="kindFilter"
+        class="fl-kind"
+        :options="kindOptions"
+        size="sm"
+        :pop-min-width="130"
+      />
       <span class="fl-count num">{{ filtered.length }}/{{ items.length }}</span>
+      <IconButton
+        :name="paused ? 'play' : 'pause'"
+        :size="13"
+        :tone="paused ? 'accent' : 'default'"
+        :title="paused ? t('realtime.pauseResume') : t('realtime.pauseHint')"
+        @click="togglePause"
+      />
+      <span v-if="pendingCount" class="fl-pending num" :title="t('realtime.pausePending', { n: pendingCount })">
+        +{{ pendingCount }}
+      </span>
       <IconButton
         name="chevron-down"
         :size="13"
@@ -157,6 +245,9 @@ function dirGlyph(dir: FrameItem['dir']): string {
         :title="follow ? t('realtime.followOn') : t('realtime.followOff')"
         @click="resumeFollow"
       />
+      <IconButton name="trash" :size="13" :title="t('realtime.clearLog')" @click="emit('clear')" />
+      <IconButton name="download" :size="13" :title="t('realtime.exportLog')" @click="openExportMenu" />
+      <Menu ref="menuRef" @select="onMenuSelect" />
     </div>
 
     <!-- 帧列表（定高行虚拟滚动） -->
@@ -165,6 +256,7 @@ function dirGlyph(dir: FrameItem['dir']): string {
       class="fl-list"
       role="log"
       aria-live="polite"
+      :class="{ frozen: paused }"
       @scroll="onListScroll"
     >
       <EmptyState
@@ -192,6 +284,7 @@ function dirGlyph(dir: FrameItem['dir']): string {
             @keydown.enter="emit('select', it.data)"
           >
             <span class="fl-glyph" :title="it.data.dir">{{ dirGlyph(it.data.dir) }}</span>
+            <span class="fl-seq num">#{{ it.data.seq }}</span>
             <span class="fl-time num">{{ it.data.t }}</span>
             <span class="fl-kind">{{ it.data.meta?.event ?? it.data.kind }}</span>
             <span v-if="it.data.meta?.id" class="fl-id">#{{ it.data.meta.id }}</span>
@@ -262,6 +355,11 @@ function dirGlyph(dir: FrameItem['dir']): string {
   color: var(--text-3);
 }
 
+.fl-kind {
+  flex-shrink: 0;
+  width: 96px;
+}
+
 .fl-dirs {
   display: inline-flex;
   gap: 2px;
@@ -293,12 +391,16 @@ function dirGlyph(dir: FrameItem['dir']): string {
   font-weight: 600;
 }
 
-.fl-count {
+.fl-count,
+.fl-pending {
   flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-xxs);
   color: var(--text-3);
   white-space: nowrap;
+}
+.fl-pending {
+  color: var(--warning);
 }
 
 /* ---- 帧列表 ---- */
@@ -311,6 +413,10 @@ function dirGlyph(dir: FrameItem['dir']): string {
   background: var(--bg-code);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
+}
+/* 暂停展示：顶部微光提示视图已冻结（数据仍在缓冲） */
+.fl-list.frozen {
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
 }
 .fl-nomatch {
   margin: 0;
@@ -354,6 +460,12 @@ function dirGlyph(dir: FrameItem['dir']): string {
   color: var(--text-3);
 }
 
+.fl-seq {
+  flex: none;
+  min-width: 34px;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+}
 .fl-time {
   flex: none;
   font-size: var(--fs-xxs);
