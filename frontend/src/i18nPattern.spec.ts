@@ -67,12 +67,13 @@ const TEMPLATE_ALLOWLIST: Record<string, RegExp[]> = {
 
 /**
  * 模板文本节点里保留原文的专有名词：品牌 / 产品特性、帧与 Cookie 协议属性、
- * 数据格式名、GraphQL 术语、代码生成的语言名、HTTP 方法与状态短语。
+ * SSE 字段名（event / id）、数据格式名、GraphQL 术语、代码生成的语言名、
+ * HTTP 方法与状态短语。
  * 这些在两种语言下都显示原文，走 t() 只会制造等值键，故直接白名单；
  * 可译的 UI 词（Key / Value / Description / Body / Params / soon …）不在此列。
  */
 const EN_TERM_ALLOW =
-  /^(Miyo|Mock|Ping|Pong|Secure|HttpOnly|SameSite|Path|Domain|Expires|JSON|YAML|TOML|XML|HTML|CSV|Markdown \(\.md\)|GraphQL|Query|Mutation|Subscription|Variables|operationName|cURL|curl|TypeScript|JavaScript( \([^)]*\))?|Java|Python|Go|Shell|C#|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|SSE|WS|WSS|TLS|OK|Created|Accepted|No Content|Bad Request|Unauthorized|Forbidden|Not Found|Conflict|Gone|Too Many Requests|Internal Server Error|Bad Gateway|Service Unavailable)$/
+  /^(Miyo|Mock|Ping|Pong|Secure|HttpOnly|SameSite|Path|Domain|Expires|event|id|JSON|YAML|TOML|XML|HTML|CSV|Markdown \(\.md\)|GraphQL|Query|Mutation|Subscription|Variables|operationName|cURL|curl|TypeScript|JavaScript( \([^)]*\))?|Java|Python|Go|Shell|C#|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|SSE|WS|WSS|TLS|OK|Created|Accepted|No Content|Bad Request|Unauthorized|Forbidden|Not Found|Conflict|Gone|Too Many Requests|Internal Server Error|Bad Gateway|Service Unavailable)$/
 
 /** 静态 placeholder 属性（:placeholder / v-bind: 绑定由负向后顾排除）。 */
 const PLACEHOLDER_ATTR = /(?<![:\w-])[\w-]*placeholder\s*=\s*(?:"([^"]*)"|'([^']*)')/g

@@ -5,6 +5,8 @@
  * - 左侧行号栏：随内容垂直平移、细边框与正文分隔；
  * - 顶部工具栏（非悬浮）：左侧校验状态 Tag，右侧 美化 / 压缩 / 查找 / 复制 按钮；
  *   编辑区内没有任何绝对定位浮层遮挡代码。
+ * - 粘贴即美化（`formatOnPaste`，默认开）：剪贴板里是压缩 JSON 时先排版再落地，
+ *   规则见 utils/jsonPaste（只排版 JSON 值、已有内容不重排、已美化则放行原生粘贴）。
  * - 深色底色 #121318，聚焦时 1px 紫色光晕（原 3px 重描边移除）。
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -15,6 +17,8 @@ import { highlightJSON, highlightJSONText } from '@/utils/highlight'
 import { handleTextareaTab } from '@/utils/textareaIndent'
 import { compactJson, prettyJson } from '@/utils/jsonFormat'
 import { JsonFormatError } from '@/utils/jsonFormat'
+import { autoFormatJsonPaste } from '@/utils/jsonPaste'
+import { replaceTextareaValue } from '@/utils/textEdit'
 import Icon from '@/components/ui/Icon.vue'
 
 const props = withDefaults(
@@ -35,6 +39,8 @@ const props = withDefaults(
     showStatus?: boolean
     /** 提供全屏切换（工具栏放大按钮 + Esc 退出）；默认关闭，宿主按场景启用。 */
     fullscreenable?: boolean
+    /** 粘贴压缩 JSON 时自动美化（规则见 utils/jsonPaste）；默认开，只读宿主无影响。 */
+    formatOnPaste?: boolean
   }>(),
   {
     placeholder: '',
@@ -45,6 +51,7 @@ const props = withDefaults(
     maxHeight: 480,
     showStatus: true,
     fullscreenable: false,
+    formatOnPaste: true,
   },
 )
 
@@ -266,6 +273,22 @@ function onInput(e: Event): void {
 /** Tab / Shift+Tab 缩进而非跳出焦点（代码编辑器习惯）。 */
 function onTextareaKeydown(e: KeyboardEvent): void {
   if (e.key === 'Tab' && taRef.value) handleTextareaTab(taRef.value, e)
+}
+
+/**
+ * 粘贴即美化：剪贴板是压缩 JSON 时先排版再落库（排版策略全在 utils/pasteFormat）。
+ * 落库走 utils/textEdit：优先原生编辑事务，保撤销栈（粘错可整块退回）。
+ */
+function onTextareaPaste(e: ClipboardEvent): void {
+  if (!props.formatOnPaste || isLargeDoc.value) return
+  const ta = taRef.value
+  if (!ta) return
+  const pasted = e.clipboardData?.getData('text/plain') ?? ''
+  if (!pasted) return
+  const edit = autoFormatJsonPaste(ta.value, ta.selectionStart ?? 0, ta.selectionEnd ?? 0, pasted)
+  if (!edit) return
+  e.preventDefault()
+  replaceTextareaValue(ta, edit.text, edit.caret)
 }
 
 function syncScroll(e: Event): void {
@@ -529,6 +552,7 @@ async function copyJson(): Promise<void> {
         spellcheck="false"
         @input="onInput"
         @change="onInput"
+        @paste="onTextareaPaste"
         @scroll="syncScroll"
         @keydown="onTextareaKeydown"
       ></textarea>

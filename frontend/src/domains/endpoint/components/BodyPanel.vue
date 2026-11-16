@@ -12,6 +12,9 @@
  * （用户实测「下拉后中间很大空白」）。例外：graphql 的 variables 是次级编辑器，
  * 保持 auto-height 贴内容，由主 query textarea（flex:1）吸收剩余高度。
  * bodyAny 用 any 放宽联合类型访问（模板 v-model 直写 raw / spec.*）。
+ * 粘贴即美化（root 上统一接 paste，raw(JSON) 由 JsonEditor 自己先接）：cURL 命令
+ * → 抽 JSON 正文；raw 的 XML / HTML 子类型 → 保守排版（utils/markupFormat）；
+ * urlencoded / form-data → query string 拆行（utils/queryPaste）。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useLocaleStore } from '@/stores/locale'
@@ -28,6 +31,12 @@ import SegmentedControl, { type SegmentOption } from '@/components/ui/SegmentedC
 import { RAW_SUBTYPES, applyBodyTab, applyRawSubtype, tabOf } from '@/utils/bodyMode'
 import { draftsOf, rememberTabContentType, restoreTabContentType, setSlot, slotOf } from '@/utils/bodyDrafts'
 import { handleTextareaTab } from '@/utils/textareaIndent'
+import { isCurlCommand } from '@/utils/url'
+import { extractCurlBodyJson } from '@/utils/curlPaste'
+import { looksLikeMarkup, prettyMarkup } from '@/utils/markupFormat'
+import { autoFormatPasted, placeFormattedText } from '@/utils/pasteFormat'
+import { mergeQueryPairs, parseQueryPairsPaste } from '@/utils/queryPaste'
+import { replaceTextareaValue } from '@/utils/textEdit'
 import type { BodyTab, RawSubtype } from '@/utils/bodyMode'
 import type { BodySpec, Endpoint, GraphQLSpec, KeyValue, MultipartField } from '@/types/miyoApi.d'
 
@@ -325,6 +334,97 @@ function onCodeKeydown(e: KeyboardEvent): void {
   if (e.key === 'Tab') handleTextareaTab(e.target as HTMLTextAreaElement, e)
 }
 
+/**
+ * 字段表粘贴：把一整条 query string / 表单正文拆成字段行。
+ * 单个 `key=value` 粘进单元格或已有字段的表 → 放行原生粘贴（用户只想填这一格）。
+ */
+function applyQueryPaste(event: ClipboardEvent, raw: string): void {
+  const pairs = parseQueryPairsPaste(raw)
+  if (!pairs) return
+  const inCell =
+    event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement
+  const isMultipart = activeTab.value === 'form-data'
+  const fields = (isMultipart ? multipartFields.value : urlencodedFields.value) as Array<{
+    key?: string
+    value?: string
+  }>
+  const hasKeys = fields.some((f) => (f.key ?? '').trim() !== '')
+  if (pairs.length < 2 && (inCell || hasKeys)) return
+  event.preventDefault()
+  if (isMultipart) {
+    const { rows } = mergeQueryPairs(multipartFields.value, pairs, (p) => ({
+      key: p.key,
+      value: p.value,
+      value_type: 'text' as const,
+      enabled: true,
+    }))
+    multipartFields.value.splice(0, multipartFields.value.length, ...rows)
+  } else {
+    const { rows } = mergeQueryPairs(urlencodedFields.value, pairs, (p) => ({
+      key: p.key,
+      value: p.value,
+      enabled: true,
+      description: '',
+      field_type: 'string',
+      required: true,
+      example: '',
+    }))
+    applyUrlencoded(rows as KVRow[])
+  }
+  if (pairs.length > 1) toast.success(t('body.pastedFields', { n: pairs.length }))
+}
+
+/**
+ * 请求体粘贴总入口（root 上冒泡，raw(JSON) 由 JsonEditor 自己处理并默认已
+ * preventDefault，这里只看它没接手的）：
+ * - cURL 命令 → 抽出其中的 JSON 正文（整条命令塞进 body 只会变成语法错误；
+ *   整条请求的导入在地址栏粘贴路径）；
+ * - raw 的 XML / HTML 子类型 → 保守排版（只重排纯结构层空白）；
+ * - urlencoded / form-data → query string 拆行。
+ */
+function onPanelPaste(event: ClipboardEvent): void {
+  if (event.defaultPrevented || !props.draft) return
+  const raw = event.clipboardData?.getData('text/plain') ?? ''
+  if (!raw.trim()) return
+
+  if (activeTab.value === 'x-www-form-urlencoded' || activeTab.value === 'form-data') {
+    applyQueryPaste(event, raw)
+    return
+  }
+  if (activeTab.value !== 'raw') return
+  const target = event.target
+  if (!(target instanceof HTMLTextAreaElement)) return
+
+  if (isCurlCommand(raw)) {
+    event.preventDefault()
+    const body = extractCurlBodyJson(raw)
+    if (!body) {
+      toast.error(t('body.curlNoJsonBody'))
+      return
+    }
+    const edit = placeFormattedText(
+      target.value,
+      target.selectionStart ?? 0,
+      target.selectionEnd ?? 0,
+      body,
+    )
+    replaceTextareaValue(target, edit.text, edit.caret)
+    return
+  }
+
+  if (rawSubtype.value !== 'xml' && rawSubtype.value !== 'html') return
+  const edit = autoFormatPasted(
+    target.value,
+    target.selectionStart ?? 0,
+    target.selectionEnd ?? 0,
+    raw,
+    { format: prettyMarkup, looksLike: looksLikeMarkup },
+  )
+  if (!edit) return
+  event.preventDefault()
+  replaceTextareaValue(target, edit.text, edit.caret)
+}
+
 function onWindowKeydown(e: KeyboardEvent): void {
   const mod = e.metaKey || e.ctrlKey
   if (!mod) return
@@ -468,7 +568,7 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="panelRef" class="panel">
+  <div ref="panelRef" class="panel" @paste="onPanelPaste">
     <div class="mode-bar">
       <div class="mode-bar-left">
         <SegmentedControl v-model="activeTab" :options="BODY_TABS" size="sm" class="mode-tabs" />
