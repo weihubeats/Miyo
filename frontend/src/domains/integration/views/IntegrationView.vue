@@ -12,7 +12,7 @@
  * - 主体：场景库列表（ScenarioLibrary）↔ 工作流编辑器（WorkflowEditor），
  *   由 integration store 的 activeScenarioId 驱动（跨路由返回不闪，见 store）。
  */
-import { onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLocaleStore } from '@/stores/locale'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -28,14 +28,29 @@ const t = useLocaleStore().t
 const workspace = useWorkspaceStore()
 const store = useIntegrationStore()
 
+/** 编辑器实例引用：编辑器内返回要经过它的脏数据确认（requestBack）。 */
+const editorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null)
+
 /**
- * 返回来源页：可从仪表板导航或工作区工具进入，不写死回 /workspace——
- * 会话内有历史则原路返回，直接深链打开时回仪表板兜底。
+ * 返回：按当前视图分层——
+ * - 编辑器内（activeScenarioId 非空）：回场景列表，不离开集成测试页；
+ *   未保存的修改由编辑器的 requestBack 弹确认，避免误丢改动；
+ * - 列表页：返回来源页——可从仪表板导航或工作区工具进入，不写死回
+ *   /workspace——会话内有历史则原路返回，直接深链打开时回仪表板兜底。
  */
 function goBack(): void {
+  if (store.activeScenarioId) {
+    editorRef.value?.requestBack()
+    return
+  }
   if (window.history.state?.back) router.back()
   else void router.push('/projects')
 }
+
+/** 返回钮提示随视图切换：编辑器内提示回列表，列表页提示回上一页。 */
+const backHint = computed(() =>
+  store.activeScenarioId ? t('integration.backToLib') : t('integration.backHint'),
+)
 
 /** 项目下拉选项（名称排序与仪表板一致按原始顺序）。 */
 const projectOptions = () =>
@@ -77,7 +92,7 @@ watch(
     <header class="it-topbar">
       <!-- Brand 打头：macOS 交通灯落在品牌区上方，可点元素不被遮挡（同 WorkspaceView 惯例） -->
       <Brand :title="t('integration.title')" class="it-brand" />
-      <button class="miyo-btn miyo-btn-sm" type="button" :title="t('integration.backHint')" @click="goBack">
+      <button class="miyo-btn miyo-btn-sm" type="button" :title="backHint" @click="goBack">
         ← {{ t('integration.back') }}
       </button>
       <div class="it-topbar-spacer"></div>
@@ -97,6 +112,7 @@ watch(
            场景上下文，复用实例会串场景（运行历史记错归属）。 -->
       <WorkflowEditor
         v-if="store.activeScenarioId"
+        ref="editorRef"
         :key="store.activeScenarioId"
         :scenario-id="store.activeScenarioId"
         @back="store.backToLibrary"
@@ -139,6 +155,14 @@ watch(
 .it-project {
   min-width: 160px;
   max-width: 240px;
+}
+
+/* Brand 自带 flex: 1（工作区顶栏惯例），会把返回钮挤到中段：
+   此处收窄为内容自适应宽度，返回钮紧贴品牌区靠左。 */
+.it-brand {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 280px;
 }
 
 .it-body {

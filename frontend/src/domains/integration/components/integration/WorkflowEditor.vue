@@ -162,6 +162,17 @@ const saveStateClass = computed(() => {
 
 const scenarioRef = computed(() => (scenario.value ? { id: scenario.value.id, name: scenario.value.name } : null))
 
+// ---------- 返回列表（脏数据确认） ----------
+const confirmBackOpen = ref(false)
+
+/** 返回场景列表：有未保存修改先弹确认（编辑器返回钮与顶栏返回共用此入口）。 */
+function requestBack(): void {
+  if (dirty.value) confirmBackOpen.value = true
+  else emit('back')
+}
+
+defineExpose({ requestBack })
+
 async function load(): Promise<void> {
   loading.value = true
   const pid = store.projectId
@@ -894,6 +905,12 @@ function onRunClick(): void {
 function confirmRun(): void {
   confirmRunOpen.value = false
   void run.run()
+}
+
+/** 确认放弃未保存修改：直接回列表（不落库）。 */
+function discardAndBack(): void {
+  confirmBackOpen.value = false
+  emit('back')
 }
 
 /** 校验面板的「仍然运行」：忽略阻断项。写操作照旧走副作用确认。 */
@@ -1671,6 +1688,25 @@ function stepTimeoutOf(s: EditorStep): number | null {
       </template>
     </Modal>
 
+    <!-- 返回列表确认：有未保存修改时拦截顶栏 / 编辑器的返回 -->
+    <Modal
+      v-model:open="confirmBackOpen"
+      :title="t('integration.backDirtyTitle')"
+      width="420px"
+    >
+      <p class="wf-confirm-body">
+        {{ t('integration.backDirtyBody') }}
+      </p>
+      <template #footer>
+        <button class="miyo-btn miyo-btn-sm" type="button" @click="confirmBackOpen = false">
+          {{ t('integration.backDirtyStay') }}
+        </button>
+        <button class="miyo-btn miyo-btn-sm miyo-btn-danger-solid" type="button" @click="discardAndBack">
+          {{ t('integration.backDirtyDiscard') }}
+        </button>
+      </template>
+    </Modal>
+
     <RunCompareModal v-model:open="compareOpen" :scenario-id="props.scenarioId" />
 
     <!-- 执行历史面板：筛选（状态×环境×时间）/ 打开详情 / 删除 / 按筛选导出 -->
@@ -1750,7 +1786,7 @@ function stepTimeoutOf(s: EditorStep): number | null {
         name="chevron-right"
         :size="14"
         :title="t('integration.back')"
-        @click="emit('back')"
+        @click="requestBack"
       />
       <input v-model="name" class="wf-name" type="text" :placeholder="t('integration.editorNamePh')" spellcheck="false" />
       <input v-model="category" class="wf-category" type="text" :placeholder="t('integration.categoryLabel')" spellcheck="false" />
