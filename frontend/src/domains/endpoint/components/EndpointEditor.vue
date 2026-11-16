@@ -242,27 +242,36 @@ const VALID_TABS: readonly ConfigTabKey[] = ['params', 'auth', 'headers', 'body'
 /** 未保存 active_tab 时的智能默认（不写回草稿，避免标记脏）。 */
 const smartTab = ref<ConfigTabKey>('params')
 
+/** 本次会话内用户手动点的页签（null = 没点过，用保存值 / 智能默认）。 */
+const manualTab = ref<ConfigTabKey | null>(null)
+
+/** 草稿里保存的页签（合法值才认，历史数据可能存过已下线的 Tab）。 */
+const savedTab = computed<ConfigTabKey | null>(() => {
+  const saved = draft.value?.request.active_tab as ConfigTabKey | null
+  return saved && VALID_TABS.includes(saved) ? saved : null
+})
+
 /** 打开接口时的开场页签（由 Method 推导），用于「用户手动切页签后」的还原基准。 */
 const defaultTabForMethod = (m: string | null | undefined): ConfigTabKey =>
   m === 'GRPC' ? 'grpc' : m && methodNeedsBody(m) ? 'body' : 'params'
 
 /**
- * 配置 Tab：优先读接口保存的 active_tab；未设置（或为已下线 Tab）时用
- * 编辑器会话内的选择，再退到按 Method 的智能默认。
+ * 配置 Tab：优先级 = 本次会话手动点的 > 接口保存的 active_tab > 会话内选择 / 按 Method 的智能默认。
  *
  * **点击页签绝不写回草稿**：`active_tab` 既在 RequestSpec 里持久化、又是
  * `isDirty`（store 的 eq）的比较项之一，写回会让「只是切到 Headers 看看」
  * 立刻把接口标记成有改动——保存后随便点个页签，左侧树又会冒出小圆点
  *（用户实测「接口已经保存了，为什么还有小点」）。页签纯属查看偏好，
  * 只有用户真改 Method 时（applyMethodDefaults 那条路径）才随请求一起落库。
+ *
+ * **手动点击必须盖过保存值**（用户实测「保存后点 Headers 没反应」）：保存的
+ * active_tab 只是打开接口时的开场页签，若把它放在 getter 首位，页签就被钉死
+ * 在保存值上——setter 只改本地态、getter 永远回保存值，点哪个都没反应。
  */
 const activeTab = computed<ConfigTabKey>({
-  get: () => {
-    const saved = draft.value?.request.active_tab as ConfigTabKey | null
-    return saved && VALID_TABS.includes(saved) ? saved : smartTab.value
-  },
+  get: () => manualTab.value ?? savedTab.value ?? smartTab.value,
   set: (tab: ConfigTabKey) => {
-    smartTab.value = tab
+    manualTab.value = tab
   },
 })
 
@@ -320,8 +329,18 @@ watch(
   () => draft.value?.id,
   () => {
     smartTab.value = defaultTabForMethod(draft.value?.method)
+    manualTab.value = null
   },
   { immediate: true },
+)
+
+/** 外部改写了草稿的 active_tab（改 Method / 用例回填 / 导入）：这次改写的目标页签优先，
+ *  丢弃本地手动选择，否则会出现「切了 Method 页签却停在旧位置」。 */
+watch(
+  () => draft.value?.request.active_tab,
+  () => {
+    manualTab.value = null
+  },
 )
 
 /**
@@ -353,6 +372,7 @@ watch(
       smartTab.value = restored && VALID_TABS.includes(restored as ConfigTabKey)
         ? (restored as ConfigTabKey)
         : defaultTabForMethod(m)
+      manualTab.value = null
       methodRevert = null
       return
     }
@@ -360,6 +380,7 @@ watch(
     const tab = applyMethodDefaults(d.request, m)
     d.request.active_tab = tab
     smartTab.value = tab
+    manualTab.value = null
   },
 )
 
