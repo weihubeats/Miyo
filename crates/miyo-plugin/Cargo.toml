@@ -1,0 +1,29 @@
+[package]
+name = "miyo-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Miyo plugin system — manifest validation, compatibility, permissions, package install (Core + Plugin architecture)"
+
+[dependencies]
+miyo-core = { path = "../miyo-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+# .miyo 插件包 = tar.gz；解包做路径穿越 / 体积 / 条目类型白名单防护
+tar = { workspace = true }
+flate2 = { workspace = true }
+# ed25519 签名校验（官方目录签名；未签名本地包需用户显式信任）
+ed25519-dalek = { workspace = true }
+# ts feature：PluginManifest 等类型导出 TS 绑定（miyo-tauri --features ts 聚合启用）
+ts-rs = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+ts = ["dep:ts-rs"]

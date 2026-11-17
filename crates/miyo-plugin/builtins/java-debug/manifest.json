@@ -1,0 +1,48 @@
+{
+  "id": "com.miyo.java-debug",
+  "name": "Java 方法调试",
+  "name_key": "pnav.javaDebug",
+  "description": "连接运行中的 Java 应用，发现并调用白名单方法，查看返回值、异常堆栈与耗时。",
+  "description_key": "plugins.javaDebugDesc",
+  "version": "0.1.0",
+  "authors": ["Miyo"],
+  "icon": "package",
+  "kind": "ui",
+  "min_app_version": "0.0.60",
+  "sdk_version": 1,
+  "nav": [
+    {
+      "id": "main",
+      "label_key": "pnav.javaDebug",
+      "icon": "package",
+      "route": "/java-debug",
+      "order": 40
+    }
+  ],
+  "permissions": [
+    "std.storage",
+    "std.env.read",
+    "std.notify",
+    "std.log",
+    "std.events",
+    "java.debug"
+  ],
+  "runtime_deps": [
+    {
+      "kind": "java",
+      "min_version": "11",
+      "description": "目标应用内嵌 miyo-java-runtime SDK（Java 11+ 编译目标，兼容 Java 11+ 运行时）"
+    }
+  ],
+  "config_schema": {
+    "properties": {
+      "audit_log": {
+        "type": "boolean",
+        "title": "记录方法执行审计",
+        "description": "每次方法执行在插件日志写入一条 audit 记录（不含参数原文）",
+        "default": true
+      }
+    },
+    "required": []
+  }
+}
