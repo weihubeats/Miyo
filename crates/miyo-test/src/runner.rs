@@ -1117,7 +1117,7 @@ async fn java_round(
             step.endpoint.id,
             &step.endpoint,
             Some(url.clone()),
-            "Java 调试执行器未接入（Runtime 未配置或运行环境不支持）",
+            "Java 调试插件未启用（请在插件管理中安装并启用 Java 方法调试插件）",
         );
         r.step_index = Some(pos);
         r.step_status = Some(step_status::FAILED.to_string());

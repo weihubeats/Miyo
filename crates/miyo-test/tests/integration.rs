@@ -1950,7 +1950,7 @@ async fn java_step_without_hook_fails_fast() {
         .request_error
         .as_deref()
         .unwrap_or_default()
-        .contains("执行器未接入"));
+        .contains("Java 调试插件未启用"));
 }
 
 #[tokio::test]
