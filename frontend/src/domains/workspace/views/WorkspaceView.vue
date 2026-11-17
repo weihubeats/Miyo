@@ -36,6 +36,8 @@ import EndpointEditor from '@/domains/endpoint/components/EndpointEditor.vue'
 import { useShortcuts, shortcutDef } from '@/composables/useShortcuts'
 import { useWindowDrag } from '@/domains/workspace/composables/useWindowDrag'
 import { lazyComponent } from '@/composables/lazyComponent'
+import { usePluginManager } from '@/plugins/manager'
+import type { IconName } from '@/components/ui/Icon.vue'
 import { errorText } from '@/utils/errorText'
 
 // 低频重型面板按需加载（composables/lazyComponent.ts：骨架 + 可翻译的错误重试层）。
@@ -56,6 +58,7 @@ const api = useMiyoApi()
 const toast = useToast()
 const locale = useLocaleStore()
 const t = locale.t
+const pluginManager = usePluginManager()
 
 const loading = ref(false)
 const showCurlImport = ref(false)
@@ -424,7 +427,7 @@ function onWideToolsChange(event: MediaQueryListEvent): void {
 wideToolsMql.addEventListener('change', onWideToolsChange)
 onBeforeUnmount(() => wideToolsMql.removeEventListener('change', onWideToolsChange))
 
-/** 顶栏溢出菜单：窄窗口承载 GraphQL/实时（视图切换）+ 快捷键 + 团队同步。 */
+/** 顶栏溢出菜单：窄窗口承载 GraphQL/实时 + 插件入口 + 快捷键 + 团队同步。 */
 const TOOLS_ITEMS = computed<MenuItem[]>(() => {
   const items: MenuItem[] = []
   if (!wideTools.value) {
@@ -432,8 +435,16 @@ const TOOLS_ITEMS = computed<MenuItem[]>(() => {
       { key: 'tools-integration', label: t('pnav.integration'), icon: 'beaker', checked: route.path === '/integration' },
       { key: 'tools-graphql', label: t('workspace.graphql'), icon: 'code', checked: route.path === '/graphql' },
       { key: 'tools-realtime', label: t('workspace.realtime'), icon: 'zap', checked: route.path === '/realtime' },
-      { key: 'tools-java', label: t('pnav.javaDebug'), icon: 'package', checked: route.path === '/java-debug' },
     )
+    // 插件注册的导航入口（激活态插件；与仪表板导航同源）。
+    for (const { item, pluginId } of pluginManager.activeNavItems) {
+      items.push({
+        key: `plugin-${pluginId}-${item.id}`,
+        label: item.label_key ? t(item.label_key) : (item.label ?? pluginId),
+        icon: (item.icon as MenuItem['icon']) ?? 'package',
+        checked: route.path === item.route,
+      })
+    }
   }
   items.push(
     { key: 'tools-shortcuts', label: t('workspace.shortcutsHint'), icon: 'keyboard', dividerBefore: !wideTools.value },
@@ -448,14 +459,25 @@ function openToolsMenu(): void {
   if (toolsBtn.value) menuRef.value?.openAt(toolsBtn.value, TOOLS_ITEMS.value, 'right')
 }
 
+/** 插件导航项 → 路由（overflow 菜单按 key 反查：key = plugin-<插件id>-<navId>）。 */
+function pluginRouteForKey(key: string): string | null {
+  if (!key.startsWith('plugin-')) return null
+  for (const { item, pluginId } of pluginManager.activeNavItems) {
+    if (key === `plugin-${pluginId}-${item.id}`) return item.route
+  }
+  return null
+}
+
 function onMenuSelect(item: MenuItem): void {
   if (item.key === 'new-project') openCreateProject()
   else if (item.key === 'import' || item.key === 'export') onDocsSelect(item)
   else if (item.key === 'tools-integration') router.push('/integration')
   else if (item.key === 'tools-graphql') router.push('/graphql')
   else if (item.key === 'tools-realtime') router.push('/realtime')
-  else if (item.key === 'tools-java') router.push('/java-debug')
-  else if (item.key === 'tools-shortcuts') showShortcuts.value = true
+  else if (item.key.startsWith('plugin-')) {
+    const target = pluginRouteForKey(item.key)
+    if (target) router.push(target)
+  } else if (item.key === 'tools-shortcuts') showShortcuts.value = true
   else if (item.key === 'tools-sync') showSync.value = true
   else onMockSelect(item)
 }
@@ -573,14 +595,28 @@ onBeforeUnmount(() => {
               :title="t('workspace.realtime')"
               @click="router.push('/realtime')"
             />
-            <IconButton
-              class="tb-tool"
-              :class="{ active: route.path === '/java-debug' }"
-              name="package"
-              :size="15"
-              :title="t('pnav.javaDebug')"
-              @click="router.push('/java-debug')"
-            />
+            <!-- 插件导航入口（激活态插件；data-uri 图标经 <img> 渲染） -->
+            <template v-for="({ item }) in pluginManager.activeNavItems" :key="`plugin-${item.id}`">
+              <button
+                v-if="item.icon?.startsWith('data:image/')"
+                class="tb-tool ib-img"
+                type="button"
+                :class="{ active: route.path === item.route }"
+                :title="item.label_key ? t(item.label_key) : (item.label ?? item.route)"
+                @click="router.push(item.route)"
+              >
+                <img :src="item.icon" alt="" aria-hidden="true" />
+              </button>
+              <IconButton
+                v-else
+                class="tb-tool"
+                :class="{ active: route.path === item.route }"
+                :name="(item.icon as IconName) ?? 'package'"
+                :size="15"
+                :title="item.label_key ? t(item.label_key) : (item.label ?? item.route)"
+                @click="router.push(item.route)"
+              />
+            </template>
           </template>
           <!-- 溢出菜单：窄窗口承载 GraphQL/实时，常驻快捷键/同步 -->
           <button
@@ -988,6 +1024,24 @@ onBeforeUnmount(() => {
 .tb-tool-group .tb-tool.active {
   color: var(--accent);
   background: var(--accent-tint);
+}
+/* 插件 data-uri 图标按钮（原生 button 补齐 IconButton 基础态，img 与 Icon 同视觉尺寸） */
+.tb-tool-group .tb-tool.ib-img {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.tb-tool-group .tb-tool.ib-img img {
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
 }
 
 /* 溢出菜单触发器：原生 button，补齐 IconButton 的基础态（group 规则给宽高/悬停） */

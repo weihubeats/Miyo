@@ -25,7 +25,9 @@ import { nextTick } from 'vue'
 
 const routerMock = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }))
 
-vi.mock('vue-router', () => ({
+vi.mock('vue-router', async (importOriginal) => ({
+  // 展开真实实现：WorkspaceView → plugins/manager → @/router 链需要 createRouter/createWebHistory
+  ...(await importOriginal<typeof import('vue-router')>()),
   useRoute: () => ({ path: '/workspace', query: {} }),
   useRouter: () => routerMock,
 }))

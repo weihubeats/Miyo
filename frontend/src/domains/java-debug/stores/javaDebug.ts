@@ -264,6 +264,20 @@ export const useJavaDebugStore = defineStore('javaDebug', () => {
     activeMethodId.value = null
   }
 
+  /**
+   * 插件停用回收（PluginManager deactivate 链调用）：停心跳、清在途状态。
+   * store 实例随 pinia 常驻，重激活时视图会重新加载数据。
+   */
+  function dispose(): void {
+    stopHeartbeat()
+    disconnect()
+    invoking.value = false
+    lastResponse.value = null
+    lastStartedAt.value = null
+    history.value = []
+    recentMethods.value = []
+  }
+
   async function loadClasses(): Promise<void> {
     if (!activeProject.value || connection.value.state !== 'ok') return
     classesLoading.value = true
@@ -435,6 +449,7 @@ export const useJavaDebugStore = defineStore('javaDebug', () => {
     loadProjects,
     connect,
     disconnect,
+    dispose,
     discover,
     loadClasses,
     loadHistory,

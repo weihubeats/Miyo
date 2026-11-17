@@ -4,43 +4,89 @@
  *
  * - 仅保留已实现的全局入口：仪表板（本页）、实时调试（/realtime 独立路由视图，
  *   此前只能从工作区工具抽屉进入）；
+ * - 插件导航项由 PluginManager 动态注册（激活态才出现；停用 / 卸载即消失）；
  * - 项目内模块（接口树 / 场景 / 历史 / 文档）随项目走工作区，不在导航重复；
  * - 设置入口在顶栏右上角（齿轮按钮）、团队管理在工具栏，导航不再重复。
  * 注意：此前「仪表板 / API 项目」曾是两个同路由入口（navActive 恒双真，
  * 两个紫 pill 同时高亮），已合并为单一入口。
  */
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Icon from '@/components/ui/Icon.vue'
+import Icon, { type IconName } from '@/components/ui/Icon.vue'
 import { useLocaleStore } from '@/stores/locale'
+import { usePluginManager } from '@/plugins/manager'
 
 const router = useRouter()
 const route = useRoute()
 const locale = useLocaleStore()
 const t = locale.t
 
-const NAV_ITEMS = [
-  { key: 'dashboard', labelKey: 'pnav.dashboard', icon: 'gauge' as const, route: '/projects' },
-  { key: 'integration', labelKey: 'pnav.integration', icon: 'beaker' as const, route: '/integration' },
-  { key: 'realtime', labelKey: 'pnav.realtime', icon: 'globe' as const, route: '/realtime' },
-  { key: 'javaDebug', labelKey: 'pnav.javaDebug', icon: 'package' as const, route: '/java-debug' },
+/** 合并后的导航项（核心静态项 + 插件注册项，按 order 升序）。 */
+interface NavEntry {
+  key: string
+  label: string
+  /** IconName 或 data:image/* URI（插件）。 */
+  icon: string
+  route: string
+  order: number
+  isPlugin: boolean
+  badgeKey?: string
+  badgeTipKey?: string
+}
+
+/** 核心导航项（静态；插件项经 PluginManager 动态插入）。 */
+const CORE_NAV_ITEMS: NavEntry[] = [
+  { key: 'dashboard', label: t('pnav.dashboard'), icon: 'gauge', route: '/projects', order: 0, isPlugin: false },
+  { key: 'integration', label: t('pnav.integration'), icon: 'beaker', route: '/integration', order: 10, isPlugin: false },
+  { key: 'realtime', label: t('pnav.realtime'), icon: 'globe', route: '/realtime', order: 20, isPlugin: false },
   {
     key: 'aiTest',
-    labelKey: 'pnav.aiTest',
-    icon: 'zap' as const,
+    label: t('pnav.aiTest'),
+    icon: 'zap',
     route: '/ai-test',
+    order: 30,
+    isPlugin: false,
     // 页面仍在测试：「测试中」标记在导航入口就要可见，进页面前就知道结果可能不可靠
-    badgeKey: 'ai.beta' as const,
-    badgeTipKey: 'ai.betaTipShort' as const,
+    badgeKey: 'ai.beta',
+    badgeTipKey: 'ai.betaTipShort',
   },
+  { key: 'plugins', label: t('pnav.plugins'), icon: 'plug', route: '/plugins', order: 90, isPlugin: false },
 ]
 
+const manager = usePluginManager()
+
+/** 插件注册的导航项（激活态插件；展示名走 i18n 键优先）。 */
+const pluginNavItems = computed<NavEntry[]>(() =>
+  manager.activeNavItems.map(({ item, pluginId }) => ({
+    key: `plugin-${pluginId}-${item.id}`,
+    label: item.label_key ? t(item.label_key) : (item.label ?? pluginId),
+    icon: item.icon ?? 'package',
+    route: item.route,
+    order: item.order ?? 100,
+    isPlugin: true,
+  })),
+)
+
+/** 合并导航（核心 + 插件；核心 order 0-90，插件默认 100 起）。 */
+const NAV_ITEMS = computed<NavEntry[]>(() =>
+  [...CORE_NAV_ITEMS, ...pluginNavItems.value].sort(
+    (a, b) => a.order - b.order || a.key.localeCompare(b.key),
+  ),
+)
+
 /** 激活态跟随当前路由（实时调试视图打开时高亮对应入口）。 */
-function navActive(item: (typeof NAV_ITEMS)[number]): boolean {
+function navActive(item: NavEntry): boolean {
   return route.path === item.route
 }
 
-function onNav(item: (typeof NAV_ITEMS)[number]): void {
+function onNav(item: NavEntry): void {
   if (!navActive(item)) router.push(item.route)
+}
+
+/** 插件 data-uri 图标走 <img>；IconName 校验交给渲染层兜底（未知名回落 package）。 */
+const KNOWN_ICONS = new Set<string>(['gauge', 'beaker', 'globe', 'zap', 'plug', 'package'])
+function iconOf(item: NavEntry): IconName {
+  return KNOWN_ICONS.has(item.icon) ? (item.icon as IconName) : 'package'
 }
 </script>
 
@@ -54,13 +100,20 @@ function onNav(item: (typeof NAV_ITEMS)[number]): void {
       type="button"
       @click="onNav(item)"
     >
-      <Icon :name="item.icon" :size="15" />
-      <span class="nav-label">{{ t(item.labelKey) }}</span>
+      <img
+        v-if="item.icon.startsWith('data:image/')"
+        class="nav-icon-img"
+        :src="item.icon"
+        alt=""
+        aria-hidden="true"
+      />
+      <Icon v-else :name="iconOf(item)" :size="15" />
+      <span class="nav-label">{{ item.label }}</span>
       <span
         v-if="'badgeKey' in item && item.badgeKey"
         class="nav-beta"
         role="status"
-        :title="t(item.badgeTipKey)"
+        :title="item.badgeTipKey ? t(item.badgeTipKey) : ''"
       >
         {{ t(item.badgeKey) }}
       </span>
@@ -123,6 +176,15 @@ function onNav(item: (typeof NAV_ITEMS)[number]): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 第三方插件 data-uri 图标（与 Icon 同视觉尺寸，跟随 currentColor 无从谈起，原样展示） */
+.nav-icon-img {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
 }
 
 /* 「测试中」标记：未选中 amber 描边，选中（紫底）提亮为半透明白底保证可读 */

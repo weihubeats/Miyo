@@ -8,7 +8,12 @@ import { createPinia, setActivePinia } from 'pinia'
 
 const routerMock = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn(), path: '/ai-test' }))
 
-vi.mock('vue-router', () => ({ useRouter: () => routerMock, useRoute: () => routerMock }))
+vi.mock('vue-router', async (importOriginal) => ({
+  // 展开真实实现：DashboardNav → plugins/manager → @/router 链需要 createRouter/createWebHistory
+  ...(await importOriginal<typeof import('vue-router')>()),
+  useRouter: () => routerMock,
+  useRoute: () => routerMock,
+}))
 // AiTestView 的 onMounted 会打 IPC：整体打桩，只验证徽标渲染。
 vi.mock('@/domains/agent/stores/aiTest.ts', () => ({
   useAiTestStore: () => ({

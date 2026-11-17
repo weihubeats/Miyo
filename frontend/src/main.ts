@@ -8,6 +8,7 @@ import App from '@/App.vue'
 import router from '@/router'
 import { useThemeStore } from '@/stores/theme'
 import { useLocaleStore } from '@/stores/locale'
+import { usePluginManager } from '@/plugins/manager'
 import { migrateLegacyStorageKeys } from '@/utils/legacyStorage'
 // 字体：仅 latin 子集 + 仅 woff2 + 400/500/700（原 8 个 fontsource 入口产出
 // 44 个 woff/woff2 共 760KB，占 dist 约 1/3），声明见 fonts.css。
@@ -35,6 +36,9 @@ async function bootstrap(): Promise<void> {
   // 等启动语言字典就绪再挂载：首帧即完整文案，不回落另一语言。
   // （模块顶层 await 会撞 es2020 构建目标，故放这里。）
   await useLocaleStore(pinia).init()
+  // 插件系统引导：拉取已安装插件并激活启用项（异步，不阻塞首屏挂载；
+  // 激活完成前导航区不含插件项——按需加载，未启用插件零字节拉取）。
+  void usePluginManager(pinia).boot()
   createApp(App)
     .use(pinia)
     .use(router)
