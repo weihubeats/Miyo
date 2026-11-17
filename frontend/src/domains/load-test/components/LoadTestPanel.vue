@@ -4,11 +4,12 @@
  * - 实时面积图（Chart.js）：x=已耗时(s)，y=累计成功/失败请求数，压测中逐事件刷新；
  * - 3 列 KPI 指标网格：成功率 / 平均耗时 / RPS / P50 / P90 / P99。
  */
-import { computed, defineAsyncComponent, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { ChartOptions } from 'chart.js'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useToast } from '@/composables/useToast'
 import { useTauriEvent } from '@/composables/useTauriEvent'
+import { THEME_EVENT } from '@/stores/theme'
 import { useLocaleStore } from '@/stores/locale'
 import { useWorkspaceStore } from '@/stores/workspace'
 import CustomNumberInput from '@/components/ui/CustomNumberInput.vue'
@@ -110,16 +111,25 @@ function cssVar(name: string, fallback: string): string {
   return v || fallback
 }
 
-const okColor = cssVar('--success', '#22c55e')
-const errColor = cssVar('--danger', '#ef4444')
+// 图表色随主题实时刷新：setup 时取一次（历史问题：曾冻结为创建时主题的颜色），
+// 订阅 miyo:theme 在换肤后重取（Chart.js dataset 颜色是响应式的）。
+const okColor = ref(cssVar('--success', '#22c55e'))
+const errColor = ref(cssVar('--danger', '#ef4444'))
+
+function refreshChartColors(): void {
+  okColor.value = cssVar('--success', '#22c55e')
+  errColor.value = cssVar('--danger', '#ef4444')
+}
+onMounted(() => window.addEventListener(THEME_EVENT, refreshChartColors))
+onBeforeUnmount(() => window.removeEventListener(THEME_EVENT, refreshChartColors))
 
 const chartData = computed(() => ({
   datasets: [
     {
       label: t('loadtest.legendOk'),
       data: points.value.map((p) => ({ x: p.x, y: p.ok })),
-      borderColor: okColor,
-      backgroundColor: `${okColor}2e`,
+      borderColor: okColor.value,
+      backgroundColor: `${okColor.value}2e`,
       fill: true,
       tension: 0.35,
       borderWidth: 1.5,
@@ -128,8 +138,8 @@ const chartData = computed(() => ({
     {
       label: t('loadtest.legendFail'),
       data: points.value.map((p) => ({ x: p.x, y: p.failed })),
-      borderColor: errColor,
-      backgroundColor: `${errColor}2e`,
+      borderColor: errColor.value,
+      backgroundColor: `${errColor.value}2e`,
       fill: true,
       tension: 0.35,
       borderWidth: 1.5,

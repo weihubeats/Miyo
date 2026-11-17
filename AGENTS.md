@@ -47,6 +47,11 @@ Miyo：Tauri 2 + Vue 3 的跨平台 API 调试工具（Rust 工作区 + 前端�
   `frontend/src/themePattern.spec.ts` 会扫全仓 `.vue` 拦截。
 - **深/浅验证看构建产物，不只看源码**：`npm run build` 后 grep `dist/assets/*.css`
   确认规则存在（如 `.miyo-sidebar` 是否跟变量），dev 与构建行为可能分叉。
+- **flex `<button>` 的子元素禁止用 `display: block`**：WebKit（Tauri WKWebView /
+  Safari）对 flex 按钮内的 block 子元素不做伸展，宽度塌缩为 0（主题预览卡实证：
+  只剩边框塌成的一条细竖线）；Chromium 会正常 blockify，只在 WKWebView 里坏，
+  极易漏检。按钮内子元素统一 `display: flex` + 显式 `width: 100%`，视觉回归
+  须在 Safari/WKWebView 复验，不能只看 Chromium 内核浏览器。
 - **共享类禁止只定义在某组件 scoped 内**：`m-select-*` 曾只在 EndpointEditor 局部，
   另 4 处引用实际裸奔。跨组件复用的类一律放 `style.css` 全局。
 - **方法色 single source**：`@theme` 的 `method-*` 令牌（色值）+ `utils/methodTone.ts`

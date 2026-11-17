@@ -98,9 +98,9 @@ function onKeydown(event: KeyboardEvent): void {
   align-items: center;
   gap: 2px;
   padding: 2px;
-  background: var(--bg-card);
+  background: var(--bg-code);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
 }
 .seg.size-md .seg-item {
   height: 26px;
@@ -142,13 +142,17 @@ function onKeydown(event: KeyboardEvent): void {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
+/* 激活项 = 浮起表面（elevated + hairline 内描边 + 轻阴影），中性克制不抢色 */
 .seg-item.active {
-  background: var(--accent);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  background: var(--bg-elevated);
+  color: var(--text-1);
+  font-weight: 500;
+  box-shadow:
+    inset 0 0 0 1px var(--border-strong),
+    var(--shadow-sm);
 }
 .seg-item.active:hover {
-  background: var(--accent-hover);
+  background: var(--bg-elevated);
 }
 .seg.disabled .seg-item {
   opacity: 0.45;

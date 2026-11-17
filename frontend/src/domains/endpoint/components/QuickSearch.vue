@@ -221,7 +221,8 @@ const ACTIONS = computed<Item[]>(() => [
     subtitle: theme.resolved === 'dark' ? t('quicksearch.toLight') : t('quicksearch.toDark'),
     icon: theme.resolved === 'dark' ? 'sun' : 'moon',
     score: 0,
-    run: () => theme.setMode(theme.resolved === 'dark' ? 'light' : 'dark'),
+    // 深浅互切：切到记忆对中的另一个基调主题（store 会记入手动模式）
+    run: () => theme.setThemeId(theme.resolved === 'dark' ? theme.config.lastLight : theme.config.lastDark),
   },
 ])
 

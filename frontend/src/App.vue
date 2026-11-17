@@ -11,6 +11,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import ToastHost from '@/domains/workspace/components/ToastHost.vue'
 import ProgressBar from '@/domains/workspace/components/ProgressBar.vue'
+import AppBackground from '@/components/AppBackground.vue'
 import Brand from '@/domains/workspace/components/Brand.vue'
 import AboutDialog from '@/domains/workspace/components/AboutDialog.vue'
 import ReleaseNotesModal from '@/domains/workspace/components/ReleaseNotesModal.vue'
@@ -164,6 +165,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- 自定义主题背景图固定层（纯色/渐变走 --bg-app，无图时不渲染） -->
+  <AppBackground />
   <div v-if="showFloatingBrand" class="app-brand" :aria-label="t('app.brandAria')">
     <Brand title="Miyo" :subtitle="t('app.tagline')" />
   </div>

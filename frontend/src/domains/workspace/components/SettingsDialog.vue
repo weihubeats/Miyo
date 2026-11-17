@@ -12,7 +12,6 @@ import { relaunch } from '@tauri-apps/plugin-process'
 import { copyText } from '@/utils/clipboard'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useToast } from '@/composables/useToast'
-import { useThemeStore, type ThemeMode } from '@/stores/theme'
 import { useLocaleStore, type LocaleMode } from '@/stores/locale'
 import { useWorkspaceStore, FALLBACK_GLOBAL_TIMEOUT_MS } from '@/stores/workspace'
 import {
@@ -45,6 +44,8 @@ import Modal from '@/components/ui/Modal.vue'
 import Icon, { type IconName } from '@/components/ui/Icon.vue'
 import Popconfirm from '@/components/ui/Popconfirm.vue'
 import CustomNumberInput from '@/components/ui/CustomNumberInput.vue'
+import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import ThemeAppearance from '@/domains/workspace/components/settings/ThemeAppearance.vue'
 import SettingsMcpTab from '@/domains/agent/components/settings/SettingsMcpTab.vue'
 import SettingsAiTab from '@/domains/agent/components/settings/SettingsAiTab.vue'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
@@ -62,15 +63,8 @@ const emit = defineEmits<{ close: []; restored: [projectId: string] }>()
 
 const api = useMiyoApi()
 const toast = useToast()
-const theme = useThemeStore()
 const locale = useLocaleStore()
 const t = locale.t
-
-const THEME_OPTIONS = computed<{ value: ThemeMode; label: string; icon: IconName }[]>(() => [
-  { value: 'system', label: t('settings.themeSystem'), icon: 'monitor' },
-  { value: 'dark', label: t('settings.themeDark'), icon: 'moon' },
-  { value: 'light', label: t('settings.themeLight'), icon: 'sun' },
-])
 
 const LANG_OPTIONS = computed<{ value: LocaleMode; label: string }[]>(() => [
   { value: 'system', label: t('settings.languageSystem') },
@@ -881,7 +875,7 @@ const projectSummary = computed(() => {
     <div class="flex h-[min(680px,80vh)]">
       <!-- 左：极简 List 导航（.m-body 已贴边，内距由本栏自持；分隔线与标题栏 hairline 同源）。
            窄屏优先收缩导航（min(220px, 18vw)），保住右侧变量表格不被挤压 -->
-      <aside class="flex w-[min(220px,18vw)] shrink-0 flex-col gap-1 border-r border-line p-3">
+      <aside class="flex w-[200px] shrink-0 flex-col gap-1 border-r border-line p-3">
         <button
           v-for="tab in tabs"
           :key="tab.id"
@@ -889,8 +883,8 @@ const projectSummary = computed(() => {
           class="relative flex h-9 w-full items-center gap-2.5 rounded-xl border-none px-3 text-left text-sm transition-all duration-150"
           :class="
             activeTab === tab.id
-              ? 'bg-purple-50 font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-300'
-              : 'bg-transparent text-zinc-600 hover:bg-slate-100/80 hover:text-slate-700 dark:text-zinc-400 dark:hover:bg-white/[0.05] dark:hover:text-zinc-200'
+              ? 'bg-accent-tint font-semibold text-accent'
+              : 'bg-transparent text-ink2 hover:bg-hover hover:text-ink1'
           "
           @click="onTabClick(tab.id)"
         >
@@ -902,7 +896,7 @@ const projectSummary = computed(() => {
           <Icon
             :name="tab.icon"
             :size="15"
-            :class="activeTab === tab.id ? 'text-purple-700 dark:text-purple-300' : 'text-zinc-500 dark:text-zinc-400'"
+            :class="activeTab === tab.id ? 'text-accent' : 'text-ink2'"
           />
           <span class="flex-1 truncate">{{ tab.label }}</span>
           <span
@@ -910,8 +904,8 @@ const projectSummary = computed(() => {
             class="rounded-full px-1.5 py-px text-xxs leading-4"
             :class="
               activeTab === 'sequences'
-                ? 'bg-purple-500/15 text-purple-700 dark:bg-purple-400/20 dark:text-purple-200'
-                : 'bg-zinc-200/70 text-zinc-600 dark:bg-white/[0.08] dark:text-zinc-400'
+                ? 'bg-accent-tint text-accent'
+                : 'bg-hover text-ink2'
             "
           >
             {{ sequencesCount }}
@@ -921,7 +915,7 @@ const projectSummary = computed(() => {
 
       <!-- 右：内容区。环境工作区是绝对定位覆盖层（首访挂载后 v-show 常驻，切换不重挂载）；
            其余页签走 keyed 淡入淡出。容器类恒定，切换只更新内容不抖布局。 -->
-      <div class="relative flex-1 min-w-0 overflow-y-auto p-6">
+      <div class="relative flex-1 min-w-0 overflow-y-auto px-7 py-6 pb-10">
         <!-- 环境工作区（覆盖层） -->
         <Transition name="pane">
           <section
@@ -932,11 +926,11 @@ const projectSummary = computed(() => {
             <header class="shrink-0">
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <h2 class="text-base font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.environments') }}</h2>
-                  <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-500">{{ t('settings.environmentsDesc') }}</p>
+                  <h2 class="text-base font-medium text-ink1">{{ t('settings.environments') }}</h2>
+                  <p class="mt-1 text-xs text-ink2">{{ t('settings.environmentsDesc') }}</p>
                 </div>
                 <div class="flex shrink-0 items-center gap-2 pt-0.5">
-                  <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ t('settings.envProject') }}</span>
+                  <span class="text-xs text-ink2">{{ t('settings.envProject') }}</span>
                   <CustomSelect
                     :model-value="envProjectId"
                     :options="envProjectOptions"
@@ -950,7 +944,7 @@ const projectSummary = computed(() => {
 
             <div
               v-if="!envProjectId"
-              class="mt-4 flex flex-1 items-center justify-center rounded-lg border border-zinc-200/70 bg-zinc-50/80 text-center text-xs text-zinc-600 dark:border-white/[0.06] dark:bg-zinc-900/40 dark:text-zinc-500"
+              class="mt-4 flex flex-1 items-center justify-center rounded-lg border border-line bg-code/60 text-center text-xs text-ink3"
             >
               {{ t('settings.envNoProject') }}
             </div>
@@ -971,15 +965,15 @@ const projectSummary = computed(() => {
             <!-- 通用设置 -->
             <section v-if="activeTab === 'general'">
               <header>
-                <h2 class="text-base font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.general') }}</h2>
-                <p class="mt-1 mb-5 text-xs text-zinc-600 dark:text-zinc-500">{{ t('settings.generalDesc') }}</p>
+                <h2 class="text-base font-medium text-ink1">{{ t('settings.general') }}</h2>
+                <p class="mt-1 mb-5 text-xs text-ink2">{{ t('settings.generalDesc') }}</p>
               </header>
 
-              <div class="rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-5 dark:border-white/[0.06] dark:bg-zinc-900/40">
+              <div class="miyo-card p-5">
                 <div class="flex items-center justify-between gap-4">
                   <div class="max-w-md">
-                    <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.timeout') }}</div>
-                    <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    <div class="text-sm font-medium text-ink1">{{ t('settings.timeout') }}</div>
+                    <p class="mt-0.5 text-xs text-ink2">
                       {{ t('settings.timeoutDesc') }}
                     </p>
                   </div>
@@ -996,7 +990,7 @@ const projectSummary = computed(() => {
                       @change="saveTimeout"
                     />
                     <span
-                      class="pointer-events-none absolute right-[28px] top-1/2 -translate-y-1/2 text-xs text-zinc-500"
+                      class="pointer-events-none absolute right-[28px] top-1/2 -translate-y-1/2 text-xs text-ink3"
                     >
                       {{ t('settings.timeoutUnit') }}
                     </span>
@@ -1004,106 +998,60 @@ const projectSummary = computed(() => {
                 </div>
               </div>
 
-              <div class="rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-5 dark:border-white/[0.06] dark:bg-zinc-900/40">
+              <ThemeAppearance />
+              <div class="miyo-card p-5">
                 <div class="flex items-center justify-between gap-4">
                   <div class="max-w-md">
-                    <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.theme') }}</div>
-                    <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settings.themeDesc') }}</p>
+                    <div class="text-sm font-medium text-ink1">{{ t('settings.language') }}</div>
+                    <p class="mt-0.5 text-xs text-ink2">{{ t('settings.languageDesc') }}</p>
                   </div>
-                  <div
-                    class="flex shrink-0 items-center gap-1 rounded-lg border border-zinc-300/50 bg-zinc-200/60 p-1 dark:border-white/10 dark:bg-black/30"
-                    role="radiogroup"
-                    :aria-label="t('settings.theme')"
-                  >
-                    <button
-                      v-for="opt in THEME_OPTIONS"
-                      :key="opt.value"
-                      type="button"
-                      role="radio"
-                      :aria-checked="theme.mode === opt.value"
-                      class="flex h-8 items-center gap-1.5 rounded-md px-3 text-xs transition-all duration-150"
-                      :class="
-                        theme.mode === opt.value
-                          ? 'su-chip-active font-medium text-white shadow-sm'
-                          : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200'
-                      "
-                      @click="theme.setMode(opt.value)"
-                    >
-                      <Icon :name="opt.icon" :size="13" aria-hidden="true" />
-                      {{ opt.label }}
-                    </button>
-                  </div>
+                  <SegmentedControl
+                    class="shrink-0"
+                    :model-value="locale.mode"
+                    :options="LANG_OPTIONS"
+                    @change="(v) => locale.setMode(v as LocaleMode)"
+                  />
                 </div>
-                <div class="mt-5 border-t border-zinc-200/70 dark:border-white/[0.06]">
-                  <div class="flex items-center justify-between gap-4 pt-5">
-                    <div class="max-w-md">
-                      <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.language') }}</div>
-                      <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settings.languageDesc') }}</p>
-                    </div>
-                    <div
-                      class="flex shrink-0 items-center gap-1 rounded-lg border border-zinc-300/50 bg-zinc-200/60 p-1 dark:border-white/10 dark:bg-black/30"
-                      role="radiogroup"
-                      :aria-label="t('settings.language')"
-                    >
-                      <button
-                        v-for="opt in LANG_OPTIONS"
-                        :key="opt.value"
-                        type="button"
-                        role="radio"
-                        :aria-checked="locale.mode === opt.value"
-                        class="flex h-8 items-center gap-1.5 rounded-md px-3 text-xs transition-all duration-150"
-                        :class="
-                          locale.mode === opt.value
-                            ? 'su-chip-active font-medium text-white shadow-sm'
-                            : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200'
-                        "
-                        @click="locale.setMode(opt.value)"
-                      >
-                        {{ opt.label }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div class="mt-5 border-t border-zinc-200/70 dark:border-white/[0.06]">
+                <div class="mt-5 border-t border-line">
                   <button
                     type="button"
                     class="flex w-full items-center justify-between gap-4 pt-5 text-left"
                     @click="activeTab = 'shortcuts'"
                   >
                     <div class="max-w-md">
-                      <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.shortcuts') }}</div>
-                      <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settings.shortcutsJump') }}</p>
+                      <div class="text-sm font-medium text-ink1">{{ t('settings.shortcuts') }}</div>
+                      <p class="mt-0.5 text-xs text-ink2">{{ t('settings.shortcutsJump') }}</p>
                     </div>
                     <span
-                      class="shrink-0 rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-xxs text-zinc-500 dark:border-white/[0.05] dark:bg-white/[0.03] dark:text-zinc-400"
+                      class="shrink-0 rounded-full border border-line bg-code px-2 py-0.5 text-xxs text-ink3"
                     >
                       {{ customizedCount ? t('settings.customizedCount', { n: customizedCount }) : t('settings.customizableCount', { n: SHORTCUT_DEFAULTS.length }) }}
                     </span>
                   </button>
                 </div>
                 <!-- 关于 Miyo：常驻入口（右侧展示当前版本号，点击打开关于弹窗——检查更新 / 下载安装） -->
-                <div class="mt-5 border-t border-zinc-200/70 dark:border-white/[0.06]">
+                <div class="mt-5 border-t border-line">
                   <button
                     type="button"
                     class="flex w-full items-center justify-between gap-4 pt-5 text-left"
                     @click="openAbout"
                   >
                     <div class="max-w-md">
-                      <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.about') }}</div>
-                      <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settings.aboutDesc') }}</p>
+                      <div class="text-sm font-medium text-ink1">{{ t('settings.about') }}</div>
+                      <p class="mt-0.5 text-xs text-ink2">{{ t('settings.aboutDesc') }}</p>
                     </div>
-                    <span class="shrink-0 font-mono text-xs text-zinc-500 dark:text-zinc-400">v{{ appVersion }}</span>
+                    <span class="shrink-0 font-mono text-xs text-ink2">v{{ appVersion }}</span>
                   </button>
                 </div>
                 <!-- 发现新版本：高亮卡片提权（渐变底 + 紫色版本号 + 主紫行动按钮） -->
-                <div v-if="pendingVersion" class="su-update-card mt-5 rounded-xl border border-purple-500/30 p-4">
+                <div v-if="pendingVersion" class="su-update-card mt-5 rounded-xl border border-accent/30 p-4">
                   <div class="flex items-center justify-between gap-4">
                     <div class="max-w-md">
-                      <div class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                      <div class="text-sm font-semibold text-ink1">
                         {{ t('about.newVersion') }}
-                        <span class="font-mono font-bold text-purple-600 dark:text-purple-400">v{{ pendingVersion }}</span>
+                        <span class="font-mono font-bold text-accent">v{{ pendingVersion }}</span>
                       </div>
-                      <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settings.updateAvailableDesc') }}</p>
+                      <p class="mt-0.5 text-xs text-ink2">{{ t('settings.updateAvailableDesc') }}</p>
                     </div>
                     <button
                       class="miyo-btn miyo-btn-primary miyo-btn-sm shrink-0"
@@ -1114,23 +1062,23 @@ const projectSummary = computed(() => {
                     </button>
                   </div>
                 </div>
-                <div v-if="skippedVersion" class="mt-5 border-t border-zinc-200/70 dark:border-white/[0.06]">
+                <div v-if="skippedVersion" class="mt-5 border-t border-line">
                   <div class="flex items-center justify-between gap-4 pt-5">
                     <div class="max-w-md">
-                      <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                      <div class="text-sm font-medium text-ink1">
                         {{ t('settings.skippedVersion', { v: skippedVersion }) }}
                       </div>
-                      <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settings.skippedVersionDesc') }}</p>
+                      <p class="mt-0.5 text-xs text-ink2">{{ t('settings.skippedVersionDesc') }}</p>
                     </div>
                     <button class="miyo-btn miyo-btn-sm shrink-0" type="button" @click="unskipVersion">
                       {{ t('settings.unskip') }}
                     </button>
                   </div>
                 </div>
-                <div v-if="showUpdateDebug" class="mt-5 border-t border-zinc-200/70 dark:border-white/[0.06]">
+                <div v-if="showUpdateDebug" class="mt-5 border-t border-line">
                   <div class="pt-5">
-                    <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settingsdbg.title') }}</div>
-                    <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settingsdbg.desc') }}</p>
+                    <div class="text-sm font-medium text-ink1">{{ t('settingsdbg.title') }}</div>
+                    <p class="mt-0.5 text-xs text-ink2">{{ t('settingsdbg.desc') }}</p>
                     <div class="mt-2 flex flex-wrap items-center gap-2">
                       <input
                         v-model="debugVersion"
@@ -1151,7 +1099,7 @@ const projectSummary = computed(() => {
                         {{ t('settingsdbg.clear') }}
                       </button>
                     </div>
-                    <p class="mt-1.5 font-mono text-xxs text-zinc-500 dark:text-zinc-400">{{ debugStateText }}</p>
+                    <p class="mt-1.5 font-mono text-xxs text-ink2">{{ debugStateText }}</p>
                   </div>
                 </div>
               </div>
@@ -1160,15 +1108,15 @@ const projectSummary = computed(() => {
             <!-- 网络与代理 -->
             <section v-if="activeTab === 'network'">
               <header>
-                <h2 class="text-base font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.network') }}</h2>
-                <p class="mt-1 mb-5 text-xs text-zinc-600 dark:text-zinc-500">{{ t('settings.networkDesc') }}</p>
+                <h2 class="text-base font-medium text-ink1">{{ t('settings.network') }}</h2>
+                <p class="mt-1 mb-5 text-xs text-ink2">{{ t('settings.networkDesc') }}</p>
               </header>
 
-              <div class="rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-5 dark:border-white/[0.06] dark:bg-zinc-900/40">
+              <div class="miyo-card p-5">
                 <div class="flex items-center justify-between gap-4">
                   <div class="max-w-md">
-                    <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.proxyEnable') }}</div>
-                    <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    <div class="text-sm font-medium text-ink1">{{ t('settings.proxyEnable') }}</div>
+                    <p class="mt-0.5 text-xs text-ink2">
                       {{ t('settings.proxyEnableDesc') }}
                     </p>
                   </div>
@@ -1177,7 +1125,7 @@ const projectSummary = computed(() => {
                     role="switch"
                     :aria-checked="proxyEnabled"
                     class="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
-                    :class="proxyEnabled ? 'bg-purple-500' : 'border border-zinc-300 bg-zinc-200 dark:border-white/10 dark:bg-white/10'"
+                    :class="proxyEnabled ? 'bg-accent' : 'border border-line-strong bg-hover'"
                     @click="toggleProxy"
                   >
                     <span
@@ -1187,11 +1135,11 @@ const projectSummary = computed(() => {
                   </button>
                 </div>
 
-                <div v-if="proxyEnabled" class="mt-5 border-t border-zinc-200/70 dark:border-white/[0.06]">
+                <div v-if="proxyEnabled" class="mt-5 border-t border-line">
                   <div class="flex items-center justify-between gap-4 pt-5">
                     <div class="max-w-md">
-                      <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.proxyUrlLabel') }}</div>
-                      <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                      <div class="text-sm font-medium text-ink1">{{ t('settings.proxyUrlLabel') }}</div>
+                      <p class="mt-0.5 text-xs text-ink2">
                         {{ t('settings.proxyUrlDescEg') }} <code class="font-mono text-xxs">http://127.0.0.1:7890</code> {{ t('settings.proxyUrlDescOr') }}
                         <code class="font-mono text-xxs">socks5://host:1080</code>{{ t('settings.proxyUrlDescBlur') }}
                       </p>
@@ -1206,10 +1154,10 @@ const projectSummary = computed(() => {
                     />
                   </div>
 
-                  <div class="flex items-center justify-between gap-4 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
+                  <div class="flex items-center justify-between gap-4 border-t border-line pt-5">
                     <div class="max-w-md">
-                      <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.proxyTestTitle') }}</div>
-                      <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                      <div class="text-sm font-medium text-ink1">{{ t('settings.proxyTestTitle') }}</div>
+                      <p class="mt-0.5 text-xs text-ink2">
                         {{ proxyTest ? proxyTest.message : t('settings.proxyTestDesc') }}
                       </p>
                     </div>
@@ -1227,11 +1175,11 @@ const projectSummary = computed(() => {
               </div>
 
               <!-- TLS：客户端证书（mTLS）与自签放行 -->
-              <div class="mt-5 rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-5 dark:border-white/[0.06] dark:bg-zinc-900/40">
+              <div class="miyo-card mt-5 p-5">
                 <div class="flex items-center justify-between gap-4">
                   <div class="max-w-md">
-                    <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.tlsIdentity') }}</div>
-                    <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    <div class="text-sm font-medium text-ink1">{{ t('settings.tlsIdentity') }}</div>
+                    <p class="mt-0.5 text-xs text-ink2">
                       {{ t('settings.tlsIdentityDesc') }}
                     </p>
                   </div>
@@ -1244,10 +1192,10 @@ const projectSummary = computed(() => {
                     @change="saveTls"
                   />
                 </div>
-                <div class="mt-5 flex items-center justify-between gap-4 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
+                <div class="mt-5 flex items-center justify-between gap-4 border-t border-line pt-5">
                   <div class="max-w-md">
-                    <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.tlsInsecure') }}</div>
-                    <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    <div class="text-sm font-medium text-ink1">{{ t('settings.tlsInsecure') }}</div>
+                    <p class="mt-0.5 text-xs text-ink2">
                       {{ t('settings.tlsInsecureDesc') }}
                     </p>
                   </div>
@@ -1257,7 +1205,7 @@ const projectSummary = computed(() => {
                     :aria-checked="tlsAcceptInvalid"
                     :disabled="tlsBusy"
                     class="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
-                    :class="tlsAcceptInvalid ? 'bg-purple-500' : 'border border-zinc-300 bg-zinc-200 dark:border-white/10 dark:bg-white/10'"
+                    :class="tlsAcceptInvalid ? 'bg-accent' : 'border border-line-strong bg-hover'"
                     @click="toggleTlsInsecure"
                   >
                     <span
@@ -1277,8 +1225,8 @@ const projectSummary = computed(() => {
             <section v-if="activeTab === 'shortcuts'">
               <header class="mb-6 flex items-start justify-between gap-4">
                 <div>
-                  <h2 class="text-base font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.shortcuts') }}</h2>
-                  <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                  <h2 class="text-base font-medium text-ink1">{{ t('settings.shortcuts') }}</h2>
+                  <p class="mt-1 text-xs text-ink2">
                     {{ t('settings.shortcutsDesc') }}
                   </p>
                 </div>
@@ -1294,20 +1242,20 @@ const projectSummary = computed(() => {
               </header>
 
               <div v-for="g in shortcutGroups" :key="g.group" class="mb-4">
-                <div class="mb-1.5 px-1 text-xxs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                <div class="mb-1.5 px-1 text-xxs font-medium uppercase tracking-wider text-ink2">
                   {{ t(g.group) }}
                 </div>
-                <div class="overflow-hidden rounded-xl border border-zinc-200/70 bg-zinc-50/80 dark:border-white/[0.06] dark:bg-zinc-900/40">
+                <div class="overflow-hidden miyo-card">
                   <div
                     v-for="row in g.items"
                     :key="row.id"
-                    class="flex items-center justify-between gap-3 border-b border-zinc-200/60 px-4 py-2.5 last:border-b-0 dark:border-white/[0.05]"
+                    class="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5 last:border-b-0"
                   >
                     <div class="flex min-w-0 items-center gap-2">
-                      <span class="truncate text-xs text-zinc-900 dark:text-zinc-200">{{ t(row.description) }}</span>
+                      <span class="truncate text-xs text-ink1">{{ t(row.description) }}</span>
                       <span
                         v-if="row.customized"
-                        class="shrink-0 rounded-full bg-purple-100 px-1.5 py-px text-xxs font-medium text-purple-700 dark:bg-purple-500/15 dark:text-purple-300"
+                        class="shrink-0 rounded-full bg-accent-tint px-1.5 py-px text-xxs font-medium text-accent"
                       >
                         {{ t('settings.customized') }}
                       </span>
@@ -1341,19 +1289,19 @@ const projectSummary = computed(() => {
             <!-- 自增序列 -->
             <section v-if="activeTab === 'sequences'">
               <header class="mb-6">
-                <h2 class="text-base font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.sequencesTitle') }}</h2>
-                <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                  {{ t('settings.seqDescA') }} <code class="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xxs text-purple-600 dark:bg-white/5 dark:text-purple-300">&#123;&#123;$seq:key&#125;&#125;</code> {{ t('settings.seqDescB') }}
+                <h2 class="text-base font-medium text-ink1">{{ t('settings.sequencesTitle') }}</h2>
+                <p class="mt-1 text-xs text-ink2">
+                  {{ t('settings.seqDescA') }} <code class="rounded bg-code px-1.5 py-0.5 font-mono text-xxs text-accent">&#123;&#123;$seq:key&#125;&#125;</code> {{ t('settings.seqDescB') }}
                 </p>
               </header>
 
               <div class="space-y-4">
                 <!-- 新增自增序列卡片 -->
-                <div class="rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-4 dark:border-white/[0.06] dark:bg-zinc-900/40">
+                <div class="miyo-card p-4">
                   <div class="mb-3">
-                    <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.seqAddTitle') }}</div>
-                    <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
-                      {{ t('settings.seqGlobalHint') }} <code class="font-mono text-xxs text-zinc-700 dark:text-zinc-300">&#123;&#123;$seq&#125;&#125;</code>
+                    <div class="text-sm font-medium text-ink1">{{ t('settings.seqAddTitle') }}</div>
+                    <p class="mt-0.5 text-xs text-ink2">
+                      {{ t('settings.seqGlobalHint') }} <code class="font-mono text-xxs text-ink2">&#123;&#123;$seq&#125;&#125;</code>
                     </p>
                   </div>
                   <div class="flex items-center gap-2">
@@ -1386,36 +1334,36 @@ const projectSummary = computed(() => {
                 </div>
 
                 <!-- 序列清单列表卡片 -->
-                <div class="rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-1 dark:border-white/[0.06] dark:bg-zinc-900/40">
+                <div class="miyo-card p-1">
                   <div class="flex items-center justify-between px-4 py-3">
-                    <div class="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{{ t('settings.seqListTitle') }}</div>
-                    <span class="text-xxs text-zinc-500">{{ t('settings.seqAutoSave') }}</span>
+                    <div class="text-xs font-medium uppercase tracking-wider text-ink2">{{ t('settings.seqListTitle') }}</div>
+                    <span class="text-xxs text-ink3">{{ t('settings.seqAutoSave') }}</span>
                   </div>
 
-                  <div v-if="counters.length" class="mx-2 mb-2 overflow-hidden rounded-lg border border-zinc-200/70 bg-white dark:border-white/[0.06] dark:bg-black/20">
+                  <div v-if="counters.length" class="mx-2 mb-2 overflow-hidden rounded-lg border border-line bg-card">
                     <table class="w-full border-collapse text-left text-xs">
                       <thead>
-                        <tr class="border-b border-zinc-200/70 bg-zinc-50/60 text-xxs text-zinc-500 dark:border-white/[0.06] dark:bg-white/[0.02] dark:text-zinc-400">
+                        <tr class="border-b border-line bg-code text-xxs text-ink3">
                           <th class="px-3.5 py-2.5 font-medium">{{ t('settings.seqColKey') }}</th>
                           <th class="w-36 px-3.5 py-2.5 font-medium">{{ t('settings.seqColNext') }}</th>
                           <th class="w-24 px-3.5 py-2.5 text-right font-medium">{{ t('settings.seqColOps') }}</th>
                         </tr>
                       </thead>
-                      <tbody class="divide-y divide-zinc-200/70 dark:divide-white/[0.06]">
+                      <tbody class="divide-y divide-line">
                         <tr
                           v-for="c in counters"
                           :key="c.key || '__global__'"
-                          class="transition-colors hover:bg-zinc-50/50 dark:hover:bg-white/[0.02]"
+                          class="transition-colors hover:bg-hover"
                         >
                           <td class="px-3.5 py-2.5">
                             <div class="flex items-center gap-2 font-mono">
                               <span
                                 v-if="!c.key"
-                                class="inline-flex items-center rounded bg-purple-100 px-1.5 py-0.5 text-xxs font-medium text-purple-700 dark:bg-purple-500/15 dark:text-purple-300"
+                                class="inline-flex items-center rounded bg-accent-tint px-1.5 py-0.5 text-xxs font-medium text-accent"
                               >
                                 {{ t('envmgr.groupGlobal') }}
                               </span>
-                              <span class="text-zinc-900 dark:text-zinc-200">
+                              <span class="text-ink1">
                                 <template v-if="c.key">&#123;&#123;$seq:{{ c.key }}&#125;&#125;</template>
                                 <template v-else>&#123;&#123;$seq&#125;&#125;</template>
                               </span>
@@ -1447,7 +1395,7 @@ const projectSummary = computed(() => {
                                 @confirm="deleteSeq(c)"
                               >
                                 <button
-                                  class="miyo-btn miyo-btn-sm miyo-btn-ghost text-zinc-500 hover:text-red-500 dark:text-zinc-400 dark:hover:text-red-400"
+                                  class="miyo-btn miyo-btn-sm miyo-btn-ghost text-ink3 hover:text-danger"
                                   type="button"
                                   :aria-label="t('settings.seqDeleteTitle')"
                                 >
@@ -1466,11 +1414,11 @@ const projectSummary = computed(() => {
                     v-else
                     class="flex flex-col items-center justify-center py-10 text-center"
                   >
-                    <div class="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-zinc-200/50 text-zinc-500 dark:bg-white/5 dark:text-zinc-500">
+                    <div class="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-hover text-ink3">
                       <Icon name="list" :size="16" />
                     </div>
-                    <p class="text-xs text-zinc-700 dark:text-zinc-400">{{ t('settings.seqEmpty') }}</p>
-                    <p class="mt-0.5 text-xxs text-zinc-500">{{ t('settings.seqEmptyHint') }}</p>
+                    <p class="text-xs text-ink2">{{ t('settings.seqEmpty') }}</p>
+                    <p class="mt-0.5 text-xxs text-ink3">{{ t('settings.seqEmptyHint') }}</p>
                   </div>
                 </div>
               </div>
@@ -1483,22 +1431,22 @@ const projectSummary = computed(() => {
                 <p class="my-2.5 text-xs leading-relaxed text-ink3">{{ t('settings.dataDesc') }}</p>
               </header>
 
-              <div class="rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-5 dark:border-white/[0.06] dark:bg-zinc-900/40">
+              <div class="miyo-card p-5">
                 <div class="flex items-center gap-3">
                   <div
-                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-400"
+                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-tint text-accent"
                   >
                     <Icon name="package" :size="18" />
                   </div>
                   <div class="min-w-0">
-                    <div class="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                    <div class="truncate text-sm font-medium text-ink1">
                       {{ project ? project.name : t('settings.noProject') }}
                     </div>
-                    <p class="mt-0.5 truncate text-xs text-zinc-600 dark:text-zinc-400">{{ projectSummary }}</p>
+                    <p class="mt-0.5 truncate text-xs text-ink2">{{ projectSummary }}</p>
                   </div>
                 </div>
 
-                <div class="mt-4 flex items-center gap-2 border-t border-zinc-200/70 pt-4 dark:border-white/[0.06]">
+                <div class="mt-4 flex items-center gap-2 border-t border-line pt-4">
                   <button
                     class="miyo-btn"
                     type="button"
@@ -1522,8 +1470,8 @@ const projectSummary = computed(() => {
                 </div>
               </div>
 
-              <div class="rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-5 dark:border-white/[0.06] dark:bg-zinc-900/40">
-                <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.dataDir') }}</div>
+              <div class="miyo-card p-5">
+                <div class="text-sm font-medium text-ink1">{{ t('settings.dataDir') }}</div>
                 <!-- 路径井与次级按钮组同行等高（--h-md = 32px）：路径超长单行截断，完整值走 title + 复制按钮 -->
                 <div class="datadir-row">
                   <div class="datadir-path" :title="dataDir || undefined">
@@ -1563,7 +1511,7 @@ const projectSummary = computed(() => {
                   </div>
                 </div>
                 <p class="mt-2 text-xxs leading-relaxed text-ink3">{{ t('settings.dataDirDesc') }}</p>
-                <p v-if="needRestart" class="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
+                <p v-if="needRestart" class="mt-3 text-xs text-ink2">
                   {{ t('settings.dataDirRestartNow') }}
                   <button class="miyo-btn miyo-btn-sm ml-2" type="button" @click="restartNow">
                     {{ t('settings.restartNow') }}
@@ -1577,14 +1525,14 @@ const projectSummary = computed(() => {
             <!-- 日志 -->
             <section v-if="activeTab === 'logs'">
               <header>
-                <h2 class="text-base font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.logs') }}</h2>
-                <p class="mt-1 mb-5 text-xs text-zinc-600 dark:text-zinc-500">{{ t('settings.logsDesc') }}</p>
+                <h2 class="text-base font-medium text-ink1">{{ t('settings.logs') }}</h2>
+                <p class="mt-1 mb-5 text-xs text-ink2">{{ t('settings.logsDesc') }}</p>
               </header>
 
-              <div class="mb-4 flex items-center justify-between gap-4 rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-4 dark:border-white/[0.06] dark:bg-zinc-900/40">
+              <div class="mb-4 flex items-center justify-between gap-4 miyo-card p-4">
                 <div class="max-w-md">
-                  <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.logRetention') }}</div>
-                  <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settings.logRetentionDesc') }}</p>
+                  <div class="text-sm font-medium text-ink1">{{ t('settings.logRetention') }}</div>
+                  <p class="mt-0.5 text-xs text-ink2">{{ t('settings.logRetentionDesc') }}</p>
                 </div>
                 <div class="relative w-28 shrink-0">
                   <CustomNumberInput
@@ -1597,7 +1545,7 @@ const projectSummary = computed(() => {
                     @change="saveLogRetention"
                   />
                   <span
-                    class="pointer-events-none absolute right-[28px] top-1/2 -translate-y-1/2 text-xs text-zinc-500"
+                    class="pointer-events-none absolute right-[28px] top-1/2 -translate-y-1/2 text-xs text-ink3"
                   >
                     {{ t('settings.logRetentionUnit') }}
                   </span>
@@ -1620,7 +1568,7 @@ const projectSummary = computed(() => {
                 </button>
               </div>
               <pre v-if="logContent" class="log-view">{{ logContent }}</pre>
-              <p v-else class="text-xs text-zinc-500">{{ t('settings.logsEmpty') }}</p>
+              <p v-else class="text-xs text-ink3">{{ t('settings.logsEmpty') }}</p>
             </section>
           </div>
         </Transition>
@@ -1630,10 +1578,8 @@ const projectSummary = computed(() => {
 </template>
 
 <style scoped>
-/* 选中态紫色填充（Tab 高亮条 / 主题·语言 radio chip）：走 --primary 令牌
-   （浅色降刺眼 violet-600，深色 violet-500），替代字面 bg-purple-600 */
-.su-tab-marker,
-.su-chip-active {
+/* 页签选中态左侧高亮条：走 --primary 令牌（随主题/自定义强调色自动适配） */
+.su-tab-marker {
   background: var(--primary);
 }
 
