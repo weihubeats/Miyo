@@ -197,6 +197,20 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-plugin-data-set`
 - `allow-plugin-data-delete`
 - `allow-plugin-data-keys`
+- `allow-java-discover-processes`
+- `allow-java-probe-pid`
+- `allow-java-attach-process`
+- `allow-java-detach-process`
+- `allow-java-unload-agent`
+- `allow-java-attach-sessions`
+- `allow-java-agent-status`
+- `allow-java-agent-spring-status`
+- `allow-java-agent-classes`
+- `allow-java-agent-class-detail`
+- `allow-java-agent-methods`
+- `allow-java-agent-beans`
+- `allow-java-agent-invoke`
+- `allow-java-agent-cancel`
 - `allow-list-java-projects`
 - `allow-save-java-project`
 - `allow-delete-java-project`
@@ -2512,6 +2526,266 @@ Denies the import_environment command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-java-agent-beans`
+
+</td>
+<td>
+
+Enables the java_agent_beans command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-agent-beans`
+
+</td>
+<td>
+
+Denies the java_agent_beans command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-agent-cancel`
+
+</td>
+<td>
+
+Enables the java_agent_cancel command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-agent-cancel`
+
+</td>
+<td>
+
+Denies the java_agent_cancel command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-agent-class-detail`
+
+</td>
+<td>
+
+Enables the java_agent_class_detail command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-agent-class-detail`
+
+</td>
+<td>
+
+Denies the java_agent_class_detail command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-agent-classes`
+
+</td>
+<td>
+
+Enables the java_agent_classes command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-agent-classes`
+
+</td>
+<td>
+
+Denies the java_agent_classes command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-agent-invoke`
+
+</td>
+<td>
+
+Enables the java_agent_invoke command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-agent-invoke`
+
+</td>
+<td>
+
+Denies the java_agent_invoke command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-agent-methods`
+
+</td>
+<td>
+
+Enables the java_agent_methods command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-agent-methods`
+
+</td>
+<td>
+
+Denies the java_agent_methods command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-agent-spring-status`
+
+</td>
+<td>
+
+Enables the java_agent_spring_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-agent-spring-status`
+
+</td>
+<td>
+
+Denies the java_agent_spring_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-agent-status`
+
+</td>
+<td>
+
+Enables the java_agent_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-agent-status`
+
+</td>
+<td>
+
+Denies the java_agent_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-attach-process`
+
+</td>
+<td>
+
+Enables the java_attach_process command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-attach-process`
+
+</td>
+<td>
+
+Denies the java_attach_process command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-attach-sessions`
+
+</td>
+<td>
+
+Enables the java_attach_sessions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-attach-sessions`
+
+</td>
+<td>
+
+Denies the java_attach_sessions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-java-cancel-invocation`
 
 </td>
@@ -2538,6 +2812,32 @@ Denies the java_cancel_invocation command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-java-detach-process`
+
+</td>
+<td>
+
+Enables the java_detach_process command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-detach-process`
+
+</td>
+<td>
+
+Denies the java_detach_process command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-java-discover-local`
 
 </td>
@@ -2557,6 +2857,32 @@ Enables the java_discover_local command without any pre-configured scope.
 <td>
 
 Denies the java_discover_local command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-discover-processes`
+
+</td>
+<td>
+
+Enables the java_discover_processes command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-discover-processes`
+
+</td>
+<td>
+
+Denies the java_discover_processes command without any pre-configured scope.
 
 </td>
 </tr>
@@ -2668,6 +2994,32 @@ Denies the java_probe_endpoint command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-java-probe-pid`
+
+</td>
+<td>
+
+Enables the java_probe_pid command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-probe-pid`
+
+</td>
+<td>
+
+Denies the java_probe_pid command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-java-test-connection`
 
 </td>
@@ -2687,6 +3039,32 @@ Enables the java_test_connection command without any pre-configured scope.
 <td>
 
 Denies the java_test_connection command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-unload-agent`
+
+</td>
+<td>
+
+Enables the java_unload_agent command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-unload-agent`
+
+</td>
+<td>
+
+Denies the java_unload_agent command without any pre-configured scope.
 
 </td>
 </tr>

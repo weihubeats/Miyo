@@ -2,12 +2,13 @@
 /**
  * JavaDebugView：Java 方法实时调试工作台（顶级路由 /java-debug）。
  *
- * 布局：顶栏（项目选择 / Runtime 连接状态 / 连接 / Runtime 信息 / 历史 /
- * 保存用例）+ SplitPanes 三列（类浏览器 / 方法与参数 / 执行结果）+
- * 历史抽屉 + 项目弹窗 + SDK 教程 + 接入向导。无项目时整页展示接入向导
- * （JavaOnboarding）；连接期间 30s 心跳探活（store 内实现）。
+ * 2.0 双模式（默认 attach，localStorage 记忆）：
+ * - attach：本地 JVM 自动发现 → 用户确认 → 动态注入 Agent → 类 / Bean /
+ *   方法发现 → 受控调用（零源码侵入；左栏 进程/Bean 页签 + 中列 类/方法 +
+ *   右列 结果，复用 v1 的类浏览器 / 方法面板 / 结果面板 / 历史抽屉）；
+ * - runtime：v1 SDK 嵌入端点工作台原样保留（旧项目兼容连接方式）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
 import Icon from '@/components/ui/Icon.vue'
@@ -17,56 +18,218 @@ import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge.vue'
 import { useToast } from '@/composables/useToast'
 import { useLocaleStore } from '@/stores/locale'
 import { useWorkspaceStore } from '@/stores/workspace'
+import JavaAttachConfirmDialog from '@/domains/java-debug/components/JavaAttachConfirmDialog.vue'
+import JavaBeansPanel from '@/domains/java-debug/components/JavaBeansPanel.vue'
 import JavaClassBrowser from '@/domains/java-debug/components/JavaClassBrowser.vue'
 import JavaHistoryDrawer from '@/domains/java-debug/components/JavaHistoryDrawer.vue'
 import JavaMethodPanel from '@/domains/java-debug/components/JavaMethodPanel.vue'
 import JavaOnboarding from '@/domains/java-debug/components/JavaOnboarding.vue'
+import JavaProcessPanel from '@/domains/java-debug/components/JavaProcessPanel.vue'
 import JavaProjectDialog from '@/domains/java-debug/components/JavaProjectDialog.vue'
 import JavaResultPanel from '@/domains/java-debug/components/JavaResultPanel.vue'
 import JavaSaveTestCaseDialog from '@/domains/java-debug/components/JavaSaveTestCaseDialog.vue'
 import JavaSetupGuide from '@/domains/java-debug/components/JavaSetupGuide.vue'
+import { useJavaAttachStore } from '@/domains/java-debug/stores/javaAttach'
 import { useJavaDebugStore } from '@/domains/java-debug/stores/javaDebug'
 import { errorText } from '@/utils/errorText'
+
+type ViewMode = 'attach' | 'runtime'
+const MODE_KEY = 'miyo.java.mode'
 
 const router = useRouter()
 const toast = useToast()
 const locale = useLocaleStore()
 const t = locale.t
-const store = useJavaDebugStore()
 const workspace = useWorkspaceStore()
 
+const attachStore = useJavaAttachStore()
+const runtimeStore = useJavaDebugStore()
+
+// ---------- 模式切换（attach 默认；runtime 兼容 v1 项目） ----------
+const viewMode = ref<ViewMode>(loadMode())
+
+function loadMode(): ViewMode {
+  try {
+    const raw = localStorage.getItem(MODE_KEY)
+    return raw === 'runtime' ? 'runtime' : 'attach'
+  } catch {
+    return 'attach'
+  }
+}
+
+watch(viewMode, (mode) => {
+  try {
+    localStorage.setItem(MODE_KEY, mode)
+  } catch {
+    // localStorage 不可用：会话内存即可
+  }
+  if (mode === 'attach') {
+    runtimeStore.dispose()
+    void attachStore.loadProcesses()
+    attachStore.setAutoRefresh(attachStore.autoRefresh)
+  } else {
+    attachStore.dispose()
+    void runtimeStore.loadProjects()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// attach 工作台
+// ---------------------------------------------------------------------------
+const leftTab = ref<'processes' | 'beans'>('processes')
+const attachDialogPid = ref<number | null>(null)
+const historyOpenAttach = ref(false)
+
+const attachTarget = computed(
+  () => attachStore.processes.find((p) => p.pid === attachDialogPid.value) ?? null,
+)
+
+const attachedPids = computed(() => [...attachStore.sessions.keys()])
+
+onMounted(async () => {
+  if (viewMode.value === 'attach') {
+    await attachStore.loadProcesses()
+    attachStore.setAutoRefresh(true)
+  } else {
+    await runtimeStore.loadProjects()
+    if (runtimeStore.projects.length > 0 && runtimeStore.connection.state !== 'ok') {
+      const ok = await runtimeStore.connect()
+      if (ok) await runtimeStore.loadClasses()
+    }
+  }
+})
+
+onBeforeUnmount(() => {
+  attachStore.setAutoRefresh(false)
+})
+
+function requestAttach(pid: number): void {
+  attachDialogPid.value = pid
+}
+
+async function confirmAttach(): Promise<void> {
+  const pid = attachDialogPid.value
+  if (pid == null) return
+  const ok = await attachStore.attach(pid)
+  attachDialogPid.value = null
+  if (ok) {
+    toast.success(t('java2.attachedToast', { pid }))
+    leftTab.value = 'processes'
+  } else {
+    toast.error(t('java2.attachFailedToast'))
+  }
+}
+
+async function detachActive(): Promise<void> {
+  const pid = attachStore.activePid
+  if (pid == null) return
+  await attachStore.detach(pid)
+  toast.success(t('java2.detachedToast'))
+}
+
+async function unloadActive(): Promise<void> {
+  const pid = attachStore.activePid
+  if (pid == null) return
+  try {
+    await attachStore.unloadAgent(pid)
+    toast.success(t('java2.unloadedToast'))
+  } catch (e) {
+    toast.error(errorText(e))
+  }
+}
+
+async function manualProbe(pid: number): Promise<void> {
+  const info = await attachStore.probeManualPid(pid)
+  if (info && info.attachable) {
+    requestAttach(pid)
+  } else {
+    toast.error(info?.attach_block_reason ?? t('java2.manualPidNotFound'))
+  }
+}
+
+/** Bean 点击 → 选中其实现类的类浏览（方法发现走 actual_type）。 */
+function selectBean(bean: import('@/types/miyoApi').JavaBeanInfo): void {
+  const className = bean.actual_type ?? bean.definition_type
+  if (className) {
+    void attachStore.selectClass(className)
+    leftTab.value = 'processes'
+  }
+}
+
+async function attachRun(): Promise<void> {
+  const response = await attachStore.invoke()
+  if (response && response.status !== 'success') {
+    toast.warning(t('java.invokeFailedToast'))
+  }
+}
+
+async function attachCancel(): Promise<void> {
+  try {
+    await attachStore.cancelLast()
+    toast.success(t('java.cancelSent'))
+  } catch (e) {
+    toast.error(errorText(e))
+  }
+}
+
+/** 类搜索 → 服务端过滤（Agent classes.list search）+ 本地浏览器过滤叠加。 */
+function onAttachClassSearch(term: string): void {
+  attachStore.classSearch = term
+  void attachStore.loadClasses()
+}
+
+/** 方法点击：v1 形状方法 + 原始 agent 方法（风险 / param_types）一起入 store。 */
+function agentMethodOf(method: import('@/types/miyoApi').JavaMethodInfo):
+  | import('@/types/miyoApi').JavaAgentMethodInfo
+  | undefined {
+  return attachStore.agentMethods.find((m) => m.method_id === method.method_id)
+}
+
+function rerunAttach(record: import('@/types/miyoApi').JavaInvocationRecord): void {
+  const method = attachStore.methods.find((m) => m.method_id === record.method_id)
+  if (method) {
+    attachStore.selectMethod(method)
+  }
+  attachStore.argsJson = JSON.stringify(record.arguments ?? [], null, 2)
+  attachStore.editMode = 'json'
+  attachStore.lastResponse = null
+  historyOpenAttach.value = false
+}
+
+const attachSessionTone = computed<StatusTone>(() => {
+  if (attachStore.attached) return 'ok'
+  if (attachStore.attachingPid != null) return 'wait'
+  return 'wait'
+})
+
+const sessionLabel = computed(() => {
+  if (attachStore.attached) return t('java2.sessionAttached')
+  if (attachStore.attachingPid != null) return t('java2.attaching')
+  return t('java2.sessionIdle')
+})
+
+// ---------------------------------------------------------------------------
+// runtime 工作台（v1 原样保留；逻辑与既有版本一致）
+// ---------------------------------------------------------------------------
 const projectDialogOpen = ref(false)
-const editingProject = ref<import('@/types/miyoApi.d').JavaDebugProject | null>(null)
+const editingProject = ref<import('@/types/miyoApi').JavaDebugProject | null>(null)
 const projectPreset = ref<{ name?: string; endpoint?: string } | null>(null)
 const historyOpen = ref(false)
 const connecting = ref(false)
 const guideOpen = ref(false)
 const saveCaseOpen = ref(false)
 
-onMounted(async () => {
-  await store.loadProjects()
-  // 有项目且未连接：静默自动连接（失败不弹错，交给顶栏状态）。
-  if (store.projects.length > 0 && store.connection.state !== 'ok') {
-    const ok = await store.connect()
-    if (ok) await store.loadClasses()
-  }
-})
-
-/** 无任何项目 = 首次进入，整页展示接入向导。 */
-const needsOnboarding = computed(() => store.projects.length === 0)
-
-/** 返回来源页（与 RealtimeView 同款回退逻辑）。 */
-function goBack(): void {
-  if (window.history.state?.back) router.back()
-  else void router.push('/projects')
-}
+const runtimeConnected = computed(() => runtimeStore.connection.state === 'ok')
+const needsOnboarding = computed(
+  () => viewMode.value === 'runtime' && runtimeStore.projects.length === 0,
+)
 
 const projectOptions = computed(() =>
-  store.projects.map((p) => ({ value: p.id, label: p.name })),
+  runtimeStore.projects.map((p) => ({ value: p.id, label: p.name })),
 )
 
 const connectionTone = computed<StatusTone>(() => {
-  switch (store.connection.state) {
+  switch (runtimeStore.connection.state) {
     case 'ok':
       return 'ok'
     case 'fail':
@@ -77,7 +240,7 @@ const connectionTone = computed<StatusTone>(() => {
 })
 
 const connectionLabel = computed(() => {
-  switch (store.connection.state) {
+  switch (runtimeStore.connection.state) {
     case 'ok':
       return t('java.connOk')
     case 'fail':
@@ -87,34 +250,35 @@ const connectionLabel = computed(() => {
   }
 })
 
-const connected = computed(() => store.connection.state === 'ok')
+const runtimeInfo = computed(() => runtimeStore.connection.info)
 
-/** 连接后的 Runtime 信息 chips（握手 info 快照）。 */
-const runtimeInfo = computed(() => store.connection.info)
-
-/** 关联环境的展示（来自 workspace store 的环境列表）。 */
 const linkedEnvName = computed(() => {
-  const envId = store.activeProject?.environment_id
+  const envId = runtimeStore.activeProject?.environment_id
   if (!envId) return null
   return workspace.environments.find((e) => e.id === envId)?.name ?? null
 })
 
 async function connect(): Promise<void> {
-  if (!store.activeProject) return
+  if (!runtimeStore.activeProject) return
   connecting.value = true
-  const ok = await store.connect().finally(() => {
+  const ok = await runtimeStore.connect().finally(() => {
     connecting.value = false
   })
   if (ok) {
-    toast.success(t('java.connectedToast', { app: store.activeProject.name }))
-    await store.loadClasses()
+    toast.success(t('java.connectedToast', { app: runtimeStore.activeProject.name }))
+    await runtimeStore.loadClasses()
   } else {
-    toast.error(store.connection.message || t('java.connFail'))
+    toast.error(runtimeStore.connection.message || t('java.connFail'))
   }
 }
 
 function disconnect(): void {
-  store.disconnect()
+  runtimeStore.disconnect()
+}
+
+function goBack(): void {
+  if (window.history.state?.back) router.back()
+  else void router.push('/projects')
 }
 
 function openNewProject(): void {
@@ -124,14 +288,12 @@ function openNewProject(): void {
 }
 
 function openEditProject(): void {
-  if (!store.activeProject) return
-  editingProject.value = store.activeProject
-  projectPreset.value = null
+  if (!runtimeStore.activeProject) return
+  editingProject.value = runtimeStore.activeProject
   projectDialogOpen.value = true
 }
 
-/** 接入向导：本地候选 → 预填注册弹窗（应用名 / 端点）。 */
-function useCandidate(runtime: import('@/types/miyoApi.d').JavaDiscoveredRuntime): void {
+function useCandidate(runtime: import('@/types/miyoApi').JavaDiscoveredRuntime): void {
   editingProject.value = null
   projectPreset.value = {
     endpoint: runtime.endpoint,
@@ -140,12 +302,11 @@ function useCandidate(runtime: import('@/types/miyoApi.d').JavaDiscoveredRuntime
   projectDialogOpen.value = true
 }
 
-async function onProjectSaved(project: import('@/types/miyoApi.d').JavaDebugProject): Promise<void> {
-  await store.loadProjects()
-  store.activeProjectId = project.id
-  // 保存即尝试连接（新注册项目一步到位进入工作台）。
-  const ok = await store.connect()
-  if (ok) await store.loadClasses()
+async function onProjectSaved(project: import('@/types/miyoApi').JavaDebugProject): Promise<void> {
+  await runtimeStore.loadProjects()
+  runtimeStore.activeProjectId = project.id
+  const ok = await runtimeStore.connect()
+  if (ok) await runtimeStore.loadClasses()
 }
 
 function editSettings(): void {
@@ -153,16 +314,15 @@ function editSettings(): void {
 }
 
 async function run(): Promise<void> {
-  const response = await store.invoke()
+  const response = await runtimeStore.invoke()
   if (response && response.status !== 'success') {
-    // 业务失败不打断（结果面板突出异常），仅提示已返回。
     toast.warning(t('java.invokeFailedToast'))
   }
 }
 
 async function cancelRun(): Promise<void> {
   try {
-    await store.cancelLast()
+    await runtimeStore.cancelLast()
     toast.success(t('java.cancelSent'))
   } catch (e) {
     toast.error(errorText(e))
@@ -170,93 +330,125 @@ async function cancelRun(): Promise<void> {
 }
 
 async function refreshHistory(): Promise<void> {
-  await store.loadHistory()
+  await runtimeStore.loadHistory()
 }
 
-/** 从历史重跑：回填参数并关抽屉。 */
-function rerun(record: import('@/types/miyoApi.d').JavaInvocationRecord): void {
-  store.applyFromRecord(record)
+function rerun(record: import('@/types/miyoApi').JavaInvocationRecord): void {
+  runtimeStore.applyFromRecord(record)
   historyOpen.value = false
 }
 
-/** 结果面板历史 Tab 的快速重跑（不关抽屉，只回填参数）。 */
-function rerunFromPanel(record: import('@/types/miyoApi.d').JavaInvocationRecord): void {
-  store.applyFromRecord(record)
-  void store.selectClass(record.class_name).then(() => {
-    const found = store.methods.find((m) => m.method_id === record.method_id)
-    if (found) store.selectMethod(found)
-    store.applyFromRecord(record)
+function rerunFromPanel(record: import('@/types/miyoApi').JavaInvocationRecord): void {
+  runtimeStore.applyFromRecord(record)
+  void runtimeStore.selectClass(record.class_name).then(() => {
+    const found = runtimeStore.methods.find((m) => m.method_id === record.method_id)
+    if (found) runtimeStore.selectMethod(found)
+    runtimeStore.applyFromRecord(record)
   })
 }
 
 function pickRecent(methodId: string): void {
-  const method = store.methods.find((m) => m.method_id === methodId)
+  const method = runtimeStore.methods.find((m) => m.method_id === methodId)
   if (method) {
-    store.selectMethod(method)
+    runtimeStore.selectMethod(method)
     return
   }
-  // 方法不在当前类列表：先选其所属类再选方法。
   const className = methodId.split('#')[0] ?? ''
-  void store.selectClass(className).then(() => {
-    const found = store.methods.find((m) => m.method_id === methodId)
-    if (found) store.selectMethod(found)
+  void runtimeStore.selectClass(className).then(() => {
+    const found = runtimeStore.methods.find((m) => m.method_id === methodId)
+    if (found) runtimeStore.selectMethod(found)
   })
 }
 
-/** 保存当前调用配置（参数快照）为请求示例风格的本地草稿 —— MVP 落点：
- * 参数回填历史即可复用，这里提供「复制为 JSON」快捷动作。 */
 async function copyArgs(): Promise<void> {
   try {
-    await navigator.clipboard.writeText(store.argsJson)
+    await navigator.clipboard.writeText(runtimeStore.argsJson)
     toast.success(t('java.copied'))
   } catch {
     toast.error(t('java.copyFailed'))
   }
 }
 
-/** 当前参数存为模板（下次选该方法自动带出）。 */
 function onSaveTemplate(): void {
-  store.saveArgsTemplate()
+  runtimeStore.saveArgsTemplate()
   toast.success(t('java.argsTemplateSaved'))
 }
 
-/** 应用已存模板（重新回填参数）。 */
 function onUseTemplate(): void {
-  if (store.argsTemplate != null) store.argsJson = store.argsTemplate
+  if (runtimeStore.argsTemplate != null) runtimeStore.argsJson = runtimeStore.argsTemplate
 }
+
+const modeOptions = computed(() => [
+  { value: 'attach', label: t('java2.modeAttach') },
+  { value: 'runtime', label: t('java2.modeRuntime') },
+])
 </script>
 
 <template>
   <div class="jdv">
     <header class="jdv-top">
       <div class="jdv-top-left">
-        <!-- 返回主页：带文案的清晰入口（原 icon-only + 反向 chevron 不可辨识，
-             且 common.back 为字典缺失的悬空键，tooltip 显示裸键名） -->
         <button class="miyo-btn miyo-btn-sm" type="button" :title="t('app.backHome')" @click="goBack">
           <Icon name="chevron-left" :size="13" />
           {{ t('app.backHome') }}
         </button>
         <Icon name="package" :size="16" />
         <h1 class="jdv-title">{{ t('java.viewTitle') }}</h1>
+        <!-- 连接模式切换：attach 默认推荐（零源码侵入）；runtime 兼容 v1 SDK 项目 -->
+        <div class="jdv-mode" data-testid="java-mode-switch">
+          <button
+            v-for="opt in modeOptions"
+            :key="opt.value"
+            type="button"
+            class="jdv-mode-btn"
+            :class="{ active: viewMode === opt.value }"
+            :data-testid="`java-mode-${opt.value}`"
+            @click="viewMode = opt.value as ViewMode"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
       </div>
 
-      <div class="jdv-top-center">
+      <!-- attach 顶栏：会话状态 + 目标信息 + 断开 / 卸载 -->
+      <div v-if="viewMode === 'attach'" class="jdv-top-center">
+        <StatusBadge :tone="attachSessionTone" :label="sessionLabel" :dot="attachStore.attached" />
+        <template v-if="attachStore.activeSession">
+          <span class="jdv-chip" :title="attachStore.activeSession.handshake.java_home">
+            PID {{ attachStore.activePid }}
+          </span>
+          <span class="jdv-chip">
+            {{ t('java.chipJava') }} {{ attachStore.activeSession.handshake.java_version }}
+          </span>
+          <span class="jdv-chip" :title="`agent ${attachStore.activeSession.agent_version} · protocol v${attachStore.activeSession.protocol}`">
+            agent {{ attachStore.activeSession.agent_version }}
+          </span>
+          <button type="button" class="miyo-btn miyo-btn-sm" @click="detachActive">
+            {{ t('java2.detach') }}
+          </button>
+          <button type="button" class="miyo-btn miyo-btn-sm" @click="unloadActive">
+            {{ t('java2.unload') }}
+          </button>
+        </template>
+      </div>
+
+      <!-- runtime 顶栏（v1 原样） -->
+      <div v-else class="jdv-top-center">
         <CustomSelect
-          :model-value="store.activeProjectId ?? ''"
+          :model-value="runtimeStore.activeProjectId ?? ''"
           :options="projectOptions"
           size="sm"
           :placeholder="t('java.projectSelect')"
           data-testid="java-project-select"
-          @update:model-value="(v: string | number | null) => (store.activeProjectId = v ? String(v) : null)"
+          @update:model-value="(v: string | number | null) => (runtimeStore.activeProjectId = v ? String(v) : null)"
         />
         <IconButton name="plus" :title="t('java.projectNew')" @click="openNewProject" />
 
-        <StatusBadge :tone="connectionTone" :label="connectionLabel" :dot="store.connection.state === 'ok'" />
+        <StatusBadge :tone="connectionTone" :label="connectionLabel" :dot="runtimeStore.connection.state === 'ok'" />
 
-        <!-- Runtime 信息 chips（握手 info 快照；连接后展示） -->
-        <template v-if="connected && runtimeInfo">
+        <template v-if="runtimeConnected && runtimeInfo">
           <span class="jdv-chip" :title="runtimeInfo.jvm_version">
-            {{ t('java.chipApp') }}: {{ runtimeInfo.app_name || store.activeProject?.name }}
+            {{ t('java.chipApp') }}: {{ runtimeInfo.app_name || runtimeStore.activeProject?.name }}
           </span>
           <span class="jdv-chip" :title="runtimeInfo.jvm_version">
             {{ t('java.chipJava') }} {{ runtimeInfo.java_version }}
@@ -272,10 +464,10 @@ function onUseTemplate(): void {
         <span v-if="linkedEnvName" class="jdv-env">{{ linkedEnvName }}</span>
 
         <button
-          v-if="!connected"
+          v-if="!runtimeConnected"
           type="button"
           class="miyo-btn miyo-btn-primary"
-          :disabled="!store.activeProject || connecting"
+          :disabled="!runtimeStore.activeProject || connecting"
           data-testid="java-connect-btn"
           @click="connect"
         >
@@ -286,22 +478,50 @@ function onUseTemplate(): void {
           {{ t('java.disconnect') }}
         </button>
         <span
-          v-if="store.connection.state === 'fail'"
+          v-if="runtimeStore.connection.state === 'fail'"
           class="jdv-conn-error"
-          :title="store.connection.message"
-        >{{ store.connection.message }}</span>
+          :title="runtimeStore.connection.message"
+        >{{ runtimeStore.connection.message }}</span>
       </div>
 
       <div class="jdv-top-right">
-        <IconButton name="code" :title="t('java.setupGuide')" @click="guideOpen = true" />
-        <IconButton name="save" :title="t('java.saveCase')" :disabled="!store.activeMethod" @click="saveCaseOpen = true" />
-        <IconButton name="pencil" :title="t('java.projectEdit')" :disabled="!store.activeProject" @click="editSettings" />
-        <IconButton name="copy" :title="t('java.copyArgs')" :disabled="!store.activeMethod" @click="copyArgs" />
-        <IconButton name="history" :title="t('java.historyTitle')" :disabled="!store.activeProject" @click="historyOpen = true" />
+        <IconButton
+          v-if="viewMode === 'runtime'"
+          name="code"
+          :title="t('java.setupGuide')"
+          @click="guideOpen = true"
+        />
+        <IconButton
+          v-if="viewMode === 'runtime'"
+          name="save"
+          :title="t('java.saveCase')"
+          :disabled="!runtimeStore.activeMethod"
+          @click="saveCaseOpen = true"
+        />
+        <IconButton
+          v-if="viewMode === 'runtime'"
+          name="pencil"
+          :title="t('java.projectEdit')"
+          :disabled="!runtimeStore.activeProject"
+          @click="editSettings"
+        />
+        <IconButton
+          v-if="viewMode === 'runtime'"
+          name="copy"
+          :title="t('java.copyArgs')"
+          :disabled="!runtimeStore.activeMethod"
+          @click="copyArgs"
+        />
+        <IconButton
+          name="history"
+          :title="t('java.historyTitle')"
+          :disabled="viewMode === 'runtime' ? !runtimeStore.activeProject : !attachStore.historyProjectId"
+          @click="viewMode === 'attach' ? (historyOpenAttach = true) : (historyOpen = true)"
+        />
       </div>
     </header>
 
-    <!-- 首次进入：整页接入向导 -->
+    <!-- runtime 首次进入：整页接入向导（v1 流程） -->
     <JavaOnboarding
       v-if="needsOnboarding"
       @new-remote="openNewProject"
@@ -309,20 +529,120 @@ function onUseTemplate(): void {
       @use-candidate="useCandidate"
     />
 
+    <!-- attach 工作台：进程/Bean | 类浏览器 | 方法+参数 | 结果 -->
+    <div v-else-if="viewMode === 'attach'" class="jdv-body" data-testid="java-attach-workbench">
+      <SplitPanes :width="300" :min="240" :max="440">
+        <template #first>
+          <div class="jdv-left">
+            <div class="jdv-left-tabs">
+              <button
+                type="button"
+                class="jdv-left-tab"
+                :class="{ active: leftTab === 'processes' }"
+                data-testid="java-tab-processes"
+                @click="leftTab = 'processes'"
+              >
+                {{ t('java2.tabProcesses') }}
+              </button>
+              <button
+                type="button"
+                class="jdv-left-tab"
+                :class="{ active: leftTab === 'beans' }"
+                data-testid="java-tab-beans"
+                @click="leftTab = 'beans'"
+              >
+                {{ t('java2.tabBeans') }}
+              </button>
+            </div>
+            <JavaProcessPanel
+              v-if="leftTab === 'processes'"
+              :summary="attachStore.summary"
+              :processes="attachStore.filteredProcesses"
+              :loading="attachStore.scanning"
+              :search="attachStore.processSearch"
+              :active-pid="attachStore.activePid"
+              :attached-pids="attachedPids"
+              :auto-refresh="attachStore.autoRefresh"
+              @update:search="attachStore.processSearch = $event"
+              @update:auto-refresh="attachStore.setAutoRefresh($event)"
+              @refresh="attachStore.loadProcesses()"
+              @select="attachStore.activePid = $event"
+              @attach="requestAttach"
+              @manual-pid="manualProbe"
+            />
+            <JavaBeansPanel
+              v-else
+              :status="attachStore.springStatus"
+              :beans="attachStore.beans"
+              :total="attachStore.beanTotal"
+              :loading="attachStore.beansLoading"
+              :search="attachStore.beanSearch"
+              :active-bean-name="null"
+              @update:search="attachStore.beanSearch = $event"
+              @select="selectBean"
+              @reload="attachStore.loadBeans()"
+            />
+          </div>
+        </template>
+        <template #second>
+          <SplitPanes :width="260" :min="200" :max="400">
+            <template #first>
+              <JavaClassBrowser
+                :classes="attachStore.classes"
+                :loading="attachStore.classesLoading"
+                :connected="attachStore.attached"
+                :active-class-name="attachStore.activeClassName"
+                :search="attachStore.classSearch"
+                :recent="[]"
+                :is-favorite="attachStore.isFavorite"
+                @update:search="onAttachClassSearch"
+                @select="attachStore.selectClass($event)"
+                @toggle-favorite="attachStore.toggleFavorite($event)"
+              />
+            </template>
+            <template #second>
+              <JavaMethodPanel
+                :class-name="attachStore.activeClassName"
+                :methods="attachStore.methods"
+                :loading="attachStore.methodsLoading"
+                :active-method-id="attachStore.activeMethodId"
+                :args-json="attachStore.argsJson"
+                :edit-mode="attachStore.editMode"
+                :invoking="attachStore.invoking"
+                :has-connection="attachStore.attached"
+                :has-template="false"
+                attach-mode
+                :can-instantiate="true"
+                v-model:instance-kind="attachStore.instanceKind"
+                v-model:new-consent="attachStore.newConsent"
+                @select-method="attachStore.selectMethod($event, agentMethodOf($event))"
+                @update:args-json="attachStore.argsJson = $event"
+                @update:edit-mode="attachStore.editMode = $event"
+                @update:timeout="attachStore.timeoutOverride = $event"
+                @run="attachRun"
+                @cancel="attachCancel"
+              />
+            </template>
+          </SplitPanes>
+        </template>
+      </SplitPanes>
+    </div>
+
+    <!-- runtime 工作台（v1 原样） -->
     <div v-else class="jdv-body">
       <SplitPanes :width="280" :min="200" :max="420">
         <template #first>
           <JavaClassBrowser
-              :classes="store.classes"
-              :loading="store.classesLoading"
-              :connected="connected"
-              :active-class-name="store.activeClassName"
-              :search="store.classSearch"
-              :recent="store.recentMethods.filter((r) => r.projectId === store.activeProjectId)"
-              :is-favorite="store.isFavorite"
-              @update:search="store.classSearch = $event"
-              @select="store.selectClass($event)"
-              @toggle-favorite="store.toggleFavorite($event)"
+              :classes="runtimeStore.classes"
+              :loading="runtimeStore.classesLoading"
+              :connected="runtimeConnected"
+              :active-class-name="runtimeStore.activeClassName"
+              :search="runtimeStore.classSearch"
+              :recent="runtimeStore.recentMethods.filter((r) => r.projectId === runtimeStore.activeProjectId)"
+              :is-favorite="runtimeStore.isFavorite"
+              @update:search="runtimeStore.classSearch = $event"
+              @select="runtimeStore.selectClass($event)"
+              @toggle-favorite="runtimeStore.toggleFavorite($event)"
               @pick-recent="pickRecent"
             />
         </template>
@@ -330,19 +650,19 @@ function onUseTemplate(): void {
           <SplitPanes :width="460" :min="320" :max="720" width-on="second">
             <template #first>
               <JavaMethodPanel
-                :class-name="store.activeClassName"
-                :methods="store.methods"
-                :loading="store.methodsLoading"
-                :active-method-id="store.activeMethodId"
-                :args-json="store.argsJson"
-                :edit-mode="store.editMode"
-                :invoking="store.invoking"
-                :has-connection="connected"
-                :has-template="!!store.argsTemplate"
-                @select-method="store.selectMethod($event)"
-                @update:args-json="store.argsJson = $event"
-                @update:edit-mode="store.editMode = $event"
-                @update:timeout="store.timeoutOverride = $event"
+                :class-name="runtimeStore.activeClassName"
+                :methods="runtimeStore.methods"
+                :loading="runtimeStore.methodsLoading"
+                :active-method-id="runtimeStore.activeMethodId"
+                :args-json="runtimeStore.argsJson"
+                :edit-mode="runtimeStore.editMode"
+                :invoking="runtimeStore.invoking"
+                :has-connection="runtimeConnected"
+                :has-template="!!runtimeStore.argsTemplate"
+                @select-method="runtimeStore.selectMethod($event)"
+                @update:args-json="runtimeStore.argsJson = $event"
+                @update:edit-mode="runtimeStore.editMode = $event"
+                @update:timeout="runtimeStore.timeoutOverride = $event"
                 @save-template="onSaveTemplate"
                 @use-template="onUseTemplate"
                 @run="run"
@@ -351,12 +671,12 @@ function onUseTemplate(): void {
             </template>
             <template #second>
               <JavaResultPanel
-                :response="store.lastResponse"
-                :started-at="store.lastStartedAt"
-                :args-json="store.argsJson"
-                :params="store.activeMethod?.params ?? []"
-                :invoking="store.invoking"
-                :history="store.history.slice(0, 10)"
+                :response="runtimeStore.lastResponse"
+                :started-at="runtimeStore.lastStartedAt"
+                :args-json="runtimeStore.argsJson"
+                :params="runtimeStore.activeMethod?.params ?? []"
+                :invoking="runtimeStore.invoking"
+                :history="runtimeStore.history.slice(0, 10)"
                 @rerun="rerunFromPanel"
               />
             </template>
@@ -365,13 +685,32 @@ function onUseTemplate(): void {
       </SplitPanes>
     </div>
 
+    <!-- 历史抽屉（双模式共用组件；数据源按模式切换） -->
     <JavaHistoryDrawer
+      v-if="viewMode === 'runtime'"
       :open="historyOpen"
-      :records="store.history"
-      :loading="store.historyLoading"
+      :records="runtimeStore.history"
+      :loading="runtimeStore.historyLoading"
       @close="historyOpen = false"
       @rerun="rerun"
       @changed="refreshHistory"
+    />
+    <JavaHistoryDrawer
+      v-else
+      :open="historyOpenAttach"
+      :records="attachStore.history"
+      :loading="attachStore.historyLoading"
+      @close="historyOpenAttach = false"
+      @rerun="rerunAttach"
+      @changed="attachStore.loadHistory()"
+    />
+
+    <JavaAttachConfirmDialog
+      :open="attachDialogPid != null"
+      :target="attachTarget"
+      :busy="attachStore.attachingPid != null"
+      @close="attachDialogPid = null"
+      @confirm="confirmAttach"
     />
 
     <JavaProjectDialog
@@ -419,6 +758,25 @@ function onUseTemplate(): void {
   color: var(--text);
   white-space: nowrap;
 }
+.jdv-mode {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.jdv-mode-btn {
+  font-size: 11.5px;
+  padding: 3px 10px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.jdv-mode-btn.active {
+  background: var(--bg-hover);
+  color: var(--text);
+  font-weight: 600;
+}
 .jdv-top-center {
   display: flex;
   align-items: center;
@@ -460,5 +818,39 @@ function onUseTemplate(): void {
 .jdv-body {
   flex: 1;
   min-height: 0;
+  display: flex;
+}
+.jdv-left {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.jdv-left-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 10px 0;
+  flex-shrink: 0;
+}
+.jdv-left-tab {
+  font-size: 12px;
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+.jdv-left-tab.active {
+  color: var(--text);
+  font-weight: 600;
+  border-color: var(--border);
+  background: var(--bg-hover);
+}
+/* attach 工作台：左列（SplitPanes first）+ 右侧弹性区（中列 + 结果） */
+.jdv-body > :deep(.split-panes) {
+  flex: 1;
+  min-width: 0;
 }
 </style>

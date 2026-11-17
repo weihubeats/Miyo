@@ -1,276 +1,381 @@
-# Java 方法实时调试（Java Debug）
+# Java 方法实时调试 2.0（零源码侵入 + Attach）
 
-Miyo 的 Java 方法调试能力：连接运行中的 Java 应用，发现并调用经过显式授权的
-类 / 方法，查看返回值、异常堆栈与耗时，并可将 Java 方法调用纳入集成测试场景
-与 MCP（AI）工作流。与 HTTP / WebSocket / SSE 调试相互独立——执行模型是
-「Runtime 白名单方法调用」，不是伪装成 HTTP 的请求类型。
+Miyo 的 Java 方法调试能力：**自动发现本机 Java 进程 → 用户确认后动态注入调试
+Agent → 浏览已加载类 / Spring Bean / 方法 → 受控反射调用**。目标应用
+**零源码修改**——不引入 Miyo SDK、不改 pom.xml / build.gradle、不加注解、
+不注册 Bean、不重启进程。
 
-## 一、整体架构
+同时保留 v1 的「Runtime SDK」模式作为兼容连接方式（旧项目 / 远程调试）。
+Java 调试历史、集成测试 Java 步骤、MCP Java 工具、AI 调试工作流全部沿用，
+底层执行器按项目 `mode` 路由（`attach` / `runtime`）。
+
+## 一、新旧架构对比
+
+| 维度 | v1（Runtime SDK） | **v2（本地 JVM Attach，默认）** |
+|---|---|---|
+| 目标应用改动 | 引入 SDK + 显式白名单注册 + start() | **零改动**（正常启动即可） |
+| 连接方式 | HTTP + Bearer Token（目标进程内嵌端点） | JVM Attach API → Agent 本地 IPC |
+| 进程发现 | 端口段指纹探测 + 注册目录 | OS 进程扫描 + Attach listener 交叉 |
+| 类 / 方法范围 | 用户显式注册的白名单 | 已加载类（可搜索 / 过滤 JDK 内部类） |
+| Spring Bean | 手动经 InstanceProvider 接入 | 自动探测（策略梯子，分级支持） |
+| 远程应用 | 支持（HTTP 可达即可） | 不支持（必须本地 Attach 或走 v1 / 远程 Agent） |
+| 安全模型 | 显式注册 + 两端黑名单 | 注入确认 + token 鉴权 + 黑名单 + 可赋值性闸 |
+
+## 二、整体架构
 
 ```text
-┌────────────────────────────┐  HTTP+JSON 调试协议 v1   ┌──────────────────────────────┐
-│ Miyo 桌面端（Tauri）        │ ───────────────────────> │ Java Debug Runtime（SDK）      │
-│ 前端 JavaDebugView          │  Bearer Token 鉴权        │ 嵌入目标 JVM 进程内             │
-│ miyo-tauri java_debug 命令  │                          │ 白名单显式注册 + 反射受控调用     │
-│ miyo-java 协议层 + 客户端    │ <─────────────────────── │ 结果 / 异常 / 耗时结构化回传     │
-└────────────────────────────┘                          └──────────────────────────────┘
-        │
-        ├─ miyo-test 场景引擎：Java 步骤（method=JAVA + 执行器回调）与 HTTP 步骤混合编排
-        └─ miyo-agent / miyo-mcp：9 个 list_java_* / run_java_method 工具供 AI 调用
+┌────────────────────────┐ spawn 子进程    ┌──────────────────────────┐
+│ Miyo（Rust / Tauri）    │ ─────────────> │ miyo-attach-launcher.jar │
+│ miyo-java-attach crate │                │ JDK Attach API（短进程）   │
+│ 命令层 java_attach.rs  │                │ list / properties / attach│
+└──────────┬─────────────┘                └────────────┬─────────────┘
+           │  TCP 127.0.0.1:随机端口                    │ VirtualMachine.attach
+           │  长度前缀 JSON 协议 v2                     ▼ loadAgent(miyo-java-agent.jar)
+           │  一次性 256-bit token 鉴权    ┌──────────────────────────────────┐
+           ▼                              │ 目标 JVM（零源码修改）             │
+┌────────────────────────────┐           │  miyo-java-agent（agentmain）     │
+│ Miyo 前端（attach 工作台）   │ ←──────── │  · IPC 服务（回环 + token）        │
+│ 进程列表 / 类 / Bean / 方法  │  Tauri IPC │  · Inspector（已加载类 / 方法）    │
+│ 参数编辑 / 结果 / 历史      │            │  · InvocationEngine（受控反射）    │
+└────────────────────────────┘            │  · Spring 上下文发现（策略梯子）    │
+                                          └──────────────────────────────────┘
 ```
 
-### Runtime 方案选型
+分层职责：
 
-评估了三条路线后选择 **B：独立 Java Debug SDK（嵌入目标项目）**：
+| 层 | 位置 | 职责 |
+|---|---|---|
+| Miyo Java Debug Plugin | `frontend/src/domains/java-debug/` | 双模式工作台 UI（attach 默认 / runtime 兼容） |
+| JVM Process Discovery | `crates/miyo-java-attach/src/process.rs` | macOS `ps` / Linux `/proc` / Windows PowerShell 进程扫描 + 脱敏 |
+| Attach Manager | `crates/miyo-java-attach/src/manager.rs` | 会话注册表 / attach 流程编排 / 重启身份识别 |
+| Miyo Java Agent | `java/miyo-java-agent/` | agentmain + Instrumentation + IPC 服务（Java 8 字节码） |
+| JVM Inspector | agent `inspect/` | 已加载类 / 方法元信息（重载 / 泛型 / synthetic / bridge） |
+| Invocation Engine | agent `invoke/` | 并发闸 / 超时 watchdog / 取消 / 异常结构化 |
+| Result Serializer | agent `invoke/ResultSerializer` | 循环引用 / 深度 / 体积截断 / 代理标注 |
+| Agent Communication | 协议 v2（本文件 §四） | 握手 / 版本协商 / 请求 id / 错误码 |
+| Security Policy | agent `invoke/RiskPolicy` + Miyo 侧预检 | 黑名单 + 可赋值性闸 + 风险分级 |
+| Attach Launcher | `java/miyo-attach-launcher/` | list / properties / attach CLI（JDK 8 tools.jar 兼容） |
 
-| 方案 | 结论 |
+Agent 与 launcher 均编译为 **Java 8 字节码**（可注入 JDK 8+ 的任意 HotSpot 目标
+进程）；Agent 内嵌 **shaded ASM**（重定位到 `io.miyo.agent.shaded`），不污染
+目标应用 classpath。Miyo 主进程不执行任何不可信 Java 代码——Attach 工具以
+短进程 sidecar（`java -jar launcher.jar`）运行。
+
+## 三、本地 Java 进程自动发现
+
+真实进程扫描（非端口猜测），覆盖规格全部条目：
+
+| 条目 | 实现 |
 |---|---|
-| A. Java Agent + Instrumentation | Attach 语义跨平台差异大、生命周期耦合高，MVP 不引入 |
-| **B. 独立 SDK（已实现）** | 用户在目标项目里显式注册白名单并 start()，本进程内起 HTTP 端点；可运行、可维护、可扩展 |
-| C. 独立 Worker + 受控 ClassLoader | 需要托管用户依赖树，复杂度高；为「执行不可信代码」场景预留（后续阶段） |
+| PID / 进程名 / 主类 | macOS `ps -axo pid,uid,etime,lstart,command`；Linux `/proc/*/cmdline + exe`；Windows `Get-CimInstance Win32_Process` |
+| Java 版本 / 厂商 | `<home>/bin/java -version` 探测（按 home 缓存，不重复起进程） |
+| JDK / JRE / 不可 attach | `bin/javac` 存在性 → jdk/jre；launcher `list`（Attach API 视角）交叉 → attachable |
+| 启动参数（脱敏） | `redact_command_line`：password / secret / token / api_key 等键值 `***`，URL 内嵌凭证脱敏 |
+| 运行时间 | etime（ps）/ CreationDate（Windows） |
+| Java 可执行路径 | 命令行首个 `/bin/java` token；java_home 由路径推断 |
+| 手动输入 PID | `java_probe_pid` 单进程探测（存在性 + Java 判定） |
+| 自动刷新 | 前端 5s 轮询（可开关） |
+| 多 JVM 并行发现 | 单次快扫全部进程 + 逐 home 版本探测（缓存） |
+| 进程退出检测 | launcher `list` 消失 → attachable=false；会话命令失败 → 明确报错 |
+| 重复 PID / 重启识别 | `vm_start_ms`（JVM 启动时刻）绑定——pid 复用时 vm_start 变化 → 重建会话，历史保持连续 |
 
-关键取舍：**Miyo 主进程不执行任何不可信 Java 代码**——反射调用全部发生在目标
-应用自身进程与安全边界内；Miyo 侧只做协议客户端与安全预检（双保险）。
+**兼容性提示（诚实呈现）**：
 
-### 通信协议 v1（`crates/miyo-java/src/protocol.rs` + SDK `io.miyo.debug`）
+- 不同用户 uid 的进程 → 「进程属于其他用户，当前用户无权 attach」；
+- 非 HotSpot / `-XX:+DisableAttachMechanism` → launcher 错误码
+  `attach_not_supported`；
+- 无可用 JDK 工具链 → 「未发现可用 JDK（jlink 裁剪 / JRE 不含 jdk.attach）」；
+- 容器 / PID namespace：Miyo 与目标必须在同一 PID 空间（容器内运行的应用
+  需在容器内启动 Miyo，或挂载宿主 /proc——视环境而定，探测不到即如实展示）。
 
-| 端点 | 用途 |
+## 四、Agent 通信协议 v2
+
+**传输**：TCP `127.0.0.1:<随机端口>`，仅回环；4 字节大端长度前缀 + UTF-8 JSON
+（单帧上限 16 MiB）。协议版本 `2`（与 `miyo-java-attach::AGENT_PROTOCOL_VERSION`
+对齐，握手不匹配即拒绝）。
+
+**鉴权**：Miyo 生成一次性 256-bit token（`rand` 32 字节 hex）→ 经 launcher
+loadAgent 参数传入 Agent（内存持有，不落盘）→ 握手首帧 `params.token` 常数
+时间比较（`MessageDigest.isEqual`）。连接信息经 infoFile（0600）回传 Miyo
+（不含 token）；token 换发 = 重复 attach 时旧 token 立即失效。
+
+**身份绑定**：agent args 携带 `expectedPid`（不匹配拒绝启动）；握手响应回传
+`pid` + `vm_start_ms`（Miyo 缓存比对 → 重启识别）。
+
+**请求**：`{"id":"r-N","op":"...","params":{...}}`；
+**响应**：`{"id":..,"ok":true,"data":{..}}` 或
+`{"id":..,"ok":false,"error":{"code":"...","message":"..."}}`。
+invoke 在 Agent 侧 worker 池执行——期间 cancel / status 可并发
+（响应按 id 关联，乱序完成不影响匹配）。
+
+| op | 说明 |
 |---|---|
-| `GET  /miyo/debug/info` | 握手：协议版本 / 应用名 / Java 版本 / JVM / 白名单规模 |
-| `GET  /miyo/debug/classes` | 白名单类清单（类名 / 包名 / Bean 名 / 方法数） |
-| `GET  /miyo/debug/methods?class={FQN}` | 类的白名单方法（签名 / 参数 / 返回类型 / 重载标记） |
-| `POST /miyo/debug/invoke` | 执行方法（同步返回结果 / 异常 / 耗时） |
-| `POST /miyo/debug/invocations/{id}/cancel` | 取消在途调用（协作式中断） |
+| `handshake` | token + 协议版本协商 → JVM 信息 / 上限 / 版本 |
+| `status` | 在途 / 成功 / 失败 / 超时 / 取消计数 |
+| `classes.list` | search / include / exclude / include_jdk / limit / offset |
+| `class.detail` | 父类 / 接口 / loader / 修饰符 |
+| `methods.list` | 方法清单（含 `risk` 分级与 `risk_reason`） |
+| `beans.contexts` | Spring 状态（策略梯子 + 捕获状态，§六） |
+| `beans.list` | Bean 清单（定义信息 + 已实例化单例真实类型） |
+| `invoke` | invocation_id / class / method / param_types / args / instance{kind,bean_name,consent} / timeout_ms |
+| `cancel` | 协作式中断（delivered / terminated=false） |
+| `agent.stop` | 停服务 + 清 infoFile（类不可卸载——诚实语义） |
+| `ping` | 心跳 / 链路探活 |
 
-- 鉴权：`Authorization: Bearer <token>`（两端必配，常数时间比较）。
-- 版本协商：`X-Miyo-Protocol-Version: 1`，握手不匹配即拒绝连接。
-- 方法标识：`com.example.OrderService#createOrder(CreateOrderRequest,long)`
-  ——重载消歧唯一依据，两端同规则生成 / 校验。
-- 错误体：`{"error":{"code":"not_authorized|not_registered|not_allowed|bad_arguments|rate_limited|...","message":...}}`。
+**错误码**：`not_authorized / protocol_mismatch / bad_request / bad_arguments /
+not_allowed / not_found / rate_limited / unknown_invocation / consent_required /
+unsupported / internal`。
 
-### 超时与取消语义（必须了解）
+**诚实边界**：v2 传输为回环 TCP（Java 8 无内置 UDS 支持；UDS / Named Pipe
+作为后续增强——协议层传输无关，替换不动上层）。
 
-Java 方法执行**无法保证强制终止**。超时与取消通过线程中断实现——业务代码不
-响应中断时方法仍会执行完（结果丢弃、调用按 timeout 返回）。需要强制终止 /
-执行不可信代码的场景应采用独立进程隔离 + 终止 Worker 进程回收（后续阶段能力）。
+## 五、Attach Launcher（sidecar）
 
-## 二、模块与文件清单
-
-### Rust 后端（根 workspace）
-
-| 模块 | 职责 |
-|---|---|
-| `crates/miyo-java/`（新增） | 调试协议类型、Runtime HTTP 客户端、安全策略（黑名单 / 体积 / 超时 / 并发）、axum mock 集成测试、真实 Runtime E2E 测试（env 门控） |
-| `crates/miyo-core/src/model.rs` | `JavaDebugProject` / `JavaInvocationRecord` / `ScenarioJavaInvocation` 模型；`HttpMethod::Java` 变体（wire 值 `JAVA`） |
-| `crates/miyo-storage/migrations/0030_java_debug.sql` | `java_projects` / `java_invocations` 表（token AES-GCM 加密列） |
-| `crates/miyo-storage/src/repository/java_debug.rs` | 项目 CRUD（token 加解密）、调用历史（滚动保留 200 条）、连接状态刷新 |
-| `crates/miyo-test/src/runner.rs` | Java 步骤执行分支（`java_round`：渲染参数 → 执行器回调 → 合成响应 → 复用断言 / 提取管线）；`JavaStepRequest/Response` + `ScenarioOptions.java_invoke` 执行器注入 |
-| `crates/miyo-test/src/materialize.rs` | `StepMaterialInput.java_invocation` 透传；Java 步骤跳过幂等键 / 全局参数注入 |
-| `crates/miyo-agent/src/java_hook.rs` | 场景引擎 Java 执行器单源（tauri 与 agent 控制面共用：加载配置 → 调用 → 历史落库） |
-| `crates/miyo-agent/src/registry.rs` | 9 个 MCP 工具元数据 + Schema（`Module::JavaDebug`） |
-| `crates/miyo-agent/src/server.rs` | `/agent/java/*` 路由 + 处理器（出站统一脱敏） |
-| `crates/miyo-agent/src/client.rs` | ControlClient Java 方法 |
-| `crates/miyo-mcp/src/tools.rs` | `call_tool` / `validate_tool_call` 分发分支 |
-| `crates/miyo-tauri/src/commands/java_debug.rs` | 12 个 Tauri 命令（项目 CRUD / 探测 / 发现 / 调用 / 历史） |
-| `crates/miyo-tauri/src/commands/scenarios.rs` | 场景运行接线 `java_invoke` 执行器 + Java 步骤参数透传 |
-
-### Java SDK（`java/`）
-
-| 文件 | 职责 |
-|---|---|
-| `java/miyo-java-runtime/`（Maven，零第三方依赖） | 见下 |
-| `MiyoDebugRuntime.java` | 入口：builder / register / start / stop（token 必配，空白名单拒绝启动） |
-| `RuntimeConfig.java` | 配置：token / 端口 / 绑定地址 / 应用名 / 线程数 / 安全策略 |
-| `MethodRegistry.java` | 白名单注册表：methodId 生成、重载标记、黑名单注册期拒绝、Object 方法过滤 |
-| `HttpApi.java` | `com.sun.net.httpserver` 路由：鉴权 / 协议版本 / 5 端点 / 限流错误码 |
-| `ArgsConverter.java` | JSON → Java 参数：基本类型 / 枚举 / 集合（泛型感知）/ Map / DTO（字段 + setter 注入，深度 12） |
-| `ResultSerializer.java` | Java 对象 → JSON：getter 优先 / public 字段兜底、循环引用与深度截断、体积截断 |
-| `InvocationManager.java` | 执行：并发信号量 / 分钟限流 / 超时（协作式中断）/ 异常全量结构化 |
-| `SecurityPolicy.java` | 黑名单 + 上限（与 Rust 侧同规则双保险） |
-| `InstanceProvider.java` | 实例解析接口（Spring Bean 容器钩子） |
-| `Json.java` | 极简 JSON 解析 / 序列化 |
-| `src/test/java/io/miyo/debug/SelfTest.java` | 纯 JDK 自测（76 断言：协议 / 转换 / 序列化 / 执行 / HTTP E2E / 鉴权） |
-| `java/examples/demo-app/` | 演示应用（订单 + 支付 + 静态工具类）与 `run_demo.sh` 端到端联调脚本 |
-
-### 前端（`frontend/src/`）
-
-| 文件 | 职责 |
-|---|---|
-| `domains/java-debug/views/JavaDebugView.vue` | 工作台（顶栏连接管理 + 三栏 SplitPanes + 历史抽屉 + 项目弹窗） |
-| `domains/java-debug/components/JavaClassBrowser.vue` | 类浏览器（搜索 / 收藏置顶 / 最近使用） |
-| `domains/java-debug/components/JavaMethodPanel.vue` | 方法选择 + 参数编辑（可视化表单 ↔ JSON 双模式）+ 执行 |
-| `domains/java-debug/components/JavaResultPanel.vue` | 结果区（返回结果 / 异常堆栈 / 执行信息 / 输入参数 四 Tab） |
-| `domains/java-debug/components/JavaHistoryDrawer.vue` | 调用历史（重跑 / 复制参数 / 删除 / 清空） |
-| `domains/java-debug/components/JavaProjectDialog.vue` | 项目注册 / 编辑 |
-| `domains/java-debug/stores/javaDebug.ts` | 工作台状态（发现 / 参数草稿 / 执行 / 历史 / 收藏 / 最近） |
-| `router/index.ts` | `/java-debug` 路由 |
-| `domains/workspace/.../DashboardNav.vue` + WorkspaceView | 导航入口（侧边栏 + 顶栏工具组 / 溢出菜单） |
-| `types/miyoApi.d.ts` | Java 类型手写镜像 + `ScenarioJavaInvocation` 生成类型 |
-| `composables/useMiyoApi.ts` | 12 个 Java IPC 方法 |
-| `i18n/zh.ts` / `en.ts` | `java.*` 命名空间 105 键（1:1） |
-
-## 三、前后端接口清单
-
-### Tauri 命令（`plugin:miyo|*`，12 个）
+`java/miyo-attach-launcher/target/miyo-attach-launcher.jar`（Java 8 字节码，
+零依赖），Miyo 以 `java -jar` 短进程调用，单行 JSON stdout + 退出码：
 
 | 命令 | 用途 |
 |---|---|
-| `list_java_projects` / `save_java_project` / `delete_java_project` | 项目 CRUD |
-| `java_test_connection` | 握手探测（刷新最近连接时间 + 信息缓存） |
-| `java_list_classes` / `java_list_methods` | 类 / 方法发现（实时白名单） |
-| `java_invoke` | 执行方法（预检 → 调用 → 历史落库） |
-| `java_cancel_invocation` | 取消在途调用 |
-| `list_java_history` / `get_java_invocation` / `delete_java_invocation` / `clear_java_history` | 历史 |
+| `capabilities` | 运行环境自检（bridge_available / tools.jar 位置 / java 版本） |
+| `list` | Attach API 视角的可 attach JVM（`VirtualMachine.list()`） |
+| `properties --pid N` | 目标 JVM 系统属性（预检版本 / 厂商，不加载 Agent） |
+| `attach --pid N --agent PATH --args "k=v,..." --info-file PATH` | attach → loadAgent → 轮询 infoFile → 连接信息 |
 
-### Agent 控制面路由（`/agent/java/*`，9 个工具的 HTTP 后端）
+- **JDK 8 运行时**：`com.sun.tools.attach` 经 URLClassLoader 反射桥
+  （tools.jar 自动定位）；
+- **JDK 9+ 运行时**：jdk.attach 模块直连；
+- **JDK 工具链选择**（`ToolchainRegistry::select_for_target`）：目标进程
+  版本探测 → 「同 major」优先 → 「更新 client」次之 → 最新可用兜底。
+  跨版本 attach 的协议返回码偏斜（JDK21→JDK8 误报 AgentLoadException、
+  JDK8→JDK17「Non-numeric value found」）由 launcher 的 **infoFile 轮询兜底**
+  吸收：loadAgent 报异常仍继续轮询，Agent 实际加载成功即按成功处理。
 
-`/agent/java/projects`、`/agent/java/projects/{id}`、`/agent/java/classes`、
-`/agent/java/methods`、`/agent/java/method-detail`、
-`/agent/java/invocations/validate`、`/agent/java/invoke`、
-`/agent/java/invocations/{id}`、`/agent/java/history`。
+## 六、Spring Boot 支持（策略梯子，分级支持）
 
-## 四、MCP 工具清单（9 个，`Module::JavaDebug`）
+**不能假设动态 Attach 后能通过静态字段拿到 ApplicationContext**——Boot 不保留
+静态引用。Agent 用三条互补策略，UI 按「已验证 / 条件 / 暂不支持」分级展示：
 
-| 工具 | 权限等级 | 说明 |
+| 策略 | 原理 | 级别 |
 |---|---|---|
-| `list_java_projects` | Read | Java 调试项目列表 |
-| `get_java_project` | Read | 项目详情（含握手缓存） |
-| `list_java_classes` | Read | Runtime 白名单类（可搜索） |
-| `list_java_methods` | Read | 类的白名单方法 |
-| `get_java_method` | Read | 按 methodId 查询签名详情 |
-| `create_java_invocation` | Read | 构建并校验调用计划（不执行；参数个数 / 形状预检） |
-| `run_java_method` | **NetworkExecute（默认关闭）** | 真实执行（历史落库 + 出站脱敏） |
-| `get_java_execution_result` | Read | 按 invocationId 查询执行记录 |
-| `list_java_execution_history` | Read | 项目执行历史 |
+| 捕获插桩（默认启用） | ASM 插桩 `AbstractApplicationContext.publishEvent / getBean` 方法体入口 → `SpringCapture.capture(this)` 静态弱引用收集（attach 后**下一次**应用活动命中——发一次 HTTP 请求 / 定时任务即可） | 条件支持（应用有活动即命中） |
+| LiveBeansView 静态表 | 启动时设 `-Dspring.liveBeansView.mbeanDomain=<值>` 的应用，Spring 自行注册上下文到静态集合 | 条件支持（需启动参数） |
+| ContextLoader | 经典 Spring MVC（非 Boot）`getCurrentWebApplicationContext()` | 条件支持（应用形态） |
 
-高风险门与 `send_endpoint` 同口径：`run_java_method` 属 NetworkExecute，
-默认关闭，需用户在设置 → MCP 服务中显式启用；注册完整性测试（registry ↔
-tools/list ↔ miyo-mcp 分发 1:1）拦截漏项。
+- **不可用时如实展示原因**（`beans.contexts.note`）——绝不伪造 Bean 数据；
+- 全部策略纯反射 / 插桩，不改目标应用行为；
+- **关键实现细节**：Boot fat-jar 的 Spring 类加载在 `LaunchedURLClassLoader`
+  里，Agent 线程的 system classloader 看不到——类探测一律走
+  `Instrumentation.getAllLoadedClasses()`（已加载类视角）+ 以
+  `AbstractApplicationContext` 的实际加载器为锚反射 Spring 类；
+- Bean 清单：默认只列 `ROLE_APPLICATION`；**不为取类型而实例化 Bean**——
+  已实例化单例经 `beanFactory().containsSingleton` 安全回读真实类型
+  （含 JDK 动态代理 / CGLIB 标注），未实例化的只报定义信息并标 `lazy`
+  （调用其方法会触发创建，UI 明示）；
+- 插桩安全兜底：任何解析失败返回 null（原字节码放行）；捕获钩子
+  try/catch 全包（绝不影响目标应用热路径）。
 
-## 五、数据库变更（迁移 `0030_java_debug.sql`）
+**实测**（Spring Boot 3.2.5 / JDK 17 / Zulu，`java/examples/spring-boot-demo`）：
+attach → `curl /ping` → 上下文捕获命中（155 Bean 定义）→ Bean 清单
+（priceService，instantiated=true，proxy=false）→ Bean 方法调用
+`quote("SKU-1", 2, 0.1)` → success + 完整结果。
 
-- `java_projects`：id / project_id（可空关联 Miyo 项目，级联删除）/ name /
-  runtime_endpoint / environment_id / **auth_json（token AES-GCM 加密）** /
-  timeout_ms / max_result_bytes / max_concurrent / description /
-  last_connected_at / last_info_json / created_at / updated_at。
-- `java_invocations`：id / project_id（级联删除）/ class_name / method_id /
-  method_signature / args_json / status / result_json（截断）/ result_truncated /
-  exception_json / duration_ms / started_at / finished_at / created_at。
-- 索引：`idx_java_projects_project`、`idx_java_invocations_project(project_id, created_at DESC)`。
-- 历史清理：插入时滚动保留每项目最近 200 条（`prune_java_invocations`）。
+## 七、Java 方法执行引擎（受控反射）
 
-## 六、安全设计
+- **static / 实例 / Bean 方法**：实例解析三态——`static`（直调）/ `bean`
+  （Spring 上下文按名或类型）/ `new`（无参构造临时实例，**必须 UI consent**，
+  Agent 侧 `consent_required` 硬闸）；
+- **参数**：JSON → Java（基本类型 / String / Enum / List / Set / Map / 数组 /
+  嵌套 DTO（字段 + setter）/ 泛型集合感知 / null）；重载以擦除参数表
+  （FQCN）精确定位，缺省要求方法名唯一；
+- **结果**：返回值 + 类型 + 耗时；异常全量结构化（类型 / 消息 / 50 帧堆栈 /
+  10 级 cause 链）；循环引用（`__circular__`）/ 深度截断 / 体积截断；
+  JDK 代理不穿透 InvocationHandler（`__proxy__` 标注 + 接口清单）；
+  Throwable 结果标注 `__throwable__`；
+- **超时 / 取消（协作式，诚实语义）**：watchdog 到点 / 用户取消 →
+  `Thread.interrupt`——业务代码不响应中断时方法继续跑完（结果丢弃）；
+  响应恒带 `terminated: false` + `interrupt_sent`，UI 必须区分
+  「已请求取消」与「实际终止」；
+- **上限**：并发信号量（默认 4）/ 单次超时 ≤ 300s / 参数 1 MiB /
+  结果序列化 1 MiB（双端同口径）。
 
-1. **显式白名单**：只有用户在目标项目里注册过的类 / 方法可调用；空白名单拒绝启动。
-2. **危险类黑名单（两端各查一遍）**：`java.lang.Runtime` / `ProcessBuilder` /
-   `ProcessHandle` / `System` / `ClassLoader` / `Thread` / 反射与脚本引擎 /
-   `sun.misc.Unsafe` / 文件与网络套接字类（完整清单见 `SecurityPolicy`）。
-3. **鉴权强制**：token 必配（SDK 拒绝空 token 启动），常数时间比较；
-   Miyo 侧 token AES-256-GCM 加密落库，不进日志。
-4. **体积限制**：请求体 1 MiB 硬顶、返回值默认 1 MiB（可配），超出截断并标记。
-5. **超时上限**：单次调用上限 300s（与全局请求超时口径一致），到点发出中断。
-6. **并发 / 频率**：默认并发 4（信号量）、每分钟 60 次（滑动窗口），双端限制。
-7. **异常不吞**：业务异常全量结构化回传（类型 / 消息 / 50 帧堆栈 / 10 级 cause 链）。
-8. **审计**：每次调用落 `java_invocations`（入参 / 状态 / 耗时 / 异常），滚动保留。
-9. **出站脱敏**：agent 控制面返回前统一 `redact_json_text`（凭证形态字段 / URL）。
-10. **MCP 高风险门**：`run_java_method` = NetworkExecute 默认关闭，副作用方法
-    （删除 / 支付 / 改单）必须用户确认，AI 调用不绕过用户权限。
-11. **环境隔离**：Runtime 端点与 token 按项目配置；生产环境建议不启用调试 SDK
-    （目标应用侧决策）。
+## 八、安全模型
 
-## 七、集成测试编排（Java 步骤）
+| 控制点 | 实现 |
+|---|---|
+| 目标进程身份 | expectedPid 校验 + vm_start_ms 绑定 + pid 一致性回读 |
+| Attach 前确认 | JavaAttachConfirmDialog（注入说明 / 回环 / token / 卸载语义） |
+| Agent 注入确认 | 同上（确认即注入，audit 级日志） |
+| 仅调试选定进程 | 会话按 pid 注册；未 attach 的 pid 所有命令 NOT_FOUND |
+| 包 / 类过滤 | 类清单默认排除 `java.* javax.* jdk.* sun.* com.sun.*` 等内部类；include / exclude 前缀可配 |
+| 危险类硬闸 | 黑名单前缀（Runtime / ProcessBuilder / ClassLoader / reflect / script…）+ **可赋值性闸**（ClassLoader / Runtime / Thread 的任意子类按类型拒绝，防名字绕过） |
+| 方法风险提示 | 方法名破坏性动词（delete / drop / pay…）→ destructive 分级 → UI 二次确认 |
+| 调用权限 | 插件门禁（PLUGIN_NOT_INSTALLED / PLUGIN_DISABLED）+ MCP NetworkExecute 高风险门（沿用） |
+| 体积上限 | 参数 1 MiB / 结果 1 MiB / 帧 16 MiB |
+| 超时 | 单次 ≤ 300s（双端收敛） |
+| 并发 | Agent 信号量 4（可配 1..32） |
+| 审计 | attach / unload / invoke 落插件 audit 日志（不含参数原文）；调用历史 `java_invocations` 滚动 200 条 |
+| 敏感信息 | 进程命令行脱敏回传；token 不落盘不进日志 |
+| 卸载 | agent.stop 停服务 + 清 infoFile；已加载类不可卸载（明确告知） |
+| 默认不开放 | 任意表达式执行 / Shell 执行 / 不受限代码执行（无此类入口） |
 
-`ScenarioStep` 三态互斥扩展（`endpoint_id` / `request` / `java_invocation`）：
+## 九、前端 UI（attach 工作台）
 
-```json
-{
-  "name": "创建订单",
-  "java_invocation": {
-    "java_project_id": "<uuid>",
-    "class_name": "com.example.OrderService",
-    "method_id": "com.example.OrderService#createOrder(CreateOrderRequest,long)",
-    "arguments": [{"sku": "A"}, "{{userId}}"]
-  },
-  "extract": [{"name": "orderNo", "from": "body", "path": "$.orderNo"}],
-  "assertions": [{"type": "jsonpath", "path": "$.status", "op": "eq", "expected": "CREATED"}]
-}
-```
+七步交互（`/java-debug`，模式切换「本地进程（默认）/ Runtime (SDK)」）：
 
-- 前序 HTTP / Java 步骤的提取值共享同一变量上下文，`{{var}}` 在参数 JSON 内
-  渲染（类型层还原数字）。
-- Java 步骤返回值 JSON 作为「响应体」进入同一套断言 / 提取管线：成功映射 200、
-  业务异常映射 500、链路失败（Runtime 不可达）报 request_error。
-- 条件 / 循环 / 等待 / 重试 / 并行 / 失败即停对 Java 步骤全部生效；Blocked 判定
-  与变量丢失语义与 HTTP 步骤一致（引擎级测试覆盖：成功链路 / 异常 / 未接执行器 /
-  失败步阻塞后续）。
+1. 自动发现本机 Java 进程（左栏，5s 自动刷新 + 搜索 + 手动 PID）；
+2. 选择目标（状态徽章：可连接 / 已连接 / 不可连接 + 原因）；
+3. 点击 Attach → **确认对话框**（注入说明）；
+4. 类浏览器（中列左：已加载类，JDK 内部类默认排除 + 收藏）；
+5. 选择方法（中列右：签名 / 重载徽标 / 风险提示 / 实例来源选择）；
+6. 填写参数（可视化表单 ↔ JSON 双模式 + 超时覆盖）；
+7. 执行并展示结果（右列：返回值 / 异常堆栈 / 执行信息 / 输入参数）。
 
-## 八、部署与使用
+顶栏：会话状态 + PID / Java 版本 / agent 版本 chips + 断开 + 卸载 Agent。
+左栏第二页签为 **Spring Bean 视图**（支持分级 + Bean 类型 / scope / 代理 /
+实例化状态），点击 Bean 直接定位其实现类。
 
-### 1. 目标 Java 应用（Runtime 侧）
+组件复用：Agent 数据在 store 内归一为 v1 形状——JavaClassBrowser /
+JavaMethodPanel / JavaResultPanel / JavaHistoryDrawer 原样复用；差异点
+（风险 / 实例解析 / consent）以独立 props / 状态暴露。历史与 v1 同表
+（attach 会话自动建 `java_projects(mode=attach)` 行）。
 
-```bash
-cd java/miyo-java-runtime && mvn package
-# jar 或源码包加入目标项目 classpath，应用启动时：
-```
+首次使用引导：无 JDK / 缺 jar 时左栏给出可操作诊断；JDK 21+ 动态 agent
+告警（目标进程 stderr）在确认对话框中预先说明。
 
-```java
-MiyoDebugRuntime runtime = MiyoDebugRuntime.create(
-        RuntimeConfig.builder(System.getenv("MIYO_DEBUG_TOKEN"))
-                .appName("order-service").port(9918))
-        .register("orderService", OrderService.class,
-                () -> applicationContext.getBean(OrderService.class)) // Spring Bean
-        .register(null, MathUtil.class, InstanceProvider.staticInstance())
-        .start();
-```
+## 十、与现有 Miyo 集成
 
-编译期建议加 `-parameters`（保留形参名，缺省回退 arg0..n）。
+| 能力 | 状态 |
+|---|---|
+| Java 调试历史 | 同表复用（attach 会话有 `java_projects(mode=attach)` 行） |
+| 方法调用记录 / 重放 | 完全沿用（method_id 同键） |
+| 集成测试 Java 步骤 | `miyo-agent::java_hook` 按项目 mode 路由：attach 项目经会话表路由（会话未建立显式报错，不隐式注入）；runtime 项目走 v1 客户端 |
+| MCP Java 工具（9 个） | 沿用（执行器同上路由）；`run_java_method` 仍走 NetworkExecute 高风险门 |
+| AI 调试工作流 | Agent 控制面（AgentState 注入 AttachManager）与 tauri 场景引擎共用单源执行器 |
+| v1 SDK 模式 | 保留为兼容连接方式（`mode='runtime'` 项目），文档与接入向导不变 |
 
-### 2. 验证联调
+远程普通 Java 应用**不能**仅凭本地 Attach 零侵入连接——UI 明确要求
+「可访问的远程 Agent 或其他受控调试通道」（v1 Runtime / 自部署 Agent）。
 
-```bash
-java/examples/demo-app/run_demo.sh        # 端到端：编译 + 启动 + 全协议走查
-# 可选：真实 Rust 客户端 ↔ Java SDK 对接（env 门控）
-MIYO_E2E_RUNTIME=http://127.0.0.1:9918 MIYO_E2E_TOKEN=<token> \
-  cargo test -p miyo-java --test java_runtime_e2e_test
-```
+## 十一、兼容性矩阵（实测环境：macOS 15 arm64）
 
-### 3. Miyo 桌面端
+| 目标 JVM | 结论 | 验证 |
+|---|---|---|
+| JDK 8（Zulu 1.8.0_372） | ✅ 全链路（attach / 握手 / 调用 / 卸载） | `scripts/test_java_attach_matrix.sh` |
+| JDK 11（Zulu 11.0.12） | ✅ 全链路 | 同上 |
+| JDK 17（Zulu 17.0.13） | ✅ 全链路 | 同上 |
+| JDK 21（Zulu 21.0.6） | ✅ 全链路（动态 agent 告警已提示） | 同上 + E2E |
+| launcher 运行于 JDK 8（tools.jar 桥） | ✅ attach JDK 17 目标（协议偏斜由兜底吸收） | 实测 |
+| launcher 运行于 JDK 21 → JDK 8 目标 | ✅（AgentLoadException 误报由 infoFile 兜底吸收） | 实测 |
+| Spring Boot 3.2.5 / Spring 6.1.6 | ✅ 上下文捕获 + Bean 清单 + Bean 调用 | `java/examples/spring-boot-demo` 实测 |
+| JDK 22 / 25 / Windows / Linux / 容器 | ⚠️ 未实测——本机无对应环境；协议与字节码按 Java 8 目标设计，理论兼容，**不标记完全支持** | — |
 
-仪表板左侧导航「Java 方法调试」（或工作台顶栏工具组）→ 注册项目
-（Runtime 地址 + token）→ 连接 → 浏览白名单类 → 选择方法（表单 / JSON 双模式
-填参）→ 执行 → 查看 结果 / 异常 / 耗时 / 历史 → 可存历史重放。
-
-### 4. AI（MCP）
-
-在设置 → MCP 服务启用工具（`run_java_method` 需显式开启 NetworkExecute）。
-AI 流程：`list_java_projects → list_java_classes → list_java_methods →
-create_java_invocation（校验）→ run_java_method → get_java_execution_result`。
-
-## 九、自动化测试结果
+## 十二、自动化测试结果
 
 | 套件 | 结果 |
 |---|---|
-| `cargo test --workspace`（根 workspace 全量） | 全部通过（含新增：miyo-java 25 + mock 6 + E2E 2、storage java_debug 3、core 场景模型、miy-test Java 步骤引擎级 4、agent/mcp 注册完整性） |
-| `cargo test`（miyo-tauri，独立 workspace） | 44 通过（含 Java 步骤入参反序列化 2） |
-| `cargo clippy --workspace --all-targets` | 0 警告 |
-| `cargo fmt --all` | 已格式化 |
-| `cargo test --features ts`（bindings 导出） | `ScenarioJavaInvocation.ts` 生成、`ScenarioStep.ts` 更新（CI diff 校验所需文件已随提交） |
-| Java SDK `SelfTest`（纯 JDK） | 76 断言全部通过 |
-| `java/examples/demo-app/run_demo.sh` | 端到端全协议通过（info / classes / methods / invoke / 异常 / 404 / 403 / 401 / 取消） |
-| `cargo test -p miyo-java --test java_runtime_e2e_test`（env 门控，真实 Java Runtime） | 2 通过（握手 / 发现 / DTO 注入调用 / 金额校验 / 异常堆栈 / 未注册拒绝 / 取消链路） |
-| 前端 `vitest run` | 139 文件 1122 测试全绿（含 javaDebug 12） |
-| 前端 `eslint .` / `vue-tsc --noEmit` / `vite build` | 干净 / 通过 / 成功 |
+| Agent 协议冒烟（`java/examples/plain-app/agent_smoke.py`，28 项） | ✅ 全过（鉴权 / 版本协商 / 类 / 方法 / 重载 / 黑名单 / 静态 + DTO 调用 / consent 闸 / 业务异常 / 超时 / 取消 / 重复 attach 换发 / 卸载） |
+| JDK 目标矩阵（`scripts/test_java_attach_matrix.sh`） | ✅ JDK 8 / 11 / 17 / 21 全过 |
+| Rust `cargo test --workspace`（根 workspace 全量） | ✅ 全绿（新增 miyo-java-attach 13 单测：脱敏 / 版本选择 / 错误映射 / 帧协议 / 握手映射 + storage attach 项目 4 测） |
+| Rust Attach E2E（`miyo-java-attach/tests/attach_e2e_test.rs`，env 门控） | ✅ 10 步全链路（发现 → attach → 发现 → 静态调用 → 黑名单 → consent → 取消 → detach → 重连识别 → 卸载） |
+| Rust `cargo test`（miyo-tauri 独立 workspace） | ✅ 43 + 契约 3（14 个新命令过三向契约） |
+| Spring Boot 实测 | ✅（§六） |
+| 前端 `vitest run` | ✅ 149 文件 / 1201 测试（新增 javaAttach 7） |
+| 前端 eslint / vue-tsc / vite build | ✅ 干净（attach 代码在独立 chunk，主 chunk 零字节） |
+| i18n 门禁 | ✅（java2.* 55 键中英 1:1；白名单补 Java 语义词 primary / private） |
 
-## 十、当前未实现（预留扩展）
+## 十三、安装包体积变化
 
-- **方法链式执行**：多 Java 方法串联编排 UI（场景引擎已具备链路变量能力，
-  缺独立工作台向导）。
-- **JSONPath 断言之外的 Java 专属断言**（返回值字段匹配模板等）——现有
-  body / jsonpath / response_time_ms 断言已覆盖主要场景。
-- **Spring Bean 自动发现**：SDK 已支持经 `InstanceProvider` 接入 Bean 容器，
-  自动扫描 `ApplicationContext` 注册白名单（第二阶段）。
-- **参数模板 / 收藏的持久化**（当前收藏走 localStorage、最近使用走会话内存）。
-- **多 Runtime 实例管理与实例选择**（当前一个 Java 项目对应一个 Runtime 端点）。
-- **进程级强制终止**（独立 Worker 进程隔离 + 杀进程回收，针对不可信代码）。
-- **CLI 支持 Java 步骤**（导出格式暂不含 Java 步骤，桌面端已支持）。
-- **MCP `create_java_invocation` 落库为可复用模板**（当前为即时校验计划）。
+| 产物 | 体积 |
+|---|---|
+| `miyo-java-agent.jar`（含 shaded ASM） | ~340 KiB |
+| `miyo-attach-launcher.jar` | ~19 KiB |
+| Rust 侧新增 crate（miyo-java-attach） | 编译进主二进制（< 200 KiB 增量） |
+| 安装包净增 | **< 0.6 MiB**（纯增量，无第三方运行时引入） |
+
+## 十四、已知限制（诚实清单）
+
+1. **类不可卸载**：JVM 不支持运行时卸载 Agent 类——卸载 = 停服务 + 清
+   连接信息，已加载的类随 JVM 退出回收（UI 明示）；
+2. **超时 / 取消为协作式**：Java 无法强制终止同 JVM 业务线程
+   （`terminated` 恒为 false）；
+3. **Spring 上下文捕获为条件支持**：attach 晚于应用启动时需一次应用活动
+   （HTTP 请求 / 定时任务）；彻底无活动 + 未设 LiveBeansView 属性 →
+   显示等待状态与两种解决路径；
+4. **实例来源**：无 Spring 时实例方法只能「新建临时实例」（需 consent）；
+   无法枚举任意存量对象（纯 Java 无堆遍历能力，JVM TI 需原生库——后续增强）；
+5. **传输为回环 TCP**（Java 8 无内置 UDS / Named Pipe）；token 鉴权 +
+   仅回环绑定达到同等防护，UDS 作为后续增强；
+6. **远程应用**：本地 Attach 不适用——远程需走 v1 Runtime SDK 或受控
+   远程 Agent 通道；
+7. **懒加载类不可见**：Instrumentation 只能看到已加载类——未触发的类
+   需先在应用中触发使用（UI 提示）；
+8. **JDK 22+ / Windows / Linux / 容器未实测**（协议按 Java 8 兼容设计）；
+9. boot 版本探测：`SpringBootVersion` 未加载时显示 unknown（诚实降级）。
+
+## 十五、模块与文件清单
+
+```text
+java/
+├── miyo-java-agent/            # 动态注入 Agent（Java 8 + shaded ASM）
+│   └── src/main/java/io/miyo/agent/
+│       ├── AgentMain.java      # agentmain / premain / boot / shutdown
+│       ├── AgentArgs.java      # loadAgent options 解析（URL 编码 k=v）
+│       ├── AgentState.java     # 单例 / token 换发 / infoFile（0600）
+│       ├── ipc/                # IpcServer / IpcConnection / Frames / RequestDispatcher / Protocol
+│       ├── inspect/            # ClassInspector / ClassFilter（已加载类视角）
+│       ├── invoke/             # InvocationEngine / ArgsConverter / ResultSerializer / RiskPolicy / InstanceResolver
+│       ├── spring/             # ContextDiscovery（策略梯子）/ ContextTransformer（ASM）/ SpringCapture
+│       └── util/Json.java
+├── miyo-attach-launcher/       # Attach sidecar CLI（JDK8 tools.jar 反射桥 + JDK9+ 直连）
+│   └── src/main/java/io/miyo/launcher/{LauncherMain,AttachBridge}.java
+└── examples/
+    ├── plain-app/              # 零 SDK 验收 demo（Calculator / OrderService）+ agent_smoke.py
+    └── spring-boot-demo/       # Spring Boot 3.2.5 验收 demo（PriceService）
+
+crates/miyo-java-attach/        # Rust 侧 Attach 层（进程发现 / JDK 工具链 / launcher runner / Agent IPC client / 会话管理）
+├── src/{lib,model,process,jdk,launcher,client,manager}.rs
+└── tests/attach_e2e_test.rs    # 全链路 E2E（env 门控）
+
+crates/miyo-tauri/src/
+├── commands/java_attach.rs     # 14 个新命令（发现 / attach / 类 / 方法 / Bean / 调用 / 取消）
+└── state.rs                    # AppState.java_attach（resource dir / dev java/dist 候选）
+
+crates/miyo-agent/src/java_hook.rs   # 场景 / MCP 单源执行器：按项目 mode 路由
+
+frontend/src/domains/java-debug/
+├── stores/javaAttach.ts        # attach store（Agent 数据归一复用 v1 组件）
+├── components/{JavaProcessPanel,JavaAttachConfirmDialog,JavaBeansPanel}.vue
+└── views/JavaDebugView.vue     # 双模式壳（attach 默认 / runtime 兼容）
+
+scripts/
+├── build_java_debug.sh         # agent + launcher 构建 → java/dist + resources
+├── ensure-java-jars.sh         # tauri bundle.resources 预置（CI / 打包）
+└── test_java_attach_matrix.sh  # JDK 8/11/17/21 目标矩阵
+
+crates/miyo-storage/migrations/0032_java_attach.sql  # java_projects + mode/attach_pid/vm_start_ms
+```
+
+### 使用（E2E 复现）
+
+```bash
+# 1. 构建 agent / launcher jar（java/dist + tauri resources）
+scripts/build_java_debug.sh
+
+# 2. 协议冒烟（28 项）
+(cd java/examples/plain-app && javac --release 8 -d build/classes8 @build/sources.txt)
+(cd java/examples/plain-app && java -cp build/classes8 com.example.PlainApp &)
+python3 java/examples/plain-app/agent_smoke.py <pid> $(openssl rand -hex 32)
+
+# 3. JDK 目标矩阵
+scripts/test_java_attach_matrix.sh
+
+# 4. Rust 全链路 E2E
+cargo test -p miyo-java-attach --test attach_e2e_test -- --ignored
+
+# 5. Spring Boot 验收
+(cd java/examples/spring-boot-demo && mvn package && java -jar target/*.jar &)
+# → Miyo → Java 调试 → 本地进程 → Attach → curl /ping 一次 → Bean 页签
+```
+
+v1 Runtime SDK 模式的部署与协议文档见 `java/miyo-java-runtime/README.md`
+（兼容连接方式，未改动）。

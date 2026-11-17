@@ -31,8 +31,14 @@ const plugin: PluginFactory = (ctx) => {
 
   return {
     async deactivate() {
-      // 释放插件运行时：连接心跳 / 在途状态 / 发现缓存（模块动态 import——
-      // deactivate 时该 store 通常已存在；不存在则无资源可释放）。
+      // 释放插件运行时：attach 轮询 / 会话状态 + v1 心跳与在途状态
+      //（模块动态 import——deactivate 时 store 通常已存在；不存在则无资源可释放）。
+      try {
+        const { useJavaAttachStore } = await import('./stores/javaAttach')
+        useJavaAttachStore().dispose()
+      } catch (err) {
+        ctx.logger.warn(`javaAttach store dispose failed: ${String(err)}`)
+      }
       try {
         const { useJavaDebugStore } = await import('./stores/javaDebug')
         useJavaDebugStore().dispose()

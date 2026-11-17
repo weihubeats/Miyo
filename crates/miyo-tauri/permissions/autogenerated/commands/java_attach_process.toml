@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-attach-process"
+description = "Enables the java_attach_process command without any pre-configured scope."
+commands.allow = ["java_attach_process"]
+
+[[permission]]
+identifier = "deny-java-attach-process"
+description = "Denies the java_attach_process command without any pre-configured scope."
+commands.deny = ["java_attach_process"]

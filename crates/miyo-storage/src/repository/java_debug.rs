@@ -18,6 +18,9 @@ struct JavaProjectRow {
     id: String,
     project_id: Option<String>,
     name: String,
+    mode: String,
+    attach_pid: Option<i64>,
+    vm_start_ms: Option<i64>,
     runtime_endpoint: String,
     environment_id: Option<String>,
     auth_json: String,
@@ -39,6 +42,9 @@ impl JavaProjectRow {
             id: parse_uuid(&self.id)?,
             project_id: self.project_id.map(|v| parse_uuid(&v)).transpose()?,
             name: self.name,
+            mode: self.mode,
+            attach_pid: self.attach_pid,
+            vm_start_ms: self.vm_start_ms,
             runtime_endpoint: self.runtime_endpoint,
             environment_id: self.environment_id.map(|v| parse_uuid(&v)).transpose()?,
             auth_token,
@@ -87,7 +93,7 @@ fn auth_json_for(token: Option<&str>) -> Result<String> {
     Ok(serde_json::json!({ "token": encrypted }).to_string())
 }
 
-const PROJECT_COLUMNS: &str = "id, project_id, name, runtime_endpoint, environment_id, auth_json, timeout_ms, max_result_bytes, max_concurrent, description, last_connected_at, last_info_json, created_at, updated_at";
+const PROJECT_COLUMNS: &str = "id, project_id, name, mode, attach_pid, vm_start_ms, runtime_endpoint, environment_id, auth_json, timeout_ms, max_result_bytes, max_concurrent, description, last_connected_at, last_info_json, created_at, updated_at";
 
 /// 列出全部 Java 调试项目（更新时间倒序）；`project_id` 过滤关联项目。
 pub async fn list_java_projects(
@@ -135,11 +141,14 @@ pub async fn save_java_project(db: &SqlitePool, project: &JavaDebugProject) -> R
         .map(|v| v.to_string())
         .unwrap_or_default();
     let result = sqlx::query(
-        "INSERT INTO java_projects (id, project_id, name, runtime_endpoint, environment_id, auth_json, timeout_ms, max_result_bytes, max_concurrent, description, last_connected_at, last_info_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO java_projects (id, project_id, name, mode, attach_pid, vm_start_ms, runtime_endpoint, environment_id, auth_json, timeout_ms, max_result_bytes, max_concurrent, description, last_connected_at, last_info_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             project_id = excluded.project_id,
             name = excluded.name,
+            mode = excluded.mode,
+            attach_pid = excluded.attach_pid,
+            vm_start_ms = excluded.vm_start_ms,
             runtime_endpoint = excluded.runtime_endpoint,
             environment_id = excluded.environment_id,
             auth_json = excluded.auth_json,
@@ -153,6 +162,9 @@ pub async fn save_java_project(db: &SqlitePool, project: &JavaDebugProject) -> R
     .bind(project.id.to_string())
     .bind(project.project_id.map(|v| v.to_string()))
     .bind(project.name.trim())
+    .bind(project.mode.trim())
+    .bind(project.attach_pid)
+    .bind(project.vm_start_ms)
     .bind(project.runtime_endpoint.trim())
     .bind(project.environment_id.map(|v| v.to_string()))
     .bind(auth_json)
@@ -205,6 +217,75 @@ pub async fn delete_java_project(db: &SqlitePool, id: Uuid) -> Result<()> {
         return Err(AppError::NotFound(format!("Java 调试项目（{id}）")));
     }
     Ok(())
+}
+
+/// attach 模式项目查找：pid + vm_start_ms 精确匹配。
+pub async fn find_attach_project(
+    db: &SqlitePool,
+    pid: i64,
+    vm_start_ms: i64,
+) -> Result<Option<JavaDebugProject>> {
+    let row: Option<JavaProjectRow> = sqlx::query_as(&format!(
+        "SELECT {PROJECT_COLUMNS} FROM java_projects WHERE mode = 'attach' AND attach_pid = ? AND vm_start_ms = ?"
+    ))
+    .bind(pid)
+    .bind(vm_start_ms)
+    .fetch_optional(db)
+    .await?;
+    row.map(JavaProjectRow::into_model).transpose()
+}
+
+/// attach 模式项目查找（仅按 pid——重启识别用）。
+pub async fn find_attach_project_by_pid(
+    db: &SqlitePool,
+    pid: i64,
+) -> Result<Option<JavaDebugProject>> {
+    let row: Option<JavaProjectRow> = sqlx::query_as(&format!(
+        "SELECT {PROJECT_COLUMNS} FROM java_projects WHERE mode = 'attach' AND attach_pid = ? ORDER BY updated_at DESC LIMIT 1"
+    ))
+    .bind(pid)
+    .fetch_optional(db)
+    .await?;
+    row.map(JavaProjectRow::into_model).transpose()
+}
+
+/// attach 会话落库 / 更新（name = 进程展示名；runtime_endpoint 为 attach:// 占位）。
+/// 已有同 pid 行：更新 name / vm_start_ms（重启复用历史）；无行：新建。返回项目 id。
+pub async fn upsert_attach_project(
+    db: &SqlitePool,
+    name: &str,
+    pid: i64,
+    vm_start_ms: i64,
+) -> Result<Uuid> {
+    let existing = find_attach_project_by_pid(db, pid).await?;
+    if let Some(project) = existing {
+        sqlx::query(
+            "UPDATE java_projects SET name = ?, vm_start_ms = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(name.trim())
+        .bind(vm_start_ms)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(project.id.to_string())
+        .execute(db)
+        .await?;
+        return Ok(project.id);
+    }
+    let id = Uuid::new_v4();
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO java_projects (id, name, mode, attach_pid, vm_start_ms, runtime_endpoint, auth_json, timeout_ms, max_result_bytes, max_concurrent, description, created_at, updated_at)
+         VALUES (?, ?, 'attach', ?, ?, ?, '{}', 30000, 1048576, 4, '', ?, ?)",
+    )
+    .bind(id.to_string())
+    .bind(name.trim())
+    .bind(pid)
+    .bind(vm_start_ms)
+    .bind(format!("attach://{pid}"))
+    .bind(&now)
+    .bind(&now)
+    .execute(db)
+    .await?;
+    Ok(id)
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +455,9 @@ mod tests {
             id: Uuid::new_v4(),
             project_id: None,
             name: name.into(),
+            mode: "runtime".into(),
+            attach_pid: None,
+            vm_start_ms: None,
             runtime_endpoint: "http://127.0.0.1:9918".into(),
             environment_id: None,
             auth_token: Some("s3cret".into()),
@@ -434,6 +518,66 @@ mod tests {
         let got = get_java_project(&db, p.id).await.unwrap();
         assert!(got.last_connected_at.is_some());
         assert_eq!(got.last_info.unwrap()["app_name"], "demo");
+    }
+
+    #[tokio::test]
+    async fn attach_project_upsert_and_restart_reuse() {
+        let db = db().await;
+        // 首次 attach：新建行
+        let id = upsert_attach_project(&db, "com.example.PlainApp", 4242, 1_000)
+            .await
+            .unwrap();
+        let project = get_java_project(&db, id).await.unwrap();
+        assert_eq!(project.mode, "attach");
+        assert_eq!(project.attach_pid, Some(4242));
+        assert_eq!(project.vm_start_ms, Some(1_000));
+        assert_eq!(project.runtime_endpoint, "attach://4242");
+
+        // 落一条历史（复用既有链路）
+        let record = JavaInvocationRecord {
+            id: Uuid::new_v4(),
+            project_id: id,
+            class_name: "com.example.calculator.Calculator".into(),
+            method_id: "com.example.calculator.Calculator#add(long,long)".into(),
+            method_signature: "add(long, long)".into(),
+            arguments: serde_json::json!([2, 40]),
+            status: "success".into(),
+            result: Some(serde_json::json!(42)),
+            result_truncated: false,
+            exception: None,
+            duration_ms: Some(0.4),
+            started_at: None,
+            finished_at: None,
+            created_at: chrono::Utc::now(),
+        };
+        insert_java_invocation(&db, &record).await.unwrap();
+        assert_eq!(list_java_invocations(&db, id, 10).await.unwrap().len(), 1);
+
+        // 同 pid + 同 vm_start：不新建
+        let id2 = upsert_attach_project(&db, "com.example.PlainApp", 4242, 1_000)
+            .await
+            .unwrap();
+        assert_eq!(id, id2);
+
+        // 进程重启（vm_start 变化）：同一行更新 vm_start，历史保留
+        let id3 = upsert_attach_project(&db, "com.example.PlainApp（重启）", 4242, 2_000)
+            .await
+            .unwrap();
+        assert_eq!(id, id3);
+        let project = get_java_project(&db, id).await.unwrap();
+        assert_eq!(project.vm_start_ms, Some(2_000));
+        assert_eq!(project.name, "com.example.PlainApp（重启）");
+        assert_eq!(list_java_invocations(&db, id, 10).await.unwrap().len(), 1);
+
+        // find_attach_project：精确 vm_start 命中 / 旧值不命中
+        assert!(find_attach_project(&db, 4242, 2_000)
+            .await
+            .unwrap()
+            .is_some());
+        assert!(find_attach_project(&db, 4242, 1_000)
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]

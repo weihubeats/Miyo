@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-attach-sessions"
+description = "Enables the java_attach_sessions command without any pre-configured scope."
+commands.allow = ["java_attach_sessions"]
+
+[[permission]]
+identifier = "deny-java-attach-sessions"
+description = "Denies the java_attach_sessions command without any pre-configured scope."
+commands.deny = ["java_attach_sessions"]

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-detach-process"
+description = "Enables the java_detach_process command without any pre-configured scope."
+commands.allow = ["java_detach_process"]
+
+[[permission]]
+identifier = "deny-java-detach-process"
+description = "Denies the java_detach_process command without any pre-configured scope."
+commands.deny = ["java_detach_process"]

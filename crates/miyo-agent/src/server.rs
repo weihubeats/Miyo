@@ -82,6 +82,9 @@ pub struct AgentState {
     /// 异步场景运行的内存注册表（run_id → 句柄）：wait=false 的运行在后台
     /// 执行，get_run_result 据此轮询；运行结束落 scenario_runs 后查询走 DB。
     pub runs: Arc<std::sync::Mutex<std::collections::HashMap<String, RunHandle>>>,
+    /// Java Debug 2.0 AttachManager（attach 模式 Java 步骤 / MCP 调用路由；
+    /// miyo-tauri 启动 Agent 控制面时注入，独立运行默认 None）。
+    pub java_attach: Option<Arc<miyo_java_attach::AttachManager>>,
 }
 
 /// 一次异步运行的状态句柄（标准锁：持有期间不 await）。
@@ -125,7 +128,14 @@ impl AgentState {
             events,
             progress: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             runs: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            java_attach: None,
         }
+    }
+
+    /// 注入 AttachManager（miyo-tauri 启动 Agent 控制面时调用）。
+    pub fn with_java_attach(mut self, manager: Arc<miyo_java_attach::AttachManager>) -> Self {
+        self.java_attach = Some(manager);
+        self
     }
 
     /// 已启用的 MCP 权限等级（每次实时读 settings：开关即时生效）。
@@ -1837,7 +1847,10 @@ async fn execute_scenario(
         timeout_ms: Some(timeout_ms),
         cancel: Some((*cancel_token).clone()),
         stop_on_failure: req.stop_on_failure,
-        java_invoke: Some(crate::java_hook::java_invoke_hook(state.db.clone())),
+        java_invoke: Some(crate::java_hook::java_invoke_hook(
+            state.db.clone(),
+            state.java_attach.clone(),
+        )),
     };
     // 总超时 watchdog：到点自动 cancel（runner 返回已完成步骤并落库）。
     // AbortOnDrop 守卫：正常完成 / 出错 / panic 三条路径都会撤销 watchdog
@@ -2508,7 +2521,7 @@ async fn run_java_method_handler(
         .split_once('#')
         .map(|(c, _)| c.to_string())
         .unwrap_or_default();
-    let hook = crate::java_hook::java_invoke_hook(state.db.clone());
+    let hook = crate::java_hook::java_invoke_hook(state.db.clone(), state.java_attach.clone());
     let outcome = hook(miyo_test::runner::JavaStepRequest {
         java_project_id: req.project_id,
         class_name: class,

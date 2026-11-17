@@ -20,6 +20,7 @@ members = [
     "crates/miyo-sync",
     "crates/miyo-cli",
     "crates/miyo-java",
+    "crates/miyo-java-attach",
     "crates/miyo-plugin",
 ]
 

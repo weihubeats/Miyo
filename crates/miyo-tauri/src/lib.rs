@@ -83,6 +83,30 @@ fn init_tracing() {
         .try_init();
 }
 
+/// Java Attach 工具 jar 候选目录（按序取第一个就绪的）：
+/// 1. Tauri 资源目录（打包后：resources/java/，tauri.conf.json bundle.resources）；
+/// 2. 开发回退：仓库 java/dist/（scripts/build_java_debug.sh 产物）。
+fn java_attach_jar_candidates(app: &tauri::AppHandle) -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(res_dir) = app
+        .path()
+        .resolve("java", tauri::path::BaseDirectory::Resource)
+    {
+        candidates.push(res_dir);
+    }
+    // dev 回退：CARGO_MANIFEST_DIR 在编译期已知（miyo-tauri/src → 仓库根 java/dist）
+    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
+        candidates.push(
+            std::path::PathBuf::from(manifest_dir)
+                .join("..")
+                .join("..")
+                .join("java")
+                .join("dist"),
+        );
+    }
+    candidates
+}
+
 /// 插件命名空间。`init()` 注册状态与全部 Command。
 ///
 /// 非泛型 `Wry` 实现:便于 Command 直接取 `tauri::AppHandle` 推送事件
@@ -188,7 +212,7 @@ pub mod plugin {
                     // 按保留天数清理过期日志（失败仅记日志）
                     commands::log::cleanup_logs_on_startup(&db);
                     // 恢复持久化的激活项目 / 环境（settings 表，含归属校验）
-                    let state = AppState::new(db);
+                    let state = AppState::new(db, java_attach_jar_candidates(app));
                     let _ = tauri::async_runtime::block_on(state.restore_active());
                     app.manage(state);
                     // Agent 控制面随应用自动拉起（幂等；失败仅记日志不阻断启动）；
@@ -314,6 +338,21 @@ pub mod plugin {
                 commands::plugin_data_delete,
                 commands::plugin_data_keys,
                 // Java 方法实时调试（commands/java_debug.rs，插件门禁见该文件）
+                // Java Debug 2.0 Attach（commands/java_attach.rs）
+                commands::java_discover_processes,
+                commands::java_probe_pid,
+                commands::java_attach_process,
+                commands::java_detach_process,
+                commands::java_unload_agent,
+                commands::java_attach_sessions,
+                commands::java_agent_status,
+                commands::java_agent_spring_status,
+                commands::java_agent_classes,
+                commands::java_agent_class_detail,
+                commands::java_agent_methods,
+                commands::java_agent_beans,
+                commands::java_agent_invoke,
+                commands::java_agent_cancel,
                 commands::list_java_projects,
                 commands::save_java_project,
                 commands::delete_java_project,

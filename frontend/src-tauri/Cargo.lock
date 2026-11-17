@@ -3137,6 +3137,7 @@ dependencies = [
  "miyo-core",
  "miyo-http",
  "miyo-java",
+ "miyo-java-attach",
  "miyo-plugin",
  "miyo-sign",
  "miyo-storage",
@@ -3273,6 +3274,21 @@ dependencies = [
  "dirs",
  "miyo-core",
  "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "miyo-java-attach"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "miyo-core",
+ "rand 0.10.3",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3427,6 +3443,7 @@ dependencies = [
  "miyo-grpc",
  "miyo-http",
  "miyo-java",
+ "miyo-java-attach",
  "miyo-mock",
  "miyo-oauth",
  "miyo-openapi",
@@ -6600,6 +6617,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

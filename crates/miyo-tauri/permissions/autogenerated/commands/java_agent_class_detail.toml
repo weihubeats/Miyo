@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-agent-class-detail"
+description = "Enables the java_agent_class_detail command without any pre-configured scope."
+commands.allow = ["java_agent_class_detail"]
+
+[[permission]]
+identifier = "deny-java-agent-class-detail"
+description = "Denies the java_agent_class_detail command without any pre-configured scope."
+commands.deny = ["java_agent_class_detail"]

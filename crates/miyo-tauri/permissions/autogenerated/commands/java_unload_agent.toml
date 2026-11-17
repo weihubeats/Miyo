@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-unload-agent"
+description = "Enables the java_unload_agent command without any pre-configured scope."
+commands.allow = ["java_unload_agent"]
+
+[[permission]]
+identifier = "deny-java-unload-agent"
+description = "Denies the java_unload_agent command without any pre-configured scope."
+commands.deny = ["java_unload_agent"]

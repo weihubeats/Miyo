@@ -67,10 +67,18 @@ pub fn client_for(
     )
 }
 
-/// 构造场景引擎的 Java 步骤执行器（两侧共用单源）。
-pub fn java_invoke_hook(db: sqlx::SqlitePool) -> Arc<miyo_test::runner::JavaInvokeFn> {
+/// 构造场景引擎的 Java 步骤执行器（两侧共用单源；按项目连接模式路由）。
+///
+/// `attach`：AttachManager（miyo-tauri AppState 持有 / Agent 控制面经
+/// AgentState 注入）。项目 mode = attach 时必须提供——远程 / MCP 链路对
+/// attach 项目经同一会话表路由（零侵入目标 + 历史同表落库）。
+pub fn java_invoke_hook(
+    db: sqlx::SqlitePool,
+    attach: Option<Arc<miyo_java_attach::AttachManager>>,
+) -> Arc<miyo_test::runner::JavaInvokeFn> {
     Arc::new(move |req| {
         let db = db.clone();
+        let attach = attach.clone();
         Box::pin(async move {
             // 插件门禁：Java 调试插件未安装 / 未启用时拒绝执行
             // （tauri 命令层另有前置检查，这里是场景引擎 / Agent 控制面 / MCP 的兜底单源）。
@@ -80,6 +88,15 @@ pub fn java_invoke_hook(db: sqlx::SqlitePool) -> Arc<miyo_test::runner::JavaInvo
             let project = repo::get_java_project(&db, req.java_project_id)
                 .await
                 .map_err(|e| format!("Java 项目配置加载失败：{}", e.user_message()))?;
+            // 按连接模式路由：attach（零侵入动态注入）/ runtime（SDK 端点，v1 兼容）。
+            if project.mode == "attach" {
+                let Some(manager) = attach else {
+                    return Err("attach 模式项目需要本机 Attach 会话：请在 Java 调试工作台\
+                        先 Attach 目标进程（远程 Java 应用不支持本地 Attach）"
+                        .to_string());
+                };
+                return attach_invoke(&manager, &db, &project, req).await;
+            }
             let client = client_for(&project).map_err(|e| e.to_string())?;
             let arguments = normalize_arguments(req.arguments.clone());
             let invocation_id = Uuid::new_v4();
@@ -114,4 +131,96 @@ pub fn java_invoke_hook(db: sqlx::SqlitePool) -> Arc<miyo_test::runner::JavaInvo
             })
         })
     })
+}
+
+/// attach 模式执行：经 AttachManager 会话（Agent IPC）调用，历史同表落库。
+///
+/// 目标方法经 `Class#method(T1,T2)` + param_types 定位（method_id 与场景步骤
+/// 同键）；实例解析默认 bean（Spring Bean）/ Agent 侧 unsupported 显式失败。
+/// attach 会话未建立时报错——场景引擎不隐式注入 JVM（入口在 UI 且需确认）。
+async fn attach_invoke(
+    manager: &Arc<miyo_java_attach::AttachManager>,
+    db: &sqlx::SqlitePool,
+    project: &miyo_core::model::JavaDebugProject,
+    req: miyo_test::runner::JavaStepRequest,
+) -> Result<miyo_test::runner::JavaStepResponse, String> {
+    let pid = project.attach_pid.ok_or_else(|| {
+        "attach 项目缺少目标 pid（项目行异常）：请重新 Attach 目标进程".to_string()
+    })?;
+    let client = manager
+        .client(pid)
+        .await
+        .map_err(|_| "目标进程尚未 Attach：请在 Java 调试工作台连接后重试".to_string())?;
+    let (class, method, param_types) = split_method_id(&req.method_id);
+    let arguments = normalize_arguments(req.arguments.clone());
+    let invocation_id = Uuid::new_v4();
+    let params = serde_json::json!({
+        "invocation_id": invocation_id.to_string(),
+        "class": class,
+        "method": method,
+        "param_types": param_types,
+        "args": arguments,
+        "instance": { "kind": "bean" },
+        "timeout_ms": req.timeout_ms.unwrap_or(30_000),
+    });
+    let timeout_ms = req.timeout_ms.unwrap_or(30_000).min(300_000);
+    let resp = client
+        .invoke(params, timeout_ms)
+        .await
+        .map_err(|e| e.to_app_error().user_message())?;
+    let status = resp
+        .get("status")
+        .and_then(|s| s.as_str())
+        .unwrap_or("failed")
+        .to_string();
+    let record = JavaInvocationRecord {
+        id: invocation_id,
+        project_id: project.id,
+        class_name: class.to_string(),
+        method_id: req.method_id.clone(),
+        method_signature: req.method_id.clone(),
+        arguments: req.arguments.clone(),
+        status,
+        result: resp.get("result").cloned(),
+        result_truncated: resp
+            .get("result_truncated")
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false),
+        exception: resp.get("exception").cloned(),
+        duration_ms: resp.get("duration_ms").and_then(|d| d.as_f64()),
+        started_at: resp
+            .get("started_at")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        finished_at: resp
+            .get("finished_at")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        created_at: chrono::Utc::now(),
+    };
+    if let Err(e) = repo::insert_java_invocation(db, &record).await {
+        tracing::warn!("attach 调用历史落库失败：{e}");
+    }
+    Ok(miyo_test::runner::JavaStepResponse {
+        status: record.status.clone(),
+        result: record.result.clone(),
+        exception: record.exception.clone(),
+        duration_ms: record.duration_ms,
+    })
+}
+
+/// `Class#method(T1,T2)` → (class, method, [T1, T2])（缺参表 = 空表，要求唯一）。
+fn split_method_id(method_id: &str) -> (&str, &str, Vec<String>) {
+    let (class, rest) = method_id.split_once('#').unwrap_or((method_id, ""));
+    let (method, params) = match rest.split_once('(') {
+        Some((m, p)) => (m, p.trim_end_matches(')')),
+        None => (rest, ""),
+    };
+    let types = params
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+    (class, method, types)
 }

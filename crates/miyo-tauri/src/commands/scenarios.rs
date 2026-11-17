@@ -32,6 +32,7 @@ async fn java_hook_for(
     if enabled {
         Some(crate::commands::java_debug::java_invoke_hook(
             state.db.clone(),
+            Some(state.java_attach.clone()),
         ))
     } else {
         None

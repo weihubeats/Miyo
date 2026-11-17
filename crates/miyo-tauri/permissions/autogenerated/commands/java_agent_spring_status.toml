@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-agent-spring-status"
+description = "Enables the java_agent_spring_status command without any pre-configured scope."
+commands.allow = ["java_agent_spring_status"]
+
+[[permission]]
+identifier = "deny-java-agent-spring-status"
+description = "Denies the java_agent_spring_status command without any pre-configured scope."
+commands.deny = ["java_agent_spring_status"]

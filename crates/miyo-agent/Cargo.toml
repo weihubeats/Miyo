@@ -14,6 +14,7 @@ miyo-storage = { path = "../miyo-storage" }
 miyo-plugin = { path = "../miyo-plugin" }
 miyo-test = { path = "../miyo-test" }
 miyo-java = { path = "../miyo-java" }
+miyo-java-attach = { path = "../miyo-java-attach" }
 miyo-sync = { path = "../miyo-sync" }
 jsonpath-rust = "1.0"
 miyo-http = { path = "../miyo-http" }

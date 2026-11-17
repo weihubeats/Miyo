@@ -104,6 +104,9 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install nsis -y
 
+      # bundle.resources 校验：Java Debug attach jar 须在打包前预置
+      - name: Ensure Java Debug attach jars (bundle.resources)
+        run: bash scripts/ensure-java-jars.sh
       - name: Build Tauri bundle
         shell: bash
         run: scripts/package-tauri.sh

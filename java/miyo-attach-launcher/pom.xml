@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Miyo Attach Launcher：短生命周期 sidecar CLI，Miyo（Rust）以子进程方式调用。
+
+  职责：进程枚举（VirtualMachine.list）→ attach → loadAgent → 轮询 infoFile
+  → 返回连接信息 → detach。自身不常驻。
+
+  JDK 兼容：编译目标 Java 8；运行在 JDK 9+ 直接用 jdk.attach 模块，
+  运行在 JDK 8 时经 URLClassLoader 反射加载 tools.jar（同 bridge 接口）。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>io.miyo</groupId>
+  <artifactId>miyo-attach-launcher</artifactId>
+  <version>2.0.0</version>
+  <packaging>jar</packaging>
+  <name>Miyo Attach Launcher</name>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.source>8</maven.compiler.source>
+    <maven.compiler.target>8</maven.compiler.target>
+  </properties>
+
+  <build>
+    <finalName>miyo-attach-launcher</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.3.0</version>
+        <configuration>
+          <archive>
+            <manifest>
+              <mainClass>io.miyo.launcher.LauncherMain</mainClass>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

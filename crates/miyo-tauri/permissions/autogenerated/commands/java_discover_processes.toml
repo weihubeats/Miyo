@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-discover-processes"
+description = "Enables the java_discover_processes command without any pre-configured scope."
+commands.allow = ["java_discover_processes"]
+
+[[permission]]
+identifier = "deny-java-discover-processes"
+description = "Denies the java_discover_processes command without any pre-configured scope."
+commands.deny = ["java_discover_processes"]

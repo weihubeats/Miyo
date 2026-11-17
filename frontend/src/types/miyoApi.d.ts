@@ -1317,6 +1317,12 @@ export interface JavaDebugProject {
   id: string
   project_id?: string | null
   name: string
+  /** 连接模式：runtime = SDK 嵌入端点（v1 兼容）；attach = 本地 JVM 动态注入。 */
+  mode: 'runtime' | 'attach'
+  /** attach 模式的目标进程 pid。 */
+  attach_pid?: number | null
+  /** 目标 JVM 启动时刻（epoch ms；重启识别）。 */
+  vm_start_ms?: number | null
   runtime_endpoint: string
   environment_id?: string | null
   /** 仅在保存请求里有意义：缺省 = 保持现有 token，空串 = 显式清除；回显恒为 null。 */
@@ -1436,4 +1442,145 @@ export interface JavaInvocationRecord {
   started_at?: string | null
   finished_at?: string | null
   created_at: string
+}
+
+// ---------------------------------------------------------------------------
+// Java Debug 2.0：本地 JVM Attach（miyo-java-attach crate）
+// ---------------------------------------------------------------------------
+
+/** 本机 Java 进程（发现层输出；命令行已脱敏）。 */
+export interface JavaProcessInfo {
+  pid: number
+  main_class: string
+  display_name: string
+  command_line: string
+  java_executable: string
+  java_home: string
+  java_version: string
+  jvm_vendor: string
+  /** jdk / jre / unknown。 */
+  kind: string
+  started_at: string
+  elapsed: string
+  uid: string
+  attachable: boolean
+  attach_block_reason?: string | null
+  /** 本 Miyo 会话已 attach。 */
+  attached: boolean
+  source: 'os_scan' | 'manual_pid'
+}
+
+/** 进程发现汇总（含工具链可用性）。 */
+export interface JavaProcessListSummary {
+  processes: JavaProcessInfo[]
+  toolchain_count: number
+  launcher_ready: boolean
+  agent_ready: boolean
+  scan_ms: number
+  hints: string[]
+}
+
+/** Agent 类行（原始形状；store 归一为 JavaClassInfo 后进组件）。 */
+export interface JavaAgentClassItem {
+  name: string
+  package_name: string
+  simple_name: string
+  jdk_internal: boolean
+  array: boolean
+  synthetic: boolean
+  loader: { id: string; name: string; identity: number }
+}
+
+/** Agent 握手信息。 */
+export interface JavaAgentHandshakeInfo {
+  protocol: number
+  agent_version: string
+  pid: number
+  vm_start_ms: number
+  java_version: string
+  java_vm_version: string
+  jvm_vendor: string
+  java_home: string
+  max_concurrent: number
+  max_timeout_ms: number
+  uptime_ms: number
+}
+
+/** attach 会话快照（不含 token）。 */
+export interface JavaAttachSessionSnapshot {
+  pid: number
+  vm_start_ms: number
+  agent_version: string
+  protocol: number
+  handshake: JavaAgentHandshakeInfo
+  launcher_java_home: string
+  attached_at: string
+  /** Agent 已在目标 JVM 运行（本次仅换发 token，无新注入）。 */
+  reattached: boolean
+}
+
+/** Agent 方法信息（attach 模式：方法级风险分级 + 实例解析提示）。 */
+export interface JavaAgentMethodInfo {
+  method_id: string
+  class_name: string
+  declaring_class: string
+  method_name: string
+  signature: string
+  params: { name: string; type: string; generic: string; primitive: boolean }[]
+  param_types: string[]
+  return_type: string
+  return_generic: string
+  static: boolean
+  visibility: string
+  synthetic: boolean
+  bridge: boolean
+  varargs: boolean
+  overloaded: boolean
+  /** blocked / destructive / instance / safe。 */
+  risk: string
+  risk_reason?: string | null
+}
+
+/** attach 调用响应（v1 形状 + attach 附加字段）。 */
+export interface JavaAgentInvokeResponse extends JavaInvokeResponse {
+  instance_kind?: string
+  instance_type?: string
+  bean_name?: string
+  void?: boolean
+  interrupt_sent?: boolean
+  terminated?: boolean
+}
+
+/** Spring 上下文状态（策略梯子 + 分级支持）。 */
+export interface JavaSpringStatus {
+  spring_present: boolean
+  framework_version?: string | null
+  boot_version?: string | null
+  contexts: {
+    id: string
+    class: string
+    active: boolean
+    startup_date: number
+    parent?: string | null
+    bean_count: number
+  }[]
+  capture_state: string
+  capture_count?: number
+  note?: string
+}
+
+/** Spring Bean 条目。 */
+export interface JavaBeanInfo {
+  name: string
+  scope: string
+  lazy: boolean
+  primary: boolean
+  bean_class?: string | null
+  /** 单例已实例化（actual_type 可用；未实例化的调用会触发创建）。 */
+  instantiated: boolean
+  actual_type?: string | null
+  definition_type?: string | null
+  proxy?: boolean
+  proxy_kind?: string
+  error?: string
 }

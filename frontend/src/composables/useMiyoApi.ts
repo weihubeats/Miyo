@@ -29,13 +29,21 @@ import type {
   AiMessageView,
   AuthSpec,
   AgentStatusInfo,
+  JavaAgentClassItem,
+  JavaAgentInvokeResponse,
+  JavaAgentMethodInfo,
+  JavaAttachSessionSnapshot,
+  JavaBeanInfo,
   JavaClassInfo,
   JavaDebugProject,
   JavaDiscoveredRuntime,
   JavaInvocationRecord,
   JavaInvokeResponse,
   JavaMethodInfo,
+  JavaProcessInfo,
+  JavaProcessListSummary,
   JavaRuntimeInfo,
+  JavaSpringStatus,
   BackupSummary,
   BodySpec,
   CodeLang,
@@ -1210,6 +1218,95 @@ export function useMiyoApi() {
   },
   async clearJavaHistory(id: string): Promise<void> {
     await run(() => call<void>('clear_java_history', { id }))
+  },
+
+  // ---- Java Debug 2.0：本地 JVM Attach（miyo-java-attach） ----
+  /** 发现本机 Java 进程（OS 扫描 + Attach listener 交叉 + 脱敏）。 */
+  javaDiscoverProcesses(): Promise<JavaProcessListSummary> {
+    return quiet<JavaProcessListSummary>('java_discover_processes', {})
+  },
+  /** 手动 pid 探测（attach 前可达性确认）。 */
+  javaProbePid(pid: number): Promise<JavaProcessInfo> {
+    return run(() => call<JavaProcessInfo>('java_probe_pid', { pid }))
+  },
+  /** attach 目标进程（高危：注入 Agent——UI 必须二次确认后调用）。 */
+  javaAttachProcess(pid: number): Promise<JavaAttachSessionSnapshot> {
+    return run(() => call<JavaAttachSessionSnapshot>('java_attach_process', { pid }))
+  },
+  /** 断开连接（Agent 服务继续运行）。 */
+  async javaDetachProcess(pid: number): Promise<void> {
+    await run(() => call<void>('java_detach_process', { pid }))
+  },
+  /** 卸载 Agent（agent.stop；类不可卸载——诚实语义）。 */
+  async javaUnloadAgent(pid: number): Promise<void> {
+    await run(() => call<void>('java_unload_agent', { pid }))
+  },
+  /** 全部 attach 会话快照。 */
+  javaAttachSessions(): Promise<JavaAttachSessionSnapshot[]> {
+    return quiet<JavaAttachSessionSnapshot[]>('java_attach_sessions', {})
+  },
+  /** Agent 状态。 */
+  javaAgentStatus(pid: number): Promise<Record<string, unknown>> {
+    return quiet<Record<string, unknown>>('java_agent_status', { pid })
+  },
+  /** Spring 支持状态（上下文发现 + 分级）。 */
+  javaAgentSpringStatus(pid: number): Promise<JavaSpringStatus> {
+    return quiet<JavaSpringStatus>('java_agent_spring_status', { pid })
+  },
+  /** 已加载类清单（搜索 / 分页；JDK 内部类默认排除）。 */
+  javaAgentClasses(
+    pid: number,
+    search?: string,
+    includeJdk?: boolean,
+    limit?: number,
+    offset?: number,
+  ): Promise<{ total: number; returned: number; offset: number; items: JavaAgentClassItem[] }> {
+    return quiet('java_agent_classes', { pid, search, includeJdk, limit, offset })
+  },
+  /** 类详情。 */
+  javaAgentClassDetail(pid: number, className: string): Promise<Record<string, unknown>> {
+    return quiet<Record<string, unknown>>('java_agent_class_detail', { pid, class: className })
+  },
+  /** 类方法清单（风险分级 + 实例解析提示）。 */
+  javaAgentMethods(
+    pid: number,
+    className: string,
+  ): Promise<{
+    class_name: string
+    methods: JavaAgentMethodInfo[]
+    can_instantiate: boolean
+    proxy: boolean
+  }> {
+    return quiet('java_agent_methods', { pid, class: className })
+  },
+  /** Spring Bean 清单。 */
+  javaAgentBeans(
+    pid: number,
+    search?: string,
+    contextId?: string,
+    limit?: number,
+  ): Promise<{ context_id: string; context_class: string; total: number; returned: number; items: JavaBeanInfo[] }> {
+    return quiet('java_agent_beans', { pid, search, contextId, limit })
+  },
+  /** Agent 方法调用（历史 / 审计与 v1 同链路）。 */
+  javaAgentInvoke(
+    pid: number,
+    args: {
+      methodId: string
+      class: string
+      method: string
+      paramTypes?: string[]
+      arguments: unknown
+      instance?: { kind: 'static' | 'bean' | 'new'; beanName?: string; consent?: boolean }
+      timeoutMs?: number
+      methodSignature?: string
+    },
+  ): Promise<JavaAgentInvokeResponse> {
+    return run(() => call<JavaAgentInvokeResponse>('java_agent_invoke', { pid, args }))
+  },
+  /** 取消在途调用（协作式中断）。 */
+  javaAgentCancel(pid: number, invocationId: string): Promise<Record<string, unknown>> {
+    return quiet<Record<string, unknown>>('java_agent_cancel', { pid, invocationId })
   },
   }
 }

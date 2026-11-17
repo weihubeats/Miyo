@@ -16,6 +16,12 @@ node_modules/
 # Java Debug SDK 构建产物（Maven target 与示例脚本输出）
 java/miyo-java-runtime/target/
 java/examples/demo-app/build/
+# Java Debug 2.0 构建产物（agent / launcher jar 与示例构建）
+java/miyo-java-agent/target/
+java/miyo-attach-launcher/target/
+java/examples/plain-app/build/
+java/examples/spring-boot-demo/target/
+java/dist/
 
 
 # Tauri 2 壳 + Vue 前端（frontend/）
@@ -24,6 +30,7 @@ java/examples/demo-app/build/
 /frontend/src-tauri/target/
 /frontend/src-tauri/gen/
 /frontend/src-tauri/binaries/
+/frontend/src-tauri/resources/
 .openchamber/
 .zcode/
 /dist/

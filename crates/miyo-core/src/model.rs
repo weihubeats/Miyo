@@ -1665,7 +1665,17 @@ pub struct JavaDebugProject {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<Uuid>,
     pub name: String,
-    /// Runtime 地址（含 scheme，如 `http://127.0.0.1:9918`）。
+    /// 连接模式：`runtime`（SDK 嵌入端点，v1 兼容）/ `attach`（本地 JVM 动态注入）。
+    #[serde(default)]
+    pub mode: String,
+    /// attach 模式的目标进程 pid（runtime 模式 None）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attach_pid: Option<i64>,
+    /// 目标 JVM 启动时刻（epoch ms；重启识别——pid 复用时 vm_start 变化即更新本行）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_start_ms: Option<i64>,
+    /// Runtime 地址（含 scheme，如 `http://127.0.0.1:9918`；attach 模式为
+    /// `attach://<pid>` 占位，不参与连接）。
     pub runtime_endpoint: String,
     /// 关联环境（可空；工作台展示 + 变量来源）。
     #[serde(default, skip_serializing_if = "Option::is_none")]

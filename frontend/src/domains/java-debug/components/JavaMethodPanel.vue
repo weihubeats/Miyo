@@ -29,6 +29,12 @@ const props = defineProps<{
   invoking: boolean
   hasConnection: boolean
   hasTemplate: boolean
+  /** attach 模式扩展：实例解析策略 / 风险分级（v1 runtime 模式不传）。 */
+  attachMode?: boolean
+  agentRisk?: string | null
+  agentRiskReason?: string | null
+  canInstantiate?: boolean
+  isProxy?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -36,12 +42,36 @@ const emit = defineEmits<{
   'update:argsJson': [value: string]
   'update:editMode': [value: 'form' | 'json']
   'update:timeout': [value: number | null]
+  'update:instanceKind': [value: 'auto' | 'static' | 'bean' | 'new']
+  'update:newConsent': [value: boolean]
   run: []
   cancel: []
   saveTemplate: []
   useTemplate: []
 }>()
 const timeoutValue = ref<number | null>(null)
+
+/** attach 实例解析选项（实例方法才有意义；static 方法固定 static）。 */
+const instanceOptions = computed<SegmentOption[]>(() => [
+  { value: 'auto', label: t('java2.instanceAuto') },
+  { value: 'static', label: t('java2.instanceStatic') },
+  { value: 'bean', label: t('java2.instanceBean') },
+  { value: 'new', label: t('java2.instanceNew') },
+])
+
+// attach 实例策略：外部受控值（store） + new 前置确认
+const instanceKindValue = defineModel<'auto' | 'static' | 'bean' | 'new'>('instanceKind', {
+  default: 'auto',
+})
+const newConsent = defineModel<boolean>('newConsent', { default: false })
+
+function onInstanceKindChange(value: string | number | null): void {
+  const kind = String(value) as 'auto' | 'static' | 'bean' | 'new'
+  instanceKindValue.value = kind
+  if (kind !== 'new') {
+    newConsent.value = false
+  }
+}
 
 function onTimeoutChange(event: Event): void {
   const raw = (event.target as HTMLInputElement).value.trim()
@@ -286,6 +316,10 @@ function onRunClick(): void {
                 <span class="jmp-method-name">{{ m.method_name }}</span>
                 <span v-if="m.overloaded" class="jmp-badge">{{ t('java.overloadedBadge') }}</span>
                 <span v-if="m.static_method" class="jmp-badge jmp-badge-static">{{ t('java.staticBadge') }}</span>
+                <span
+                  v-if="attachMode && m.visibility === 'private'"
+                  class="jmp-badge"
+                >private</span>
                 <span class="jmp-method-ret">{{ m.return_generic || m.return_type }}</span>
               </span>
               <span class="jmp-method-sig">{{ m.signature }}</span>
@@ -393,6 +427,33 @@ function onRunClick(): void {
           <p v-if="validationError" class="jmp-error" data-testid="java-args-error">
             {{ validationError }}
           </p>
+
+          <!-- attach 模式：实例解析策略（static 方法固定直调；实例方法可选
+               auto / bean / new——new 需显式确认，构造器会执行） -->
+          <div v-if="attachMode && activeMethod && !activeMethod.static_method" class="jmp-instance">
+            <div class="jmp-instance-row">
+              <span class="jmp-instance-label">{{ t('java2.instanceKindLabel') }}</span>
+              <SegmentedControl
+                :model-value="instanceKindValue"
+                :options="instanceOptions"
+                size="sm"
+                data-testid="java-instance-kind"
+                @update:model-value="onInstanceKindChange"
+              />
+            </div>
+            <p v-if="instanceKindValue === 'new'" class="jmp-instance-warn">
+              {{ t('java2.instanceNewWarn') }}
+            </p>
+            <label v-if="instanceKindValue === 'new'" class="jmp-instance-consent">
+              <input
+                type="checkbox"
+                :checked="newConsent"
+                data-testid="java-new-consent"
+                @change="emit('update:newConsent', ($event.target as HTMLInputElement).checked)"
+              />
+              <span>{{ t('java2.instanceNewConsent') }}</span>
+            </label>
+          </div>
 
           <!-- 危险方法二次确认 -->
           <div v-if="dangerousConfirm && dangerKeyword" class="jmp-danger" data-testid="java-danger-confirm">

@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Miyo Java Debug Agent：动态注入目标 JVM 的调试 Agent（零第三方运行时依赖）。
+
+  - 编译目标 Java 8（可加载进 JDK 8+ 的任意 HotSpot 目标进程）；
+  - ASM（provided + shade relocation）仅用于 Spring 上下文捕获的字节码插桩，
+    重定位到 io.miyo.agent.shaded 后不会污染目标应用 classpath；
+  - 产物：单一可执行 agent jar（Premain-Class / Agent-Class / Can-Retransform-Classes）。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>io.miyo</groupId>
+  <artifactId>miyo-java-agent</artifactId>
+  <version>2.0.0</version>
+  <packaging>jar</packaging>
+  <name>Miyo Java Debug Agent</name>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.source>8</maven.compiler.source>
+    <maven.compiler.target>8</maven.compiler.target>
+    <asm.version>9.8</asm.version>
+  </properties>
+
+  <dependencies>
+    <!-- 仅编译期：shade 时 relocation 进 agent 包，不改目标应用 classpath 语义 -->
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm</artifactId>
+      <version>${asm.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm-commons</artifactId>
+      <version>${asm.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>miyo-java-agent</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.5.1</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <relocations>
+                <relocation>
+                  <pattern>org.objectweb.asm</pattern>
+                  <shadedPattern>io.miyo.agent.shaded.org.objectweb.asm</shadedPattern>
+                </relocation>
+              </relocations>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>module-info.class</exclude>
+                    <exclude>META-INF/versions/**</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.3.0</version>
+        <configuration>
+          <archive>
+            <manifestEntries>
+              <Premain-Class>io.miyo.agent.AgentMain</Premain-Class>
+              <Agent-Class>io.miyo.agent.AgentMain</Agent-Class>
+              <Can-Redefine-Classes>false</Can-Redefine-Classes>
+              <Can-Retransform-Classes>true</Can-Retransform-Classes>
+              <Implementation-Version>${project.version}</Implementation-Version>
+            </manifestEntries>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

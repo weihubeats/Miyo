@@ -117,6 +117,7 @@ describe('javaDebug store', () => {
       {
         id: 'p1',
         name: 'A',
+        mode: 'runtime',
         runtime_endpoint: 'http://127.0.0.1:9918',
         timeout_ms: 30_000,
         max_result_bytes: 1_048_576,
@@ -128,6 +129,7 @@ describe('javaDebug store', () => {
       {
         id: 'p2',
         name: 'B',
+        mode: 'runtime',
         runtime_endpoint: 'http://127.0.0.1:9919',
         timeout_ms: 30_000,
         max_result_bytes: 1_048_576,

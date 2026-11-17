@@ -110,6 +110,9 @@ pub struct AppState {
     pub script_sandbox: std::sync::OnceLock<Option<miyo_http::script_sandbox::ScriptSandbox>>,
     /// AI 聊天会话运行注册表（取消令牌 + 待确认审批；Arc 供循环任务持有所属权）。
     pub ai_chats: std::sync::Arc<Mutex<crate::commands::ai::AiChatRegistry>>,
+    /// Java Debug 2.0 Attach 管理器（进程发现 / launcher sidecar / Agent 会话）。
+    /// jar 候选目录由 lib.rs setup 以 AppHandle 解析后传入。
+    pub java_attach: Arc<miyo_java_attach::AttachManager>,
 }
 
 /// 请求热路径的全局设置快照：命中时免去每次请求 2~3 次 settings SELECT +
@@ -180,7 +183,9 @@ impl ResponseBodyCache {
 }
 
 impl AppState {
-    pub fn new(db: SqlitePool) -> Self {
+    /// `jar_candidates`：Java Attach 工具 jar 候选目录（resource dir / dev 回退，
+    /// 由 lib.rs setup 以 AppHandle 解析后传入）。
+    pub fn new(db: SqlitePool, jar_candidates: Vec<std::path::PathBuf>) -> Self {
         AppState {
             db,
             active: AsyncRwLock::new(ActiveContext::default()),
@@ -198,6 +203,10 @@ impl AppState {
             script_sandbox: std::sync::OnceLock::new(),
             ai_chats: std::sync::Arc::new(Mutex::new(
                 crate::commands::ai::AiChatRegistry::default(),
+            )),
+            java_attach: Arc::new(miyo_java_attach::AttachManager::new(
+                jar_candidates,
+                miyo_storage::db::data_dir().join("java-agent"),
             )),
         }
     }
@@ -531,7 +540,7 @@ mod tests {
             std::env::temp_dir().join(format!("miyo-env-test-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let db = miyo_storage::db::init_db(&path).await.expect("建库");
-        let state = AppState::new(db.clone());
+        let state = AppState::new(db.clone(), Vec::new());
 
         let users = mk_project("小奏技术 · 用户服务");
         let open = mk_project("小奏技术 · 开放演示");
@@ -600,7 +609,7 @@ mod tests {
             std::env::temp_dir().join(format!("miyo-own-test-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let db = miyo_storage::db::init_db(&path).await.expect("建库");
-        let state = AppState::new(db.clone());
+        let state = AppState::new(db.clone(), Vec::new());
 
         let users = mk_project("用户服务");
         let open = mk_project("开放演示");
@@ -635,7 +644,7 @@ mod tests {
             std::env::temp_dir().join(format!("miyo-refresh-test-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let db = miyo_storage::db::init_db(&path).await.expect("建库");
-        let state = AppState::new(db.clone());
+        let state = AppState::new(db.clone(), Vec::new());
 
         let mut project = mk_project("项目");
         repo::save_project(&db, &project).await.expect("落库项目");
@@ -685,7 +694,7 @@ mod tests {
             std::env::temp_dir().join(format!("miyo-active-test-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let db = miyo_storage::db::init_db(&path).await.expect("建库");
-        let state = AppState::new(db.clone());
+        let state = AppState::new(db.clone(), Vec::new());
 
         let project = mk_project("测试项目");
         repo::save_project(&db, &project).await.expect("落库项目");
@@ -702,7 +711,7 @@ mod tests {
             .expect("激活环境");
 
         // 模拟重启：同库新建状态，仅靠 settings 表恢复。
-        let restarted = AppState::new(db.clone());
+        let restarted = AppState::new(db.clone(), Vec::new());
         restarted.restore_active().await.expect("恢复激活上下文");
         let read = restarted.active.read().await;
         assert_eq!(read.project_id, Some(project.id), "项目应恢复");
@@ -765,7 +774,7 @@ mod tests {
         }
 
         // 重启恢复：环境 id 有效且归属项目即恢复。
-        let again = AppState::new(db.clone());
+        let again = AppState::new(db.clone(), Vec::new());
         again.restore_active().await.expect("恢复");
         let read = again.active.read().await;
         assert_eq!(read.project_id, Some(project.id));

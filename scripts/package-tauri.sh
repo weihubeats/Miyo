@@ -20,6 +20,7 @@ echo "==> 安装前端依赖 (npm ci)"
 
 echo "==> 预置 miyo-mcp 侧载二进制（bundle.externalBin）"
 "$ROOT/scripts/ensure-mcp-bin.sh"
+bash "$ROOT/scripts/ensure-java-jars.sh"
 
 echo "==> tauri build（含 vite 前端构建 + Rust release 编译 + 平台 bundle）"
 (cd "$FRONTEND" && npm run tauri build)

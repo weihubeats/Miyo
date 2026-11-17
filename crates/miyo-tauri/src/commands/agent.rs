@@ -64,7 +64,8 @@ pub async fn ensure_started(app: &tauri::AppHandle) -> CommandResult<String> {
     let token = miyo_agent::load_or_create_token(&miyo_storage::db::data_dir()).map_err(|e| {
         CommandError::with_code(CommandErrorCode::Io, format!("Agent 令牌文件创建失败：{e}"))
     })?;
-    let agent_state = AgentState::new(state.db.clone(), token);
+    let agent_state =
+        AgentState::new(state.db.clone(), token).with_java_attach(state.java_attach.clone());
     let mut events = agent_state.subscribe();
 
     let server = miyo_agent::server::start_at(agent_state, preferred_port).await?;

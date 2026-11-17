@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-agent-invoke"
+description = "Enables the java_agent_invoke command without any pre-configured scope."
+commands.allow = ["java_agent_invoke"]
+
+[[permission]]
+identifier = "deny-java-agent-invoke"
+description = "Denies the java_agent_invoke command without any pre-configured scope."
+commands.deny = ["java_agent_invoke"]

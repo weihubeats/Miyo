@@ -106,6 +106,9 @@ jobs:
       # tauri-build 在编译期校验 bundle.externalBin 文件存在，须先预置侧载二进制
       - name: Ensure miyo-mcp sidecar (bundle.externalBin)
         run: bash scripts/ensure-mcp-bin.sh
+      # tauri-build 同样校验 bundle.resources：Java Debug attach jar 须先预置
+      - name: Ensure Java Debug attach jars (bundle.resources)
+        run: bash scripts/ensure-java-jars.sh
       # 复刻 tauri-cli 的版本一致性校验（npm 与 Rust 插件 major.minor 必须一致），
       # 否则 CI 的 cargo check 全绿、但 tauri build 打包时直接 exit 1（v0.0.32 踩过）。
       - name: Check Tauri npm/Rust 插件版本一致

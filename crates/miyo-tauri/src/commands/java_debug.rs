@@ -423,7 +423,11 @@ pub async fn clear_java_history(state: State<'_, AppState>, id: Uuid) -> Command
 // 场景引擎 Java 执行器（单源在 miyo-agent::java_hook，tauri 侧转发）
 // ---------------------------------------------------------------------------
 
-/// 构造场景引擎的 Java 步骤执行器（详见 miyo-agent::java_hook 模块文档）。
-pub fn java_invoke_hook(db: sqlx::SqlitePool) -> Arc<miyo_test::runner::JavaInvokeFn> {
-    miyo_agent::java_hook::java_invoke_hook(db)
+/// 构造场景引擎的 Java 步骤执行器（详见 miyo-agent::java_hook 模块文档；
+/// attach 模式项目经 AttachManager 会话表路由）。
+pub fn java_invoke_hook(
+    db: sqlx::SqlitePool,
+    attach: Option<Arc<miyo_java_attach::AttachManager>>,
+) -> Arc<miyo_test::runner::JavaInvokeFn> {
+    miyo_agent::java_hook::java_invoke_hook(db, attach)
 }
