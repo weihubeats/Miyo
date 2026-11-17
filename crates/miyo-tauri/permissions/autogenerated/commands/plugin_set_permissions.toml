@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-plugin-set-permissions"
+description = "Enables the plugin_set_permissions command without any pre-configured scope."
+commands.allow = ["plugin_set_permissions"]
+
+[[permission]]
+identifier = "deny-plugin-set-permissions"
+description = "Denies the plugin_set_permissions command without any pre-configured scope."
+commands.deny = ["plugin_set_permissions"]

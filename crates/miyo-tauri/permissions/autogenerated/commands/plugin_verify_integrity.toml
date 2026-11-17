@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-plugin-verify-integrity"
+description = "Enables the plugin_verify_integrity command without any pre-configured scope."
+commands.allow = ["plugin_verify_integrity"]
+
+[[permission]]
+identifier = "deny-plugin-verify-integrity"
+description = "Denies the plugin_verify_integrity command without any pre-configured scope."
+commands.deny = ["plugin_verify_integrity"]

@@ -5,6 +5,7 @@
 //! 变量即成为后续请求的入参（详见 miyo-test `run_scenario`）。
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -19,6 +20,23 @@ use miyo_test::runner::{ScenarioOptions, ScenarioProgress, ScenarioStepInput};
 use crate::commands::request::{cap_ipc_body, resolve_timeout_ms};
 use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
+
+/// Java 步骤执行器注入：内置 Java 调试插件已启用才注入。
+/// 未启用时 runner 对 Java 步骤报「插件未启用」失败，其余步骤照常执行。
+async fn java_hook_for(
+    state: &State<'_, AppState>,
+) -> Option<Arc<miyo_test::runner::JavaInvokeFn>> {
+    let enabled = repo::is_plugin_enabled(&state.db, miyo_plugin::JAVA_DEBUG_PLUGIN_ID)
+        .await
+        .unwrap_or(false);
+    if enabled {
+        Some(crate::commands::java_debug::java_invoke_hook(
+            state.db.clone(),
+        ))
+    } else {
+        None
+    }
+}
 
 fn default_step_enabled() -> bool {
     true
@@ -299,9 +317,7 @@ pub async fn run_scenario(
         timeout_ms: Some(timeout_ms),
         cancel: cancel.as_ref().map(|(_, t)| t.clone()),
         stop_on_failure: args.stop_on_failure,
-        java_invoke: Some(crate::commands::java_debug::java_invoke_hook(
-            state.db.clone(),
-        )),
+        java_invoke: java_hook_for(&state).await,
     };
     let lifecycle = miyo_test::runner::ScenarioLifecycle {
         setup: &setup_steps,
@@ -500,9 +516,7 @@ pub async fn run_scenario_matrix(
         timeout_ms: None, // 每行用步骤级 / 全局超时（同单场景口径）
         cancel: Some(cancel.clone()),
         stop_on_failure: args.stop_on_failure,
-        java_invoke: Some(crate::commands::java_debug::java_invoke_hook(
-            state.db.clone(),
-        )),
+        java_invoke: java_hook_for(&state).await,
     };
     let teardown_enabled = args.teardown_enabled;
     let concurrency = args.concurrency.unwrap_or(1);
@@ -586,9 +600,7 @@ pub async fn run_scenario_matrix(
             timeout_ms: row_timeout.first().copied(),
             cancel: Some(cancel.clone()),
             stop_on_failure: false,
-            java_invoke: Some(crate::commands::java_debug::java_invoke_hook(
-                state.db.clone(),
-            )),
+            java_invoke: java_hook_for(&state).await,
         };
         let results = miyo_test::runner::run_scenario_matrix_concurrency(
             &|| materialize_owned(&args.steps, &row_vars[0]).unwrap_or_default(),

@@ -29,6 +29,7 @@ miyo-grpc = { path = "../miyo-grpc" }
 miyo-java = { path = "../miyo-java" }
 miyo-openapi = { path = "../miyo-openapi" }
 miyo-test = { path = "../miyo-test" }
+miyo-plugin = { path = "../miyo-plugin" }
 
 tauri = "2"
 # 仅用于启动失败的阻塞式原生错误弹窗（无窗口阶段也能显示）
@@ -73,7 +74,7 @@ ts-rs = { version = "12", optional = true, default-features = false, features = 
 ] }
 
 [features]
-ts = ["dep:ts-rs", "miyo-core/ts", "miyo-http/ts"]
+ts = ["dep:ts-rs", "miyo-core/ts", "miyo-http/ts", "miyo-plugin/ts"]
 
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }

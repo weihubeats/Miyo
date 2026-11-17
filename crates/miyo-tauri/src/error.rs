@@ -67,6 +67,12 @@ pub enum CommandErrorCode {
     MockNotRunning,
     /// 系统剪贴板写入失败。
     Clipboard,
+    /// 插件未安装（功能入口存在但插件未装机）。
+    PluginNotInstalled,
+    /// 插件已安装但被停用。
+    PluginDisabled,
+    /// 插件与当前 Miyo 版本 / SDK 协议不兼容。
+    PluginIncompatible,
 }
 
 impl CommandErrorCode {
@@ -105,6 +111,9 @@ impl CommandErrorCode {
             CommandErrorCode::HighRiskConfirmationRequired => "HIGH_RISK_CONFIRMATION_REQUIRED",
             CommandErrorCode::MockNotRunning => "MOCK_NOT_RUNNING",
             CommandErrorCode::Clipboard => "CLIPBOARD",
+            CommandErrorCode::PluginNotInstalled => "PLUGIN_NOT_INSTALLED",
+            CommandErrorCode::PluginDisabled => "PLUGIN_DISABLED",
+            CommandErrorCode::PluginIncompatible => "PLUGIN_INCOMPATIBLE",
         }
     }
 }
@@ -231,6 +240,15 @@ mod tests {
             (CommandErrorCode::AiProvider, "AI_PROVIDER"),
             (CommandErrorCode::AiNotConfigured, "AI_NOT_CONFIGURED"),
             (CommandErrorCode::AiNoPending, "AI_NO_PENDING"),
+            (
+                CommandErrorCode::HighRiskConfirmationRequired,
+                "HIGH_RISK_CONFIRMATION_REQUIRED",
+            ),
+            (CommandErrorCode::MockNotRunning, "MOCK_NOT_RUNNING"),
+            (CommandErrorCode::Clipboard, "CLIPBOARD"),
+            (CommandErrorCode::PluginNotInstalled, "PLUGIN_NOT_INSTALLED"),
+            (CommandErrorCode::PluginDisabled, "PLUGIN_DISABLED"),
+            (CommandErrorCode::PluginIncompatible, "PLUGIN_INCOMPATIBLE"),
         ];
         for (code, expected) in cases {
             let json = serde_json::to_string(&code).unwrap();
@@ -280,6 +298,9 @@ mod tests {
             CommandErrorCode::HighRiskConfirmationRequired,
             CommandErrorCode::MockNotRunning,
             CommandErrorCode::Clipboard,
+            CommandErrorCode::PluginNotInstalled,
+            CommandErrorCode::PluginDisabled,
+            CommandErrorCode::PluginIncompatible,
         ];
         for code in codes {
             let serde_str = serde_json::to_string(&code).unwrap();

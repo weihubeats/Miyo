@@ -178,6 +178,25 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-ai-list-scenario-drafts`
 - `allow-ai-apply-scenario-draft`
 - `allow-ai-revert-scenario-draft`
+- `allow-plugin-list-installed`
+- `allow-plugin-list-catalog`
+- `allow-plugin-get`
+- `allow-plugin-inspect-package`
+- `allow-plugin-install-from-path`
+- `allow-plugin-install-builtin`
+- `allow-plugin-uninstall`
+- `allow-plugin-set-enabled`
+- `allow-plugin-update-builtin`
+- `allow-plugin-set-permissions`
+- `allow-plugin-report-error`
+- `allow-plugin-verify-integrity`
+- `allow-plugin-logs`
+- `allow-plugin-clear-logs`
+- `allow-plugin-record-log`
+- `allow-plugin-data-get`
+- `allow-plugin-data-set`
+- `allow-plugin-data-delete`
+- `allow-plugin-data-keys`
 - `allow-list-java-projects`
 - `allow-save-java-project`
 - `allow-delete-java-project`
@@ -3578,6 +3597,500 @@ Enables the parse_curl_command command without any pre-configured scope.
 <td>
 
 Denies the parse_curl_command command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-clear-logs`
+
+</td>
+<td>
+
+Enables the plugin_clear_logs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-clear-logs`
+
+</td>
+<td>
+
+Denies the plugin_clear_logs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-data-delete`
+
+</td>
+<td>
+
+Enables the plugin_data_delete command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-data-delete`
+
+</td>
+<td>
+
+Denies the plugin_data_delete command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-data-get`
+
+</td>
+<td>
+
+Enables the plugin_data_get command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-data-get`
+
+</td>
+<td>
+
+Denies the plugin_data_get command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-data-keys`
+
+</td>
+<td>
+
+Enables the plugin_data_keys command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-data-keys`
+
+</td>
+<td>
+
+Denies the plugin_data_keys command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-data-set`
+
+</td>
+<td>
+
+Enables the plugin_data_set command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-data-set`
+
+</td>
+<td>
+
+Denies the plugin_data_set command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-get`
+
+</td>
+<td>
+
+Enables the plugin_get command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-get`
+
+</td>
+<td>
+
+Denies the plugin_get command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-inspect-package`
+
+</td>
+<td>
+
+Enables the plugin_inspect_package command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-inspect-package`
+
+</td>
+<td>
+
+Denies the plugin_inspect_package command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-install-builtin`
+
+</td>
+<td>
+
+Enables the plugin_install_builtin command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-install-builtin`
+
+</td>
+<td>
+
+Denies the plugin_install_builtin command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-install-from-path`
+
+</td>
+<td>
+
+Enables the plugin_install_from_path command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-install-from-path`
+
+</td>
+<td>
+
+Denies the plugin_install_from_path command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-list-catalog`
+
+</td>
+<td>
+
+Enables the plugin_list_catalog command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-list-catalog`
+
+</td>
+<td>
+
+Denies the plugin_list_catalog command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-list-installed`
+
+</td>
+<td>
+
+Enables the plugin_list_installed command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-list-installed`
+
+</td>
+<td>
+
+Denies the plugin_list_installed command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-logs`
+
+</td>
+<td>
+
+Enables the plugin_logs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-logs`
+
+</td>
+<td>
+
+Denies the plugin_logs command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-record-log`
+
+</td>
+<td>
+
+Enables the plugin_record_log command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-record-log`
+
+</td>
+<td>
+
+Denies the plugin_record_log command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-report-error`
+
+</td>
+<td>
+
+Enables the plugin_report_error command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-report-error`
+
+</td>
+<td>
+
+Denies the plugin_report_error command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-set-enabled`
+
+</td>
+<td>
+
+Enables the plugin_set_enabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-set-enabled`
+
+</td>
+<td>
+
+Denies the plugin_set_enabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-set-permissions`
+
+</td>
+<td>
+
+Enables the plugin_set_permissions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-set-permissions`
+
+</td>
+<td>
+
+Denies the plugin_set_permissions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-uninstall`
+
+</td>
+<td>
+
+Enables the plugin_uninstall command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-uninstall`
+
+</td>
+<td>
+
+Denies the plugin_uninstall command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-update-builtin`
+
+</td>
+<td>
+
+Enables the plugin_update_builtin command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-update-builtin`
+
+</td>
+<td>
+
+Denies the plugin_update_builtin command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-verify-integrity`
+
+</td>
+<td>
+
+Enables the plugin_verify_integrity command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-verify-integrity`
+
+</td>
+<td>
+
+Denies the plugin_verify_integrity command without any pre-configured scope.
 
 </td>
 </tr>

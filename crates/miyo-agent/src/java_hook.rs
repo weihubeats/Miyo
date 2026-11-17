@@ -72,6 +72,11 @@ pub fn java_invoke_hook(db: sqlx::SqlitePool) -> Arc<miyo_test::runner::JavaInvo
     Arc::new(move |req| {
         let db = db.clone();
         Box::pin(async move {
+            // 插件门禁：Java 调试插件未安装 / 未启用时拒绝执行
+            // （tauri 命令层另有前置检查，这里是场景引擎 / Agent 控制面 / MCP 的兜底单源）。
+            repo::ensure_plugin_enabled(&db, miyo_plugin::JAVA_DEBUG_PLUGIN_ID)
+                .await
+                .map_err(|e| format!("Java 调试插件不可用：{}", e.user_message()))?;
             let project = repo::get_java_project(&db, req.java_project_id)
                 .await
                 .map_err(|e| format!("Java 项目配置加载失败：{}", e.user_message()))?;

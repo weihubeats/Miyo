@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-plugin-get"
+description = "Enables the plugin_get command without any pre-configured scope."
+commands.allow = ["plugin_get"]
+
+[[permission]]
+identifier = "deny-plugin-get"
+description = "Denies the plugin_get command without any pre-configured scope."
+commands.deny = ["plugin_get"]

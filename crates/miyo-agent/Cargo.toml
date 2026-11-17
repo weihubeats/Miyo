@@ -11,6 +11,7 @@ homepage = "https://weihubeats.github.io/Miyo/"
 miyo-core = { path = "../miyo-core" }
 miyo-sign = { path = "../miyo-sign" }
 miyo-storage = { path = "../miyo-storage" }
+miyo-plugin = { path = "../miyo-plugin" }
 miyo-test = { path = "../miyo-test" }
 miyo-java = { path = "../miyo-java" }
 miyo-sync = { path = "../miyo-sync" }
