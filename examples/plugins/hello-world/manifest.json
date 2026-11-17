@@ -1,0 +1,37 @@
+{
+  "id": "com.example.hello-world",
+  "name": "Hello World（示例插件）",
+  "description": "第三方插件的最小可用示例：沙箱 iframe + RPC 桥，演示私有存储、日志、通知与受控命令调用。",
+  "version": "0.1.0",
+  "authors": ["Miyo"],
+  "icon": "package",
+  "kind": "ui",
+  "entry": "index.html",
+  "min_app_version": "0.0.60",
+  "sdk_version": 1,
+  "nav": [
+    {
+      "id": "main",
+      "label": "Hello 插件",
+      "icon": "package",
+      "route": "/p/com-example-hello",
+      "order": 110
+    }
+  ],
+  "permissions": [
+    "std.storage",
+    "std.log",
+    "std.notify",
+    "std.events"
+  ],
+  "config_schema": {
+    "properties": {
+      "greeting": {
+        "type": "string",
+        "title": "问候语",
+        "default": "你好，Miyo"
+      }
+    },
+    "required": []
+  }
+}

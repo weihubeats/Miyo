@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Hello World 插件</title>
+<style>
+  /* 插件页面运行在沙箱 iframe（opaque origin），样式完全自持，
+     不继承主程序 CSS 变量——这是隔离的一部分。 */
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: -apple-system, 'Segoe UI', sans-serif;
+    color: #e8e6ef;
+    background: #16161a;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p  { font-size: 13px; color: #9b97a8; margin: 6px 0; }
+  code { background: #232329; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  button {
+    margin: 8px 8px 0 0;
+    padding: 7px 14px;
+    border: 1px solid #3d3a49;
+    border-radius: 8px;
+    background: #241f3d;
+    color: #cfcbe0;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { background: #2e2850; }
+  .log { margin-top: 14px; font-size: 12px; color: #7fbf7f; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Hello World（第三方插件示例）</h1>
+<p>
+  本页面运行在 <code>sandbox="allow-scripts"</code> 的 iframe 中（opaque origin），
+  与主程序唯一的通信通道是 <code>postMessage</code> RPC。
+  下方按钮演示 SDK 的四类能力：私有存储 / 日志 / 通知 / 事件总线。
+</p>
+<div>
+  <button id="btn-save">保存到私有存储</button>
+  <button id="btn-load">读取私有存储</button>
+  <button id="btn-log">写一条日志</button>
+  <button id="btn-notify">发通知</button>
+  <button id="btn-emit">广播事件</button>
+</div>
+<div class="log" id="out"></div>
+
+<script>
+'use strict'
+// ---------------------------------------------------------------------------
+// 极简 RPC 客户端（第三方插件开发时复制这段即可，见 docs/PLUGIN-SYSTEM.md）
+// ---------------------------------------------------------------------------
+let seq = 0
+const pending = new Map()
+
+function rpc(method, params) {
+  return new Promise((resolve, reject) => {
+    const id = 'r' + (++seq)
+    pending.set(id, { resolve, reject })
+    window.parent.postMessage({ v: 1, type: 'req', id, method, params }, '*')
+    setTimeout(() => {
+      if (pending.has(id)) {
+        pending.delete(id)
+        reject(new Error('timeout: ' + method))
+      }
+    }, 10000)
+  })
+}
+
+window.addEventListener('message', (event) => {
+  const f = event.data
+  if (!f || f.v !== 1) return
+  if (f.type === 'res' && pending.has(f.id)) {
+    const { resolve, reject } = pending.get(f.id)
+    pending.delete(f.id)
+    if (f.ok) resolve(f.result)
+    else reject(new Error(f.error ? f.error.message : 'rpc error'))
+    return
+  }
+  if (f.type === 'evt') {
+    out('收到宿主事件: ' + f.event + ' ' + JSON.stringify(f.payload))
+  }
+})
+
+const outEl = document.getElementById('out')
+function out(text) {
+  outEl.textContent = '[' + new Date().toLocaleTimeString() + '] ' + text + '\n' + outEl.textContent
+}
+
+document.getElementById('btn-save').onclick = async () => {
+  await rpc('storage.set', { key: 'visits', value: { at: Date.now(), note: '来自沙箱插件' } })
+  out('storage.set 完成（键 visits 落在插件私有作用域）')
+}
+document.getElementById('btn-load').onclick = async () => {
+  const v = await rpc('storage.get', { key: 'visits' })
+  out('storage.get → ' + JSON.stringify(v))
+}
+document.getElementById('btn-log').onclick = async () => {
+  await rpc('log.write', { level: 'info', message: 'hello from sandbox iframe' })
+  out('已写 info 日志（插件中心 → 详情 → 日志 可见）')
+}
+document.getElementById('btn-notify').onclick = async () => {
+  await rpc('notify.show', { kind: 'success', title: 'Hello 插件', message: '这是插件经 SDK 发出的通知' })
+  out('notify.show 已发送')
+}
+document.getElementById('btn-emit').onclick = async () => {
+  await rpc('events.subscribe', { event: 'tick' })
+  await rpc('events.emit', { event: 'tick', payload: { t: Date.now() } })
+  out('已订阅并广播 tick 事件（宿主会回推 evt 帧）')
+}
+</script>
+</body>
+</html>

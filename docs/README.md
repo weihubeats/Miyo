@@ -18,6 +18,7 @@
 | 文档 | 说明 |
 | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) / [en/ARCHITECTURE.md](en/ARCHITECTURE.md) | 架构总览（Tauri 2 + Vue 3，含架构图，中英双语） |
+| [PLUGIN-SYSTEM.md](PLUGIN-SYSTEM.md) | 插件系统（Core + Plugin 架构：Manifest / SDK / 权限 / 沙箱 / 开发指南） |
 | [SPEC.md](SPEC.md) | 历史开发规范（已冻结，仅追溯用） |
 | [TAURI_MIGRATION.md](TAURI_MIGRATION.md) | Dioxus → Tauri 迁移记录 |
 | [DEPLOY.md](DEPLOY.md) | 打包部署 |
