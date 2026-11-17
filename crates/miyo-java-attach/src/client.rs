@@ -358,7 +358,7 @@ async fn connection_loop(
     }
 }
 
-async fn write_frame(stream: &mut TcpStream, payload: &Value) -> std::io::Result<()> {
+pub(crate) async fn write_frame(stream: &mut TcpStream, payload: &Value) -> std::io::Result<()> {
     let body = serde_json::to_vec(payload)?;
     let len = body.len() as u32;
     if len > MAX_FRAME_BYTES {
@@ -372,7 +372,7 @@ async fn write_frame(stream: &mut TcpStream, payload: &Value) -> std::io::Result
     stream.flush().await
 }
 
-async fn read_frame(stream: &mut TcpStream) -> Result<Value, AgentClientError> {
+pub(crate) async fn read_frame(stream: &mut TcpStream) -> Result<Value, AgentClientError> {
     let mut header = [0u8; 4];
     stream.read_exact(&mut header).await.map_err(io_err)?;
     let len = u32::from_be_bytes(header);

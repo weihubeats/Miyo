@@ -17,8 +17,10 @@ import java.util.Properties;
  *   capabilities                      —— 运行环境自检（桥类型 / tools.jar / java 版本）
  *   list                              —— 枚举可 attach 的 JVM
  *   properties --pid N                —— 读目标 JVM 系统属性（预检版本 / 厂商，不加载 agent）
- *   attach --pid N --agent PATH --args "k=v,..." --info-file PATH [--timeout-ms 15000]
+ *   attach --pid N --agent PATH (--args "k=v,..." | --args-stdin) --info-file PATH [--timeout-ms 15000]
  *                                     —— attach → loadAgent → 轮询 infoFile → 输出连接信息
+ *                                     —— --args-stdin：agent 参数（含一次性 token）经 stdin
+ *                                        传入，不出现在命令行（防同机其他用户 ps 读取）
  *
  * 退出码：0 成功；2 attach 不支持；3 无 attach 工具链；4 进程不存在；
  * 5 agent 加载 / 初始化失败；6 超时；7 IO / 参数错误。
@@ -125,7 +127,7 @@ public final class LauncherMain {
     private static int attach(Map<String, String> opts) throws Exception {
         long pid = requirePid(opts);
         String agentPath = requireOpt(opts, "agent");
-        String agentArgs = opts.getOrDefault("args", "");
+        String agentArgs = readAgentArgs(opts);
         String infoFile = requireOpt(opts, "info-file");
         long timeoutMs = Long.parseLong(opts.getOrDefault("timeout-ms", "20000"));
         AttachBridge bridge = requireBridge();
@@ -181,6 +183,28 @@ public final class LauncherMain {
     // ------------------------------------------------------------------
     // 工具
     // ------------------------------------------------------------------
+
+    /**
+     * 解析 agent 参数：`--args-stdin` 优先（Miyo 宿主现行路径，参数不出现在
+     * 命令行），`--args` 兼容保留（旧调用方 / 手动调试）。两者均缺省视为空。
+     */
+    static String readAgentArgs(Map<String, String> opts) throws Exception {
+        if (opts.containsKey("args-stdin")) {
+            return readAll(System.in).trim();
+        }
+        return opts.getOrDefault("args", "");
+    }
+
+    /** 读满整个流（Java 8 无 InputStream.readAllBytes）。 */
+    static String readAll(java.io.InputStream in) throws Exception {
+        java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+        byte[] chunk = new byte[8192];
+        int n;
+        while ((n = in.read(chunk)) > 0) {
+            buf.write(chunk, 0, n);
+        }
+        return new String(buf.toByteArray(), StandardCharsets.UTF_8);
+    }
 
     private static AttachBridge requireBridge() throws CliError {
         AttachBridge bridge = AttachBridge.Factory.create();

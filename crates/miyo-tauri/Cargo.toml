@@ -77,5 +77,8 @@ ts-rs = { version = "12", optional = true, default-features = false, features = 
 [features]
 ts = ["dep:ts-rs", "miyo-core/ts", "miyo-http/ts", "miyo-plugin/ts"]
 
+[dev-dependencies]
+tempfile = "3"
+
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }

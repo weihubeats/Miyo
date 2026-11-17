@@ -152,6 +152,11 @@ async fn attach_invoke(
         .await
         .map_err(|_| "目标进程尚未 Attach：请在 Java 调试工作台连接后重试".to_string())?;
     let (class, method, param_types) = split_method_id(&req.method_id);
+    // 黑名单预检（与 tauri 命令层 java_agent_invoke 同口径；Agent 侧 RiskPolicy
+    // 终检兜底——纵深防御，不能只依赖目标 JVM 内的最后一道闸）
+    if miyo_java::policy::blacklisted(class.trim()) {
+        return Err(format!("{class} 属于受限类，禁止通过调试协议调用"));
+    }
     let arguments = normalize_arguments(req.arguments.clone());
     let invocation_id = Uuid::new_v4();
     let params = serde_json::json!({
@@ -163,7 +168,7 @@ async fn attach_invoke(
         "instance": { "kind": "bean" },
         "timeout_ms": req.timeout_ms.unwrap_or(30_000),
     });
-    let timeout_ms = req.timeout_ms.unwrap_or(30_000).min(300_000);
+    let timeout_ms = req.timeout_ms.unwrap_or(30_000).min(MAX_TIMEOUT_MS);
     let resp = client
         .invoke(params, timeout_ms)
         .await

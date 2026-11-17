@@ -86,13 +86,13 @@ impl LauncherRunner {
 
     /// `capabilities`：工具链自检（bridge_available=false = 该 JDK 不能 attach）。
     pub async fn capabilities(&self) -> Result<LauncherCapabilities, AppError> {
-        let raw = self.run("capabilities", &[], 15_000).await?;
+        let raw = self.run("capabilities", &[], 15_000, None).await?;
         parse_json(&raw)
     }
 
     /// `list`：目标 JVM 里 attach listener 可达的进程（pid + display_name）。
     pub async fn list_attachable(&self) -> Result<Vec<LauncherVm>, AppError> {
-        let raw = self.run("list", &[], 15_000).await?;
+        let raw = self.run("list", &[], 15_000, None).await?;
         let parsed: serde_json::Value = parse_json(&raw)?;
         let items = parsed
             .get("items")
@@ -119,7 +119,12 @@ impl LauncherRunner {
         pid: i64,
     ) -> Result<std::collections::HashMap<String, String>, AppError> {
         let raw = self
-            .run("properties", &["--pid".into(), pid.to_string()], 20_000)
+            .run(
+                "properties",
+                &["--pid".into(), pid.to_string()],
+                20_000,
+                None,
+            )
             .await?;
         let parsed: serde_json::Value = parse_json(&raw)?;
         let mut out = std::collections::HashMap::new();
@@ -134,6 +139,10 @@ impl LauncherRunner {
     }
 
     /// `attach`：attach + loadAgent + 轮询 infoFile。成功返回连接信息。
+    ///
+    /// 安全：`agent_args`（含一次性 token）经 **stdin** 传给 launcher
+    /// （`--args-stdin`），不出现在子进程命令行——避免 attach 窗口期内本机
+    /// 其他用户经 `ps` 读到 token。Java 侧仍兼容 `--args`（旧调用方）。
     pub async fn attach(
         &self,
         pid: i64,
@@ -151,14 +160,14 @@ impl LauncherRunner {
                     pid.to_string(),
                     "--agent".into(),
                     self.tools.agent_jar.to_string_lossy().to_string(),
-                    "--args".into(),
-                    agent_args.to_string(),
+                    "--args-stdin".into(),
                     "--info-file".into(),
                     info_file.to_string_lossy().to_string(),
                     "--timeout-ms".into(),
                     timeout_ms.to_string(),
                 ],
                 timeout_ms + 30_000, // launcher 自身 JVM 启动余量
+                Some(agent_args),
             )
             .await?;
         let info: AttachInfoFile = parse_json(&raw)?;
@@ -176,6 +185,7 @@ impl LauncherRunner {
         command: &str,
         args: &[String],
         timeout_ms: u64,
+        stdin_data: Option<&str>,
     ) -> Result<String, AppError> {
         if !self.tools.ready() {
             return Err(AppError::NotFound(format!(
@@ -190,19 +200,36 @@ impl LauncherRunner {
             .arg(&self.tools.launcher_jar)
             .arg(command)
             .args(args)
-            .stdin(std::process::Stdio::null())
+            .stdin(if stdin_data.is_some() {
+                std::process::Stdio::piped()
+            } else {
+                std::process::Stdio::null()
+            })
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
-        let output = tokio::time::timeout(Duration::from_millis(timeout_ms), cmd.output())
-            .await
-            .map_err(|_| {
-                AppError::NetworkTimeout(format!(
-                    "launcher {command} 超时（{timeout_ms}ms；java={}）",
-                    self.java_executable.display()
-                ))
-            })?
-            .map_err(AppError::Io)?;
+        let mut child = cmd.spawn().map_err(AppError::Io)?;
+        // stdin 载荷（attach 的 agent_args）：写入后立刻 drop 关闭写端，
+        // launcher 读到 EOF 再继续。write_all 阻塞上限为子进程消费速度，
+        // 外层 timeout 覆盖整个 spawn→写→等退出链路。
+        if let (Some(data), Some(mut stdin)) = (stdin_data, child.stdin.take()) {
+            use tokio::io::AsyncWriteExt;
+            if let Err(e) = stdin.write_all(data.as_bytes()).await {
+                tracing::warn!("launcher stdin 写入失败（子进程可能已退出）：{e}");
+            }
+            let _ = stdin.shutdown().await;
+            drop(stdin);
+        }
+        let output =
+            tokio::time::timeout(Duration::from_millis(timeout_ms), child.wait_with_output())
+                .await
+                .map_err(|_| {
+                    AppError::NetworkTimeout(format!(
+                        "launcher {command} 超时（{timeout_ms}ms；java={}）",
+                        self.java_executable.display()
+                    ))
+                })?
+                .map_err(AppError::Io)?;
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if !output.status.success() {

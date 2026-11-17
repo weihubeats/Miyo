@@ -6,6 +6,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use rand::Rng;
 use tokio::sync::Mutex;
@@ -19,6 +21,12 @@ use crate::model::{
     AgentHandshakeInfo, AttachSessionSnapshot, JavaProcessInfo, ProcessListSummary,
 };
 use crate::{process as proc_scan, AGENT_JAR_NAME, LAUNCHER_JAR_NAME};
+
+/// 单 Miyo 实例的 attach 会话上限（防无界注入；超出需先断开空闲会话）。
+pub const MAX_ATTACH_SESSIONS: usize = 8;
+/// infoFile 过期时长：活跃会话在 detach / 卸载 / 失联移除时即时清理自己的
+/// 文件；这里兜底 Miyo 崩溃、目标 JVM 静默死亡等残留（心跳循环周期清扫）。
+const INFO_FILE_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// attach 选项（安全 / 策略上限）。
 #[derive(Debug, Clone)]
@@ -53,6 +61,8 @@ pub struct AttachSession {
     pub client: AgentClient,
     pub handshake: AgentHandshakeInfo,
     pub launcher_java_home: String,
+    /// 本次 attach 的连接信息文件（会话移除时一并清理）。
+    pub info_file: PathBuf,
     pub attached_at: chrono::DateTime<chrono::Utc>,
     pub reattached: bool,
 }
@@ -221,6 +231,10 @@ impl AttachManager {
         }
         // 进程身份前置确认（存在且是 Java）
         let mut inner = self.inner.lock().await;
+        // 会话上限：新 pid 才计数（幂等重连 / 失联重建不受限）
+        if !inner.sessions.contains_key(&pid) {
+            check_session_limit(inner.sessions.len())?;
+        }
         let proc_info = proc_scan::probe_pid(pid, &mut inner.registry, &HashSet::new())
             .await
             .ok_or_else(|| AppError::NotFound(format!("进程 {pid} 不存在（可能已退出）")))?;
@@ -302,6 +316,7 @@ impl AttachManager {
             client,
             handshake: handshake.clone(),
             launcher_java_home: toolchain.home.clone(),
+            info_file: info_file.clone(),
             attached_at: chrono::Utc::now(),
             reattached,
         };
@@ -310,24 +325,27 @@ impl AttachManager {
         Ok(snapshot)
     }
 
-    /// 断开连接（不卸载 Agent；Agent 服务继续运行）。
+    /// 断开连接（不卸载 Agent；Agent 服务继续运行）。本会话 infoFile 一并清理。
     pub async fn detach(&self, pid: i64) -> Result<(), AppError> {
         let mut inner = self.inner.lock().await;
         if let Some(session) = inner.sessions.remove(&pid) {
             session.client.disconnect().await;
+            let _ = tokio::fs::remove_file(&session.info_file).await;
             Ok(())
         } else {
             Err(AppError::NotFound(format!("pid {pid} 未 attach")))
         }
     }
 
-    /// 卸载 Agent：agent.stop → 断开 → 会话移除（类不可卸载——诚实语义）。
+    /// 卸载 Agent：agent.stop → 断开 → 会话移除 + infoFile 清理
+    /// （类不可卸载——诚实语义）。
     pub async fn unload_agent(&self, pid: i64) -> Result<(), AppError> {
         let mut inner = self.inner.lock().await;
         if let Some(session) = inner.sessions.remove(&pid) {
             // stop 失败不阻塞会话移除（目标进程可能已退出）
             let _ = session.client.stop_agent().await;
             session.client.disconnect().await;
+            let _ = tokio::fs::remove_file(&session.info_file).await;
             Ok(())
         } else {
             Err(AppError::NotFound(format!("pid {pid} 未 attach")))
@@ -343,6 +361,113 @@ impl AttachManager {
             .map(|s| session_to_snapshot(s, false))
             .collect()
     }
+
+    /// 启动会话心跳循环（lib.rs setup 装配时调用一次，随应用生命周期常驻）。
+    ///
+    /// 每个 interval：① 对全部会话 ping（内置 5s 超时），失联会话移除并清理
+    /// 其 infoFile（目标 JVM 静默死亡后 stale 会话不再滞留；下次 attach 幂等
+    /// 重建）；② 清扫 data_dir 下过期 infoFile（兜底 Miyo 崩溃残留）。
+    /// interval 首个 tick 立即触发——启动即完成一次清扫。
+    pub fn spawn_heartbeat(self: &Arc<Self>, interval: Duration) -> tokio::task::JoinHandle<()> {
+        let manager = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(interval);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                manager.heartbeat_once().await;
+                manager.sweep_info_files().await;
+            }
+        })
+    }
+
+    /// 单轮心跳：收集快照 → 锁外逐个 ping → 移除失联会话。
+    async fn heartbeat_once(&self) {
+        let probes: Vec<(i64, AgentClient)> = {
+            let inner = self.inner.lock().await;
+            inner
+                .sessions
+                .values()
+                .map(|s| (s.pid, s.client.clone()))
+                .collect()
+        };
+        let mut dead: Vec<i64> = Vec::new();
+        for (pid, client) in &probes {
+            if client.ping().await.is_err() {
+                dead.push(*pid);
+            }
+        }
+        if dead.is_empty() {
+            return;
+        }
+        let mut inner = self.inner.lock().await;
+        for pid in dead {
+            if let Some(session) = inner.sessions.remove(&pid) {
+                tracing::warn!("attach 会话失联，移除：pid={pid}（目标进程可能已退出）");
+                session.client.disconnect().await;
+                let _ = tokio::fs::remove_file(&session.info_file).await;
+            }
+        }
+    }
+
+    /// 清扫 data_dir 下过期 infoFile（attach-*.json，mtime 超过
+    /// [`INFO_FILE_MAX_AGE_MS`] 即删）。返回删除数。
+    pub async fn sweep_info_files(&self) -> usize {
+        let Ok(mut entries) = tokio::fs::read_dir(&self.data_dir).await else {
+            return 0;
+        };
+        let mut removed = 0usize;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !name.starts_with("attach-") || !name.ends_with(".json") {
+                continue;
+            }
+            let expired = match tokio::fs::metadata(&path).await {
+                Ok(meta) => meta
+                    .modified()
+                    .ok()
+                    .and_then(|m| m.elapsed().ok())
+                    .map(|age| age.as_millis() as u64 > INFO_FILE_MAX_AGE_MS)
+                    .unwrap_or(false),
+                Err(_) => false, // 元数据读不到 → 保守跳过，下轮再试
+            };
+            if expired && tokio::fs::remove_file(&path).await.is_ok() {
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            tracing::info!("清理过期 attach infoFile：{removed} 个");
+        }
+        removed
+    }
+
+    /// 应用退出清理：对全部会话尽力 agent.stop（停目标 JVM 内 IPC 服务 +
+    /// 清 infoFile；已加载类不可卸载——诚实语义），随后移除全部会话。
+    /// stop 各自限时 2s，不阻塞退出。
+    pub async fn shutdown_all(&self) {
+        let sessions: Vec<AttachSession> = {
+            let mut inner = self.inner.lock().await;
+            std::mem::take(&mut inner.sessions).into_values().collect()
+        };
+        for session in sessions {
+            let _ = tokio::time::timeout(Duration::from_secs(2), session.client.stop_agent()).await;
+            session.client.disconnect().await;
+            let _ = tokio::fs::remove_file(&session.info_file).await;
+        }
+    }
+}
+
+/// 会话上限校验（独立纯函数便于单测）。
+fn check_session_limit(existing: usize) -> Result<(), AppError> {
+    if existing >= MAX_ATTACH_SESSIONS {
+        return Err(AppError::Validation(format!(
+            "attach 会话数已达上限（{MAX_ATTACH_SESSIONS}）：请先断开不再需要的会话"
+        )));
+    }
+    Ok(())
 }
 
 fn session_to_snapshot(session: &AttachSession, reattached: bool) -> AttachSessionSnapshot {
@@ -366,6 +491,24 @@ pub fn generate_token() -> String {
 }
 
 #[cfg(test)]
+impl AttachManager {
+    /// 测试钩子：直接注册会话（绕过 launcher / 目标 JVM），供心跳 / 上限 /
+    /// 清理逻辑测试。
+    pub(crate) async fn register_session_for_test(&self, session: AttachSession) {
+        self.inner
+            .lock()
+            .await
+            .sessions
+            .insert(session.pid, session);
+    }
+
+    /// 测试钩子：当前会话数。
+    pub(crate) async fn session_count_for_test(&self) -> usize {
+        self.inner.lock().await.sessions.len()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -375,5 +518,147 @@ mod tests {
         assert_eq!(token.len(), 64);
         assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(token, generate_token());
+    }
+
+    #[test]
+    fn session_limit_rejects_over_cap() {
+        for n in 0..MAX_ATTACH_SESSIONS {
+            assert!(check_session_limit(n).is_ok());
+        }
+        let err = check_session_limit(MAX_ATTACH_SESSIONS).unwrap_err();
+        assert!(err.user_message().contains("上限"), "{err}");
+        assert!(check_session_limit(MAX_ATTACH_SESSIONS + 1).is_err());
+    }
+
+    /// mock Agent IPC：握手成功；`answer_ping=false` 时对 ping 不回包
+    /// （客户端 5s 超时 → 心跳判死）。
+    async fn spawn_mock_agent(answer_ping: bool) -> (u16, Arc<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    loop {
+                        let Ok(frame) = crate::client::read_frame(&mut socket).await
+                        else {
+                            return;
+                        };
+                        if frame["op"] == "handshake" {
+                            let body = serde_json::json!({"id": "handshake", "ok": true,
+                                "data": {"protocol": 2, "pid": 1, "agent_version": "t"}});
+                            let _ =
+                                crate::client::write_frame(&mut socket, &body).await;
+                        } else if frame["op"] == "ping" && answer_ping {
+                            let body = serde_json::json!({"id": frame["id"], "ok": true,
+                                "data": {"pong": 1}});
+                            let _ =
+                                crate::client::write_frame(&mut socket, &body).await;
+                        }
+                    }
+                });
+            }
+        });
+        (port, Arc::new(()))
+    }
+
+    fn test_session(pid: i64, port: u16, dir: &std::path::Path) -> AttachSession {
+        AttachSession {
+            pid,
+            vm_start_ms: 1,
+            token: "t".into(),
+            port,
+            client: AgentClient::new(port, "t".into()),
+            handshake: AgentHandshakeInfo {
+                protocol: 2,
+                agent_version: "t".into(),
+                pid,
+                vm_start_ms: 1,
+                java_version: String::new(),
+                java_vm_version: String::new(),
+                jvm_vendor: String::new(),
+                java_home: String::new(),
+                max_concurrent: 4,
+                max_timeout_ms: 300_000,
+                uptime_ms: 0,
+            },
+            info_file: dir.join(format!("attach-{pid}-0.json")),
+            launcher_java_home: String::new(),
+            attached_at: chrono::Utc::now(),
+            reattached: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn heartbeat_removes_stale_session_and_info_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = AttachManager::new(vec![], tmp.path().to_path_buf());
+        let (port, _keep) = spawn_mock_agent(false).await; // 不回 ping → 判死
+        manager
+            .register_session_for_test(test_session(101, port, tmp.path()))
+            .await;
+        std::fs::write(tmp.path().join("attach-101-0.json"), "{}").unwrap();
+
+        manager.heartbeat_once().await;
+
+        assert_eq!(manager.session_count_for_test().await, 0);
+        assert!(!tmp.path().join("attach-101-0.json").exists());
+    }
+
+    #[tokio::test]
+    async fn heartbeat_keeps_healthy_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = AttachManager::new(vec![], tmp.path().to_path_buf());
+        let (port, _keep) = spawn_mock_agent(true).await;
+        manager
+            .register_session_for_test(test_session(102, port, tmp.path()))
+            .await;
+
+        manager.heartbeat_once().await;
+
+        assert_eq!(manager.session_count_for_test().await, 1);
+    }
+
+    #[tokio::test]
+    async fn sweep_removes_only_expired_info_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = AttachManager::new(vec![], tmp.path().to_path_buf());
+        // 过期文件（mtime 拨回 25h 前）+ 新鲜文件 + 非匹配名
+        let old = tmp.path().join("attach-1-0.json");
+        let fresh = tmp.path().join("attach-2-0.json");
+        let other = tmp.path().join("unrelated.json");
+        std::fs::write(&old, "{}").unwrap();
+        std::fs::write(&fresh, "{}").unwrap();
+        std::fs::write(&other, "{}").unwrap();
+        let stale = std::time::Duration::from_millis(INFO_FILE_MAX_AGE_MS + 3_600_000);
+        let past = std::time::SystemTime::now() - stale;
+        let f = std::fs::File::options().write(true).open(&old).unwrap();
+        f.set_modified(past).unwrap();
+        drop(f);
+
+        let removed = manager.sweep_info_files().await;
+
+        assert_eq!(removed, 1);
+        assert!(!old.exists());
+        assert!(fresh.exists());
+        assert!(other.exists());
+    }
+
+    #[tokio::test]
+    async fn shutdown_all_stops_disconnects_and_cleans() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = AttachManager::new(vec![], tmp.path().to_path_buf());
+        let (port, _keep) = spawn_mock_agent(true).await;
+        manager
+            .register_session_for_test(test_session(103, port, tmp.path()))
+            .await;
+        std::fs::write(tmp.path().join("attach-103-0.json"), "{}").unwrap();
+
+        manager.shutdown_all().await;
+
+        assert_eq!(manager.session_count_for_test().await, 0);
+        assert!(!tmp.path().join("attach-103-0.json").exists());
     }
 }

@@ -9,7 +9,9 @@
  * javaDebug store 的心跳定时器与在途状态（dispose 动作）。
  *
  * 后端对应物：miyo-plugin/builtins/java-debug/manifest.json（唯一事实源）；
- * 14 个 java_* IPC 命令在 Rust 侧按插件状态门禁（未安装 / 停用即拒绝）。
+ * v1 Runtime（java_*）与 v2 Attach（java_attach_* / java_agent_*）共 28 个
+ * IPC 命令在 Rust 侧按插件状态门禁（未安装 / 停用即拒绝；含进程发现——
+ * 未装插件不启动 launcher sidecar）。
  */
 import type { PluginFactory } from '@/plugins/types'
 

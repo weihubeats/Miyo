@@ -122,8 +122,13 @@ fn main() {
         .run(|app, event| {
             // 应用退出：停 Agent 控制面——先取消全部在途异步运行（给后台任务
             // 落库窗口），再清端口文件（避免残留失效的 agent-port）。
+            // 同时清理 Java Attach：尽力 agent.stop（停目标 JVM 内 IPC 服务 +
+            // 清 infoFile）并移除全部会话；目标 JVM 本身不受影响。
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 tauri::async_runtime::block_on(miyo_tauri::commands::agent::shutdown_on_exit(app));
+                tauri::async_runtime::block_on(
+                    miyo_tauri::commands::java_attach::shutdown_attach_on_exit(app),
+                );
             }
         });
 }

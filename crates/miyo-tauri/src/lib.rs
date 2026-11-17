@@ -213,6 +213,11 @@ pub mod plugin {
                     commands::log::cleanup_logs_on_startup(&db);
                     // 恢复持久化的激活项目 / 环境（settings 表，含归属校验）
                     let state = AppState::new(db, java_attach_jar_candidates(app));
+                    // Java Attach 会话心跳常驻（失联会话移除 + infoFile 过期
+                    // 清扫；首个 tick 立即触发，兼作启动清扫）
+                    state
+                        .java_attach
+                        .spawn_heartbeat(std::time::Duration::from_secs(30));
                     let _ = tauri::async_runtime::block_on(state.restore_active());
                     app.manage(state);
                     // Agent 控制面随应用自动拉起（幂等；失败仅记日志不阻断启动）；

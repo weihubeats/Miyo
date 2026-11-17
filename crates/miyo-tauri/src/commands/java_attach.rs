@@ -9,7 +9,7 @@
 //! - attach / unload 属高危动作：写 audit 级插件日志。
 
 use serde::Deserialize;
-use tauri::State;
+use tauri::{Manager, State};
 use uuid::Uuid;
 
 use miyo_java::protocol::InvocationStatus;
@@ -69,19 +69,24 @@ async fn attach_project_id(
 // ---------------------------------------------------------------------------
 
 /// 发现本机 Java 进程（OS 扫描 + Attach listener 交叉 + 版本富化 + 脱敏）。
+///
+/// 门禁：发现会 spawn launcher sidecar 子进程扫描本机——插件未安装 /
+/// 未启用时一律拒绝（与「未装插件不启动 Sidecar」口径一致）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn java_discover_processes(
     state: State<'_, AppState>,
 ) -> CommandResult<ProcessListSummary> {
+    ensure_java_plugin(&state.db).await?;
     Ok(state.java_attach.discover_processes().await)
 }
 
-/// 手动输入 pid 探测（手动 attach 前的可达性确认）。
+/// 手动输入 pid 探测（手动 attach 前的可达性确认；探测同样 spawn launcher）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn java_probe_pid(
     state: State<'_, AppState>,
     pid: i64,
 ) -> CommandResult<JavaProcessInfo> {
+    ensure_java_plugin(&state.db).await?;
     state
         .java_attach
         .probe_pid(pid)
@@ -132,6 +137,7 @@ pub async fn java_attach_process(
 /// 断开连接（Agent 服务继续运行；重连无需重新注入）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn java_detach_process(state: State<'_, AppState>, pid: i64) -> CommandResult<()> {
+    ensure_java_plugin(&state.db).await?;
     state
         .java_attach
         .detach(pid)
@@ -157,6 +163,7 @@ pub async fn java_unload_agent(state: State<'_, AppState>, pid: i64) -> CommandR
 pub async fn java_attach_sessions(
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<AttachSessionSnapshot>> {
+    ensure_java_plugin(&state.db).await?;
     Ok(state.java_attach.all_snapshots().await)
 }
 
@@ -170,6 +177,7 @@ pub async fn java_agent_status(
     state: State<'_, AppState>,
     pid: i64,
 ) -> CommandResult<serde_json::Value> {
+    ensure_java_plugin(&state.db).await?;
     let client = state
         .java_attach
         .client(pid)
@@ -188,6 +196,7 @@ pub async fn java_agent_spring_status(
     state: State<'_, AppState>,
     pid: i64,
 ) -> CommandResult<serde_json::Value> {
+    ensure_java_plugin(&state.db).await?;
     let client = state
         .java_attach
         .client(pid)
@@ -210,6 +219,7 @@ pub async fn java_agent_classes(
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> CommandResult<serde_json::Value> {
+    ensure_java_plugin(&state.db).await?;
     let client = state
         .java_attach
         .client(pid)
@@ -236,6 +246,7 @@ pub async fn java_agent_class_detail(
     pid: i64,
     class: String,
 ) -> CommandResult<serde_json::Value> {
+    ensure_java_plugin(&state.db).await?;
     let client = state
         .java_attach
         .client(pid)
@@ -255,6 +266,7 @@ pub async fn java_agent_methods(
     pid: i64,
     class: String,
 ) -> CommandResult<serde_json::Value> {
+    ensure_java_plugin(&state.db).await?;
     let client = state
         .java_attach
         .client(pid)
@@ -276,6 +288,7 @@ pub async fn java_agent_beans(
     context_id: Option<String>,
     limit: Option<u32>,
 ) -> CommandResult<serde_json::Value> {
+    ensure_java_plugin(&state.db).await?;
     let client = state
         .java_attach
         .client(pid)
@@ -453,6 +466,7 @@ pub async fn java_agent_cancel(
     pid: i64,
     invocation_id: String,
 ) -> CommandResult<serde_json::Value> {
+    ensure_java_plugin(&state.db).await?;
     let client = state
         .java_attach
         .client(pid)
@@ -473,5 +487,62 @@ pub fn invocation_status_of(status: &str) -> InvocationStatus {
         "timeout" => InvocationStatus::Timeout,
         "cancelled" => InvocationStatus::Cancelled,
         _ => InvocationStatus::RuntimeDisconnected,
+    }
+}
+
+/// 应用退出清理（frontend/src-tauri main.rs 在 `RunEvent::ExitRequested` 调用）：
+/// 尽力停止全部目标 JVM 内 Agent 服务（停 IPC + 清 infoFile）并移除会话。
+/// Agent 已加载类不可卸载（诚实语义）；目标 JVM 继续运行。
+pub async fn shutdown_attach_on_exit(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state.java_attach.shutdown_all().await;
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    /// 门禁分型：未安装 → PLUGIN_NOT_INSTALLED；已安装未启用 → PLUGIN_DISABLED；
+    /// 启用 → 放行。attach 命令族 14/14 均经此门禁（Phase 1 收口）。
+    #[tokio::test]
+    async fn gate_rejects_uninstalled_disabled_and_passes_enabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = miyo_storage::db::init_db(&tmp.path().join("gate.db"))
+            .await
+            .unwrap();
+        let id = miyo_plugin::JAVA_DEBUG_PLUGIN_ID;
+
+        // 未安装
+        let err = ensure_java_plugin(&db).await.unwrap_err();
+        assert_eq!(err.code, CommandErrorCode::PluginNotInstalled);
+
+        // 已安装（granted 含 java.debug）未启用
+        let manifest_bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../miyo-plugin/builtins/java-debug/manifest.json"),
+        )
+        .unwrap();
+        let manifest = miyo_plugin::PluginManifest::parse(&manifest_bytes).unwrap();
+        repo::insert_plugin(
+            &db,
+            id,
+            &manifest,
+            "builtin",
+            None,
+            false,
+            &manifest.permissions,
+            None,
+        )
+        .await
+        .unwrap();
+        let err = ensure_java_plugin(&db).await.unwrap_err();
+        assert_eq!(err.code, CommandErrorCode::PluginDisabled);
+
+        // 启用 → 放行
+        repo::set_plugin_state(&db, id, repo::STATE_ENABLED, None)
+            .await
+            .unwrap();
+        ensure_java_plugin(&db).await.unwrap();
     }
 }
