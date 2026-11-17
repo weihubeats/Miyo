@@ -13,6 +13,10 @@ node_modules/
 # 站点文档页（由 scripts/build_site_docs.mjs 生成，不入库）
 /website/docs/
 
+# Java Debug SDK 构建产物（Maven target 与示例脚本输出）
+java/miyo-java-runtime/target/
+java/examples/demo-app/build/
+
 
 # Tauri 2 壳 + Vue 前端（frontend/）
 /frontend/node_modules/

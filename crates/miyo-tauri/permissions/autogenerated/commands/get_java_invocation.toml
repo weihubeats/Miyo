@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-get-java-invocation"
+description = "Enables the get_java_invocation command without any pre-configured scope."
+commands.allow = ["get_java_invocation"]
+
+[[permission]]
+identifier = "deny-get-java-invocation"
+description = "Denies the get_java_invocation command without any pre-configured scope."
+commands.deny = ["get_java_invocation"]

@@ -112,6 +112,9 @@ pub struct ScenarioStepArgs {
     /// 步骤重试策略（显式配置才启用；None = 不重试）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry: Option<miyo_core::model::StepRetry>,
+    /// Java 方法调用定义（Some = Java 步骤；endpoint 为合成虚拟端点）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub java_invocation: Option<miyo_core::model::ScenarioJavaInvocation>,
 }
 
 /// 场景运行入参。
@@ -189,6 +192,7 @@ pub async fn run_scenario(
                 miyo_test::materialize::materialize_step(
                     miyo_test::materialize::StepMaterialInput {
                         endpoint: step.endpoint,
+                        java_invocation: step.java_invocation,
                         url_template: step.url,
                         extract_json: step.extract,
                         assertions_json: step.assertions,
@@ -295,6 +299,9 @@ pub async fn run_scenario(
         timeout_ms: Some(timeout_ms),
         cancel: cancel.as_ref().map(|(_, t)| t.clone()),
         stop_on_failure: args.stop_on_failure,
+        java_invoke: Some(crate::commands::java_debug::java_invoke_hook(
+            state.db.clone(),
+        )),
     };
     let lifecycle = miyo_test::runner::ScenarioLifecycle {
         setup: &setup_steps,
@@ -493,6 +500,9 @@ pub async fn run_scenario_matrix(
         timeout_ms: None, // 每行用步骤级 / 全局超时（同单场景口径）
         cancel: Some(cancel.clone()),
         stop_on_failure: args.stop_on_failure,
+        java_invoke: Some(crate::commands::java_debug::java_invoke_hook(
+            state.db.clone(),
+        )),
     };
     let teardown_enabled = args.teardown_enabled;
     let concurrency = args.concurrency.unwrap_or(1);
@@ -511,6 +521,7 @@ pub async fn run_scenario_matrix(
                     miyo_test::materialize::materialize_step(
                         miyo_test::materialize::StepMaterialInput {
                             endpoint: step.endpoint.clone(),
+                            java_invocation: step.java_invocation.clone(),
                             url_template: step.url.clone(),
                             extract_json: step.extract.clone(),
                             assertions_json: step.assertions.clone(),
@@ -575,6 +586,9 @@ pub async fn run_scenario_matrix(
             timeout_ms: row_timeout.first().copied(),
             cancel: Some(cancel.clone()),
             stop_on_failure: false,
+            java_invoke: Some(crate::commands::java_debug::java_invoke_hook(
+                state.db.clone(),
+            )),
         };
         let results = miyo_test::runner::run_scenario_matrix_concurrency(
             &|| materialize_owned(&args.steps, &row_vars[0]).unwrap_or_default(),
@@ -701,6 +715,7 @@ pub async fn run_scenario_matrix(
                         miyo_test::materialize::materialize_step(
                             miyo_test::materialize::StepMaterialInput {
                                 endpoint: step.endpoint.clone(),
+                                java_invocation: step.java_invocation.clone(),
                                 url_template: step.url.clone(),
                                 extract_json: step.extract.clone(),
                                 assertions_json: step.assertions.clone(),
@@ -1424,5 +1439,76 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("{{key}}"));
+    }
+}
+
+#[cfg(test)]
+mod java_step_tests {
+    use super::*;
+
+    /// Java 步骤入参反序列化（前端 → ScenarioStepArgs）：java_invocation 与
+    /// 合成虚拟端点（method=JAVA、参数模板进 body.Json.raw）一并透传。
+    #[test]
+    fn scenario_step_args_parses_java_invocation() {
+        let json = serde_json::json!({
+            "endpoint": {
+                "id": "019426d5-8f3e-7110-8000-000000000001",
+                "project_id": "019426d5-8f3e-7110-8000-000000000002",
+                "name": "创建订单",
+                "method": "JAVA",
+                "path": "com.example.OrderService#createOrder(CreateOrderRequest,long)",
+                "description": "",
+                "status": "developing",
+                "sort_order": 0,
+                "created_at": "2026-11-17T00:00:00Z",
+                "updated_at": "2026-11-17T00:00:00Z",
+                "request": {
+                    "body": {"mode": "json", "raw": "[{\"sku\":\"A\"}, {{userId}}]"}
+                }
+            },
+            "url": "java://proj/com.example.OrderService",
+            "java_invocation": {
+                "java_project_id": "019426d5-8f3e-7110-8000-000000000003",
+                "class_name": "com.example.OrderService",
+                "method_id": "com.example.OrderService#createOrder(CreateOrderRequest,long)",
+                "arguments": [{"sku": "A"}, "{{userId}}"]
+            }
+        });
+        let args: ScenarioStepArgs = serde_json::from_value(json).unwrap();
+        let java = args.java_invocation.expect("java_invocation 解析");
+        assert_eq!(
+            java.method_id,
+            "com.example.OrderService#createOrder(CreateOrderRequest,long)"
+        );
+        assert_eq!(args.endpoint.method.as_str(), "JAVA");
+        match &args.endpoint.request.body {
+            miyo_core::model::BodySpec::Json { raw } => {
+                assert!(raw.contains("{{userId}}"), "参数模板保留 {{var}}：{raw}");
+            }
+            other => panic!("参数模板应存 body.Json.raw：{other:?}"),
+        }
+    }
+
+    /// 旧数据（无 java_invocation 字段）反序列化不毒化（serde default）。
+    #[test]
+    fn scenario_step_args_defaults_java_invocation() {
+        let json = serde_json::json!({
+            "endpoint": {
+                "id": "019426d5-8f3e-7110-8000-000000000001",
+                "project_id": "019426d5-8f3e-7110-8000-000000000002",
+                "name": "登录",
+                "method": "POST",
+                "path": "/login",
+                "description": "",
+                "status": "developing",
+                "sort_order": 0,
+                "created_at": "2026-11-17T00:00:00Z",
+                "updated_at": "2026-11-17T00:00:00Z",
+                "request": {}
+            },
+            "url": "{{base_url}}/login"
+        });
+        let args: ScenarioStepArgs = serde_json::from_value(json).unwrap();
+        assert!(args.java_invocation.is_none());
     }
 }

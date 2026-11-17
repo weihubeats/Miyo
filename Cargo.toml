@@ -19,6 +19,7 @@ members = [
     "crates/miyo-sign",
     "crates/miyo-sync",
     "crates/miyo-cli",
+    "crates/miyo-java",
 ]
 
 [workspace.package]

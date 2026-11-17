@@ -2788,6 +2788,7 @@ dependencies = [
  "jsonpath-rust",
  "miyo-core",
  "miyo-http",
+ "miyo-java",
  "miyo-sign",
  "miyo-storage",
  "miyo-sync",
@@ -2914,6 +2915,22 @@ dependencies = [
  "tracing",
  "ts-rs",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "miyo-java"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "dirs",
+ "miyo-core",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -3046,6 +3063,7 @@ dependencies = [
  "miyo-core",
  "miyo-grpc",
  "miyo-http",
+ "miyo-java",
  "miyo-mock",
  "miyo-oauth",
  "miyo-openapi",

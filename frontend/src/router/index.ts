@@ -31,6 +31,11 @@ const router = createRouter({
       component: () => import('@/domains/integration/views/IntegrationView.vue'),
     },
     {
+      path: '/java-debug',
+      name: 'java-debug',
+      component: () => import('@/domains/java-debug/views/JavaDebugView.vue'),
+    },
+    {
       path: '/ai-test',
       name: 'ai-test',
       component: () => import('@/domains/agent/views/AiTestView.vue'),

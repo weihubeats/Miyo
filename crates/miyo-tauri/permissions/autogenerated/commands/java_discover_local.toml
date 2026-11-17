@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-discover-local"
+description = "Enables the java_discover_local command without any pre-configured scope."
+commands.allow = ["java_discover_local"]
+
+[[permission]]
+identifier = "deny-java-discover-local"
+description = "Denies the java_discover_local command without any pre-configured scope."
+commands.deny = ["java_discover_local"]

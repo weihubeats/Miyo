@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 
-/// 请求方法（HTTP 七种 + Grpc 独立协议维度）。
+/// 请求方法（HTTP 七种 + Grpc / Java 独立协议维度）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -25,6 +25,9 @@ pub enum HttpMethod {
     /// gRPC 调试端点（独立协议，不走 HTTP 引擎；不入 all() 方法下拉，
     /// 由前端方法下拉单独提供入口，历史/徽标展示走 all_with_grpc）。
     Grpc,
+    /// Java 方法调用（miyo-java 调试协议；仅用于集成测试 Java 步骤与
+    /// 历史展示，不走 HTTP 引擎）。wire 值 `JAVA`。
+    Java,
 }
 
 impl HttpMethod {
@@ -60,6 +63,16 @@ impl HttpMethod {
         matches!(self, HttpMethod::Grpc)
     }
 
+    /// 是否为 Java 方法调用步骤（执行链路据此分流到 miyo-java 执行器）。
+    pub fn is_java(&self) -> bool {
+        matches!(self, HttpMethod::Java)
+    }
+
+    /// 是否为标准 HTTP 方法（Java / Grpc 之外的七种）。
+    pub fn is_http(&self) -> bool {
+        !matches!(self, HttpMethod::Java | HttpMethod::Grpc)
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             HttpMethod::GET => "GET",
@@ -70,6 +83,7 @@ impl HttpMethod {
             HttpMethod::HEAD => "HEAD",
             HttpMethod::OPTIONS => "OPTIONS",
             HttpMethod::Grpc => "GRPC",
+            HttpMethod::Java => "JAVA",
         }
     }
 }
@@ -93,6 +107,7 @@ impl FromStr for HttpMethod {
             "HEAD" => Ok(HttpMethod::HEAD),
             "OPTIONS" => Ok(HttpMethod::OPTIONS),
             "GRPC" => Ok(HttpMethod::Grpc),
+            "JAVA" => Ok(HttpMethod::Java),
             other => Err(AppError::Validation(format!("不支持的 HTTP 方法：{other}"))),
         }
     }
@@ -942,8 +957,31 @@ pub fn parse_csv_rows(text: &str) -> Option<Vec<std::collections::HashMap<String
     Some(rows)
 }
 
+/// Java 方法调用步骤定义（与 HTTP 步骤互斥；三态互斥：
+/// `endpoint_id` / `request` / `java_invocation`）。
+///
+/// 参数 JSON 数组元素内支持 `{{var}}` 引用——与前序 HTTP / Java 步骤的
+/// 提取值共享同一变量上下文（如：Java 步 createOrder 提取 orderNo，
+/// HTTP 步 `POST /pay` 引用 `{{orderNo}}`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ScenarioJavaInvocation {
+    /// Java 调试项目 id（java_projects.id）。
+    pub java_project_id: Uuid,
+    /// 目标类全限定名（展示用；权威定位走 method_id）。
+    pub class_name: String,
+    /// 稳定方法标识 `Class#method(ParamTypes)`（重载消歧唯一依据）。
+    pub method_id: String,
+    /// 参数 JSON 数组（元素内支持 {{var}}；执行期渲染）。
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+    /// 本步超时（毫秒；None 用 Java 项目默认）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
 /// 场景步骤：引用一个接口（`request = None`）或内联请求（`request = Some`）
-/// + 步骤级提取 / 断言。
+/// 或 Java 方法调用（`java_invocation = Some`）+ 步骤级提取 / 断言。
 ///
 /// 引用式（而非接口快照）：URL / 头 / 体用接口当前配置，接口更新后场景
 /// 自动跟随；内联式（2026-11 集成测试工作流）：请求定义自持，导入导出 /
@@ -968,6 +1006,9 @@ pub struct ScenarioStep {
     /// 内联请求定义；`None` = 引用式步骤（endpoint_id 必有）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<ScenarioInlineRequest>,
+    /// Java 方法调用定义；`None` = HTTP 步骤（引用式或内联式）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub java_invocation: Option<ScenarioJavaInvocation>,
     /// 执行条件（miyo-test `StepCondition` 形状 JSON 透传；不满足 → skipped 不发送）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<serde_json::Value>,
@@ -998,6 +1039,7 @@ impl Default for ScenarioStep {
             assertions: serde_json::Value::Null,
             name: None,
             request: None,
+            java_invocation: None,
             condition: None,
             r#loop: None,
             wait_ms: None,
@@ -1603,6 +1645,84 @@ pub struct WsMessageRecord {
     pub message_type: WsMessageType,
     /// Text 为原文；Binary / Ping 为 base64 编码。
     pub payload: String,
+    pub created_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Java 方法实时调试（miyo-java 调试协议；Runtime = 目标 JVM 内嵌 SDK 端点）
+// ---------------------------------------------------------------------------
+
+/// Java 调试项目：Runtime 连接配置 + 安全策略（连接状态是运行时数据，不落库）。
+///
+/// `project_id` 可空——Java 调试项目可独立存在；关联 Miyo 项目后复用其
+/// 环境变量与集成测试上下文。token 存 `auth_json`（AES-GCM 加密），模型层
+/// 只带明文生命周期于内存（`auth_token`），序列化到前端时由 Command 层清空。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct JavaDebugProject {
+    pub id: Uuid,
+    /// 关联的 Miyo 项目（可空）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<Uuid>,
+    pub name: String,
+    /// Runtime 地址（含 scheme，如 `http://127.0.0.1:9918`）。
+    pub runtime_endpoint: String,
+    /// 关联环境（可空；工作台展示 + 变量来源）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<Uuid>,
+    /// Bearer Token（仅内存；落库前由存储层加密进 auth_json）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+    /// 默认调用超时（毫秒）。
+    pub timeout_ms: u64,
+    /// 返回值截断阈值（字节）。
+    pub max_result_bytes: usize,
+    /// 最大并发调用数（SDK 侧同样限流）。
+    pub max_concurrent: u32,
+    #[serde(default)]
+    pub description: String,
+    /// 最近一次成功连接时刻（RFC3339；探测成功时刷新）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_connected_at: Option<DateTime<Utc>>,
+    /// 最近一次握手返回的 Runtime 信息缓存（非权威，连接时刷新）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_info: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Java 调用执行记录（历史 / 审计；大字段截断落库）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct JavaInvocationRecord {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    /// 类全限定名（冗余自 method_id，展示 / 过滤用）。
+    pub class_name: String,
+    /// 稳定方法标识 `Class#method(Types)`。
+    pub method_id: String,
+    /// 人类可读签名（调用时快照）。
+    #[serde(default)]
+    pub method_signature: String,
+    /// 入参 JSON 数组（超限截断）。
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+    /// 执行状态（java::InvocationStatus 序列化字符串：success/failed/…）。
+    pub status: String,
+    /// 返回值 JSON（截断后）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(default)]
+    pub result_truncated: bool,
+    /// 异常详情 `{ exception_type, message, stack_trace, cause_chain }`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exception: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 

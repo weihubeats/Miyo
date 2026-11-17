@@ -432,6 +432,7 @@ const TOOLS_ITEMS = computed<MenuItem[]>(() => {
       { key: 'tools-integration', label: t('pnav.integration'), icon: 'beaker', checked: route.path === '/integration' },
       { key: 'tools-graphql', label: t('workspace.graphql'), icon: 'code', checked: route.path === '/graphql' },
       { key: 'tools-realtime', label: t('workspace.realtime'), icon: 'zap', checked: route.path === '/realtime' },
+      { key: 'tools-java', label: t('pnav.javaDebug'), icon: 'package', checked: route.path === '/java-debug' },
     )
   }
   items.push(
@@ -453,6 +454,7 @@ function onMenuSelect(item: MenuItem): void {
   else if (item.key === 'tools-integration') router.push('/integration')
   else if (item.key === 'tools-graphql') router.push('/graphql')
   else if (item.key === 'tools-realtime') router.push('/realtime')
+  else if (item.key === 'tools-java') router.push('/java-debug')
   else if (item.key === 'tools-shortcuts') showShortcuts.value = true
   else if (item.key === 'tools-sync') showSync.value = true
   else onMockSelect(item)
@@ -570,6 +572,14 @@ onBeforeUnmount(() => {
               :size="15"
               :title="t('workspace.realtime')"
               @click="router.push('/realtime')"
+            />
+            <IconButton
+              class="tb-tool"
+              :class="{ active: route.path === '/java-debug' }"
+              name="package"
+              :size="15"
+              :title="t('pnav.javaDebug')"
+              @click="router.push('/java-debug')"
             />
           </template>
           <!-- 溢出菜单：窄窗口承载 GraphQL/实时，常驻快捷键/同步 -->

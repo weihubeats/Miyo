@@ -668,6 +668,140 @@ impl ControlClient {
             .map_err(AppError::from_reqwest)?;
         decode(res).await
     }
+
+    // ---- Java 方法实时调试（miyo-java 协议）----
+
+    /// Java 调试项目列表。
+    pub async fn list_java_projects(&self) -> Result<serde_json::Value, AppError> {
+        self.get_json("/agent/java/projects").await
+    }
+
+    /// 单个 Java 调试项目详情。
+    pub async fn get_java_project(&self, project_id: Uuid) -> Result<serde_json::Value, AppError> {
+        self.get_json(&format!("/agent/java/projects/{project_id}"))
+            .await
+    }
+
+    /// Runtime 白名单类清单（可按类名 / 包名 / Bean 名过滤）。
+    pub async fn list_java_classes(
+        &self,
+        project_id: Uuid,
+        search: Option<&str>,
+    ) -> Result<serde_json::Value, AppError> {
+        let mut path = format!("/agent/java/classes?projectId={project_id}");
+        if let Some(term) = search.filter(|s| !s.trim().is_empty()) {
+            path.push_str(&format!("&search={}", urlencode_query(term)));
+        }
+        self.get_json(&path).await
+    }
+
+    /// 某类的白名单方法清单。
+    pub async fn list_java_methods(
+        &self,
+        project_id: Uuid,
+        class_name: &str,
+    ) -> Result<serde_json::Value, AppError> {
+        let path = format!(
+            "/agent/java/methods?projectId={project_id}&className={}",
+            urlencode_query(class_name)
+        );
+        self.get_json(&path).await
+    }
+
+    /// 按 methodId 查询方法详情。
+    pub async fn get_java_method(
+        &self,
+        project_id: Uuid,
+        method_id: &str,
+    ) -> Result<serde_json::Value, AppError> {
+        let path = format!(
+            "/agent/java/method-detail?projectId={project_id}&methodId={}",
+            urlencode_query(method_id)
+        );
+        self.get_json(&path).await
+    }
+
+    /// 构建并校验调用计划（不执行）。
+    pub async fn validate_java_invocation(
+        &self,
+        project_id: Uuid,
+        method_id: &str,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, AppError> {
+        self.post_json(
+            "/agent/java/invocations/validate",
+            serde_json::json!({
+                "projectId": project_id.to_string(),
+                "methodId": method_id,
+                "arguments": arguments,
+            }),
+        )
+        .await
+    }
+
+    /// 执行 Java 方法（真实副作用；NetworkExecute 门）。
+    pub async fn run_java_method(
+        &self,
+        project_id: Uuid,
+        method_id: &str,
+        arguments: serde_json::Value,
+        timeout_ms: Option<u64>,
+    ) -> Result<serde_json::Value, AppError> {
+        let mut body = serde_json::json!({
+            "projectId": project_id.to_string(),
+            "methodId": method_id,
+            "arguments": arguments,
+        });
+        if let Some(t) = timeout_ms {
+            body["timeoutMs"] = serde_json::json!(t);
+        }
+        let res = self
+            .http
+            .post(format!("{}/agent/java/invoke", self.base))
+            .timeout(EXEC_HTTP_TIMEOUT)
+            .header("Authorization", self.auth())
+            .json(&body)
+            .send()
+            .await
+            .map_err(AppError::from_reqwest)?;
+        decode(res).await
+    }
+
+    /// 单次执行记录。
+    pub async fn get_java_execution_result(
+        &self,
+        invocation_id: Uuid,
+    ) -> Result<serde_json::Value, AppError> {
+        self.get_json(&format!("/agent/java/invocations/{invocation_id}"))
+            .await
+    }
+
+    /// 项目执行历史。
+    pub async fn list_java_execution_history(
+        &self,
+        project_id: Uuid,
+        limit: Option<u32>,
+    ) -> Result<serde_json::Value, AppError> {
+        let mut path = format!("/agent/java/history?projectId={project_id}");
+        if let Some(n) = limit {
+            path.push_str(&format!("&limit={n}"));
+        }
+        self.get_json(&path).await
+    }
+}
+
+/// 极简 query 值编码（字母数字与 . _ - ~ $ 之外百分号编码）。
+fn urlencode_query(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for b in value.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' | b'~' | b'$' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// 非 2xx → 解析 `{code,message}` 转语义化错误；2xx → 反序列化目标类型。
@@ -715,7 +849,6 @@ async fn decode<T: serde::de::DeserializeOwned>(mut res: reqwest::Response) -> R
         .await
         .map_err(|e| AppError::Validation(format!("响应解析失败：{e}")))
 }
-
 /// 默认数据目录（与 miyo-storage 一致：debug 构建 → Miyo-dev）。
 pub fn default_data_dir() -> std::path::PathBuf {
     miyo_storage::db::data_dir()

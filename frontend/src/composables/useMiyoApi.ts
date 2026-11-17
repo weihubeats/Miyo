@@ -29,6 +29,13 @@ import type {
   AiMessageView,
   AuthSpec,
   AgentStatusInfo,
+  JavaClassInfo,
+  JavaDebugProject,
+  JavaDiscoveredRuntime,
+  JavaInvocationRecord,
+  JavaInvokeResponse,
+  JavaMethodInfo,
+  JavaRuntimeInfo,
   BackupSummary,
   BodySpec,
   CodeLang,
@@ -1154,6 +1161,55 @@ export function useMiyoApi() {
   },
   async aiRevertScenarioDraft(draftId: string): Promise<void> {
     await invoke('plugin:miyo|ai_revert_scenario_draft', { draftId })
+  },
+
+  // ---------- Java 方法实时调试 ----------
+  listJavaProjects(projectId?: string | null): Promise<JavaDebugProject[]> {
+    return run(() => call<JavaDebugProject[]>('list_java_projects', { projectId }))
+  },
+  saveJavaProject(project: JavaDebugProject): Promise<JavaDebugProject> {
+    return run(() => call<JavaDebugProject>('save_java_project', { project }))
+  },
+  async deleteJavaProject(id: string): Promise<void> {
+    await run(() => call<void>('delete_java_project', { id }))
+  },
+  javaTestConnection(id: string): Promise<JavaRuntimeInfo> {
+    return run(() => call<JavaRuntimeInfo>('java_test_connection', { id }))
+  },
+  /** 扫描本机正在运行的 Java Debug Runtime（注册目录 + 端口指纹探测）。 */
+  javaDiscoverLocal(): Promise<JavaDiscoveredRuntime[]> {
+    return run(() => call<JavaDiscoveredRuntime[]>('java_discover_local', {}))
+  },
+  /** 保存前直连探测：地址 + token 握手，不落库。 */
+  javaProbeEndpoint(endpoint: string, token?: string): Promise<JavaRuntimeInfo> {
+    return run(() => call<JavaRuntimeInfo>('java_probe_endpoint', { endpoint, token }))
+  },
+  javaListClasses(id: string, search?: string): Promise<JavaClassInfo[]> {
+    return quiet<JavaClassInfo[]>('java_list_classes', { id, search })
+  },
+  javaListMethods(id: string, className: string): Promise<JavaMethodInfo[]> {
+    return quiet<JavaMethodInfo[]>('java_list_methods', { id, className })
+  },
+  javaInvoke(
+    id: string,
+    args: { methodId: string; arguments: unknown; timeoutMs?: number; methodSignature?: string },
+  ): Promise<JavaInvokeResponse> {
+    return run(() => call<JavaInvokeResponse>('java_invoke', { id, args }))
+  },
+  javaCancelInvocation(id: string, invocationId: string): Promise<boolean> {
+    return run(() => call<boolean>('java_cancel_invocation', { id, invocationId }))
+  },
+  listJavaHistory(id: string, limit?: number): Promise<JavaInvocationRecord[]> {
+    return quiet<JavaInvocationRecord[]>('list_java_history', { id, limit: limit ?? 100 })
+  },
+  getJavaInvocation(invocationId: string): Promise<JavaInvocationRecord> {
+    return quiet<JavaInvocationRecord>('get_java_invocation', { invocationId })
+  },
+  async deleteJavaInvocation(invocationId: string): Promise<void> {
+    await run(() => call<void>('delete_java_invocation', { invocationId }))
+  },
+  async clearJavaHistory(id: string): Promise<void> {
+    await run(() => call<void>('clear_java_history', { id }))
   },
   }
 }

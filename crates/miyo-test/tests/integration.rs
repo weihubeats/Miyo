@@ -314,6 +314,7 @@ async fn scenario_chain_flows_extracted_vars() {
                 expected: Some(json!(200)),
             }],
             retry: None,
+            java_invocation: None,
         },
         ScenarioStepInput {
             enabled: true,
@@ -333,6 +334,7 @@ async fn scenario_chain_flows_extracted_vars() {
                 expected: Some(json!("tok-9")),
             }],
             retry: None,
+            java_invocation: None,
         },
     ];
     let mut base_vars = HashMap::new();
@@ -344,6 +346,7 @@ async fn scenario_chain_flows_extracted_vars() {
             timeout_ms: None,
             cancel: None,
             stop_on_failure: true,
+            java_invoke: None,
         },
         None,
     )
@@ -409,6 +412,7 @@ async fn scenario_stops_on_failure() {
                 expected: Some(json!(201)),
             }],
             retry: None,
+            java_invocation: None,
         },
         ScenarioStepInput {
             enabled: true,
@@ -421,6 +425,7 @@ async fn scenario_stops_on_failure() {
             spec_template: RequestSpec::default(),
             extract: vec![],
             retry: None,
+            java_invocation: None,
             assertions: vec![],
         },
     ];
@@ -431,6 +436,7 @@ async fn scenario_stops_on_failure() {
             timeout_ms: None,
             cancel: None,
             stop_on_failure: true,
+            java_invoke: None,
         },
         None,
     )
@@ -551,6 +557,7 @@ async fn scenario_ecommerce_flow_with_typed_vars() {
             spec_template: RequestSpec::default(),
             extract: vec![extract("orderNo", "$.orderNo"), extract("payToken", "$.payToken")],
                 retry: None,
+            java_invocation: None,
             assertions: vec![assert_status(200)],
         },
         ScenarioStepInput {
@@ -564,6 +571,7 @@ async fn scenario_ecommerce_flow_with_typed_vars() {
             spec_template: RequestSpec::default(),
             extract: vec![extract("payableAmount", "$.payableAmount")],
                 retry: None,
+            java_invocation: None,
             assertions: vec![assert_status(200)],
         },
         ScenarioStepInput {
@@ -593,6 +601,7 @@ async fn scenario_ecommerce_flow_with_typed_vars() {
                 },
             ],
             retry: None,
+            java_invocation: None,
         },
     ];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -663,6 +672,7 @@ async fn scenario_blocks_on_missing_upstream_var() {
             spec_template: RequestSpec::default(),
             extract: vec![extract("orderNo", "$.orderNo")],
             retry: None,
+            java_invocation: None,
             assertions: vec![assert_status(200)],
         },
         ScenarioStepInput {
@@ -682,6 +692,7 @@ async fn scenario_blocks_on_missing_upstream_var() {
             spec_template: RequestSpec::default(),
             extract: vec![extract("payableAmount", "$.payableAmount")],
             retry: None,
+            java_invocation: None,
             assertions: vec![assert_status(200)],
         },
         ScenarioStepInput {
@@ -705,6 +716,7 @@ async fn scenario_blocks_on_missing_upstream_var() {
             },
             extract: vec![],
             retry: None,
+            java_invocation: None,
             assertions: vec![],
         },
     ];
@@ -716,6 +728,7 @@ async fn scenario_blocks_on_missing_upstream_var() {
         &HashMap::new(),
         &ScenarioOptions {
             stop_on_failure: false,
+            java_invoke: None,
             ..Default::default()
         },
         None,
@@ -761,6 +774,7 @@ async fn scenario_reports_disabled_and_early_stop_as_skipped() {
             spec_template: RequestSpec::default(),
             extract: vec![],
             retry: None,
+            java_invocation: None,
             assertions: vec![],
         },
         ScenarioStepInput {
@@ -780,6 +794,7 @@ async fn scenario_reports_disabled_and_early_stop_as_skipped() {
             spec_template: RequestSpec::default(),
             extract: vec![],
             retry: None,
+            java_invocation: None,
             assertions: vec![assert_status(200)],
         },
         ScenarioStepInput {
@@ -798,6 +813,7 @@ async fn scenario_reports_disabled_and_early_stop_as_skipped() {
             spec_template: RequestSpec::default(),
             extract: vec![],
             retry: None,
+            java_invocation: None,
             assertions: vec![],
         },
     ];
@@ -806,6 +822,7 @@ async fn scenario_reports_disabled_and_early_stop_as_skipped() {
         &HashMap::new(),
         &ScenarioOptions {
             stop_on_failure: true,
+            java_invoke: None,
             ..Default::default()
         },
         None,
@@ -835,6 +852,7 @@ async fn scenario_rejects_non_http_scheme() {
         spec_template: RequestSpec::default(),
         extract: vec![],
         retry: None,
+        java_invocation: None,
         assertions: vec![],
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -867,6 +885,7 @@ async fn scenario_warns_undefined_vars() {
         spec_template: RequestSpec::default(),
         extract: vec![],
         retry: None,
+        java_invocation: None,
         assertions: vec![],
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -899,6 +918,7 @@ async fn scenario_runs_have_isolated_contexts() {
             spec_template: RequestSpec::default(),
             extract: vec![extract("orderNo", "$.orderNo")],
             retry: None,
+            java_invocation: None,
             assertions: vec![],
         }]
     };
@@ -959,12 +979,14 @@ async fn scenario_condition_skips_step() {
             enabled: true,
             condition: Some(var_cond("paid", "eq", json!("true"))),
             retry: None,
+            java_invocation: None,
             ..mk_get(format!("{base}/shop/pay-preview"))
         },
         ScenarioStepInput {
             enabled: true,
             condition: Some(var_cond("paid", "neq", json!("true"))),
             retry: None,
+            java_invocation: None,
             ..mk_get(format!(
                 "{base}/shop/pay-preview?orderNo=SO-1&payToken=pt-9"
             ))
@@ -979,6 +1001,7 @@ async fn scenario_condition_skips_step() {
                 value: Some(json!(200)),
             }),
             retry: None,
+            java_invocation: None,
             ..mk_get(format!("{base}/shop/pay-preview"))
         },
     ];
@@ -1014,6 +1037,7 @@ fn mk_get(url: String) -> ScenarioStepInput {
         wait_ms: None,
         parallel: false,
         retry: None,
+        java_invocation: None,
     }
 }
 
@@ -1050,6 +1074,7 @@ async fn scenario_count_loop_runs_n_rounds() {
         extract: vec![extract("n", "$.n")],
         assertions: vec![assert_status(200)],
         retry: None,
+        java_invocation: None,
         ..mk_get(format!("{base}/ping"))
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -1095,6 +1120,7 @@ async fn scenario_while_loop_polls_until_condition() {
         extract: vec![extract("paid", "$.paid")],
         assertions: vec![assert_status(200)],
         retry: None,
+        java_invocation: None,
         ..mk_get(format!("{base}/status"))
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -1130,6 +1156,7 @@ async fn scenario_while_loop_max_reached_fails() {
         extract: vec![extract("paid", "$.paid")],
         assertions: vec![assert_status(200)],
         retry: None,
+        java_invocation: None,
         ..mk_get(format!("{base}/status"))
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -1181,6 +1208,7 @@ async fn scenario_while_loop_response_body_condition() {
         }),
         assertions: vec![assert_status(200)],
         retry: None,
+        java_invocation: None,
         ..mk_get(format!("{base}/status"))
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -1214,6 +1242,7 @@ async fn scenario_while_loop_response_status_condition() {
         }),
         assertions: vec![assert_status(200)],
         retry: None,
+        java_invocation: None,
         ..mk_get(format!("{base}/ok"))
     }];
     let result = run_scenario(steps, &HashMap::new(), &ScenarioOptions::default(), None).await;
@@ -1233,6 +1262,7 @@ async fn scenario_wait_ms_sleeps_before_send() {
         enabled: true,
         wait_ms: Some(120),
         retry: None,
+        java_invocation: None,
         ..mk_get(format!("{base}/shop/pay-preview"))
     }];
     let started = std::time::Instant::now();
@@ -1277,6 +1307,7 @@ async fn scenario_parallel_batch_runs_concurrently() {
             parallel: true,
             extract: vec![extract("va", "$.v")],
             retry: None,
+            java_invocation: None,
             ..mk_get(format!("{base}/slow-a"))
         },
         ScenarioStepInput {
@@ -1284,6 +1315,7 @@ async fn scenario_parallel_batch_runs_concurrently() {
             parallel: true,
             extract: vec![extract("vb", "$.v")],
             retry: None,
+            java_invocation: None,
             ..mk_get(format!("{base}/slow-b"))
         },
         // 非并行步骤收尾（串行依赖语义不变）。
@@ -1291,6 +1323,7 @@ async fn scenario_parallel_batch_runs_concurrently() {
             enabled: true,
             extract: vec![extract("vf", "$.v")],
             retry: None,
+            java_invocation: None,
             ..mk_get(format!("{base}/fast"))
         },
     ];
@@ -1363,6 +1396,7 @@ async fn perf_smoke_100_steps_large_var_pool() {
                 expected: Some(json!(201)), // /echo 返回 CREATED
             }],
             retry: None,
+            java_invocation: None,
         });
     }
 
@@ -1370,6 +1404,7 @@ async fn perf_smoke_100_steps_large_var_pool() {
         timeout_ms: Some(10_000),
         cancel: None,
         stop_on_failure: true,
+        java_invoke: None,
     };
     let started = std::time::Instant::now();
     let result = run_scenario(steps, &base_vars, &options, None).await;
@@ -1715,4 +1750,242 @@ async fn matrix_parallel_rows_isolated_and_ordered() {
             "行 {i} 数据隔离：{body}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Java 方法步骤（执行器回调注入；与 HTTP 步骤共享变量上下文与断言/提取管线）
+// ---------------------------------------------------------------------------
+
+use miyo_core::model::{BodySpec, ScenarioJavaInvocation};
+use miyo_test::runner::{JavaStepRequest, JavaStepResponse};
+
+/// 合成 Java 步骤输入：method = JAVA、args 模板进 body.Json.raw。
+fn mk_java(
+    name: &str,
+    method_id: &str,
+    args_template: serde_json::Value,
+    timeout_ms: Option<u64>,
+) -> ScenarioStepInput {
+    let raw = serde_json::to_string(&args_template).unwrap();
+    let spec = RequestSpec {
+        body: BodySpec::Json { raw },
+        timeout_ms,
+        ..Default::default()
+    };
+    ScenarioStepInput {
+        endpoint: Endpoint {
+            id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            folder_id: None,
+            name: name.to_string(),
+            method: HttpMethod::Java,
+            path: method_id.to_string(),
+            description: String::new(),
+            status: EndpointStatus::Developing,
+            sort_order: 0,
+            request: spec.clone(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        },
+        url_template: format!("java://proj-1/{}", method_id),
+        spec_template: spec,
+        extract: vec![],
+        assertions: vec![],
+        enabled: true,
+        condition: None,
+        r#loop: None,
+        wait_ms: None,
+        parallel: false,
+        retry: None,
+        java_invocation: Some(ScenarioJavaInvocation {
+            java_project_id: Uuid::new_v4(),
+            class_name: "com.example.OrderService".into(),
+            method_id: method_id.to_string(),
+            arguments: args_template,
+            timeout_ms: None,
+        }),
+    }
+}
+
+/// 记录收到的请求，回执由测试指定（success / failed / 异常）。
+fn recording_hook(
+    seen: std::sync::Arc<std::sync::Mutex<Vec<JavaStepRequest>>>,
+    responder: impl Fn(&JavaStepRequest) -> JavaStepResponse + Send + Sync + 'static,
+) -> std::sync::Arc<miyo_test::runner::JavaInvokeFn> {
+    std::sync::Arc::new(move |req: JavaStepRequest| {
+        let seen = seen.clone();
+        let resp = responder(&req);
+        Box::pin(async move {
+            seen.lock().unwrap().push(req);
+            Ok(resp)
+        })
+    })
+}
+
+fn hook_success(req: &JavaStepRequest) -> JavaStepResponse {
+    assert_eq!(req.class_name, "com.example.OrderService");
+    JavaStepResponse {
+        status: "success".into(),
+        result: Some(json!({"orderNo": "NO-9", "amount": 42})),
+        exception: None,
+        duration_ms: Some(2.5),
+    }
+}
+
+#[tokio::test]
+async fn java_step_success_extract_and_chain_to_http() {
+    // Java 步提取 orderNo → 变量链路成立（无 HTTP 上游，仅验证 runner 内部管线）。
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let hook = recording_hook(seen.clone(), hook_success);
+
+    let mut java_step = mk_java(
+        "创建订单",
+        "com.example.OrderService#createOrder(CreateOrderRequest,long)",
+        json!([{"sku": "{{sku}}"}, "{{userId}}"]),
+        None,
+    );
+    java_step.extract = vec![ExtractSpec {
+        name: "orderNo".into(),
+        from: "body".into(),
+        path: "$.orderNo".into(),
+    }];
+    java_step.assertions = vec![AssertionSpec {
+        name: Some("返回订单号".into()),
+        r#type: "jsonpath".into(),
+        path: Some("$.orderNo".into()),
+        op: Some("eq".into()),
+        expected: Some(json!("NO-9")),
+    }];
+
+    let base_vars = HashMap::from([
+        ("sku".to_string(), "A-1".to_string()),
+        ("userId".to_string(), "7".to_string()),
+    ]);
+    let opts = ScenarioOptions {
+        java_invoke: Some(hook),
+        ..Default::default()
+    };
+    let result = run_scenario(vec![java_step], &base_vars, &opts, None).await;
+
+    assert_eq!(result.results.len(), 1);
+    let r0 = &result.results[0];
+    assert_eq!(r0.effective_status(), "success");
+    assert_eq!(r0.status, Some(200));
+    assert_eq!(
+        r0.extracted.get("orderNo").map(String::as_str),
+        Some("NO-9")
+    );
+    assert!(r0.ok);
+
+    // 执行器收到的参数已完成变量渲染（字符串替换 + 链路变量可用）。
+    let reqs = seen.lock().unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].arguments, json!([{"sku": "A-1"}, "7"]));
+    // 变量池带出提取值（下一步 HTTP/Java 步骤引用 {{orderNo}} 可用）。
+    assert_eq!(
+        result.variables.get("orderNo").map(String::as_str),
+        Some("NO-9")
+    );
+}
+
+#[tokio::test]
+async fn java_step_failure_maps_to_failed_with_exception() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let hook = recording_hook(seen.clone(), |req| {
+        assert!(req.method_id.contains("boom"));
+        JavaStepResponse {
+            status: "failed".into(),
+            result: None,
+            exception: Some(json!({
+                "exception_type": "java.lang.NullPointerException",
+                "message": "order not found",
+                "stack_trace": ["com.example.OrderService.pay(OrderService.java:88)"],
+            })),
+            duration_ms: Some(1.0),
+        }
+    });
+
+    let mut java_step = mk_java(
+        "支付",
+        "com.example.OrderService#boomPay(String)",
+        json!(["NO-404"]),
+        None,
+    );
+    java_step.assertions = vec![AssertionSpec {
+        name: Some("状态成功".into()),
+        r#type: "status".into(),
+        path: None,
+        op: Some("eq".into()),
+        expected: Some(json!(200)),
+    }];
+
+    let opts = ScenarioOptions {
+        java_invoke: Some(hook),
+        ..Default::default()
+    };
+    let result = run_scenario(vec![java_step], &HashMap::new(), &opts, None).await;
+
+    let r0 = &result.results[0];
+    assert_eq!(r0.effective_status(), "failed");
+    assert_eq!(r0.status, Some(500), "异常映射为 500 供断言/展示");
+    let err = r0.request_error.as_deref().unwrap_or_default();
+    assert!(err.contains("NullPointerException"), "{err}");
+    // 状态断言失败（500 ≠ 200）计入 outcomes。
+    assert!(r0.outcomes.iter().any(|o| !o.passed));
+}
+
+#[tokio::test]
+async fn java_step_without_hook_fails_fast() {
+    let step = mk_java("调用", "com.example.OrderService#m()", json!([]), None);
+    let result = run_scenario(
+        vec![step],
+        &HashMap::new(),
+        &ScenarioOptions::default(),
+        None,
+    )
+    .await;
+    let r0 = &result.results[0];
+    assert_eq!(r0.effective_status(), "failed");
+    assert!(r0
+        .request_error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("执行器未接入"));
+}
+
+#[tokio::test]
+async fn java_step_var_refs_block_when_source_step_failed() {
+    // 前一 Java 步失败 → 其提取名进 lost → 依赖 {{orderNo}} 的后续步 blocked。
+    let hook = recording_hook(Default::default(), |_req| JavaStepResponse {
+        status: "failed".into(),
+        result: None,
+        exception: Some(json!({"exception_type": "E", "message": "x"})),
+        duration_ms: None,
+    });
+    let mut failed = mk_java("失败步", "com.example.OrderService#a()", json!([]), None);
+    failed.extract = vec![ExtractSpec {
+        name: "orderNo".into(),
+        from: "body".into(),
+        path: "$.orderNo".into(),
+    }];
+    let mut dependent = mk_java(
+        "依赖步",
+        "com.example.OrderService#b(String)",
+        json!(["{{orderNo}}"]),
+        None,
+    );
+    dependent.extract = vec![];
+
+    let opts = ScenarioOptions {
+        java_invoke: Some(hook),
+        ..Default::default()
+    };
+    let result = run_scenario(vec![failed, dependent], &HashMap::new(), &opts, None).await;
+    assert_eq!(result.results[0].effective_status(), "failed");
+    assert_eq!(result.results[1].effective_status(), "blocked");
+    assert!(result.results[1]
+        .blocked_reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("orderNo"));
 }

@@ -540,6 +540,9 @@ pub struct ScenarioStepInput {
     /// 步骤重试策略（显式配置才启用；None = 不重试）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry: Option<miyo_core::model::StepRetry>,
+    /// Java 方法调用定义（Some = Java 步骤；endpoint 为合成虚拟端点）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub java_invocation: Option<miyo_core::model::ScenarioJavaInvocation>,
 }
 
 /// 场景进度快照（回调参数）。
@@ -582,13 +585,57 @@ impl<'a> ScenarioProgress<'a> {
     }
 }
 
+/// Java 步骤执行请求（runner 发给注入的执行器；执行器由调用方构造，
+/// 持有 DB / Runtime 客户端访问，runner 本身不依赖存储层）。
+#[derive(Debug, Clone)]
+pub struct JavaStepRequest {
+    pub java_project_id: uuid::Uuid,
+    pub class_name: String,
+    pub method_id: String,
+    /// 渲染后的参数 JSON 数组。
+    pub arguments: serde_json::Value,
+    pub timeout_ms: Option<u64>,
+}
+
+/// Java 步骤执行结果（协议无关的执行器回执；status 取
+/// miyo_java::InvocationStatus 的序列化字符串）。
+#[derive(Debug, Clone)]
+pub struct JavaStepResponse {
+    pub status: String,
+    pub result: Option<serde_json::Value>,
+    pub exception: Option<serde_json::Value>,
+    pub duration_ms: Option<f64>,
+}
+
+/// Java 步骤执行器：`JavaStepRequest -> JavaStepResponse`（Err = 链路级失败，
+/// 如 Runtime 不可达 / 项目配置缺失）。
+pub type JavaInvokeFn = dyn Fn(
+        JavaStepRequest,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<JavaStepResponse, String>> + Send>,
+    > + Send
+    + Sync;
+
 /// 场景运行选项。
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct ScenarioOptions {
     pub timeout_ms: Option<u64>,
     pub cancel: Option<tokio_util::sync::CancellationToken>,
     /// 失败即停：某步请求失败或断言不过时，不再执行后续步骤。
     pub stop_on_failure: bool,
+    /// Java 步骤执行器（None 时 Java 步骤直接 failed：未接通调试能力）。
+    pub java_invoke: Option<std::sync::Arc<JavaInvokeFn>>,
+}
+
+impl std::fmt::Debug for ScenarioOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScenarioOptions")
+            .field("timeout_ms", &self.timeout_ms)
+            .field("stop_on_failure", &self.stop_on_failure)
+            .field("has_cancel", &self.cancel.is_some())
+            .field("has_java_invoke", &self.java_invoke.is_some())
+            .finish()
+    }
 }
 
 /// 场景运行结果。
@@ -921,6 +968,11 @@ async fn send_round(
         extract: step.extract.clone(),
         assertions: step.assertions.clone(),
     };
+    // Java 步骤：不走 HTTP 引擎（无 scheme 校验），调用注入的执行器，
+    // 返回值 JSON 作为「响应体」进入同一套断言 / 提取管线。
+    if step.endpoint.method.is_java() {
+        return java_round(step, pos, shared, options, emit_enter, &config, url, spec).await;
+    }
     // scheme 白名单（对齐 execute_request：仅 http/https），防变量替换
     // 把 scheme / host 换成任意协议。
     let scheme_ok = {
@@ -993,6 +1045,245 @@ async fn send_round(
         }
     }
     result
+}
+
+/// Java 步骤单轮执行：渲染参数（已在 send_round 完成）→ 调用注入的执行器
+/// → 合成响应（status 200/500，body = 返回值 JSON）→ 与 HTTP 步骤共用
+/// 断言 / 提取管线。
+///
+/// 取消：`tokio::select!` 监听取消令牌——取消即丢弃在途调用 future（连接
+/// 关闭；目标方法是否停止取决于协作式中断，语义与 SDK 文档一致）。
+#[allow(clippy::too_many_arguments)]
+async fn java_round(
+    step: &ScenarioStepInput,
+    pos: usize,
+    shared: &SharedRunState,
+    options: &ScenarioOptions,
+    emit_enter: Option<&(dyn Fn(String) + Send + Sync)>,
+    config: &TestSpec,
+    url: String,
+    spec: miyo_core::model::RequestSpec,
+) -> EndpointResult {
+    let java = match &step.java_invocation {
+        Some(j) => j,
+        None => {
+            let mut r = EndpointResult::failed_fast(
+                step.endpoint.id,
+                &step.endpoint,
+                Some(url.clone()),
+                "步骤声明为 JAVA 方法但缺少 java_invocation 定义",
+            );
+            r.step_index = Some(pos);
+            r.step_status = Some(step_status::FAILED.to_string());
+            return r;
+        }
+    };
+    if let Some(cb) = emit_enter {
+        cb(url.clone());
+    }
+
+    // 渲染后的参数：spec.body.Json.raw（变量已替换、类型层已还原数字）。
+    let args: serde_json::Value = match &spec.body {
+        miyo_core::model::BodySpec::Json { raw } if !raw.trim().is_empty() => {
+            serde_json::from_str(raw).unwrap_or_else(
+                |e| serde_json::json!({ "__args_error": format!("参数 JSON 解析失败：{e}") }),
+            )
+        }
+        _ => serde_json::Value::Array(Vec::new()),
+    };
+    if let Some(err) = args.get("__args_error").and_then(|v| v.as_str()) {
+        let mut r = EndpointResult::failed_fast(
+            step.endpoint.id,
+            &step.endpoint,
+            Some(url.clone()),
+            err.to_string(),
+        );
+        r.step_index = Some(pos);
+        r.step_status = Some(step_status::FAILED.to_string());
+        let mut lost = shared.lost.lock().await;
+        for e in &step.extract {
+            lost.insert(e.name.clone());
+        }
+        return r;
+    }
+
+    use tokio_util::bytes::Bytes;
+    let wall = std::time::Instant::now();
+    let started_at = chrono::Utc::now().to_rfc3339();
+
+    // 无执行器（能力未接通）→ failed。
+    let Some(hook) = options.java_invoke.clone() else {
+        let mut r = EndpointResult::failed_fast(
+            step.endpoint.id,
+            &step.endpoint,
+            Some(url.clone()),
+            "Java 调试执行器未接入（Runtime 未配置或运行环境不支持）",
+        );
+        r.step_index = Some(pos);
+        r.step_status = Some(step_status::FAILED.to_string());
+        r.started_at = Some(started_at);
+        let mut lost = shared.lost.lock().await;
+        for e in &step.extract {
+            lost.insert(e.name.clone());
+        }
+        return r;
+    };
+
+    let request = JavaStepRequest {
+        java_project_id: java.java_project_id,
+        class_name: java.class_name.clone(),
+        method_id: java.method_id.clone(),
+        arguments: args,
+        timeout_ms: java.timeout_ms.or(step.endpoint.request.timeout_ms),
+    };
+    // 取消优先：取消即中止等待（丢弃在途调用）。
+    let outcome = match options.cancel.as_ref() {
+        Some(cancel) => {
+            let fut = hook(request);
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Err("运行被取消".to_string()),
+                resp = fut => resp,
+            }
+        }
+        None => hook(request).await,
+    };
+    let wall_ms = wall.elapsed().as_secs_f64() * 1000.0;
+
+    let (resp_data, step_status_value, request_error) = match outcome {
+        Ok(resp) => {
+            let ok = resp.status == "success";
+            let body = resp
+                .result
+                .as_ref()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "null".to_string());
+            let err = resp.exception.as_ref().map(|e| {
+                let t = e
+                    .get("exception_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Exception");
+                let m = e
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                format!("方法抛出异常 {t}：{m}")
+            });
+            let data = miyo_http::client::HttpResponseData {
+                status: if ok { 200 } else { 500 },
+                headers: Vec::new(),
+                body: Bytes::from(body),
+                duration_ms: resp.duration_ms.unwrap_or(wall_ms),
+                size_bytes: 0,
+                cookies: Vec::new(),
+                truncated: false,
+                request: None,
+            };
+            let status_value = match resp.status.as_str() {
+                "success" => step_status::SUCCESS,
+                "cancelled" => step_status::CANCELLED,
+                _ => step_status::FAILED,
+            };
+            (data, status_value, err)
+        }
+        Err(reason) => {
+            let data = miyo_http::client::HttpResponseData {
+                status: 503,
+                headers: Vec::new(),
+                body: Bytes::from(reason.clone()),
+                duration_ms: wall_ms,
+                size_bytes: 0,
+                cookies: Vec::new(),
+                truncated: false,
+                request: None,
+            };
+            (
+                data,
+                step_status::FAILED,
+                Some(format!("Java Runtime 调用失败：{reason}")),
+            )
+        }
+    };
+
+    let body_value: Option<serde_json::Value> =
+        serde_json::from_slice(resp_data.body.as_ref()).ok();
+    let mut outcomes: Vec<Outcome> = Vec::with_capacity(config.assertions.len());
+    for a in &config.assertions {
+        let resolved;
+        let a: &crate::config::AssertionSpec = if needs_resolve(a) {
+            let snapshot = shared.runtime.lock().await;
+            resolved = resolve(a, &snapshot);
+            &resolved
+        } else {
+            a
+        };
+        if a.r#type == "javascript" {
+            outcomes.push(crate::assert::evaluate_javascript(a, &resp_data).await);
+        } else {
+            outcomes.push(crate::assert::evaluate(a, &resp_data, body_value.as_ref()));
+        }
+    }
+    let ok = outcomes.iter().all(|o| o.passed) && step_status_value == step_status::SUCCESS;
+
+    // 提取 + 簿记（与 send_round HTTP 分支同口径）。
+    let extracted: HashMap<String, String> =
+        crate::extract::extract_variables(&config.extract, &resp_data, body_value.as_ref());
+    if !extracted.is_empty() {
+        shared.runtime.lock().await.extend(extracted.clone());
+    }
+    let success = step_status_value == step_status::SUCCESS;
+    if !success {
+        let mut lost = shared.lost.lock().await;
+        for e in &step.extract {
+            lost.insert(e.name.clone());
+        }
+    } else if let Some(body) = &body_value {
+        let mut t = shared.typed.lock().await;
+        for e in &step.extract {
+            if let Some(v) = crate::extract::extract_body_json_typed(Some(body), &e.path) {
+                if !matches!(v, serde_json::Value::String(_)) {
+                    t.insert(e.name.clone(), v);
+                }
+            }
+        }
+    }
+    if success || step_status_value == step_status::FAILED {
+        *shared.last_status.lock().await = Some(if success { 200 } else { 500 });
+    }
+
+    EndpointResult {
+        endpoint_id: step.endpoint.id,
+        endpoint_name: step.endpoint.name.clone(),
+        method: step.endpoint.method.to_string(),
+        path: step.endpoint.path.clone(),
+        ok,
+        status: Some(resp_data.status),
+        duration_ms: Some(resp_data.duration_ms),
+        request_error,
+        outcomes,
+        extracted,
+        url: Some(url),
+        step_index: Some(pos),
+        cancelled: step_status_value == step_status::CANCELLED,
+        response: Some(StepResponse {
+            status: resp_data.status,
+            headers: Vec::new(),
+            body: String::from_utf8_lossy(&resp_data.body).to_string(),
+            content_type: "application/json".to_string(),
+            duration_ms: resp_data.duration_ms,
+            size_bytes: resp_data.size_bytes,
+            truncated: resp_data.truncated,
+            body_omitted: false,
+            history_truncated: false,
+            request: None,
+        }),
+        step_status: Some(step_status_value.to_string()),
+        blocked_reason: None,
+        loop_runs: None,
+        phase: None,
+        started_at: Some(started_at),
+        retry_log: Vec::new(),
+    }
 }
 
 /// 单步执行管线：Blocked 判定 → 执行条件 → 等待 → 循环（或单次）发送。
@@ -1432,6 +1723,7 @@ pub async fn run_scenario_lifecycle(
     let mut teardown_results: Vec<EndpointResult> = Vec::new();
     if lifecycle.teardown_enabled && !lifecycle.teardown.is_empty() {
         let teardown_opts = ScenarioOptions {
+            java_invoke: None,
             timeout_ms: options.timeout_ms,
             cancel: Some(tokio_util::sync::CancellationToken::new()),
             stop_on_failure: false,

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-delete-java-invocation"
+description = "Enables the delete_java_invocation command without any pre-configured scope."
+commands.allow = ["delete_java_invocation"]
+
+[[permission]]
+identifier = "deny-delete-java-invocation"
+description = "Denies the delete_java_invocation command without any pre-configured scope."
+commands.deny = ["delete_java_invocation"]

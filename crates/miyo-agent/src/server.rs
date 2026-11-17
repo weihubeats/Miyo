@@ -1566,6 +1566,38 @@ async fn execute_scenario(
     let mut steps = Vec::new();
     for (idx, step) in scenario.steps.iter().enumerate() {
         let (ep, mut url_template) = match (&step.request, step.endpoint_id) {
+            // Java 步骤：合成虚拟端点（method = JAVA、path = method_id、
+            // body.Json.raw = 参数模板）；url_template 仅作展示。
+            (None, None) if step.java_invocation.is_some() => {
+                let java = step.java_invocation.as_ref().expect("上方已判定");
+                let raw = serde_json::to_string(&java.arguments).unwrap_or_else(|_| "[]".into());
+                let name = step.display_name().unwrap_or(&java.method_id).to_string();
+                (
+                    Endpoint {
+                        id: uuid::Uuid::new_v4(),
+                        project_id: scenario.project_id,
+                        folder_id: None,
+                        name,
+                        method: miyo_core::model::HttpMethod::Java,
+                        path: java.method_id.clone(),
+                        description: String::new(),
+                        status: miyo_core::model::EndpointStatus::Developing,
+                        sort_order: idx as i64,
+                        request: miyo_core::model::RequestSpec {
+                            body: miyo_core::model::BodySpec::Json { raw },
+                            timeout_ms: java.timeout_ms,
+                            ..miyo_core::model::RequestSpec::default()
+                        },
+                        created_at: scenario.created_at,
+                        updated_at: scenario.updated_at,
+                    },
+                    format!(
+                        "java://{}/{class_name}",
+                        java.java_project_id,
+                        class_name = java.class_name
+                    ),
+                )
+            }
             (Some(inline), _) => {
                 let method = inline
                     .method
@@ -1611,7 +1643,7 @@ async fn execute_scenario(
             }
             (None, None) => {
                 return Err(miyo_core::AppError::Validation(format!(
-                    "第 {} 步既无接口引用也无内联请求",
+                    "第 {} 步既无接口引用也无内联请求或 Java 调用定义",
                     idx + 1
                 )))
             }
@@ -1643,6 +1675,7 @@ async fn execute_scenario(
                     overrides_json: step.overrides.clone(),
                     auto_idempotency_key: auto_key,
                     step_label: format!("第 {} 步", idx + 1),
+                    java_invocation: step.java_invocation.clone(),
                 },
                 &global_params,
                 &vars,
@@ -1668,6 +1701,36 @@ async fn execute_scenario(
         let mut out = Vec::with_capacity(rows.len());
         for (idx, step) in rows.iter().enumerate() {
             let (ep, url_template) = match (&step.request, step.endpoint_id) {
+                (None, None) if step.java_invocation.is_some() => {
+                    let java = step.java_invocation.as_ref().expect("上方已判定");
+                    let raw =
+                        serde_json::to_string(&java.arguments).unwrap_or_else(|_| "[]".into());
+                    (
+                        Endpoint {
+                            id: uuid::Uuid::new_v4(),
+                            project_id,
+                            folder_id: None,
+                            name: step.display_name().unwrap_or(&java.method_id).to_string(),
+                            method: miyo_core::model::HttpMethod::Java,
+                            path: java.method_id.clone(),
+                            description: String::new(),
+                            status: miyo_core::model::EndpointStatus::Developing,
+                            sort_order: idx as i64,
+                            request: miyo_core::model::RequestSpec {
+                                body: miyo_core::model::BodySpec::Json { raw },
+                                timeout_ms: java.timeout_ms,
+                                ..miyo_core::model::RequestSpec::default()
+                            },
+                            created_at,
+                            updated_at,
+                        },
+                        format!(
+                            "java://{}/{class_name}",
+                            java.java_project_id,
+                            class_name = java.class_name
+                        ),
+                    )
+                }
                 (Some(inline), _) => {
                     let method = inline
                         .method
@@ -1703,7 +1766,7 @@ async fn execute_scenario(
                 }
                 (None, None) => {
                     return Err(miyo_core::AppError::Validation(format!(
-                        "setup/teardown 第 {} 步既无接口引用也无内联请求",
+                        "setup/teardown 第 {} 步既无接口引用也无内联请求或 Java 调用定义",
                         idx + 1
                     )))
                 }
@@ -1727,6 +1790,7 @@ async fn execute_scenario(
                         overrides_json: None,
                         auto_idempotency_key: None,
                         step_label: format!("setup/teardown 第 {} 步", idx + 1),
+                        java_invocation: step.java_invocation.clone(),
                     },
                     global_params,
                     vars,
@@ -1773,6 +1837,7 @@ async fn execute_scenario(
         timeout_ms: Some(timeout_ms),
         cancel: Some((*cancel_token).clone()),
         stop_on_failure: req.stop_on_failure,
+        java_invoke: Some(crate::java_hook::java_invoke_hook(state.db.clone())),
     };
     // 总超时 watchdog：到点自动 cancel（runner 返回已完成步骤并落库）。
     // AbortOnDrop 守卫：正常完成 / 出错 / panic 三条路径都会撤销 watchdog
@@ -2126,10 +2191,431 @@ async fn import_curl_handler(
     }))
 }
 
+// ---------------------------------------------------------------------------
+// Java 方法实时调试（miyo-java 协议；发现 / 读取 = Read 工具，执行 = run_java_method
+// NetworkExecute 高风险门）。执行走 java_hook 单源（历史落库 + 安全策略）。
+// ---------------------------------------------------------------------------
+
+/// 项目对外摘要（token 永不出控制面）。
+#[derive(Debug, serde::Serialize)]
+pub struct JavaProjectSummary {
+    pub id: uuid::Uuid,
+    #[serde(rename = "projectId", skip_serializing_if = "Option::is_none")]
+    pub linked_project_id: Option<uuid::Uuid>,
+    #[serde(rename = "environmentId", skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<uuid::Uuid>,
+    pub name: String,
+    #[serde(rename = "runtimeEndpoint")]
+    pub runtime_endpoint: String,
+    pub description: String,
+    #[serde(rename = "hasAuth")]
+    pub has_auth: bool,
+    #[serde(rename = "timeoutMs")]
+    pub timeout_ms: u64,
+    #[serde(rename = "lastConnectedAt", skip_serializing_if = "Option::is_none")]
+    pub last_connected_at: Option<String>,
+    /// 最近一次握手缓存（非权威；连接探测后刷新）。
+    #[serde(rename = "lastInfo", skip_serializing_if = "Option::is_none")]
+    pub last_info: Option<serde_json::Value>,
+}
+
+fn java_project_summary(p: miyo_core::model::JavaDebugProject) -> JavaProjectSummary {
+    JavaProjectSummary {
+        id: p.id,
+        linked_project_id: p.project_id,
+        environment_id: p.environment_id,
+        name: p.name,
+        runtime_endpoint: p.runtime_endpoint,
+        description: p.description,
+        has_auth: p.auth_token.is_some(),
+        timeout_ms: p.timeout_ms,
+        last_connected_at: p.last_connected_at.map(|t| t.to_rfc3339()),
+        last_info: p.last_info,
+    }
+}
+
+async fn load_java_project(
+    db: &SqlitePool,
+    id: uuid::Uuid,
+) -> Result<miyo_core::model::JavaDebugProject, miyo_core::AppError> {
+    repo::get_java_project(db, id).await
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct JavaProjectQuery {
+    #[serde(rename = "projectId", default)]
+    pub project_id: Option<uuid::Uuid>,
+}
+
+async fn list_java_projects_handler(
+    State(state): State<AgentState>,
+    Query(q): Query<JavaProjectQuery>,
+) -> ApiResult<Vec<JavaProjectSummary>> {
+    ensure_tool_allowed(&state, "list_java_projects").await?;
+    let projects = repo::list_java_projects(&state.db, q.project_id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(
+        projects.into_iter().map(java_project_summary).collect(),
+    ))
+}
+
+async fn get_java_project_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<JavaProjectSummary> {
+    ensure_tool_allowed(&state, "get_java_project").await?;
+    let p = load_java_project(&state.db, id).await.map_err(api_error)?;
+    Ok(Json(java_project_summary(p)))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct JavaClassesQuery {
+    #[serde(rename = "projectId")]
+    pub project_id: uuid::Uuid,
+    #[serde(default)]
+    pub search: Option<String>,
+}
+
+async fn list_java_classes_handler(
+    State(state): State<AgentState>,
+    Query(q): Query<JavaClassesQuery>,
+) -> ApiResult<Vec<miyo_java::JavaClassInfo>> {
+    ensure_tool_allowed(&state, "list_java_classes").await?;
+    let p = load_java_project(&state.db, q.project_id)
+        .await
+        .map_err(api_error)?;
+    let client = crate::java_hook::client_for(&p).map_err(api_error)?;
+    let mut classes = client.classes().await.map_err(api_error)?;
+    if let Some(term) = q
+        .search
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+    {
+        classes.retain(|c| {
+            c.class_name.to_lowercase().contains(&term)
+                || c.simple_name.to_lowercase().contains(&term)
+                || c.package_name.to_lowercase().contains(&term)
+                || c.bean_name
+                    .as_deref()
+                    .map(|b| b.to_lowercase().contains(&term))
+                    .unwrap_or(false)
+        });
+    }
+    Ok(Json(classes))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct JavaMethodsQuery {
+    #[serde(rename = "projectId")]
+    pub project_id: uuid::Uuid,
+    #[serde(rename = "className")]
+    pub class_name: String,
+}
+
+async fn list_java_methods_handler(
+    State(state): State<AgentState>,
+    Query(q): Query<JavaMethodsQuery>,
+) -> ApiResult<Vec<miyo_java::JavaMethodInfo>> {
+    ensure_tool_allowed(&state, "list_java_methods").await?;
+    let p = load_java_project(&state.db, q.project_id)
+        .await
+        .map_err(api_error)?;
+    let client = crate::java_hook::client_for(&p).map_err(api_error)?;
+    Ok(Json(
+        client.methods(&q.class_name).await.map_err(api_error)?,
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct JavaMethodQuery {
+    #[serde(rename = "projectId")]
+    pub project_id: uuid::Uuid,
+    #[serde(rename = "methodId")]
+    pub method_id: String,
+}
+
+async fn get_java_method_handler(
+    State(state): State<AgentState>,
+    Query(q): Query<JavaMethodQuery>,
+) -> ApiResult<miyo_java::JavaMethodInfo> {
+    ensure_tool_allowed(&state, "get_java_method").await?;
+    let p = load_java_project(&state.db, q.project_id)
+        .await
+        .map_err(api_error)?;
+    let client = crate::java_hook::client_for(&p).map_err(api_error)?;
+    let class = q.method_id.split_once('#').map(|(c, _)| c).ok_or_else(|| {
+        api_error(miyo_core::AppError::Validation(format!(
+            "methodId 非法：{}",
+            q.method_id
+        )))
+    })?;
+    let methods = client.methods(class).await.map_err(api_error)?;
+    methods
+        .into_iter()
+        .find(|m| m.method_id == q.method_id)
+        .map(Json)
+        .ok_or_else(|| {
+            api_error(miyo_core::AppError::NotFound(format!(
+                "方法不在白名单或不存在：{}",
+                q.method_id
+            )))
+        })
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct JavaValidateRequest {
+    #[serde(rename = "projectId")]
+    pub project_id: uuid::Uuid,
+    #[serde(rename = "methodId")]
+    pub method_id: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+}
+
+/// create_java_invocation：构建并校验调用计划（不执行）。
+async fn validate_java_invocation_handler(
+    State(state): State<AgentState>,
+    Json(req): Json<JavaValidateRequest>,
+) -> ApiResult<serde_json::Value> {
+    ensure_tool_allowed(&state, "create_java_invocation").await?;
+    let p = load_java_project(&state.db, req.project_id)
+        .await
+        .map_err(api_error)?;
+    let client = crate::java_hook::client_for(&p).map_err(api_error)?;
+    let class = req
+        .method_id
+        .split_once('#')
+        .map(|(c, _)| c.to_string())
+        .ok_or_else(|| {
+            api_error(miyo_core::AppError::Validation(format!(
+                "methodId 非法：{}",
+                req.method_id
+            )))
+        })?;
+    let methods = client.methods(&class).await.map_err(api_error)?;
+    let method = methods
+        .into_iter()
+        .find(|m| m.method_id == req.method_id)
+        .ok_or_else(|| {
+            api_error(miyo_core::AppError::NotFound(format!(
+                "方法不在白名单或不存在：{}",
+                req.method_id
+            )))
+        })?;
+    let args = crate::java_hook::normalize_arguments(req.arguments);
+    let mut warnings: Vec<String> = Vec::new();
+    if args.len() != method.params.len() {
+        warnings.push(format!(
+            "参数个数不匹配：期望 {} 个（{}），实际 {} 个",
+            method.params.len(),
+            method
+                .params
+                .iter()
+                .map(|x| x.type_name.clone())
+                .collect::<Vec<_>>()
+                .join(", "),
+            args.len()
+        ));
+    }
+    // 类型形状粗校验：数字 / 布尔 / 字符串对齐基本类型；复杂类型仅提示。
+    for (idx, (arg, param)) in args.iter().zip(method.params.iter()).enumerate() {
+        let tn = param.type_name.as_str();
+        let t = tn == "long"
+            || tn == "int"
+            || tn == "short"
+            || tn == "byte"
+            || tn == "double"
+            || tn == "float";
+        let boxed = matches!(
+            tn,
+            "Long"
+                | "Integer"
+                | "Short"
+                | "Byte"
+                | "Double"
+                | "Float"
+                | "BigDecimal"
+                | "BigInteger"
+        );
+        let is_bool = tn == "boolean" || tn == "Boolean";
+        let is_str = tn == "String" || tn == "char" || tn == "Character";
+        let shape_ok = if t || boxed {
+            arg.is_number()
+        } else if is_bool {
+            arg.is_boolean()
+        } else if is_str {
+            arg.is_string()
+        } else {
+            true // 自定义 DTO / 集合交给 Runtime 终检
+        };
+        if !shape_ok {
+            warnings.push(format!(
+                "第 {} 个参数（{}: {}）形状不匹配：{}",
+                idx + 1,
+                param.name,
+                tn,
+                json_kind(arg)
+            ));
+        }
+    }
+    crate::java_hook::security_policy_for(&p)
+        .validate_arguments(&args)
+        .map_err(api_error)?;
+    Ok(Json(serde_json::json!({
+        "valid": warnings.is_empty(),
+        "method": serde_json::json!(method),
+        "arguments": args,
+        "warnings": warnings,
+        "project": java_project_summary(p),
+    })))
+}
+
+fn json_kind(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct JavaInvokeRequest {
+    #[serde(rename = "projectId")]
+    pub project_id: uuid::Uuid,
+    #[serde(rename = "methodId")]
+    pub method_id: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+    #[serde(rename = "timeoutMs", default)]
+    pub timeout_ms: Option<u64>,
+}
+
+/// run_java_method：真实执行（NetworkExecute 高风险门 + 白名单 + 历史落库）。
+async fn run_java_method_handler(
+    State(state): State<AgentState>,
+    Json(req): Json<JavaInvokeRequest>,
+) -> ApiResult<serde_json::Value> {
+    ensure_tool_allowed(&state, "run_java_method").await?;
+    let p = load_java_project(&state.db, req.project_id)
+        .await
+        .map_err(api_error)?;
+    let class = req
+        .method_id
+        .split_once('#')
+        .map(|(c, _)| c.to_string())
+        .unwrap_or_default();
+    let hook = crate::java_hook::java_invoke_hook(state.db.clone());
+    let outcome = hook(miyo_test::runner::JavaStepRequest {
+        java_project_id: req.project_id,
+        class_name: class,
+        method_id: req.method_id.clone(),
+        arguments: req.arguments,
+        timeout_ms: req.timeout_ms,
+    })
+    .await
+    .map_err(|e| api_error(miyo_core::AppError::Connection(e)))?;
+    // 返回体脱敏（结果 JSON 可能内嵌 token / 凭证形态字段）。
+    let result = outcome.result.as_ref().map(|v| {
+        let (redacted, _) = miyo_sync::redact::redact_json_text(&v.to_string());
+        serde_json::from_str::<serde_json::Value>(&redacted).unwrap_or(serde_json::Value::Null)
+    });
+    Ok(Json(serde_json::json!({
+        "invocationId": uuid::Uuid::new_v4().to_string(),
+        "status": outcome.status,
+        "result": result,
+        "exception": outcome.exception,
+        "durationMs": outcome.duration_ms,
+        "methodId": req.method_id,
+        "project": java_project_summary(p),
+    })))
+}
+
+async fn get_java_execution_result_handler(
+    State(state): State<AgentState>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
+) -> ApiResult<serde_json::Value> {
+    ensure_tool_allowed(&state, "get_java_execution_result").await?;
+    let record = repo::get_java_invocation(&state.db, id)
+        .await
+        .map_err(api_error)?;
+    Ok(Json(redact_invocation_record(record)))
+}
+
+/// 历史记录出站脱敏（结果 JSON / 异常信息统一 redact）。
+fn redact_invocation_record(record: miyo_core::model::JavaInvocationRecord) -> serde_json::Value {
+    let result = record.result.as_ref().map(|v| {
+        let (redacted, _) = miyo_sync::redact::redact_json_text(&v.to_string());
+        serde_json::from_str::<serde_json::Value>(&redacted).unwrap_or(serde_json::Value::Null)
+    });
+    let exception = record.exception.as_ref().map(|v| {
+        let (redacted, _) = miyo_sync::redact::redact_json_text(&v.to_string());
+        serde_json::from_str::<serde_json::Value>(&redacted).unwrap_or(serde_json::Value::Null)
+    });
+    serde_json::json!({
+        "invocationId": record.id.to_string(),
+        "projectId": record.project_id.to_string(),
+        "className": record.class_name,
+        "methodId": record.method_id,
+        "methodSignature": record.method_signature,
+        "arguments": record.arguments,
+        "status": record.status,
+        "result": result,
+        "resultTruncated": record.result_truncated,
+        "exception": exception,
+        "durationMs": record.duration_ms,
+        "startedAt": record.started_at,
+        "finishedAt": record.finished_at,
+        "createdAt": record.created_at.to_rfc3339(),
+    })
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct JavaHistoryQuery {
+    #[serde(rename = "projectId")]
+    pub project_id: uuid::Uuid,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+async fn list_java_execution_history_handler(
+    State(state): State<AgentState>,
+    Query(q): Query<JavaHistoryQuery>,
+) -> ApiResult<Vec<serde_json::Value>> {
+    ensure_tool_allowed(&state, "list_java_execution_history").await?;
+    let records = repo::list_java_invocations(&state.db, q.project_id, q.limit.unwrap_or(50))
+        .await
+        .map_err(api_error)?;
+    Ok(Json(
+        records.into_iter().map(redact_invocation_record).collect(),
+    ))
+}
+
 /// 构建路由（pub 供 miyo-mcp 集成测试复用）。
 pub fn build_router(state: AgentState) -> Router {
     Router::new()
         .route("/agent/health", get(health))
+        .route("/agent/java/projects", get(list_java_projects_handler))
+        .route("/agent/java/projects/{id}", get(get_java_project_handler))
+        .route("/agent/java/classes", get(list_java_classes_handler))
+        .route("/agent/java/methods", get(list_java_methods_handler))
+        .route("/agent/java/method-detail", get(get_java_method_handler))
+        .route(
+            "/agent/java/invocations/validate",
+            post(validate_java_invocation_handler),
+        )
+        .route("/agent/java/invoke", post(run_java_method_handler))
+        .route(
+            "/agent/java/invocations/{id}",
+            get(get_java_execution_result_handler),
+        )
+        .route(
+            "/agent/java/history",
+            get(list_java_execution_history_handler),
+        )
         .route("/agent/projects", get(list_projects_handler))
         .route("/agent/endpoints/{project_id}", get(list_endpoints_handler))
         .route("/agent/environments", get(list_environments_handler))
@@ -2495,6 +2981,7 @@ pub(crate) fn normalize_step_json(v: &serde_json::Value) -> Result<ScenarioStep,
         assertions,
         name,
         request,
+        java_invocation: None,
         condition: condition.map(|c| serde_json::to_value(c).unwrap_or(serde_json::Value::Null)),
         r#loop: r#loop.map(|l| serde_json::to_value(l).unwrap_or(serde_json::Value::Null)),
         wait_ms,

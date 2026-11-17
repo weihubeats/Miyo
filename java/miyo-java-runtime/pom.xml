@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Miyo Java Debug Runtime SDK（零第三方依赖，纯 JDK 实现）。
+
+  用法：把本模块作为依赖加入目标 Java 项目（或直接拷贝源码包 io.miyo.debug），
+  在应用启动时显式注册允许调试的类 / Bean 白名单并 start()——Runtime 会在
+  本进程内起一个仅监听配置地址的 HTTP 端点，供 Miyo 桌面端调用。
+
+  构建：mvn package（Java 11+）
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>io.github.weihubeats</groupId>
+  <artifactId>miyo-java-runtime</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+  <name>Miyo Java Debug Runtime</name>
+  <description>Miyo Java 方法实时调试 Runtime SDK（白名单显式注册 + Bearer 鉴权 + 零依赖）</description>
+
+  <properties>
+    <maven.compiler.release>11</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

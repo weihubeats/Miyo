@@ -175,6 +175,21 @@ const COMMANDS: &[&str] = &[
     "sync_pull_apply",
     "sync_remote_list_projects",
     "sync_import_project",
+    // Java 方法实时调试（commands/java_debug.rs）
+    "list_java_projects",
+    "save_java_project",
+    "delete_java_project",
+    "java_discover_local",
+    "java_probe_endpoint",
+    "java_test_connection",
+    "java_list_classes",
+    "java_list_methods",
+    "java_invoke",
+    "java_cancel_invocation",
+    "list_java_history",
+    "get_java_invocation",
+    "delete_java_invocation",
+    "clear_java_history",
 ];
 
 fn main() {

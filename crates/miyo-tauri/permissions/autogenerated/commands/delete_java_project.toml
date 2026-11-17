@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-delete-java-project"
+description = "Enables the delete_java_project command without any pre-configured scope."
+commands.allow = ["delete_java_project"]
+
+[[permission]]
+identifier = "deny-delete-java-project"
+description = "Denies the delete_java_project command without any pre-configured scope."
+commands.deny = ["delete_java_project"]

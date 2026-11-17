@@ -100,6 +100,9 @@ fn reqwest_method(method: HttpMethod) -> Method {
         HttpMethod::OPTIONS => Method::OPTIONS,
         // 不可达：gRPC 在 send_request_inner 入口已拦截；兜底按字面方法名
         HttpMethod::Grpc => Method::from_bytes(b"GRPC").expect("GRPC 为合法方法 token"),
+        // 不可达：Java 步骤在场景引擎分流到 miyo-java 执行器，不经 HTTP 引擎；
+        // 兜底按字面方法名
+        HttpMethod::Java => Method::from_bytes(b"JAVA").expect("JAVA 为合法方法 token"),
     }
 }
 

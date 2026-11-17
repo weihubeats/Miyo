@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-probe-endpoint"
+description = "Enables the java_probe_endpoint command without any pre-configured scope."
+commands.allow = ["java_probe_endpoint"]
+
+[[permission]]
+identifier = "deny-java-probe-endpoint"
+description = "Denies the java_probe_endpoint command without any pre-configured scope."
+commands.deny = ["java_probe_endpoint"]

@@ -26,6 +26,7 @@ miyo-agent = { path = "../miyo-agent" }
 miyo-backup = { path = "../miyo-backup" }
 miyo-sync = { path = "../miyo-sync" }
 miyo-grpc = { path = "../miyo-grpc" }
+miyo-java = { path = "../miyo-java" }
 miyo-openapi = { path = "../miyo-openapi" }
 miyo-test = { path = "../miyo-test" }
 

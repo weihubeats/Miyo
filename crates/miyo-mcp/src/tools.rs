@@ -816,6 +816,46 @@ fn validate_tool_call(params: &Value) -> Result<(), (i64, String)> {
             index_arg(&args, "stepIndex")?;
             Ok(())
         }
+        // ---- Java 方法实时调试 ----
+        "list_java_projects" => Ok(()),
+        "get_java_project"
+        | "list_java_classes"
+        | "list_java_methods"
+        | "get_java_method"
+        | "create_java_invocation"
+        | "run_java_method"
+        | "list_java_execution_history" => {
+            uuid_req(&args, "projectId")?;
+            if matches!(
+                name,
+                "list_java_methods" | "create_java_invocation" | "run_java_method"
+            ) {
+                str_arg(&args, "methodId").ok_or_else(|| {
+                    (
+                        -32602,
+                        format!("缺少必填参数 methodId：{name} 需要完整方法标识"),
+                    )
+                })?;
+            } else if name == "list_java_methods" || name == "get_java_method" {
+                // className / methodId 由 call_tool 分支校验
+            }
+            if name == "list_java_methods" {
+                str_arg(&args, "className")
+                    .ok_or_else(|| (-32602, "缺少必填参数 className".to_string()))?;
+            }
+            if name == "run_java_method" && args.get("arguments").filter(|v| v.is_array()).is_none()
+            {
+                return Err((
+                    -32602,
+                    "缺少必填参数 arguments（JSON 数组，与方法形参一一对应）".to_string(),
+                ));
+            }
+            Ok(())
+        }
+        "get_java_execution_result" => {
+            uuid_req(&args, "invocationId")?;
+            Ok(())
+        }
         other => Err((-32602, format!("未知工具：{other}"))),
     }
 }
@@ -1464,6 +1504,111 @@ async fn call_tool(
             "auth": "Authorization: Bearer <token 文件内容>",
             "docs": "POST /agent/curl | GET /agent/projects | GET /agent/endpoints/:projectId（支持 name/method/folderId/limit/offset 过滤）| GET /agent/endpoints/:id/detail | POST /agent/endpoints/:id/execute | GET /agent/environments?projectId= | GET /agent/environments/:id | GET /agent/scenarios?projectId= | POST /agent/scenarios（完整 steps）| GET /agent/scenarios/:id | PUT /agent/scenarios/:id | DELETE /agent/scenarios/:id | POST /agent/scenarios/:id/steps | PUT/DELETE /agent/scenarios/:id/steps/:index | GET /agent/scenarios/:id/validate | POST /agent/scenarios/:id/run（wait=false 异步）| GET /agent/runs/:id | POST /agent/runs/:id/cancel | GET /agent/runs/:id/steps/:index | GET /agent/runs/:id/analysis | PUT /agent/scenarios/:id/script"
         }),
+        // ---- Java 方法实时调试（发现 / 读取 / 校验 / 执行 / 历史）----
+        "list_java_projects" => serde_json::to_value(
+            client
+                .list_java_projects()
+                .await
+                .map_err(|e| tool_fail("JAVA", &e))?,
+        )
+        .expect("序列化失败"),
+        "get_java_project" => {
+            let project_id = uuid_req(&args, "projectId")?;
+            serde_json::to_value(
+                client
+                    .get_java_project(project_id)
+                    .await
+                    .map_err(|e| tool_fail("JAVA", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "list_java_classes" => {
+            let project_id = uuid_req(&args, "projectId")?;
+            let search = str_arg(&args, "search");
+            serde_json::to_value(
+                client
+                    .list_java_classes(project_id, search)
+                    .await
+                    .map_err(|e| tool_fail("JAVA", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "list_java_methods" => {
+            let project_id = uuid_req(&args, "projectId")?;
+            let class_name = str_arg(&args, "className").ok_or_else(|| {
+                ToolFailure::new("INVALID_ARGUMENT", "缺少必填参数 className".to_string())
+            })?;
+            serde_json::to_value(
+                client
+                    .list_java_methods(project_id, class_name)
+                    .await
+                    .map_err(|e| tool_fail("JAVA", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "get_java_method" => {
+            let project_id = uuid_req(&args, "projectId")?;
+            let method_id = str_arg(&args, "methodId").ok_or_else(|| {
+                ToolFailure::new("INVALID_ARGUMENT", "缺少必填参数 methodId".to_string())
+            })?;
+            serde_json::to_value(
+                client
+                    .get_java_method(project_id, method_id)
+                    .await
+                    .map_err(|e| tool_fail("JAVA", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "create_java_invocation" => {
+            let project_id = uuid_req(&args, "projectId")?;
+            let method_id = str_arg(&args, "methodId").ok_or_else(|| {
+                ToolFailure::new("INVALID_ARGUMENT", "缺少必填参数 methodId".to_string())
+            })?;
+            let arguments = args.get("arguments").cloned().unwrap_or(json!([]));
+            serde_json::to_value(
+                client
+                    .validate_java_invocation(project_id, method_id, arguments)
+                    .await
+                    .map_err(|e| tool_fail("JAVA", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "run_java_method" => {
+            let project_id = uuid_req(&args, "projectId")?;
+            let method_id = str_arg(&args, "methodId").ok_or_else(|| {
+                ToolFailure::new("INVALID_ARGUMENT", "缺少必填参数 methodId".to_string())
+            })?;
+            let arguments = args.get("arguments").cloned().unwrap_or(json!([]));
+            let timeout_ms = args.get("timeoutMs").and_then(|v| v.as_u64());
+            serde_json::to_value(
+                client
+                    .run_java_method(project_id, method_id, arguments, timeout_ms)
+                    .await
+                    .map_err(|e| tool_fail("JAVA", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "get_java_execution_result" => {
+            let invocation_id = uuid_req(&args, "invocationId")?;
+            serde_json::to_value(
+                client
+                    .get_java_execution_result(invocation_id)
+                    .await
+                    .map_err(|e| tool_fail("JAVA", &e))?,
+            )
+            .expect("序列化失败")
+        }
+        "list_java_execution_history" => {
+            let project_id = uuid_req(&args, "projectId")?;
+            let limit = args.get("limit").and_then(|v| v.as_u64()).map(|v| v as u32);
+            serde_json::to_value(
+                client
+                    .list_java_execution_history(project_id, limit)
+                    .await
+                    .map_err(|e| tool_fail("JAVA", &e))?,
+            )
+            .expect("序列化失败")
+        }
         other => {
             return Err(ToolFailure::new(
                 "TOOL_NOT_FOUND",

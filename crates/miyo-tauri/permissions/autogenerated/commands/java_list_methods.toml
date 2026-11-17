@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-list-methods"
+description = "Enables the java_list_methods command without any pre-configured scope."
+commands.allow = ["java_list_methods"]
+
+[[permission]]
+identifier = "deny-java-list-methods"
+description = "Denies the java_list_methods command without any pre-configured scope."
+commands.deny = ["java_list_methods"]

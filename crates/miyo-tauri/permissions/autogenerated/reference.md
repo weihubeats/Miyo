@@ -178,6 +178,20 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-ai-list-scenario-drafts`
 - `allow-ai-apply-scenario-draft`
 - `allow-ai-revert-scenario-draft`
+- `allow-list-java-projects`
+- `allow-save-java-project`
+- `allow-delete-java-project`
+- `allow-java-discover-local`
+- `allow-java-probe-endpoint`
+- `allow-java-test-connection`
+- `allow-java-list-classes`
+- `allow-java-list-methods`
+- `allow-java-invoke`
+- `allow-java-cancel-invocation`
+- `allow-list-java-history`
+- `allow-get-java-invocation`
+- `allow-delete-java-invocation`
+- `allow-clear-java-history`
 
 ## Permission Table
 
@@ -867,6 +881,32 @@ Denies the cancel_test_endpoint command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-clear-java-history`
+
+</td>
+<td>
+
+Enables the clear_java_history command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-clear-java-history`
+
+</td>
+<td>
+
+Denies the clear_java_history command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-clear-request-histories`
 
 </td>
@@ -1146,6 +1186,58 @@ Enables the delete_folder command without any pre-configured scope.
 <td>
 
 Denies the delete_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-delete-java-invocation`
+
+</td>
+<td>
+
+Enables the delete_java_invocation command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-delete-java-invocation`
+
+</td>
+<td>
+
+Denies the delete_java_invocation command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-delete-java-project`
+
+</td>
+<td>
+
+Enables the delete_java_project command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-delete-java-project`
+
+</td>
+<td>
+
+Denies the delete_java_project command without any pre-configured scope.
 
 </td>
 </tr>
@@ -1855,6 +1947,32 @@ Denies the get_http_timeout_ms command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-get-java-invocation`
+
+</td>
+<td>
+
+Enables the get_java_invocation command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-get-java-invocation`
+
+</td>
+<td>
+
+Denies the get_java_invocation command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-get-log-retention-days`
 
 </td>
@@ -2375,6 +2493,188 @@ Denies the import_environment command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-java-cancel-invocation`
+
+</td>
+<td>
+
+Enables the java_cancel_invocation command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-cancel-invocation`
+
+</td>
+<td>
+
+Denies the java_cancel_invocation command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-discover-local`
+
+</td>
+<td>
+
+Enables the java_discover_local command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-discover-local`
+
+</td>
+<td>
+
+Denies the java_discover_local command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-invoke`
+
+</td>
+<td>
+
+Enables the java_invoke command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-invoke`
+
+</td>
+<td>
+
+Denies the java_invoke command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-list-classes`
+
+</td>
+<td>
+
+Enables the java_list_classes command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-list-classes`
+
+</td>
+<td>
+
+Denies the java_list_classes command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-list-methods`
+
+</td>
+<td>
+
+Enables the java_list_methods command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-list-methods`
+
+</td>
+<td>
+
+Denies the java_list_methods command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-probe-endpoint`
+
+</td>
+<td>
+
+Enables the java_probe_endpoint command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-probe-endpoint`
+
+</td>
+<td>
+
+Denies the java_probe_endpoint command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-test-connection`
+
+</td>
+<td>
+
+Enables the java_test_connection command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-test-connection`
+
+</td>
+<td>
+
+Denies the java_test_connection command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-list-endpoints`
 
 </td>
@@ -2472,6 +2772,58 @@ Enables the list_folders command without any pre-configured scope.
 <td>
 
 Denies the list_folders command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-list-java-history`
+
+</td>
+<td>
+
+Enables the list_java_history command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-java-history`
+
+</td>
+<td>
+
+Denies the list_java_history command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-list-java-projects`
+
+</td>
+<td>
+
+Enables the list_java_projects command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-java-projects`
+
+</td>
+<td>
+
+Denies the list_java_projects command without any pre-configured scope.
 
 </td>
 </tr>
@@ -3564,6 +3916,32 @@ Enables the save_global_variables command without any pre-configured scope.
 <td>
 
 Denies the save_global_variables command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-save-java-project`
+
+</td>
+<td>
+
+Enables the save_java_project command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-save-java-project`
+
+</td>
+<td>
+
+Denies the save_java_project command without any pre-configured scope.
 
 </td>
 </tr>

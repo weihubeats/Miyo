@@ -33,6 +33,7 @@ pub mod args;
 pub mod client;
 pub mod dispatch;
 pub mod import;
+pub mod java_hook;
 pub mod portfile;
 pub mod redact;
 pub mod registry;

@@ -10,7 +10,7 @@
 //! Endpoint 与 `url_template_for`）、变量来源（UI 态 vs 控制面显式传参）、
 //! 脱敏、事件推送 / 进度表、落库——这些是两端的真实边界，不是重复。
 
-use miyo_core::model::{Endpoint, GlobalParam, StepRetry};
+use miyo_core::model::{Endpoint, GlobalParam, ScenarioJavaInvocation, StepRetry};
 use miyo_core::VariableMap;
 
 use crate::config::{StepCondition, StepLoop, TestSpec};
@@ -46,6 +46,9 @@ pub struct StepMaterialInput {
     pub auto_idempotency_key: Option<String>,
     /// 错误信息里的步骤标签（如 `第 3 步` / `setup/teardown 第 1 步`）。
     pub step_label: String,
+    /// Java 方法调用定义（Some = Java 步骤；endpoint 为合成虚拟端点，
+    /// method = JAVA、path = method_id、body.Json.raw = 参数模板）。
+    pub java_invocation: Option<ScenarioJavaInvocation>,
 }
 
 /// 单步物化：全局参数补缺 → 参数覆盖 → 自动幂等键 → 提取/断言解析 →
@@ -66,8 +69,10 @@ pub fn materialize_step(
     if let Some(key) = &input.auto_idempotency_key {
         // 写操作自动幂等：POST/PUT/PATCH/DELETE 且未显式配置 Idempotency-Key
         // 时补键（键 = runId-位次；循环轮次共用——同一逻辑操作重试不重复执行）。
-        let is_write = ["POST", "PUT", "PATCH", "DELETE"]
-            .contains(&input.endpoint.method.as_str().to_uppercase().as_str());
+        // Java 步骤无 HTTP 语义，不注入。
+        let is_write = input.endpoint.method.is_http()
+            && ["POST", "PUT", "PATCH", "DELETE"]
+                .contains(&input.endpoint.method.as_str().to_uppercase().as_str());
         let has_key = spec
             .headers
             .iter()
@@ -80,7 +85,10 @@ pub fn materialize_step(
         }
     }
     // 全局参数补缺（key 大小写不敏感、不覆盖步骤显式值）。
-    miyo_core::apply_global_params(&mut spec, global_params, vars);
+    // Java 步骤无 header / query 维度，跳过。
+    if !input.endpoint.method.is_java() {
+        miyo_core::apply_global_params(&mut spec, global_params, vars);
+    }
     let config = TestSpec::from_request_value(Some(&serde_json::json!({
         "extract": input.extract_json,
         "assertions": input.assertions_json,
@@ -106,6 +114,7 @@ pub fn materialize_step(
         extract: config.extract,
         assertions: config.assertions,
         enabled: input.enabled,
+        java_invocation: input.java_invocation,
         condition,
         r#loop,
         wait_ms: input.wait_ms.map(|w| w.min(StepLoop::MAX_INTERVAL_MS)),
@@ -150,6 +159,7 @@ mod tests {
             overrides_json: None,
             auto_idempotency_key: None,
             step_label: "第 1 步".into(),
+            java_invocation: None,
         }
     }
 

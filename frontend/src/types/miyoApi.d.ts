@@ -1200,6 +1200,14 @@ export interface ScenarioStep {
   name?: string | null
   /** 内联请求定义；缺省 = 引用式步骤。 */
   request?: ScenarioInlineRequest | null
+  /** Java 方法调用定义；缺省 = HTTP 步骤（与后端 ScenarioJavaInvocation 同构）。 */
+  java_invocation?: {
+    java_project_id: string
+    class_name: string
+    method_id: string
+    arguments: unknown
+    timeout_ms?: number | null
+  } | null
   /** 执行条件（不满足 → skipped 不发送）。 */
   condition?: StepCondition | null
   /** 循环配置。 */
@@ -1297,4 +1305,135 @@ export interface DataSet {
     | { kind: 'csv'; text: string }
     | { kind: 'environment' }
   sort_order?: number
+}
+
+
+// ---------------------------------------------------------------------------
+// Java 方法实时调试（Rust `miyo-core::model::JavaDebugProject` / miyo-java 协议）
+// ---------------------------------------------------------------------------
+
+/** Java 调试项目（连接 Runtime 的配置；token 列表 / 保存返回一律脱敏，仅在编辑时于本机输入）。 */
+export interface JavaDebugProject {
+  id: string
+  project_id?: string | null
+  name: string
+  runtime_endpoint: string
+  environment_id?: string | null
+  /** 仅在保存请求里有意义：缺省 = 保持现有 token，空串 = 显式清除；回显恒为 null。 */
+  auth_token?: string | null
+  timeout_ms: number
+  max_result_bytes: number
+  max_concurrent: number
+  description: string
+  last_connected_at?: string | null
+  /** 最近一次握手缓存（非权威；连接探测后刷新）。 */
+  last_info?: JavaRuntimeInfo | null
+  created_at: string
+  updated_at: string
+}
+
+/** 本机发现的 Runtime 候选（miyo_java::discover::JavaDiscoveredRuntime）。 */
+export interface JavaDiscoveredRuntime {
+  /** registry = SDK 注册文件；port_probe = 端口指纹探测。 */
+  source: 'registry' | 'port_probe'
+  endpoint: string
+  /** 探测路径读不到应用名（需 token），为空串。 */
+  app_name: string
+  java_version: string
+  pid?: number | null
+  sdk_version: string
+  /** 端口指纹探测确认存活；false = 注册文件残留（进程可能已退出）。 */
+  alive: boolean
+}
+
+/** Runtime 自述信息（GET /miyo/debug/info）。 */
+export interface JavaRuntimeInfo {
+  protocol_version: number
+  runtime_version: string
+  app_name: string
+  java_version: string
+  jvm_version: string
+  uptime_ms: number
+  class_count: number
+  method_count: number
+  instance_provider: string
+}
+
+/** 白名单类。 */
+export interface JavaClassInfo {
+  class_name: string
+  package_name: string
+  simple_name: string
+  method_count: number
+  bean_name?: string | null
+}
+
+/** 方法参数。 */
+export interface JavaParamInfo {
+  name: string
+  type_name: string
+  generic_type: string
+  required: boolean
+}
+
+/** 白名单方法（method_id 为调用唯一依据，重载消歧）。 */
+export interface JavaMethodInfo {
+  method_id: string
+  class_name: string
+  method_name: string
+  signature: string
+  return_type: string
+  return_generic: string
+  params: JavaParamInfo[]
+  static_method: boolean
+  visibility: string
+  overloaded: boolean
+  declaring_class: string
+}
+
+/** 异常详情。 */
+export interface JavaExceptionInfo {
+  exception_type: string
+  message?: string | null
+  stack_trace: string[]
+  cause_chain: string[]
+}
+
+/** 调用结果状态。 */
+export type JavaInvocationStatus =
+  | 'success'
+  | 'failed'
+  | 'timeout'
+  | 'cancelled'
+  | 'runtime_disconnected'
+
+/** 方法调用响应。 */
+export interface JavaInvokeResponse {
+  invocation_id: string
+  method_id: string
+  status: JavaInvocationStatus
+  result?: unknown | null
+  result_truncated: boolean
+  exception?: JavaExceptionInfo | null
+  duration_ms?: number | null
+  started_at?: string | null
+  finished_at?: string | null
+}
+
+/** 调用历史记录（大字段截断落库）。 */
+export interface JavaInvocationRecord {
+  id: string
+  project_id: string
+  class_name: string
+  method_id: string
+  method_signature: string
+  arguments: unknown
+  status: string
+  result?: unknown | null
+  result_truncated: boolean
+  exception?: JavaExceptionInfo | null
+  duration_ms?: number | null
+  started_at?: string | null
+  finished_at?: string | null
+  created_at: string
 }

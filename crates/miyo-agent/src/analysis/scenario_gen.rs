@@ -260,6 +260,7 @@ pub async fn materialize_scenario_draft(
                 url: url.clone(),
                 spec: s,
             }),
+            java_invocation: None,
             condition: spec.condition.clone(),
             r#loop: None,
             wait_ms: spec.wait_ms,

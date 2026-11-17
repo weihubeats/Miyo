@@ -382,6 +382,8 @@ pub async fn run_scenario_json(text: &str, opts: &ScenarioRunOptions) -> Result<
                 wait_ms,
                 parallel,
                 retry: None,
+                // CLI 只执行导出的 HTTP 场景；Java 步骤缺端点配置 → 跳过。
+                java_invocation: None,
             });
             continue;
         };
@@ -429,6 +431,8 @@ pub async fn run_scenario_json(text: &str, opts: &ScenarioRunOptions) -> Result<
             wait_ms,
             parallel,
             retry: None,
+            // 导出格式暂不含 Java 步骤（桌面端导出物化为内联 HTTP）。
+            java_invocation: None,
         });
     }
 
@@ -437,6 +441,7 @@ pub async fn run_scenario_json(text: &str, opts: &ScenarioRunOptions) -> Result<
         timeout_ms: opts.timeout_ms,
         cancel: None,
         stop_on_failure: opts.stop_on_failure,
+        java_invoke: None,
     };
     let result = run_scenario(inputs, &runtime_vars, &options, None).await;
 
