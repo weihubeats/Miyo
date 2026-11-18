@@ -129,10 +129,13 @@ fn main() {
                 tauri::async_runtime::block_on(
                     miyo_tauri::commands::java_attach::shutdown_attach_on_exit(app),
                 );
-                // 常驻插件 sidecar：进程组全量终止（防残留）
-                if let Some(state) = app.try_state::<AppState>() {
-                    state.sidecar.shutdown_all().await;
-                }
+                // 常驻插件 sidecar：进程组全量终止（防残留）。
+                // run 闭包非 async：经 block_on 驱动；try_state 需要 Manager trait。
+                tauri::async_runtime::block_on(async {
+                    if let Some(state) = app.try_state::<miyo_tauri::state::AppState>() {
+                        state.sidecar.shutdown_all().await;
+                    }
+                });
             }
         });
 }
