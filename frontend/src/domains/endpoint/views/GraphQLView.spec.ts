@@ -94,7 +94,8 @@ describe('GraphQLView 地址记忆', () => {
     await input.trigger('input')
 
     await wrapper.findAll('textarea.hl-ta')[0]!.setValue('query { hi }')
-    await wrapper.find('.row.miyo-mb-2 button.miyo-btn-primary').trigger('click')
+    // 发送钮在 PageHeader 的 actions 区（顶栏统一导航后旧 .row 容器已收口）
+    await wrapper.find('.miyo-topbar button.miyo-btn-primary').trigger('click')
     await flushPromises()
 
     expect(apiMock.executeRequest).toHaveBeenCalledTimes(1)

@@ -207,6 +207,8 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-plugin-rollback`
 - `allow-plugin-market-index`
 - `allow-plugin-versions`
+- `allow-plugin-inspect-from-url`
+- `allow-plugin-install-from-cached`
 - `allow-java-discover-processes`
 - `allow-java-probe-pid`
 - `allow-java-attach-process`
@@ -4148,6 +4150,32 @@ Denies the plugin_get command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-plugin-inspect-from-url`
+
+</td>
+<td>
+
+Enables the plugin_inspect_from_url command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-inspect-from-url`
+
+</td>
+<td>
+
+Denies the plugin_inspect_from_url command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-plugin-inspect-package`
 
 </td>
@@ -4193,6 +4221,32 @@ Enables the plugin_install_builtin command without any pre-configured scope.
 <td>
 
 Denies the plugin_install_builtin command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-install-from-cached`
+
+</td>
+<td>
+
+Enables the plugin_install_from_cached command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-install-from-cached`
+
+</td>
+<td>
+
+Denies the plugin_install_from_cached command without any pre-configured scope.
 
 </td>
 </tr>

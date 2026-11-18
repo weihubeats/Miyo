@@ -16,7 +16,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
-import Icon from '@/components/ui/Icon.vue'
+import PageHeader from '@/components/navigation/PageHeader.vue'
 import { useLocaleStore } from '@/stores/locale'
 import { useToast } from '@/composables/useToast'
 import { usePluginManager } from '@/plugins/manager'
@@ -141,17 +141,20 @@ onBeforeUnmount(disposeBridge)
 
 <template>
   <div class="ph-root">
-    <header class="ph-topbar">
-      <Icon name="package" :size="15" />
-      <span class="ph-title">
-        {{ entry ? (entry.view.manifest.name_key ? t(entry.view.manifest.name_key) : entry.view.manifest.name) : (pluginId ?? '') }}
-      </span>
+    <!-- 顶栏：PageHeader 统一导航（插件宿主也是工作台形态）。返回钮走统一
+         返回策略（原路返回来源页，深链直开回插件中心兜底）；右侧「插件中心」
+         是去往管理中心的快捷动作，与返回语义不同，保留。 -->
+    <PageHeader
+      :title="entry ? (entry.view.manifest.name_key ? t(entry.view.manifest.name_key) : entry.view.manifest.name) : (pluginId ?? '')"
+      back-fallback="/plugins"
+    >
       <span class="ph-badge">{{ t('plugins.host.sandboxBadge') }}</span>
-      <div class="ph-spacer"></div>
-      <button class="miyo-btn miyo-btn-sm" type="button" @click="router.push('/plugins')">
-        {{ t('plugins.host.backToCenter') }}
-      </button>
-    </header>
+      <template #actions>
+        <button class="miyo-btn miyo-btn-sm" type="button" @click="router.push('/plugins')">
+          {{ t('plugins.host.backToCenter') }}
+        </button>
+      </template>
+    </PageHeader>
     <main class="ph-body">
       <div v-if="loadState === 'loading'" class="ph-state">{{ t('plugins.host.loading') }}</div>
       <div v-else-if="loadState === 'error'" class="ph-state ph-error" role="alert">
@@ -184,23 +187,6 @@ onBeforeUnmount(disposeBridge)
   color: var(--text-1);
 }
 
-.ph-topbar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-  -webkit-app-region: drag;
-}
-.ph-topbar > * {
-  -webkit-app-region: no-drag;
-}
-.ph-title {
-  font-size: var(--fs-sm);
-  font-weight: 600;
-}
 .ph-badge {
   font-size: var(--fs-2xxs);
   padding: 1px 6px;
@@ -208,9 +194,7 @@ onBeforeUnmount(disposeBridge)
   border: 1px solid color-mix(in srgb, var(--info) 50%, transparent);
   color: var(--info);
   background: color-mix(in srgb, var(--info) 10%, transparent);
-}
-.ph-spacer {
-  flex: 1;
+  white-space: nowrap;
 }
 
 .ph-body {

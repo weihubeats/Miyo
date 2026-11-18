@@ -91,7 +91,8 @@ describe('RealtimeView', () => {
   it('返回按钮：有来路时走 router.back()，深链直开兜底回仪表板', async () => {
     window.history.replaceState({ back: '/projects' }, '')
     const wrapper = mountView()
-    const back = wrapper.findAll('button').find((b) => b.attributes('aria-label') === '返回进入实时调试前的页面')
+    // 统一返回钮（BackButton）：Tooltip 走原生 title（nav.backHint）
+    const back = wrapper.findAll('button').find((b) => b.attributes('title') === '返回上一页')
     expect(back).toBeTruthy()
     await back!.trigger('click')
     expect(routerMock.back).toHaveBeenCalledTimes(1)
@@ -102,7 +103,7 @@ describe('RealtimeView', () => {
     routerMock.back.mockClear()
     routerMock.push.mockClear()
     const w2 = mountView()
-    const back2 = w2.findAll('button').find((b) => b.attributes('aria-label') === '返回进入实时调试前的页面')
+    const back2 = w2.findAll('button').find((b) => b.attributes('title') === '返回上一页')
     await back2!.trigger('click')
     expect(routerMock.back).not.toHaveBeenCalled()
     expect(routerMock.push).toHaveBeenCalledWith('/projects')

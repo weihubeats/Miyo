@@ -297,6 +297,9 @@ jobs:
           } > release_body.md
           cat release_body.md
 
+      - name: Pack market plugins (远程安装附件)
+        run: bash scripts/pack_market_plugins.sh artifacts/market
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:

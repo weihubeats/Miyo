@@ -6,24 +6,26 @@
  * 自动执行的测试——步骤间 {{var}} 传递变量、逐步断言、执行历史可回看。
  *
  * 结构：
- * - 顶栏：返回 + 标题 + 项目选择器 + 环境选择器（复用全局 EnvironmentSelector，
+ * - 顶栏：PageHeader 统一导航——列表态返回钮（useGoBack 统一策略），
+ *   编辑器态面包屑（集成测试 / 场景名，父级可点 = 回列表 + 脏确认）；
+ *   右侧项目选择器 + 环境选择器（复用全局 EnvironmentSelector，
  *   数据与写入同源 workspace store——项目切换走 workspace.switchProject，
  *   环境列表 / 激活环境天然一致）；
  * - 主体：场景库列表（ScenarioLibrary）↔ 工作流编辑器（WorkflowEditor），
  *   由 integration store 的 activeScenarioId 驱动（跨路由返回不闪，见 store）。
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useLocaleStore } from '@/stores/locale'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useIntegrationStore } from '@/domains/integration/stores/integration'
-import Brand from '@/domains/workspace/components/Brand.vue'
+import PageHeader from '@/components/navigation/PageHeader.vue'
+import Breadcrumbs, { type BreadcrumbItem } from '@/components/navigation/Breadcrumbs.vue'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
+import { useGoBack } from '@/composables/useGoBack'
 import EnvironmentSelector from '@/domains/environment/components/EnvironmentSelector.vue'
 import ScenarioLibrary from '@/domains/integration/components/integration/ScenarioLibrary.vue'
 import WorkflowEditor from '@/domains/integration/components/integration/WorkflowEditor.vue'
 
-const router = useRouter()
 const t = useLocaleStore().t
 const workspace = useWorkspaceStore()
 const store = useIntegrationStore()
@@ -31,26 +33,44 @@ const store = useIntegrationStore()
 /** 编辑器实例引用：编辑器内返回要经过它的脏数据确认（requestBack）。 */
 const editorRef = ref<InstanceType<typeof WorkflowEditor> | null>(null)
 
+/** 统一返回策略（第四阶段）：有会话历史原路返回，深链直开回仪表板兜底。 */
+const goBackFrom = useGoBack()
+
 /**
  * 返回：按当前视图分层——
  * - 编辑器内（activeScenarioId 非空）：回场景列表，不离开集成测试页；
  *   未保存的修改由编辑器的 requestBack 弹确认，避免误丢改动；
  * - 列表页：返回来源页——可从仪表板导航或工作区工具进入，不写死回
- *   /workspace——会话内有历史则原路返回，直接深链打开时回仪表板兜底。
+ *   /workspace——统一走 useGoBack（会话内有历史则原路返回，直接深链
+ *   打开时回仪表板兜底）。
  */
 function goBack(): void {
   if (store.activeScenarioId) {
     editorRef.value?.requestBack()
     return
   }
-  if (window.history.state?.back) router.back()
-  else void router.push('/projects')
+  goBackFrom()
 }
 
 /** 返回钮提示随视图切换：编辑器内提示回列表，列表页提示回上一页。 */
 const backHint = computed(() =>
-  store.activeScenarioId ? t('integration.backToLib') : t('integration.backHint'),
+  store.activeScenarioId ? t('integration.backToLib') : t('nav.backHint'),
 )
+
+/**
+ * 编辑器态面包屑（集成测试 / 场景名）：父级「集成测试」可点 = requestBack
+ * （先过脏确认回列表）；当前场景名不可点。场景未入库（新建流程）时以
+ * 「未命名场景」占位。
+ */
+const crumbs = computed<BreadcrumbItem[]>(() => [
+  {
+    label: t('integration.title'),
+    onSelect: () => editorRef.value?.requestBack(),
+  },
+  {
+    label: store.libraryItems.find((s) => s.id === store.activeScenarioId)?.name ?? t('integration.untitledScenario'),
+  },
+])
 
 /** 项目下拉选项（名称排序与仪表板一致按原始顺序）。 */
 const projectOptions = () =>
@@ -89,24 +109,28 @@ watch(
 
 <template>
   <div class="it-root">
-    <header class="it-topbar">
-      <!-- Brand 打头：macOS 交通灯落在品牌区上方，可点元素不被遮挡（同 WorkspaceView 惯例） -->
-      <Brand :title="t('integration.title')" class="it-brand" />
-      <button class="miyo-btn miyo-btn-sm" type="button" :title="backHint" @click="goBack">
-        ← {{ t('integration.back') }}
-      </button>
-      <div class="it-topbar-spacer"></div>
-      <CustomSelect
-        class="it-project"
-        :model-value="store.projectId"
-        :options="projectOptions()"
-        :placeholder="t('integration.projectLabel')"
-        size="sm"
-        :pop-min-width="220"
-        @update:model-value="onSelectProject"
-      />
-      <EnvironmentSelector variant="group" />
-    </header>
+    <PageHeader
+      :title="t('integration.title')"
+      :hide-back="!!store.activeScenarioId"
+      :back-title="backHint"
+      @back="goBack"
+    >
+      <!-- 编辑器态：面包屑替代返回钮（父级可点 = 回列表 + 脏确认；
+           规范：面包屑与返回钮不堆叠同一层级入口） -->
+      <Breadcrumbs v-if="store.activeScenarioId" :items="crumbs" />
+      <template #actions>
+        <CustomSelect
+          class="it-project"
+          :model-value="store.projectId"
+          :options="projectOptions()"
+          :placeholder="t('integration.projectLabel')"
+          size="sm"
+          :pop-min-width="220"
+          @update:model-value="onSelectProject"
+        />
+        <EnvironmentSelector variant="group" />
+      </template>
+    </PageHeader>
     <main class="it-body">
       <!-- :key 强制换场景时重建实例：编辑器以 props.scenarioId 一次性捕获
            场景上下文，复用实例会串场景（运行历史记错归属）。 -->
@@ -132,37 +156,9 @@ watch(
   color: var(--text-1);
 }
 
-.it-topbar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px 8px 8px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-  -webkit-app-region: drag;
-}
-
-.it-topbar > * {
-  -webkit-app-region: no-drag;
-}
-
-.it-topbar-spacer {
-  flex: 1;
-}
-
-
 .it-project {
   min-width: 160px;
   max-width: 240px;
-}
-
-/* Brand 自带 flex: 1（工作区顶栏惯例），会把返回钮挤到中段：
-   此处收窄为内容自适应宽度，返回钮紧贴品牌区靠左。 */
-.it-brand {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 280px;
 }
 
 .it-body {

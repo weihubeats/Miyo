@@ -281,15 +281,70 @@ pub(crate) async fn install_impl(
     trust_unsigned: bool,
     app_version: &str,
 ) -> CommandResult<PluginView> {
-    let (info, install_path) = install_from_source(db, source, trust_unsigned).await?;
-    let version = app_version;
-    miyo_plugin::ensure_compatible(&info.manifest.id, &info.manifest.min_app_version, version)
-        .map_err(command_err)?;
+    if source.is_dir() {
+        // 目录直装（开发期）：记录路径本身，不复制（风险已在 UI 明示）。
+        let info = miyo_plugin::package::inspect_package_dir(source).map_err(command_err)?;
+        if !info.signed && !trust_unsigned {
+            return Err(unsigned_error(&info));
+        }
+        return install_final(
+            db,
+            info,
+            Some(source.to_string_lossy().to_string()),
+            "local",
+            app_version,
+        )
+        .await;
+    }
+    let bytes = read_package_file(source)?;
+    install_package_bytes(db, &bytes, trust_unsigned, app_version, "local").await
+}
+
+/// 读包文件（预读大小上限：读入内存前先拒绝超大包）。
+fn read_package_file(source: &std::path::Path) -> CommandResult<Vec<u8>> {
+    const MAX_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
+    let meta = std::fs::metadata(source)
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, e.to_string()))?;
+    if meta.len() > MAX_PACKAGE_BYTES {
+        return Err(CommandError::validation("插件包超过 64 MiB 上限"));
+    }
+    std::fs::read(source).map_err(|e| CommandError::with_code(CommandErrorCode::Io, e.to_string()))
+}
+
+/// `.miyo` 字节 → 完整安装管道（本地文件 / 远程下载 / 检视缓存共用）。
+/// 校验顺序：检视 → 信任 → 自声明 integrity → 兼容 / SDK / 依赖 → 已装检查
+/// → staging 解包 + 全文件清单校验 → 原子换入 → 落库 → 审计。
+pub(crate) async fn install_package_bytes(
+    db: &sqlx::SqlitePool,
+    bytes: &[u8],
+    trust_unsigned: bool,
+    app_version: &str,
+    source_label: &str,
+) -> CommandResult<PluginView> {
+    let info = miyo_plugin::package::inspect_package_bytes(bytes).map_err(command_err)?;
+    if !info.signed && !trust_unsigned {
+        return Err(unsigned_error(&info));
+    }
+    // 检视期自声明 integrity 比对（纵深：不依赖前端检视步骤）
+    if let Some(claimed) = &info.manifest.integrity {
+        if !claimed.eq_ignore_ascii_case(&info.integrity) {
+            return Err(CommandError::validation(
+                "manifest 内声明的完整性摘要与实际内容不符，插件包可能已被篡改",
+            ));
+        }
+    }
+    miyo_plugin::ensure_compatible(
+        &info.manifest.id,
+        &info.manifest.min_app_version,
+        app_version,
+    )
+    .map_err(command_err)?;
     miyo_plugin::ensure_sdk_supported(
         info.manifest.sdk_version,
         miyo_plugin::SUPPORTED_SDK_VERSION,
     )
     .map_err(command_err)?;
+    check_dependencies(db, &info.manifest, app_version).await?;
     if repo::is_plugin_installed(db, &info.manifest.id).await? {
         return Err(CommandError::validation(format!(
             "插件 {} 已安装（{}），如需升级请使用「更新」",
@@ -297,23 +352,74 @@ pub(crate) async fn install_impl(
             repo::require_plugin(db, &info.manifest.id).await?.version
         )));
     }
-    // 依赖满足性检查（缺失 / 版本过低 / 不兼容——允许先装主插件再装依赖，
-    // 但声明了 plugin_deps 的插件安装时依赖必须已安装）
-    check_dependencies(db, &info.manifest, version).await?;
+    let dest = plugins_root().join(&info.manifest.id);
+    let staging = plugins_root().join(format!(".staging-{}", uuid::Uuid::new_v4().simple()));
+    // 解包 + 全文件清单校验（staging 内完成；失败即清理，不动现有安装）
+    let extracted = miyo_plugin::package::extract_package_to_dir(bytes, &staging).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&staging);
+        command_err(e)
+    })?;
+    // 重装（卸载残留 / 版本替换）：清空目标目录后原子换入
+    if dest.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&dest) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(CommandError::with_code(CommandErrorCode::Io, e.to_string()));
+        }
+    }
+    if let Err(e) = std::fs::rename(&staging, &dest) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(CommandError::with_code(CommandErrorCode::Io, e.to_string()));
+    }
+    install_final(
+        db,
+        extracted,
+        Some(dest.to_string_lossy().to_string()),
+        source_label,
+        app_version,
+    )
+    .await
+}
+
+/// 安装收尾（共享）：已装检查 / 落库 / 全文件校验结果 / 审计。
+async fn install_final(
+    db: &sqlx::SqlitePool,
+    info: miyo_plugin::package::PackageInfo,
+    install_path: Option<String>,
+    source_label: &str,
+    app_version: &str,
+) -> CommandResult<PluginView> {
+    miyo_plugin::ensure_compatible(
+        &info.manifest.id,
+        &info.manifest.min_app_version,
+        app_version,
+    )
+    .map_err(command_err)?;
+    miyo_plugin::ensure_sdk_supported(
+        info.manifest.sdk_version,
+        miyo_plugin::SUPPORTED_SDK_VERSION,
+    )
+    .map_err(command_err)?;
+    check_dependencies(db, &info.manifest, app_version).await?;
+    if repo::is_plugin_installed(db, &info.manifest.id).await? {
+        return Err(CommandError::validation(format!(
+            "插件 {} 已安装（{}），如需升级请使用「更新」",
+            info.manifest.id,
+            repo::require_plugin(db, &info.manifest.id).await?.version
+        )));
+    }
     // 安装即授予 manifest 声明的全部权限（安装确认页已展示；后续可在详情页收权）。
     let granted = info.manifest.permissions.clone();
     repo::insert_plugin(
         db,
         &info.manifest.id,
         &info.manifest,
-        "local",
+        source_label,
         Some(&info.integrity),
         info.signed,
         &granted,
         install_path.as_deref(),
     )
     .await?;
-    // 全文件清单复核结果落库（extract 已完成校验：Some(true) 才会走到这里）
     if info.files_verified.is_some() {
         repo::set_files_verified(db, &info.manifest.id, true).await?;
     }
@@ -321,7 +427,7 @@ pub(crate) async fn install_impl(
         db,
         &info.manifest.id,
         &format!(
-            "install local v{} integrity={} signed={}",
+            "install {source_label} v{} integrity={} signed={}",
             info.manifest.version, info.integrity, info.signed
         ),
     )
@@ -953,6 +1059,197 @@ pub async fn plugin_versions(
         .collect())
 }
 
+// ---------------------------------------------------------------------------
+// 远程安装（市场）：下载 → 检视缓存 → 确认安装（两步制）
+// ---------------------------------------------------------------------------
+
+/// 插件包下载 / 缓存上限（与本地安装口径一致）。
+pub const MAX_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
+/// 下载缓存总量上限（超出驱逐最旧；防内存堆积）。
+const MAX_DOWNLOAD_CACHE_BYTES: usize = 256 * 1024 * 1024;
+/// 下载总超时。
+const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// 下载地址校验：仅 https（本地文件走 plugin_install_from_path）。
+fn validate_download_url(raw: &str) -> CommandResult<String> {
+    if raw.len() > 2048 {
+        return Err(CommandError::validation("下载地址过长"));
+    }
+    let parsed = url::Url::parse(raw)
+        .map_err(|_| CommandError::validation(format!("下载地址非法：{raw}")))?;
+    if parsed.scheme() != "https" {
+        return Err(CommandError::validation(
+            "下载地址必须是 https（本地文件请使用「本地安装」）",
+        ));
+    }
+    Ok(raw.trim_end_matches('/').to_string())
+}
+
+/// 下载插件包字节（流式累计限额 + 总超时；Content-Length 预检）。
+async fn download_package(url: &str) -> CommandResult<Vec<u8>> {
+    let client = reqwest::Client::builder()
+        // 一次性下载：禁用连接池（池化空闲连接的后台任务在测试并行 /
+        // 进程内多 runtime 场景下可能被取消——hyper Canceled）
+        .pool_max_idle_per_host(0)
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(DOWNLOAD_TIMEOUT)
+        .build()
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))?;
+    let resp = client.get(url).send().await.map_err(|e| {
+        // 根因入错误链（hyper 层原因对排查下载问题关键）
+        use std::error::Error as _;
+        let cause = e
+            .source()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "（无底层原因）".into());
+        CommandError::with_code(
+            CommandErrorCode::Timeout,
+            format!("下载失败：{e} | cause: {cause}"),
+        )
+    })?;
+    if !resp.status().is_success() {
+        return Err(CommandError::with_code(
+            CommandErrorCode::NotFound,
+            format!("下载失败：HTTP {}（{}）", resp.status().as_u16(), url),
+        ));
+    }
+    if let Some(len) = resp.content_length() {
+        if len > MAX_PACKAGE_BYTES {
+            return Err(CommandError::validation(format!(
+                "插件包超过 64 MiB 上限（Content-Length {len}）"
+            )));
+        }
+    }
+    let mut resp = resp;
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Timeout, format!("下载中断：{e}")))?
+    {
+        buf.extend_from_slice(&chunk);
+        if buf.len() as u64 > MAX_PACKAGE_BYTES {
+            return Err(CommandError::validation("插件包超过 64 MiB 上限"));
+        }
+    }
+    if buf.is_empty() {
+        return Err(CommandError::with_code(
+            CommandErrorCode::NotFound,
+            "下载内容为空",
+        ));
+    }
+    Ok(buf)
+}
+
+/// 审计用 URL 脱敏：去 query / fragment（防 token 类参数入日志）。
+fn sanitize_url(url: &str) -> String {
+    url.split(['?', '#']).next().unwrap_or(url).to_string()
+}
+
+/// 缓存写入（总量超限驱逐最旧）。
+fn cache_download(state: &AppState, url: &str, bytes: Vec<u8>) {
+    let mut cache = state.market_downloads.lock().unwrap();
+    cache.retain(|(u, _)| u != url);
+    cache.push((
+        url.to_string(),
+        crate::state::CachedDownload {
+            bytes,
+            cached_at: std::time::Instant::now(),
+        },
+    ));
+    loop {
+        let total: usize = cache.iter().map(|(_, c)| c.bytes.len()).sum();
+        if total <= MAX_DOWNLOAD_CACHE_BYTES || cache.len() <= 1 {
+            break;
+        }
+        if let Some(oldest_idx) = cache
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (_, c))| c.cached_at)
+            .map(|(i, _)| i)
+        {
+            cache.remove(oldest_idx);
+        } else {
+            break;
+        }
+    }
+}
+
+/// 远程检视：下载（≤ 64 MiB）→ 解析 + 验签 + 全文件流式预验 → 字节入缓存。
+/// 返回检视视图；确认安装走 [`plugin_install_from_cached`]（同一次下载的字节，
+/// 防 TOCTOU）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn plugin_inspect_from_url(
+    state: State<'_, AppState>,
+    url: String,
+) -> CommandResult<PackageInspectionView> {
+    let url = validate_download_url(&url)?;
+    let bytes = download_package(&url).await?;
+    let info = miyo_plugin::package::inspect_package_bytes(&bytes).map_err(command_err)?;
+    // 自声明 integrity 比对（与本地检视同口径）
+    if let Some(claimed) = &info.manifest.integrity {
+        if !claimed.eq_ignore_ascii_case(&info.integrity) {
+            return Err(CommandError::validation(
+                "manifest 内声明的完整性摘要与实际内容不符，插件包可能已被篡改",
+            ));
+        }
+    }
+    cache_download(&state, &url, bytes);
+    audit(
+        &state.db,
+        &info.manifest.id,
+        &format!(
+            "inspect remote url={} signed={}",
+            sanitize_url(&url),
+            info.signed
+        ),
+    )
+    .await;
+    Ok(PackageInspectionView {
+        manifest: info.manifest,
+        integrity: info.integrity,
+        signed: info.signed,
+        trust: match info.trust {
+            miyo_plugin::package::TrustLevel::Official => "official".into(),
+            miyo_plugin::package::TrustLevel::Foreign => "foreign".into(),
+            miyo_plugin::package::TrustLevel::Unsigned => "unsigned".into(),
+        },
+        files_verified: info.files_verified,
+        origin: "remote".into(),
+    })
+}
+
+/// 从检视缓存安装（确认弹窗后调用；不重新下载——装的就是检视的那份字节）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn plugin_install_from_cached(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    url: String,
+    trust_unsigned: bool,
+) -> CommandResult<PluginView> {
+    let url = validate_download_url(&url)?;
+    let bytes = {
+        let mut cache = state.market_downloads.lock().unwrap();
+        let idx = cache.iter().position(|(u, _)| *u == url).ok_or_else(|| {
+            CommandError::with_code(CommandErrorCode::NotFound, "下载缓存不存在（请重新检视）")
+        })?;
+        cache.remove(idx).1.bytes
+    };
+    let version = app_version(&app);
+    let view = install_package_bytes(&state.db, &bytes, trust_unsigned, &version, "remote").await?;
+    audit(
+        &state.db,
+        &view.id,
+        &format!(
+            "install remote url={} v{}",
+            sanitize_url(&url),
+            view.version
+        ),
+    )
+    .await;
+    Ok(view)
+}
+
 /// 签发插件会话凭证（std 族能力的后端强制凭据）。
 ///
 /// 仅启用态插件可签发；同插件多会话并存（上限 16，超限吊销最旧）。
@@ -1225,54 +1522,6 @@ pub async fn plugin_read_asset(
 /// 包安装为**原子两段式**：先解包到 `{plugins_root}/.staging-<uuid>` 并完成
 /// 全文件清单校验，全部通过后一次性 rename 到 `plugins/<id>`——失败时目标
 /// 目录保持原状（更新失败回滚的落点，见 plugin_update_from_path）。
-async fn install_from_source(
-    _db: &sqlx::SqlitePool,
-    source: &std::path::Path,
-    trust_unsigned: bool,
-) -> CommandResult<(miyo_plugin::package::PackageInfo, Option<String>)> {
-    if source.is_dir() {
-        // 目录直装（开发期）：记录路径本身，不复制（风险已在 UI 明示）。
-        let info = miyo_plugin::package::inspect_package_dir(source).map_err(command_err)?;
-        if !info.signed && !trust_unsigned {
-            return Err(unsigned_error(&info));
-        }
-        return Ok((info, Some(source.to_string_lossy().to_string())));
-    }
-    let bytes = std::fs::read(source)
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, e.to_string()))?;
-    // 预读大小上限（解包限制之外的前置闸：读入内存前先拒绝超大包）
-    const MAX_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
-    let meta = std::fs::metadata(source)
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, e.to_string()))?;
-    if meta.len() > MAX_PACKAGE_BYTES {
-        return Err(CommandError::validation("插件包超过 64 MiB 上限"));
-    }
-    let info = miyo_plugin::package::inspect_package_bytes(&bytes).map_err(command_err)?;
-    if !info.signed && !trust_unsigned {
-        return Err(unsigned_error(&info));
-    }
-    let dest = plugins_root().join(&info.manifest.id);
-    let staging = plugins_root().join(format!(".staging-{}", uuid::Uuid::new_v4().simple()));
-    // 解包 + 全文件清单校验（staging 内完成；失败即清理，不动 dest）
-    let extracted =
-        miyo_plugin::package::extract_package_to_dir(&bytes, &staging).map_err(|e| {
-            let _ = std::fs::remove_dir_all(&staging);
-            command_err(e)
-        })?;
-    // 重装（卸载残留 / 版本替换）：清空目标目录后原子换入
-    if dest.exists() {
-        if let Err(e) = std::fs::remove_dir_all(&dest) {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(CommandError::with_code(CommandErrorCode::Io, e.to_string()));
-        }
-    }
-    if let Err(e) = std::fs::rename(&staging, &dest) {
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(CommandError::with_code(CommandErrorCode::Io, e.to_string()));
-    }
-    Ok((extracted, Some(dest.to_string_lossy().to_string())))
-}
-
 fn unsigned_error(info: &miyo_plugin::package::PackageInfo) -> CommandError {
     CommandError::with_code(
         CommandErrorCode::Forbidden,
@@ -1346,19 +1595,23 @@ mod tests {
         hex::encode(Sha256::digest(content))
     }
 
-    /// vN 插件包（带 files 清单，manifest 自声明 integrity）。
+    /// vN 插件包（带 files 清单；id 固定 com.e2e.upd——旧 E2E 专用）。
     fn build_package(version: &str, html: &[u8]) -> Vec<u8> {
+        build_package_for("com.e2e.upd", version, html)
+    }
+
+    /// 任意 id 的插件包（files 清单；不带 integrity 自声明——安装端现算）。
+    fn build_package_for(id: &str, version: &str, html: &[u8]) -> Vec<u8> {
         let manifest = format!(
-            r#"{{"id":"com.e2e.upd","name":"Upd","description":"E2E 更新","version":"{version}",
+            r#"{{"id":"{id}","name":"Upd","description":"E2E 更新","version":"{version}",
                 "kind":"ui","min_app_version":"0.0.60","sdk_version":1,
                 "permissions":["std.storage"],"entry":"index.html",
                 "files":[{{"path":"index.html","sha256":"{sha}","size":{size}}}]}}"#,
+            id = id,
             version = version,
             sha = sha(html),
             size = html.len()
         );
-        // 不带 integrity 自声明（安装端现算 manifest 字节摘要并落库——
-        // 自引用字段无法自洽，hello-world 示例同样不带）
         build_tar_gz(&[("manifest.json", manifest.as_bytes()), ("index.html", html)])
     }
 
@@ -1447,6 +1700,116 @@ mod tests {
         // 回滚后的目录文件确为 v1 内容（备份目录原样换回）
         let html = std::fs::read(plugins_root().join("com.e2e.upd/index.html")).unwrap();
         assert_eq!(html, b"<html>v1</html>");
+        // 清理全局安装目录（plugins_root 是真实 data_dir——不留测试残留）
+        let _ = std::fs::remove_dir_all(plugins_root().join("com.e2e.upd"));
+    }
+
+    // ---------------- 远程安装：下载 / 校验 / 缓存 ----------------
+
+    #[test]
+    fn download_url_validation() {
+        assert!(validate_download_url("https://github.com/a/b.miyo").is_ok());
+        assert!(validate_download_url("http://github.com/a.miyo").is_err());
+        assert!(validate_download_url("file:///etc/passwd").is_err());
+        assert!(validate_download_url("not a url").is_err());
+        assert!(
+            validate_download_url(&format!("https://a.b/x?token={}", "x".repeat(2100))).is_err()
+        );
+    }
+
+    /// 手写 HTTP mock（单请求响应；reqwest 走 http://127.0.0.1）。
+    async fn spawn_http_mock(
+        status_line: &'static str,
+        headers: &'static str,
+        body: &'static [u8],
+    ) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = vec![0u8; 4096];
+                let _ = sock.read(&mut buf).await; // 读掉请求头
+                let head = format!(
+                    "{status_line}\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n",
+                    body.len()
+                );
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(body).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        format!("http://{addr}/pkg.miyo")
+    }
+
+    #[tokio::test]
+    async fn download_package_success_and_cap() {
+        let body: &'static [u8] = Box::leak(b"PK-MIYO-BYTES".to_vec().into_boxed_slice());
+        let url = spawn_http_mock(
+            "HTTP/1.1 200 OK",
+            "Content-Type: application/octet-stream\r\n",
+            body,
+        )
+        .await;
+        let got = download_package(&url).await.unwrap();
+        assert_eq!(got, body);
+
+        // 流式累计超限：chunked 传输 65 × 1 MiB → 超出 64 MiB 上限即拒绝
+        //（不依赖 Content-Length；覆盖 download_package 的流式 cap 路径）
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                // 先读请求头（与 reqwest 客户端时序对齐——过早写响应会触发
+                // hyper Canceled，实测探针验证）
+                let mut req_head = vec![0u8; 4096];
+                let _ = sock.read(&mut req_head).await;
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+                    .await;
+                let chunk: &'static [u8] = Box::leak(vec![0u8; 1024 * 1024].into_boxed_slice());
+                for _ in 0..70 {
+                    let _ = sock
+                        .write_all(format!("{:x}\r\n", chunk.len()).as_bytes())
+                        .await;
+                    let _ = sock.write_all(chunk).await;
+                    let _ = sock.write_all(b"\r\n").await;
+                }
+                let _ = sock.write_all(b"0\r\n\r\n").await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        let err = download_package(&format!("http://{addr}/huge.miyo"))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("64 MiB"), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn download_http_error_status_rejected() {
+        let url = spawn_http_mock("HTTP/1.1 404 Not Found", "", b"not found").await;
+        let err = download_package(&url).await.unwrap_err();
+        assert!(err.message.contains("404"), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn install_from_bytes_roundtrip_via_pipeline() {
+        // 独立插件 ID：安装目录全局共享（data_dir/plugins），避免与其他测试竞态
+        let (_dir, db) = test_db().await;
+        let v1 = build_package_for("com.e2e.remote", "1.0.0", b"<html>remote</html>");
+        let view = install_package_bytes(&db, &v1, true, "0.0.60", "remote")
+            .await
+            .unwrap();
+        assert_eq!(view.version, "1.0.0");
+        assert_eq!(view.source, "remote");
+        assert!(view.files_verified);
+        // 重复安装 → 已装拒绝
+        assert!(install_package_bytes(&db, &v1, true, "0.0.60", "remote")
+            .await
+            .is_err());
+        // 清理全局安装目录（plugins_root 是真实 data_dir——不留测试残留）
+        let _ = std::fs::remove_dir_all(plugins_root().join("com.e2e.remote"));
     }
 
     /// 构造 manifest 字节（含 integrity 自声明）。

@@ -890,6 +890,38 @@ kbd,
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- 全局导航（PageHeader 顶栏骨架，components/navigation/ 单点实现） ----
+   页面顶栏基础类：整行拖拽窗口（macOS 交通灯落 Brand 区上方），交互子元素
+   豁免拖拽；高度 44px 对齐 WorkspaceView top-bar / IntegrationView 顶栏现状，
+   AiTestView 的 36px 异构高度随统一收口废弃。 */
+.miyo-topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 44px;
+  padding: 0 var(--sp-3) 0 var(--sp-2);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.miyo-topbar > * {
+  -webkit-app-region: no-drag;
+}
+/* 中段留白保持可拖拽：no-drag 只针对交互元素，空白处按下拖动窗口。 */
+.miyo-topbar > .miyo-topbar-spacer {
+  flex: 1;
+  align-self: stretch;
+  -webkit-app-region: drag;
+}
+/* Brand 区收窄为内容自适应（工作区顶栏惯例的 flex:1 会把返回钮挤到中段）。 */
+.miyo-topbar-brand {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 280px;
+}
+
 /* ---- 按钮（miyo- 兼容类） ---- */
 
 .miyo-btn {

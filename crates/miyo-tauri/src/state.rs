@@ -117,6 +117,15 @@ pub struct AppState {
     pub plugin_sessions: crate::sessions::PluginSessions,
     /// 常驻型插件 sidecar 监督器（握手 / 心跳 / 崩溃恢复 / 进程组清理）。
     pub sidecar: Arc<miyo_sidecar::Supervisor>,
+    /// 市场远程下载缓存（检视 → 确认两步安装：装的就是检视的那份字节）。
+    /// key = 下载 URL；总量超限驱逐最旧。
+    pub market_downloads: std::sync::Mutex<Vec<(String, CachedDownload)>>,
+}
+
+/// 缓存的插件包字节（检视通过后供确认安装使用）。
+pub struct CachedDownload {
+    pub bytes: Vec<u8>,
+    pub cached_at: std::time::Instant,
 }
 
 /// 请求热路径的全局设置快照：命中时免去每次请求 2~3 次 settings SELECT +
@@ -214,6 +223,7 @@ impl AppState {
                 miyo_storage::db::data_dir().join("java-agent"),
             )),
             plugin_sessions: crate::sessions::PluginSessions::new(),
+            market_downloads: std::sync::Mutex::new(Vec::new()),
         }
     }
 

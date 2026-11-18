@@ -14,7 +14,7 @@
  * crates/miyo-desktop/src/styles.rs 的 DESIGN_SYSTEM_CSS 对齐）。
  */
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useToast } from '@/composables/useToast'
 import { useLocaleStore } from '@/stores/locale'
@@ -27,6 +27,7 @@ import {
 } from '@/utils/environment'
 import { escapeHtml, highlightGraphQL, highlightJSON } from '@/utils/highlight'
 import ResponsePanel from '@/domains/endpoint/components/ResponsePanel.vue'
+import PageHeader from '@/components/navigation/PageHeader.vue'
 import { handleTextareaTab } from '@/utils/textareaIndent'
 import Modal from '@/components/ui/Modal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -34,7 +35,6 @@ import type { BodySpec, ExecuteRequestArgs, ExecuteResponse, GraphQLSpec } from 
 import { redactUrlQuery } from '@/utils/exportRedact'
 import { errorText } from '@/utils/errorText'
 
-const router = useRouter()
 const route = useRoute()
 
 const props = withDefaults(
@@ -499,30 +499,32 @@ async function copyCode() {
 
 <template>
   <div class="gql-root">
-    <div class="row miyo-mb-2">
-      <button class="miyo-btn miyo-btn-sm" type="button" @click="router.push('/workspace')">← {{ t('graphql.backToWorkspace') }}</button>
+    <PageHeader :title="t('graphql.title')">
       <input v-model="gqlUrl" class="miyo-input gql-url" :placeholder="t('graphql.urlPh')" spellcheck="false" />
-      <button class="miyo-btn miyo-btn-sm" :disabled="saving" @click="save">{{ t('common.save') }}</button>
-      <button
-        class="miyo-btn miyo-btn-sm miyo-btn-primary"
-        type="button"
-        @click="sending ? cancelSend() : send()"
-      >
-        {{ sending ? t('scenario.stop') : t('editor.send') }}
-      </button>
-      <button
-        v-if="sendFailed"
-        class="miyo-btn miyo-btn-sm miyo-btn-ghost"
-        :disabled="sending"
-        @click="retrySend"
-      >
-        {{ sending ? t('common.retrying') : t('common.retry') }}
-      </button>
-      <button class="miyo-btn miyo-btn-sm miyo-btn-ghost" @click="openHistory">{{ t('graphql.historyBtn') }}</button>
-      <button class="miyo-btn miyo-btn-sm miyo-btn-ghost" @click="openCodegen">{{ t('graphql.codegen') }}</button>
-    </div>
+      <template #actions>
+        <button class="miyo-btn miyo-btn-sm" :disabled="saving" @click="save">{{ t('common.save') }}</button>
+        <button
+          class="miyo-btn miyo-btn-sm miyo-btn-primary"
+          type="button"
+          @click="sending ? cancelSend() : send()"
+        >
+          {{ sending ? t('scenario.stop') : t('editor.send') }}
+        </button>
+        <button
+          v-if="sendFailed"
+          class="miyo-btn miyo-btn-sm miyo-btn-ghost"
+          :disabled="sending"
+          @click="retrySend"
+        >
+          {{ sending ? t('common.retrying') : t('common.retry') }}
+        </button>
+        <button class="miyo-btn miyo-btn-sm miyo-btn-ghost" @click="openHistory">{{ t('graphql.historyBtn') }}</button>
+        <button class="miyo-btn miyo-btn-sm miyo-btn-ghost" @click="openCodegen">{{ t('graphql.codegen') }}</button>
+      </template>
+    </PageHeader>
 
-    <div class="gql-grid">
+    <div class="gql-body">
+      <div class="gql-grid">
       <div class="gql-pane">
         <div class="pane-title">
           <span>{{ t('graphql.queryTitle') }}</span>
@@ -594,6 +596,7 @@ async function copyCode() {
     <div v-else class="resp-empty">
       <p class="hint">{{ t('graphql.respEmpty') }}</p>
     </div>
+    </div>
 
     <!-- 历史 -->
     <Modal v-model:open="historyOpen" :title="t('graphql.historyTitle')" width="560px">
@@ -626,6 +629,9 @@ async function copyCode() {
 <style scoped>
 /* 私有色板映射到全局 miyo-* 令牌，随主题联动 */
 .gql-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
   --bg: var(--miyo-bg);
   --panel: var(--miyo-bg-panel);
   --panel-2: var(--miyo-bg-panel-2);
@@ -650,17 +656,14 @@ async function copyCode() {
   color: var(--text);
   background: var(--bg);
   font-size: var(--fs-md);
-  padding: 48px 12px 12px;
 }
 
-.row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-}
-
-.miyo-mb-2 {
-  margin-bottom: var(--s-2);
+/* 顶栏（PageHeader）之下主内容自滚：与 IntegrationView / RealtimeView 同构 */
+.gql-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-3);
 }
 
 .miyo-input-sm {
@@ -708,7 +711,9 @@ async function copyCode() {
 
 /* ---------- 布局 ---------- */
 .gql-url {
-  flex: 1;
+  /* 顶栏中部自适应伸展，560px 封顶后由 topbar spacer 吸收剩余空间 */
+  flex: 1 1 auto;
+  max-width: 560px;
   min-width: 0;
 }
 
@@ -723,10 +728,6 @@ async function copyCode() {
 @media (max-width: 1080px) {
   .gql-grid {
     grid-template-columns: 1fr;
-  }
-  .row {
-    flex-wrap: wrap;
-    row-gap: var(--s-2);
   }
   .gql-url {
     flex: 1 1 260px;

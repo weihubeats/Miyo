@@ -9,13 +9,14 @@
  * - runtime：v1 SDK 嵌入端点工作台原样保留（旧项目兼容连接方式）。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
+import PageHeader from '@/components/navigation/PageHeader.vue'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import SplitPanes from '@/components/ui/SplitPanes.vue'
 import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge.vue'
 import { useToast } from '@/composables/useToast'
+import { useGoBack } from '@/composables/useGoBack'
 import { useLocaleStore } from '@/stores/locale'
 import { useWorkspaceStore } from '@/stores/workspace'
 import JavaAttachConfirmDialog from '@/domains/java-debug/components/JavaAttachConfirmDialog.vue'
@@ -36,7 +37,8 @@ import { errorText } from '@/utils/errorText'
 type ViewMode = 'attach' | 'runtime'
 const MODE_KEY = 'miyo.java.mode'
 
-const router = useRouter()
+/** 统一返回策略（第四阶段）：有会话历史原路返回，深链直开回仪表板兜底。 */
+const goBackFrom = useGoBack()
 const toast = useToast()
 const locale = useLocaleStore()
 const t = locale.t
@@ -277,8 +279,7 @@ function disconnect(): void {
 }
 
 function goBack(): void {
-  if (window.history.state?.back) router.back()
-  else void router.push('/projects')
+  goBackFrom()
 }
 
 function openNewProject(): void {
@@ -386,28 +387,20 @@ const modeOptions = computed(() => [
 
 <template>
   <div class="jdv">
-    <header class="jdv-top">
-      <div class="jdv-top-left">
-        <button class="miyo-btn miyo-btn-sm" type="button" :title="t('app.backHome')" @click="goBack">
-          <Icon name="chevron-left" :size="13" />
-          {{ t('app.backHome') }}
+    <PageHeader :title="t('java.viewTitle')" @back="goBack">
+      <!-- 连接模式切换：attach 默认推荐（零源码侵入）；runtime 兼容 v1 SDK 项目 -->
+      <div class="jdv-mode" data-testid="java-mode-switch">
+        <button
+          v-for="opt in modeOptions"
+          :key="opt.value"
+          type="button"
+          class="jdv-mode-btn"
+          :class="{ active: viewMode === opt.value }"
+          :data-testid="`java-mode-${opt.value}`"
+          @click="viewMode = opt.value as ViewMode"
+        >
+          {{ opt.label }}
         </button>
-        <Icon name="package" :size="16" />
-        <h1 class="jdv-title">{{ t('java.viewTitle') }}</h1>
-        <!-- 连接模式切换：attach 默认推荐（零源码侵入）；runtime 兼容 v1 SDK 项目 -->
-        <div class="jdv-mode" data-testid="java-mode-switch">
-          <button
-            v-for="opt in modeOptions"
-            :key="opt.value"
-            type="button"
-            class="jdv-mode-btn"
-            :class="{ active: viewMode === opt.value }"
-            :data-testid="`java-mode-${opt.value}`"
-            @click="viewMode = opt.value as ViewMode"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
       </div>
 
       <!-- attach 顶栏：会话状态 + 目标信息 + 断开 / 卸载 -->
@@ -484,7 +477,7 @@ const modeOptions = computed(() => [
         >{{ runtimeStore.connection.message }}</span>
       </div>
 
-      <div class="jdv-top-right">
+      <template #actions>
         <IconButton
           v-if="viewMode === 'runtime'"
           name="code"
@@ -518,8 +511,8 @@ const modeOptions = computed(() => [
           :disabled="viewMode === 'runtime' ? !runtimeStore.activeProject : !attachStore.historyProjectId"
           @click="viewMode === 'attach' ? (historyOpenAttach = true) : (historyOpen = true)"
         />
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
     <!-- runtime 首次进入：整页接入向导（v1 流程） -->
     <JavaOnboarding
@@ -737,27 +730,6 @@ const modeOptions = computed(() => [
   height: 100vh;
   min-height: 0;
 }
-.jdv-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.jdv-top-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.jdv-title {
-  margin: 0;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-}
 .jdv-mode {
   display: flex;
   border: 1px solid var(--border);
@@ -781,8 +753,11 @@ const modeOptions = computed(() => [
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
+  /* 内容自适应 + 可收缩（溢出经 chips ellipsis 兜底）；剩余空间由
+     PageHeader 的 topbar spacer 吸收，把操作区顶到最右 */
+  flex: 0 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 .jdv-env {
   font-size: 11.5px;
@@ -810,10 +785,6 @@ const modeOptions = computed(() => [
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 320px;
-}
-.jdv-top-right {
-  display: inline-flex;
-  gap: 4px;
 }
 .jdv-body {
   flex: 1;

@@ -13,7 +13,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
-import Brand from '@/domains/workspace/components/Brand.vue'
+import PageHeader from '@/components/navigation/PageHeader.vue'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import Modal from '@/components/ui/Modal.vue'
@@ -233,8 +233,34 @@ const inspection = ref<{
 } | null>(null)
 const trustUnsigned = ref(false)
 const inspecting = ref(false)
-/** 检视用途：install（新装）/ update（本地包更新）。 */
-const inspectMode = ref<'install' | 'update'>('install')
+/** 检视用途：install（本地新装）/ update（本地包更新）/ remote（市场远程）。 */
+const inspectMode = ref<'install' | 'update' | 'remote'>('install')
+const remoteInspecting = ref<string | null>(null)
+
+/** 市场远程安装：下载 → 检视缓存（后端）→ 复用确认弹窗 → 确认后从缓存安装。 */
+async function onRemoteInstall(entry: {
+  id: string
+  name: string
+  version: string
+  download_url: string
+  permissions: string[]
+}): Promise<void> {
+  remoteInspecting.value = entry.id
+  try {
+    const info = await invoke<{
+      manifest: PluginManifest
+      integrity: string
+      signed: boolean
+      origin: string
+    }>(`${IPC_PREFIX}plugin_inspect_from_url`, { url: entry.download_url })
+    inspection.value = { ...info, path: entry.download_url }
+    trustUnsigned.value = false
+  } catch (e) {
+    toast.error(t('plugins.downloadFailed'), { message: errorText(e) })
+  } finally {
+    remoteInspecting.value = null
+  }
+}
 
 async function pickAndInspect(mode: 'install' | 'update' = 'install'): Promise<void> {
   inspectMode.value = mode
@@ -268,7 +294,13 @@ async function confirmInstallFile(): Promise<void> {
   if (!pkg.signed && !trustUnsigned.value) return
   installFileBusy.value = true
   try {
-    if (inspectMode.value === 'update') {
+    if (inspectMode.value === 'remote') {
+      await invoke(`${IPC_PREFIX}plugin_install_from_cached`, {
+        url: pkg.path,
+        trustUnsigned: pkg.signed ? undefined : true,
+      })
+      toast.success(t('plugins.installedToast', { name: displayNameOf(pkg.manifest) }))
+    } else if (inspectMode.value === 'update') {
       await invoke(`${IPC_PREFIX}plugin_update_from_path`, {
         path: pkg.path,
         trustUnsigned: pkg.signed ? undefined : true,
@@ -286,7 +318,13 @@ async function confirmInstallFile(): Promise<void> {
     tab.value = 'installed'
   } catch (e) {
     toast.error(
-      t(inspectMode.value === 'update' ? 'plugins.updateFailed' : 'plugins.installFailed'),
+      t(
+        inspectMode.value === 'update'
+          ? 'plugins.updateFailed'
+          : inspectMode.value === 'remote'
+            ? 'plugins.installFailed'
+            : 'plugins.installFailed',
+      ),
       { message: errorText(e) },
     )
   } finally {
@@ -353,20 +391,17 @@ function closeDetail(): void {
 
 <template>
   <div class="pg-root">
-    <header class="pg-topbar">
-      <Brand :title="t('plugins.title')" class="pg-brand" />
-      <button class="miyo-btn miyo-btn-sm" type="button" @click="router.push('/projects')">
-        ← {{ t('plugins.back') }}
-      </button>
-      <div class="pg-topbar-spacer"></div>
+    <PageHeader :title="t('plugins.title')">
       <SegmentedControl v-model="tab" :options="tabItems" size="sm" />
-      <IconButton
-        name="upload"
-        :size="15"
-        :title="t('plugins.installFromFile')"
-        @click="pickAndInspect('install')"
-      />
-    </header>
+      <template #actions>
+        <IconButton
+          name="upload"
+          :size="15"
+          :title="t('plugins.installFromFile')"
+          @click="pickAndInspect('install')"
+        />
+      </template>
+    </PageHeader>
 
     <main class="pg-body">
       <!-- 已安装 -->
@@ -543,13 +578,23 @@ function closeDetail(): void {
             </template>
             <template v-else>
               <button
-                class="miyo-btn miyo-btn-sm"
+                class="miyo-btn miyo-btn-sm miyo-btn-primary"
                 type="button"
-                :title="item.entry.download_url"
-                @click="copyDownloadUrl(item.entry.download_url)"
+                :disabled="remoteInspecting !== null"
+                @click="onRemoteInstall(item.entry)"
               >
-                {{ t('plugins.copyDownloadUrl') }}
+                {{
+                  remoteInspecting === item.entry.id
+                    ? t('plugins.remoteDownloading')
+                    : t('plugins.remoteInstall')
+                }}
               </button>
+              <IconButton
+                name="copy"
+                :size="15"
+                :title="t('plugins.copyDownloadUrl')"
+                @click="copyDownloadUrl(item.entry.download_url)"
+              />
             </template>
           </div>
         </article>
@@ -617,7 +662,13 @@ function closeDetail(): void {
         <div class="pg-inspect-head">
           <strong>{{ displayNameOf(inspection.manifest) }}</strong>
           <span class="pg-ver">v{{ inspection.manifest.version }}</span>
-          <span class="pg-src">{{ inspection.origin === 'package' ? t('plugins.originPackage') : t('plugins.originDirectory') }}</span>
+          <span class="pg-src">{{
+            inspection.origin === 'package'
+              ? t('plugins.originPackage')
+              : inspection.origin === 'remote'
+                ? t('plugins.originRemote')
+                : t('plugins.originDirectory')
+          }}</span>
           <StatusBadge :tone="inspection.signed ? 'ok' : 'warn'" :label="inspection.signed ? t('plugins.signed') : t('plugins.unsigned')" />
         </div>
         <p class="pg-desc">{{ descriptionOf(inspection.manifest) }}</p>
@@ -663,28 +714,6 @@ function closeDetail(): void {
   min-height: 0;
   background: var(--bg-app);
   color: var(--text-1);
-}
-
-.pg-topbar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px 8px 8px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-  -webkit-app-region: drag;
-}
-.pg-topbar > * {
-  -webkit-app-region: no-drag;
-}
-.pg-topbar-spacer {
-  flex: 1;
-}
-.pg-brand {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 280px;
 }
 
 .pg-body {

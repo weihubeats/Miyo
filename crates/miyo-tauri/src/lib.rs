@@ -356,6 +356,8 @@ pub mod plugin {
                 commands::plugin_rollback,
                 commands::plugin_market_index,
                 commands::plugin_versions,
+                commands::plugin_inspect_from_url,
+                commands::plugin_install_from_cached,
                 // Java 方法实时调试（commands/java_debug.rs，插件门禁见该文件）
                 // Java Debug 2.0 Attach（commands/java_attach.rs）
                 commands::java_discover_processes,

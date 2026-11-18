@@ -59,8 +59,13 @@ node scripts/sign_plugin.mjs verify <插件目录>
 runtime.process.start / database.*）在安装确认页单独着色明示。声明未知权限
 → manifest 校验直接失败。
 
-## 6. 上架官方索引
+## 6. 上架官方索引（远程分发）
 
-1. Fork 仓库 → 在 `docs/market/index.json` 追加条目（schema 见 MARKETPLACE.md）；
-2. 发布 .miyo 产物到 GitHub Release（附件名建议 `<id>-<version>.miyo`）；
-3. PR 合入后随下个 Miyo 版本进入内置索引。
+1. Fork 仓库 → 在 `docs/market/index.json` 追加条目，`download_url` 填
+   `https://github.com/weihubeats/Miyo/releases/latest/download/<id>-<version>.miyo`；
+2. 平台无关插件（纯 UI）由 release.yml 自动打包上传（`scripts/
+   pack_market_plugins.sh`）；含平台二进制的插件需在 release 矩阵构建
+   （或提供下载页引导用户本地构建）；
+3. 用户在市场点「远程安装」→ 后端下载检视（https + 64MiB 限额）→ 确认后
+   从缓存字节安装；签名包免信任勾选。
+4. 发版前自查：附件名与索引一致（版本变化 = 文件名变化 = 索引同步更新）。

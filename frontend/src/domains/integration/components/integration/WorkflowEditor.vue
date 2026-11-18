@@ -1774,19 +1774,14 @@ function stepTimeoutOf(s: EditorStep): number | null {
 
     <!-- ===== 顶栏 ===== -->
     <header class="wf-topbar">
+      <!-- 非全屏态不放返回钮：页面顶栏（IntegrationView → PageHeader）已提供
+           编辑器态面包屑入口，双返回堆叠已收口；全屏态顶栏不可见，保留退出钮 -->
       <IconButton
         v-if="editorFullscreen"
-        name="chevron-right"
+        name="minimize-2"
         :size="14"
-        :title="t('integration.back')"
+        :title="t('response.exitFullscreen')"
         @click="toggleEditorFullscreen"
-      />
-      <IconButton
-        v-else
-        name="chevron-right"
-        :size="14"
-        :title="t('integration.back')"
-        @click="requestBack"
       />
       <input v-model="name" class="wf-name" type="text" :placeholder="t('integration.editorNamePh')" spellcheck="false" />
       <input v-model="category" class="wf-category" type="text" :placeholder="t('integration.categoryLabel')" spellcheck="false" />

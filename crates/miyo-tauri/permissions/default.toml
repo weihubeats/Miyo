@@ -209,6 +209,8 @@ permissions = [
     "allow-plugin-rollback",
     "allow-plugin-market-index",
     "allow-plugin-versions",
+    "allow-plugin-inspect-from-url",
+    "allow-plugin-install-from-cached",
     "allow-java-discover-processes",
     "allow-java-probe-pid",
     "allow-java-attach-process",
