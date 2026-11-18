@@ -113,6 +113,10 @@ jobs:
       # 否则 CI 的 cargo check 全绿、但 tauri build 打包时直接 exit 1（v0.0.32 踩过）。
       - name: Check Tauri npm/Rust 插件版本一致
         run: node scripts/check-tauri-plugin-versions.mjs
+      # 插件签名工具自检：payload 规范 golden vector（与 Rust 测试同源互验，
+      # 任一侧规范化漂移即红灯）+ Ed25519 roundtrip
+      - name: Plugin signing tool selftest
+        run: node scripts/sign_plugin.mjs selftest
       - name: Lint (eslint)
         working-directory: frontend
         run: npm run lint

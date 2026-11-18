@@ -495,7 +495,10 @@ pub async fn insert_plugin_version(
 }
 
 /// 版本历史（新→旧；每插件滚动保留 [`PLUGIN_VERSION_CAP`] 条）。
-pub async fn list_plugin_versions(db: &SqlitePool, plugin_id: &str) -> Result<Vec<PluginVersionRow>> {
+pub async fn list_plugin_versions(
+    db: &SqlitePool,
+    plugin_id: &str,
+) -> Result<Vec<PluginVersionRow>> {
     let rows: Vec<PluginVersionRow> = sqlx::query_as(
         "SELECT id, plugin_id, version, manifest_json, integrity, signed, created_at \
          FROM plugin_versions WHERE plugin_id = ? ORDER BY id DESC LIMIT ?",

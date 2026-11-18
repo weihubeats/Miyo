@@ -113,7 +113,10 @@ pub(crate) fn inspect_package_bytes_with_keys(
     let integrity = sha256_hex(&manifest_bytes);
     let trust = verify_signature_with_keys(&manifest, &manifest_bytes, keys, TrustLevel::Official);
     let files_verified = match &manifest.files {
-        Some(files) => Some({ verify_archive_files(bytes, files)?; true }),
+        Some(files) => Some({
+            verify_archive_files(bytes, files)?;
+            true
+        }),
         None => None,
     };
     Ok(PackageInfo {
@@ -140,7 +143,10 @@ pub(crate) fn inspect_package_dir_with_keys(
     let integrity = sha256_hex(&manifest_bytes);
     let trust = verify_signature_with_keys(&manifest, &manifest_bytes, keys, TrustLevel::Official);
     let files_verified = match &manifest.files {
-        Some(files) => Some({ verify_dir_files(dir, files)?; true }),
+        Some(files) => Some({
+            verify_dir_files(dir, files)?;
+            true
+        }),
         None => None,
     };
     Ok(PackageInfo {
@@ -251,7 +257,10 @@ pub(crate) fn extract_package_to_dir_with_keys(
     let trust = verify_signature_with_keys(&manifest, &manifest_bytes, keys, TrustLevel::Official);
     // 全文件清单复核（解包后落盘状态；防解包环节与流式预验之间的差异）
     let files_verified = match &manifest.files {
-        Some(files) => Some({ verify_dir_files(dest, files)?; true }),
+        Some(files) => Some({
+            verify_dir_files(dest, files)?;
+            true
+        }),
         None => None,
     };
     Ok(PackageInfo {
@@ -319,9 +328,7 @@ pub fn verify_dir_files(dir: &Path, files: &[PluginFileEntry]) -> Result<(), App
         .into_iter()
         .filter(|p| p != "manifest.json")
         .collect();
-    if actual_files.len() != listed.len()
-        || actual_files.iter().any(|f| !listed.contains(f))
-    {
+    if actual_files.len() != listed.len() || actual_files.iter().any(|f| !listed.contains(f)) {
         let extra: Vec<&String> = actual_files
             .iter()
             .filter(|f| !listed.contains(*f))
@@ -409,7 +416,11 @@ fn verify_archive_files(bytes: &[u8], files: &[PluginFileEntry]) -> Result<(), A
             .collect();
         return Err(AppError::Validation(format!(
             "插件包缺少 files 清单声明的文件：{}",
-            missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            missing
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         )));
     }
     Ok(())
@@ -760,6 +771,18 @@ mod tests {
         assert!(tmp.path().join("index.html").exists());
     }
 
+    /// 跨语言 golden vector（scripts/sign_plugin.mjs selftest 同源互验）：
+    /// Node 端规范化实现与本端 [`signing_payload`] 必须产出逐字节一致的
+    /// payload——任一侧漂移即 CI 红灯（防签名工具与宿主验证脱节）。
+    #[test]
+    fn signing_payload_matches_node_golden_vector() {
+        const GOLDEN_MANIFEST: &str = r#"{"id":"com.example.golden","name":"Golden","description":"golden","version":"1.0.0","kind":"ui","min_app_version":"0.0.60","sdk_version":1,"permissions":["std.storage"],"files":[{"path":"a.js","sha256":"abababababababababababababababababababababababababababababababab","size":3},{"path":"sub/b.css","sha256":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd","size":5}]}"#;
+        const GOLDEN_PAYLOAD_HEX: &str =
+            include_str!("../../../scripts/testdata/golden_payload.hex");
+        let payload = signing_payload(GOLDEN_MANIFEST.as_bytes()).unwrap();
+        assert_eq!(hex::encode(&payload), GOLDEN_PAYLOAD_HEX.trim());
+    }
+
     #[test]
     fn unsigned_packages_never_report_signed() {
         // 非法签名长度在 manifest 校验拦截。
@@ -821,10 +844,10 @@ mod tests {
         let payload = signing_payload(manifest_json.as_bytes()).unwrap();
         let sig = sk.sign(&payload);
         let mut value: serde_json::Value = serde_json::from_str(manifest_json).unwrap();
-        value
-            .as_object_mut()
-            .unwrap()
-            .insert("signature".to_string(), serde_json::Value::String(hex::encode(sig.to_bytes())));
+        value.as_object_mut().unwrap().insert(
+            "signature".to_string(),
+            serde_json::Value::String(hex::encode(sig.to_bytes())),
+        );
         serde_json::to_string(&value).unwrap()
     }
 
@@ -861,8 +884,8 @@ mod tests {
 
         // 解包后复核同样通过
         let tmp = tempfile::tempdir().unwrap();
-        let extracted = extract_package_to_dir_with_keys(&pkg, tmp.path(), &[pub_hex.as_str()])
-            .unwrap();
+        let extracted =
+            extract_package_to_dir_with_keys(&pkg, tmp.path(), &[pub_hex.as_str()]).unwrap();
         assert_eq!(extracted.trust, TrustLevel::Official);
         assert_eq!(extracted.files_verified, Some(true));
 
@@ -888,8 +911,8 @@ mod tests {
         assert!(err.user_message().contains("sha256 失配"), "{err}");
 
         let tmp = tempfile::tempdir().unwrap();
-        let err = extract_package_to_dir_with_keys(&pkg, tmp.path(), &[pub_hex.as_str()])
-            .unwrap_err();
+        let err =
+            extract_package_to_dir_with_keys(&pkg, tmp.path(), &[pub_hex.as_str()]).unwrap_err();
         assert!(err.user_message().contains("sha256 失配"), "{err}");
     }
 
@@ -921,8 +944,8 @@ mod tests {
             ("assets/app.js", files[1].1.as_slice()),
         ]);
         // keyring = [旧钥, 新钥]：新钥命中 → Official（轮换期并存）
-        let info = inspect_package_bytes_with_keys(&pkg, &[old_pub.as_str(), new_pub.as_str()])
-            .unwrap();
+        let info =
+            inspect_package_bytes_with_keys(&pkg, &[old_pub.as_str(), new_pub.as_str()]).unwrap();
         assert_eq!(info.trust, TrustLevel::Official);
         // keyring 只剩旧钥（新钥已退役）：Foreign（不再官方信任）
         let info = inspect_package_bytes_with_keys(&pkg, &[old_pub.as_str()]).unwrap();

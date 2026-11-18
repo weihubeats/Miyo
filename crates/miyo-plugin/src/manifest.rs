@@ -387,10 +387,7 @@ impl PluginManifest {
                     )));
                 }
                 if !seen.insert(f.path.clone()) {
-                    return Err(AppError::Validation(format!(
-                        "files.path 重复：{}",
-                        f.path
-                    )));
+                    return Err(AppError::Validation(format!("files.path 重复：{}", f.path)));
                 }
             }
             if let Some(entry) = &self.entry {
@@ -578,7 +575,9 @@ fn validate_entry(entry: &str) -> Result<(), AppError> {
 pub fn validate_package_path(path: &str, field: &str) -> Result<(), AppError> {
     validate_bounded(path, 1, 200, field)?;
     if path.starts_with('/') || path.starts_with('\\') || path.contains('\\') {
-        return Err(AppError::Validation(format!("{field} 禁止绝对路径 / 反斜杠：{path}")));
+        return Err(AppError::Validation(format!(
+            "{field} 禁止绝对路径 / 反斜杠：{path}"
+        )));
     }
     let mut segments = path.split('/');
     for seg in segments.by_ref() {
@@ -814,13 +813,12 @@ mod tests {
     }
 
     fn manifest_with_files(files_json: &str, entry: &str) -> String {
-        base_manifest()
-            .replace(
-                r#""permissions": ["std.storage"]"#,
-                &format!(
-                    r#""permissions": ["std.storage"], "entry": "{entry}", "files": {files_json}"#
-                ),
-            )
+        base_manifest().replace(
+            r#""permissions": ["std.storage"]"#,
+            &format!(
+                r#""permissions": ["std.storage"], "entry": "{entry}", "files": {files_json}"#
+            ),
+        )
     }
 
     #[test]

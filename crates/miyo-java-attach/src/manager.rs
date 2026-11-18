@@ -542,20 +542,17 @@ mod tests {
                 };
                 tokio::spawn(async move {
                     loop {
-                        let Ok(frame) = crate::client::read_frame(&mut socket).await
-                        else {
+                        let Ok(frame) = crate::client::read_frame(&mut socket).await else {
                             return;
                         };
                         if frame["op"] == "handshake" {
                             let body = serde_json::json!({"id": "handshake", "ok": true,
                                 "data": {"protocol": 2, "pid": 1, "agent_version": "t"}});
-                            let _ =
-                                crate::client::write_frame(&mut socket, &body).await;
+                            let _ = crate::client::write_frame(&mut socket, &body).await;
                         } else if frame["op"] == "ping" && answer_ping {
                             let body = serde_json::json!({"id": frame["id"], "ok": true,
                                 "data": {"pong": 1}});
-                            let _ =
-                                crate::client::write_frame(&mut socket, &body).await;
+                            let _ = crate::client::write_frame(&mut socket, &body).await;
                         }
                     }
                 });
