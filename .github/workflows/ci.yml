@@ -37,6 +37,48 @@ jobs:
       - name: Check TS bindings drift (miyo-core)
         run: git diff --exit-code -- frontend/src/types/generated
 
+  # 插件平台 crate 三平台测试（miyo-plugin / miyo-sidecar / miyo-storage）：
+  # Sidecar 进程管理与签名校验是平台相关代码，单平台测试易漏检
+  plugin-crates:
+    name: Plugin crates (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: plugin-${{ matrix.os }}
+      - name: Test miyo-plugin / miyo-sidecar / miyo-storage
+        run: cargo test -p miyo-plugin -p miyo-sidecar -p miyo-storage
+
+  # Java Attach 2.0：agent/launcher 单测 + Rust 侧真实 JVM e2e
+  java-attach:
+    name: Java Attach (agent tests + JVM e2e)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: java-attach
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build attach jars + e2e demo target (plain-app classes8)
+        run: |
+          bash scripts/build_java_debug.sh
+          mkdir -p java/examples/plain-app/build/classes8
+          javac --release 8 -d java/examples/plain-app/build/classes8 $(find java/examples/plain-app/src -name '*.java')
+      - name: Java agent/launcher unit tests
+        run: mvn -q test -f java/miyo-java-agent/pom.xml && mvn -q test -f java/miyo-attach-launcher/pom.xml
+      - name: Rust attach e2e (real JVM target)
+        run: cargo test -p miyo-java-attach --test attach_e2e_test -- --include-ignored
+
   miyo-tauri:
     name: Check & Test (miyo-tauri 插件)
     runs-on: ubuntu-latest

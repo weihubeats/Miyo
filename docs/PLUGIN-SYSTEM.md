@@ -1,5 +1,12 @@
 # Miyo 插件系统（Core + Plugin 架构）
 
+> **2.0 已落地（2026-11）**：全文件完整性清单 + Ed25519 官方签名 keyring、
+> 权限细分后端强制（java.* 子权限 + std 族会话凭证）、ui-sidecar 形态与
+> Sidecar Runtime Supervisor、本地包更新 / 回滚 / 依赖解析、市场静态索引。
+> 2.0 详细文档见 **docs/plugin/**（AUDIT / ARCHITECTURE / MANIFEST / SDK /
+> PERMISSIONS / SIGNING / SIDECAR / MARKETPLACE / DEV-GUIDE / TESTING）；
+> 本文保留 v1 架构与协议基础描述。
+
 > 状态：已实现并全量测试通过（2026-11）。本文档是插件系统的设计规范与开发指南，
 > 也是交付物清单的索引：架构分析 / 设计 / 目录结构 / SDK / Manifest / Java 插件迁移 /
 > 安全设计 / 性能 / 测试结果 / 第三方插件开发指南。
@@ -13,7 +20,7 @@ Miyo 是 **Tauri 2 + Vue 3** 的跨平台调试工作台，三层结构：
 | 层 | 形态 | 位置 |
 |---|---|---|
 | Layer 1 前端 | Vue 3 + Pinia + vue-router（全部视图懒加载） | `frontend/src/` |
-| Layer 2 命令层 | Tauri 2 插件 `miyo`（186 个 command，`plugin:miyo|*`） | `crates/miyo-tauri/`（独立 workspace） |
+| Layer 2 命令层 | Tauri 2 插件 `miyo`（229 个 command，`plugin:miyo|*`；2.0 新增会话/资产读/更新回滚/市场/Sidecar 等 21 条） | `crates/miyo-tauri/`（独立 workspace） |
 | Layer 3 领域层 | 纯库 crate（miyo-core / storage / http / java / …） | `crates/` |
 
 关键事实（决定了插件系统的形态）：
@@ -382,7 +389,7 @@ mkdir my-plugin && cd my-plugin
   落清单 → `frontend/src/plugins/builtinModules.ts` 补一行懒加载映射 → 前端类型经
   ts-rs 生成（跑 `cargo test -p miyo-tauri --features ts`）。
 
-### 10.4 后续路线（协议已预留、未启用）
+### 10.4 后续路线（2.0 已落地大半；剩余项见 docs/plugin/TESTING.md 已知限制）
 
 1. **官方签名流水线**：CI 生成 ed25519 密钥对 → release 包签名 → 替换
    `OFFICIAL_SIGNING_PUBKEY_HEX`（校验代码零改动）；

@@ -921,8 +921,9 @@ struct MarketIndexFile {
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_market_index() -> CommandResult<Vec<MarketEntryView>> {
     const INDEX_JSON: &str = include_str!("../../../../docs/market/index.json");
-    let index: MarketIndexFile = serde_json::from_str(INDEX_JSON)
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("市场索引损坏：{e}")))?;
+    let index: MarketIndexFile = serde_json::from_str(INDEX_JSON).map_err(|e| {
+        CommandError::with_code(CommandErrorCode::Internal, format!("市场索引损坏：{e}"))
+    })?;
     Ok(index.plugins)
 }
 
