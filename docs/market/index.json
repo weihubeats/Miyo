@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "updated_at": "2026-11-19",
+  "plugins": [
+    {
+      "id": "com.example.hello-world",
+      "name": "Hello World 示例",
+      "version": "0.1.0",
+      "authors": ["Miyo Examples"],
+      "description": "最小第三方 UI 插件：RPC 五方法演示（storage / log / notify / events）。",
+      "category": "examples",
+      "permissions": ["std.storage", "std.log", "std.notify", "std.events"],
+      "min_app_version": "0.0.60",
+      "sdk_version": 1,
+      "changelog": "0.1.0 初始示例。",
+      "download_url": "https://github.com/weihubeats/Miyo/tree/main/examples/plugins/hello-world"
+    },
+    {
+      "id": "com.example.echo-sidecar",
+      "name": "Echo Sidecar 示例",
+      "version": "0.1.0",
+      "authors": ["Miyo Examples"],
+      "description": "ui-sidecar 形态参考插件：iframe UI + 常驻 sidecar 进程（握手鉴权 / 心跳 / 崩溃恢复）。",
+      "category": "examples",
+      "permissions": ["std.storage", "std.log", "std.notify", "runtime.process.start", "runtime.process.stop"],
+      "min_app_version": "0.0.60",
+      "sdk_version": 1,
+      "changelog": "0.1.0 Sidecar 协议 v1 参考实现。",
+      "download_url": "https://github.com/weihubeats/Miyo/tree/main/examples/plugins/echo-sidecar"
+    },
+    {
+      "id": "com.miyo.java-debug",
+      "name": "Java 方法调试",
+      "version": "0.1.0",
+      "authors": ["Miyo"],
+      "description": "发现本机 Java 进程、注入调试 Agent、类 / Bean / 方法浏览与受控调用（Attach + Runtime SDK 双模式）。",
+      "category": "debuggers",
+      "permissions": ["std.storage", "std.env.read", "std.notify", "std.log", "std.events", "java.process.discover", "java.runtime.attach", "java.class.inspect", "java.method.invoke"],
+      "min_app_version": "0.0.60",
+      "sdk_version": 1,
+      "changelog": "0.1.0 Java Debug 2.0：Attach 链路（launcher sidecar + 注入式 Agent + Spring 捕获）。",
+      "download_url": "https://github.com/weihubeats/Miyo"
+    }
+  ]
+}

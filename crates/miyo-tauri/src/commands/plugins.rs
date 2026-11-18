@@ -12,7 +12,7 @@
 //! - 前端 SDK 的日志写入（plugin_record_log）与存储读写都以 plugin_id 为作用域，
 //!   越权键名 / 非法级别在存储层直接拒绝。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use miyo_plugin::manifest::PluginManifest;
@@ -888,6 +888,68 @@ pub async fn plugin_set_permissions(
     .await;
     let row = repo::require_plugin(&state.db, &id).await?;
     row_to_view(row)
+}
+
+// ---------------------------------------------------------------------------
+// 市场索引 / 版本历史
+// ---------------------------------------------------------------------------
+
+/// 官方静态市场索引条目（编译期嵌入 docs/market/index.json；远端索引为
+/// 路线图——本期不做服务端）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct MarketEntryView {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub authors: Vec<String>,
+    pub description: String,
+    pub category: String,
+    pub permissions: Vec<String>,
+    pub min_app_version: String,
+    pub sdk_version: u32,
+    pub changelog: String,
+    pub download_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MarketIndexFile {
+    plugins: Vec<MarketEntryView>,
+}
+
+/// 官方市场索引（静态；与已安装状态合并由前端完成）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn plugin_market_index() -> CommandResult<Vec<MarketEntryView>> {
+    const INDEX_JSON: &str = include_str!("../../../../docs/market/index.json");
+    let index: MarketIndexFile = serde_json::from_str(INDEX_JSON)
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, format!("市场索引损坏：{e}")))?;
+    Ok(index.plugins)
+}
+
+/// 插件版本历史条目（回滚选择列表；不含 manifest 原文）。
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PluginVersionView {
+    pub version: String,
+    pub created_at: String,
+    pub signed: bool,
+}
+
+/// 查询插件版本历史（新→旧；有历史即显示「回滚」入口）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn plugin_versions(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<Vec<PluginVersionView>> {
+    let rows = repo::list_plugin_versions(&state.db, &id).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| PluginVersionView {
+            version: r.version,
+            created_at: r.created_at,
+            signed: r.signed,
+        })
+        .collect())
 }
 
 /// 签发插件会话凭证（std 族能力的后端强制凭据）。

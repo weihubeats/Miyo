@@ -63,6 +63,82 @@ watch(
   },
 )
 
+// ---------- 完整性 / Sidecar 状态 / 版本历史 ----------
+
+const verifying = ref(false)
+async function onVerifyIntegrity(): Promise<void> {
+  const v = view.value
+  if (!v) return
+  verifying.value = true
+  try {
+    const ok = await invoke<boolean>(`${IPC_PREFIX}plugin_verify_integrity`, { id: v.id })
+    if (ok) toast.success(t('plugins.integrityOkToast'))
+    await manager.refreshInstalled()
+    emit('changed')
+  } catch (e) {
+    toast.error(t('plugins.integrityFailedToast'), { message: errorText(e) })
+  } finally {
+    verifying.value = false
+  }
+}
+
+interface SidecarStatusView {
+  plugin_id: string
+  pid: number
+  sidecar_version: string
+  restarts_last_hour: number
+}
+const sidecarStatus = ref<SidecarStatusView | null>(null)
+
+interface PluginVersionRow {
+  version: string
+  created_at: string
+  signed: boolean
+}
+const versionHistory = ref<PluginVersionRow[]>([])
+
+async function loadRuntimeInfo(): Promise<void> {
+  const v = view.value
+  if (!v) return
+  // sidecar 状态（ui-sidecar 形态才查）
+  if (v.kind === 'ui-sidecar') {
+    try {
+      const all = await invoke<SidecarStatusView[]>(`${IPC_PREFIX}plugin_sidecar_status`)
+      sidecarStatus.value = all.find((s) => s.plugin_id === v.id) ?? null
+    } catch {
+      sidecarStatus.value = null
+    }
+  } else {
+    sidecarStatus.value = null
+  }
+  // 版本历史（本地包才有回滚语义）
+  if (v.source !== 'builtin') {
+    try {
+      versionHistory.value = await invoke<PluginVersionRow[]>(`${IPC_PREFIX}plugin_versions`, {
+        id: v.id,
+      })
+    } catch {
+      versionHistory.value = []
+    }
+  } else {
+    versionHistory.value = []
+  }
+}
+
+async function onRollback(): Promise<void> {
+  const v = view.value
+  if (!v) return
+  try {
+    const done = await invoke<{ version: string }>(`${IPC_PREFIX}plugin_rollback`, { id: v.id })
+    toast.success(t('plugins.rollbackDoneToast', { version: done.version }))
+    await manager.refreshInstalled()
+    await loadRuntimeInfo()
+    emit('changed')
+  } catch (e) {
+    toast.error(t('plugins.rollbackFailed'), { message: errorText(e) })
+  }
+}
+
 // ---------- 权限 ----------
 
 /** 已批准集合（本地编辑态；保存即落库快照）。 */
@@ -235,6 +311,7 @@ watch(
     if (open) {
       void loadConfig()
       void loadLogs()
+      void loadRuntimeInfo()
     } else {
       // 关闭抽屉即释放本地凭证引用（服务端会话按 TTL / 吊销策略回收）
       sessionToken.value = null
@@ -308,7 +385,59 @@ function navRouteOf(item: PluginNavItem): string {
               :label="view.signed ? t('plugins.signed') : t('plugins.unsigned')"
             />
           </dd>
+          <dt>{{ t('plugins.filesVerified') }}</dt>
+          <dd>
+            <StatusBadge
+              :tone="view.files_verified ? 'ok' : view.last_verified_at ? 'fail' : 'wait'"
+              :label="
+                view.files_verified
+                  ? t('plugins.filesVerifiedOk')
+                  : view.last_verified_at
+                    ? t('plugins.filesVerifiedFail')
+                    : t('plugins.filesNeverVerified')
+              "
+            />
+            <span v-if="view.last_verified_at" class="pd-verified-at">
+              {{ t('plugins.lastVerifiedAt') }}: {{ view.last_verified_at.slice(0, 19).replace('T', ' ') }}
+            </span>
+          </dd>
         </dl>
+        <button
+          v-if="view.install_path"
+          class="miyo-btn miyo-btn-sm"
+          type="button"
+          :disabled="verifying"
+          @click="onVerifyIntegrity"
+        >
+          {{ verifying ? t('common.loading') : t('plugins.verifyIntegrity') }}
+        </button>
+        <!-- Sidecar 运行状态（ui-sidecar 形态） -->
+        <template v-if="view.kind === 'ui-sidecar'">
+          <div class="pd-sub">{{ t('plugins.sidecarSection') }}</div>
+          <dl v-if="sidecarStatus" class="pd-kv">
+            <dt>{{ t('plugins.sidecarPid') }}</dt>
+            <dd class="pd-mono">{{ sidecarStatus.pid }}</dd>
+            <dt>{{ t('plugins.sidecarVersion') }}</dt>
+            <dd class="pd-mono">{{ sidecarStatus.sidecar_version || '—' }}</dd>
+            <dt>{{ t('plugins.sidecarRestarts') }}</dt>
+            <dd class="pd-mono">{{ sidecarStatus.restarts_last_hour }}</dd>
+          </dl>
+          <p v-else class="pd-sidecar-off">{{ t('plugins.sidecarNotRunning') }}</p>
+        </template>
+        <!-- 版本历史 / 回滚 -->
+        <template v-if="view.source !== 'builtin'">
+          <div class="pd-sub">{{ t('plugins.historySection') }}</div>
+          <ul v-if="versionHistory.length" class="pd-nav-list">
+            <li v-for="h in versionHistory" :key="h.version + h.created_at" class="pd-nav-item">
+              <span class="pd-mono">v{{ h.version }}</span>
+              <span class="pd-verified-at">{{ h.created_at.slice(0, 19).replace('T', ' ') }}</span>
+              <button class="miyo-btn miyo-btn-sm" type="button" @click="onRollback">
+                {{ t('plugins.rollback') }}
+              </button>
+            </li>
+          </ul>
+          <p v-else class="pd-sidecar-off">{{ t('plugins.noHistory') }}</p>
+        </template>
         <template v-if="entry?.lastActivateMs !== null">
           <div class="pd-sub">{{ t('plugins.metricsSection') }}</div>
           <dl class="pd-kv">
@@ -599,5 +728,16 @@ function navRouteOf(item: PluginNavItem): string {
   flex: none;
   color: var(--text-3);
   font-size: var(--fs-2xs);
+}
+
+.pd-verified-at {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-left: 6px;
+}
+.pd-sidecar-off {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 4px 0;
 }
 </style>

@@ -207,6 +207,8 @@ permissions = [
     "allow-plugin-sidecar-request",
     "allow-plugin-update-from-path",
     "allow-plugin-rollback",
+    "allow-plugin-market-index",
+    "allow-plugin-versions",
     "allow-java-discover-processes",
     "allow-java-probe-pid",
     "allow-java-attach-process",

@@ -205,6 +205,8 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-plugin-sidecar-request`
 - `allow-plugin-update-from-path`
 - `allow-plugin-rollback`
+- `allow-plugin-market-index`
+- `allow-plugin-versions`
 - `allow-java-discover-processes`
 - `allow-java-probe-pid`
 - `allow-java-attach-process`
@@ -4302,6 +4304,32 @@ Denies the plugin_logs command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-plugin-market-index`
+
+</td>
+<td>
+
+Enables the plugin_market_index command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-market-index`
+
+</td>
+<td>
+
+Denies the plugin_market_index command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-plugin-read-asset`
 
 </td>
@@ -4685,6 +4713,32 @@ Enables the plugin_verify_integrity command without any pre-configured scope.
 <td>
 
 Denies the plugin_verify_integrity command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-versions`
+
+</td>
+<td>
+
+Enables the plugin_versions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-versions`
+
+</td>
+<td>
+
+Denies the plugin_versions command without any pre-configured scope.
 
 </td>
 </tr>

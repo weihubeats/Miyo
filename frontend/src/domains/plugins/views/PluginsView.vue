@@ -51,6 +51,7 @@ const tabItems = computed(() => [
 onMounted(() => {
   void manager.refreshInstalled()
   void loadCatalog()
+  void loadMarketIndex()
   if (typeof route.query.blocked === 'string') {
     toast.toast({ type: 'warning', title: t('plugins.routeBlocked', { id: route.query.blocked }) })
     void router.replace({ path: '/plugins' })
@@ -67,6 +68,70 @@ async function loadCatalog(): Promise<void> {
     catalog.value = await manager.loadCatalog()
   } finally {
     catalogLoading.value = false
+  }
+}
+
+// ---------- 官方市场索引（静态；与内置目录合并展示） ----------
+
+interface MarketEntryView {
+  id: string
+  name: string
+  version: string
+  authors: string[]
+  description: string
+  category: string
+  permissions: string[]
+  min_app_version: string
+  sdk_version: number
+  changelog: string
+  download_url: string
+}
+
+const marketEntries = ref<MarketEntryView[]>([])
+const marketQuery = ref('')
+const marketCategory = ref('all')
+const categories = computed(() => {
+  const set = new Set<string>()
+  for (const e of marketEntries.value) set.add(e.category)
+  return ['all', ...[...set].sort()]
+})
+
+async function loadMarketIndex(): Promise<void> {
+  try {
+    marketEntries.value = await invoke<MarketEntryView[]>(`${IPC_PREFIX}plugin_market_index`)
+  } catch {
+    marketEntries.value = [] // 索引缺失不阻塞市场页（内置目录仍可用）
+  }
+}
+
+/** 市场渲染模型：索引条目优先，命中内置目录时用目录卡片（可安装/更新）。 */
+const marketItems = computed(() => {
+  const q = marketQuery.value.trim().toLowerCase()
+  return marketEntries.value
+    .filter((e) => marketCategory.value === 'all' || e.category === marketCategory.value)
+    .filter((e) => {
+      if (!q) return true
+      return (
+        e.name.toLowerCase().includes(q) ||
+        e.id.toLowerCase().includes(q) ||
+        e.description.toLowerCase().includes(q)
+      )
+    })
+    .map((entry) => ({
+      entry,
+      catalogEntry: catalog.value.find((c) => c.manifest.id === entry.id) ?? null,
+      installed: catalog.value.some((c) => c.manifest.id === entry.id),
+      compatible:
+        catalog.value.find((c) => c.manifest.id === entry.id)?.compatible ?? true,
+    }))
+})
+
+async function copyDownloadUrl(url: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(url)
+    toast.success(t('plugins.copiedToast'))
+  } catch {
+    toast.error(t('plugins.copyDownloadUrl'))
   }
 }
 
@@ -168,8 +233,11 @@ const inspection = ref<{
 } | null>(null)
 const trustUnsigned = ref(false)
 const inspecting = ref(false)
+/** 检视用途：install（新装）/ update（本地包更新）。 */
+const inspectMode = ref<'install' | 'update'>('install')
 
-async function pickAndInspect(): Promise<void> {
+async function pickAndInspect(mode: 'install' | 'update' = 'install'): Promise<void> {
+  inspectMode.value = mode
   const picked = await open({
     multiple: false,
     directory: false,
@@ -200,18 +268,47 @@ async function confirmInstallFile(): Promise<void> {
   if (!pkg.signed && !trustUnsigned.value) return
   installFileBusy.value = true
   try {
-    await invoke(`${IPC_PREFIX}plugin_install_from_path`, {
-      path: pkg.path,
-      trustUnsigned: pkg.signed ? undefined : true,
-    })
-    toast.success(t('plugins.installedToast', { name: displayNameOf(pkg.manifest) }))
+    if (inspectMode.value === 'update') {
+      await invoke(`${IPC_PREFIX}plugin_update_from_path`, {
+        path: pkg.path,
+        trustUnsigned: pkg.signed ? undefined : true,
+      })
+      toast.success(t('plugins.updatedToast', { name: displayNameOf(pkg.manifest) }))
+    } else {
+      await invoke(`${IPC_PREFIX}plugin_install_from_path`, {
+        path: pkg.path,
+        trustUnsigned: pkg.signed ? undefined : true,
+      })
+      toast.success(t('plugins.installedToast', { name: displayNameOf(pkg.manifest) }))
+    }
     inspection.value = null
     await manager.refreshInstalled()
     tab.value = 'installed'
   } catch (e) {
-    toast.error(t('plugins.installFailed'), { message: errorText(e) })
+    toast.error(
+      t(inspectMode.value === 'update' ? 'plugins.updateFailed' : 'plugins.installFailed'),
+      { message: errorText(e) },
+    )
   } finally {
     installFileBusy.value = false
+  }
+}
+
+// ---------- 本地包回滚（确认流） ----------
+
+const rollbackTarget = ref<PluginView | null>(null)
+async function confirmRollback(): Promise<void> {
+  const target = rollbackTarget.value
+  if (!target) return
+  try {
+    const done = await invoke<{ version: string }>(`${IPC_PREFIX}plugin_rollback`, { id: target.id })
+    toast.success(t('plugins.rollbackDoneToast', { version: done.version }))
+    await manager.refreshInstalled()
+    await loadCatalog()
+  } catch (e) {
+    toast.error(t('plugins.rollbackFailed'), { message: errorText(e) })
+  } finally {
+    rollbackTarget.value = null
   }
 }
 
@@ -267,7 +364,7 @@ function closeDetail(): void {
         name="upload"
         :size="15"
         :title="t('plugins.installFromFile')"
-        @click="pickAndInspect"
+        @click="pickAndInspect('install')"
       />
     </header>
 
@@ -326,6 +423,15 @@ function closeDetail(): void {
             >
               {{ t('plugins.recover') }}
             </button>
+            <button
+              v-if="e.view.source !== 'builtin'"
+              class="miyo-btn miyo-btn-sm"
+              type="button"
+              :title="t('plugins.updateFromPath')"
+              @click="pickAndInspect('update')"
+            >
+              {{ t('plugins.updateFromPath') }}
+            </button>
             <label class="pg-switch" :title="t(e.view.enabled ? 'plugins.disableAction' : 'plugins.enableAction')">
               <input
                 type="checkbox"
@@ -336,6 +442,13 @@ function closeDetail(): void {
               />
               <span class="pg-switch-track" aria-hidden="true"></span>
             </label>
+            <IconButton
+              v-if="e.view.source !== 'builtin'"
+              name="history"
+              :size="15"
+              :title="t('plugins.rollback')"
+              @click="rollbackTarget = e.view"
+            />
             <IconButton name="trash" :size="15" tone="danger" :title="t('plugins.uninstallAction')" @click="askUninstall(e.view)" />
           </div>
         </article>
@@ -343,33 +456,56 @@ function closeDetail(): void {
 
       <!-- 市场 -->
       <section v-else class="pg-list" aria-label="market">
+        <div class="pg-market-tools">
+          <input
+            v-model="marketQuery"
+            class="pg-market-search"
+            type="search"
+            :placeholder="t('plugins.marketSearch')"
+          />
+          <div class="pg-market-cats">
+            <button
+              v-for="c in categories"
+              :key="c"
+              class="pg-cat-chip"
+              :class="{ active: marketCategory === c }"
+              type="button"
+              @click="marketCategory = c"
+            >
+              {{ c === 'all' ? t('plugins.marketAllCategories') : t(`plugins.category${c.charAt(0).toUpperCase() + c.slice(1)}`) }}
+            </button>
+          </div>
+        </div>
         <div v-if="catalogLoading" class="pg-loading"><Spinner /></div>
         <EmptyState
-          v-else-if="catalog.length === 0"
+          v-else-if="marketItems.length === 0"
           icon="package"
           :title="t('plugins.emptyMarket')"
           :description="t('plugins.emptyMarketHint')"
         />
-        <article v-for="entry in catalog" v-else :key="entry.manifest.id" class="pg-card">
+        <article v-for="item in marketItems" v-else :key="item.entry.id" class="pg-card">
           <div class="pg-card-main pg-card-static">
-            <img v-if="iconOf(entry.manifest)?.startsWith('data:image/')" class="pg-icon" :src="iconOf(entry.manifest)!" alt="" />
-            <Icon v-else-if="iconOf(entry.manifest)" :name="(iconOf(entry.manifest) as never)" :size="18" />
             <div class="pg-card-text">
               <div class="pg-card-title">
-                <span class="pg-name">{{ displayNameOf(entry.manifest) }}</span>
-                <span class="pg-ver">v{{ entry.manifest.version }}</span>
-                <span class="pg-src">{{ t('plugins.sourceBuiltin') }}</span>
+                <span class="pg-name">{{ item.entry.name }}</span>
+                <span class="pg-ver">v{{ item.entry.version }}</span>
+                <span class="pg-src">{{ t(`plugins.category${item.entry.category.charAt(0).toUpperCase() + item.entry.category.slice(1)}`) }}</span>
                 <StatusBadge
-                  v-if="!entry.compatible"
+                  v-if="item.installed"
+                  tone="ok"
+                  :label="t('plugins.upToDate')"
+                />
+                <StatusBadge
+                  v-else-if="!item.compatible"
                   tone="fail"
-                  :label="t('plugins.incompatible', { v: entry.manifest.min_app_version })"
+                  :label="t('plugins.incompatible', { v: item.entry.min_app_version })"
                 />
               </div>
-              <p class="pg-desc">{{ descriptionOf(entry.manifest) }}</p>
+              <p class="pg-desc">{{ item.entry.description }}</p>
               <!-- 权限声明：安装前明示（最小知情） -->
               <div class="pg-perms-row">
                 <span
-                  v-for="p in entry.manifest.permissions"
+                  v-for="p in item.entry.permissions"
                   :key="p"
                   class="pg-perm-chip"
                   :class="`risk-${lookupPermission(p)?.risk ?? 'low'}`"
@@ -381,30 +517,43 @@ function closeDetail(): void {
             </div>
           </div>
           <div class="pg-card-actions">
-            <template v-if="!entry.installed">
-              <button
-                class="miyo-btn miyo-btn-sm miyo-btn-primary"
-                type="button"
-                :disabled="installing || !entry.compatible"
-                @click="onInstall(entry)"
-              >
-                {{ t('plugins.installAction') }}
-              </button>
+            <template v-if="item.catalogEntry">
+              <template v-if="!item.catalogEntry.installed">
+                <button
+                  class="miyo-btn miyo-btn-sm miyo-btn-primary"
+                  type="button"
+                  :disabled="installing || !item.compatible"
+                  @click="onInstall(item.catalogEntry)"
+                >
+                  {{ t('plugins.installAction') }}
+                </button>
+              </template>
+              <template v-else>
+                <button
+                  v-if="updateAvailable(item.catalogEntry)"
+                  class="miyo-btn miyo-btn-sm miyo-btn-primary"
+                  type="button"
+                  :disabled="installing"
+                  @click="onUpdate(item.catalogEntry)"
+                >
+                  {{ t('plugins.updateAction', { v: item.catalogEntry.manifest.version }) }}
+                </button>
+                <StatusBadge v-else tone="ok" :label="t('plugins.upToDate')" />
+              </template>
             </template>
             <template v-else>
               <button
-                v-if="updateAvailable(entry)"
-                class="miyo-btn miyo-btn-sm miyo-btn-primary"
+                class="miyo-btn miyo-btn-sm"
                 type="button"
-                :disabled="installing"
-                @click="onUpdate(entry)"
+                :title="item.entry.download_url"
+                @click="copyDownloadUrl(item.entry.download_url)"
               >
-                {{ t('plugins.updateAction', { v: entry.manifest.version }) }}
+                {{ t('plugins.copyDownloadUrl') }}
               </button>
-              <StatusBadge v-else tone="ok" :label="t('plugins.upToDate')" />
             </template>
           </div>
         </article>
+        <p class="pg-market-guide">{{ t('plugins.marketSourceGuide') }}</p>
       </section>
     </main>
 
@@ -432,10 +581,35 @@ function closeDetail(): void {
       </template>
     </Modal>
 
+    <!-- 回滚确认 -->
+    <Modal
+      :open="!!rollbackTarget"
+      :title="t('plugins.rollbackConfirmTitle')"
+      width="440px"
+      @update:open="(v: boolean) => { if (!v) rollbackTarget = null }"
+    >
+      <p class="pg-confirm-text">
+        {{
+          t('plugins.rollbackConfirmBody', {
+            version: rollbackTarget ? `v${rollbackTarget.version}` : '',
+            at: rollbackTarget ? rollbackTarget.updated_at : '',
+          })
+        }}
+      </p>
+      <template #footer>
+        <button class="miyo-btn miyo-btn-sm" type="button" @click="rollbackTarget = null">
+          {{ t('common.cancel') }}
+        </button>
+        <button class="miyo-btn miyo-btn-sm miyo-btn-danger" type="button" @click="confirmRollback">
+          {{ t('plugins.rollback') }}
+        </button>
+      </template>
+    </Modal>
+
     <!-- 本地包安装确认 -->
     <Modal
       :open="!!inspection"
-      :title="t('plugins.inspectTitle')"
+      :title="inspectMode === 'update' ? t('plugins.updateFromPath') : t('plugins.inspectTitle')"
       width="520px"
       @update:open="(v: boolean) => { if (!v) inspection = null }"
     >
@@ -474,7 +648,7 @@ function closeDetail(): void {
           :disabled="installFileBusy || (!inspection?.signed && !trustUnsigned)"
           @click="confirmInstallFile"
         >
-          {{ t('plugins.installConfirm') }}
+          {{ t(inspectMode === 'update' ? 'plugins.updateFromPath' : 'plugins.installConfirm') }}
         </button>
       </template>
     </Modal>
@@ -528,6 +702,51 @@ function closeDetail(): void {
   margin: 0 auto;
 }
 
+.pg-market-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.pg-market-search {
+  width: 100%;
+  height: 32px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-input, var(--bg-hover));
+  color: var(--text-1);
+  padding: 0 10px;
+  font-size: 13px;
+}
+.pg-market-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.pg-market-cats {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pg-cat-chip {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  border-radius: var(--radius-md);
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pg-cat-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-accent, #fff);
+}
+.pg-market-guide {
+  font-size: 12px;
+  color: var(--text-3);
+  text-align: center;
+  padding: 8px 0 16px;
+}
 .pg-loading {
   display: flex;
   justify-content: center;

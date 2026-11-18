@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-plugin-market-index"
+description = "Enables the plugin_market_index command without any pre-configured scope."
+commands.allow = ["plugin_market_index"]
+
+[[permission]]
+identifier = "deny-plugin-market-index"
+description = "Denies the plugin_market_index command without any pre-configured scope."
+commands.deny = ["plugin_market_index"]
