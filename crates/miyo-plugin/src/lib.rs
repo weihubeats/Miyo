@@ -24,6 +24,7 @@
 
 pub mod builtin;
 pub mod compat;
+pub mod deps;
 pub mod manifest;
 pub mod package;
 pub mod permission;

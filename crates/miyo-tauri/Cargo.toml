@@ -80,6 +80,11 @@ ts = ["dep:ts-rs", "miyo-core/ts", "miyo-http/ts", "miyo-plugin/ts"]
 
 [dev-dependencies]
 tempfile = "3"
+# 更新/回滚 E2E：内存构造 .miyo 包（tar.gz + sha256）
+tar = { version = "0.4", default-features = false }
+flate2 = "1"
+sha2 = "0.11"
+hex = "0.4"
 
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }

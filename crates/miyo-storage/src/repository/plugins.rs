@@ -491,6 +491,16 @@ pub async fn insert_plugin_version(
     .bind(now())
     .execute(db)
     .await?;
+    // 滚动保留 PLUGIN_VERSION_CAP 条（防无限增长）
+    sqlx::query(
+        "DELETE FROM plugin_versions WHERE plugin_id = ? AND id NOT IN \
+         (SELECT id FROM plugin_versions WHERE plugin_id = ? ORDER BY id DESC LIMIT ?)",
+    )
+    .bind(plugin_id)
+    .bind(plugin_id)
+    .bind(PLUGIN_VERSION_CAP)
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -595,6 +605,47 @@ mod tests {
             .as_bytes(),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn plugin_version_history_rolls_and_deletes() {
+        let db = test_pool().await;
+        let manifest = demo_manifest();
+        insert_plugin(
+            &db,
+            &manifest.id,
+            &manifest,
+            "local",
+            None,
+            false,
+            &["std.storage".into()],
+            None,
+        )
+        .await
+        .unwrap();
+        for i in 0..12 {
+            let m = PluginManifest::parse(
+                format!(
+                    r#"{{"id":"com.example.demo","name":"Demo","description":"示例","version":"0.1.{i}",
+                        "authors":["t"],"kind":"ui","min_app_version":"0.0.60","sdk_version":1,
+                        "permissions":["std.storage"]}}"#
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            insert_plugin_version(&db, &manifest.id, &m, None, false)
+                .await
+                .unwrap();
+        }
+        let rows = list_plugin_versions(&db, &manifest.id).await.unwrap();
+        assert_eq!(rows.len() as i64, PLUGIN_VERSION_CAP);
+        assert_eq!(rows[0].version, "0.1.11"); // 新→旧
+                                               // 卸载清理
+        delete_plugin_versions(&db, &manifest.id).await.unwrap();
+        assert!(list_plugin_versions(&db, &manifest.id)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

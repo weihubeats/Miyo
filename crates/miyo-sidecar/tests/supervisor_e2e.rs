@@ -5,9 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use miyo_sidecar::{
-    NoopSink, RestartPolicy, SidecarSink, SidecarSpec, Supervisor, SupervisorTiming,
-};
+use miyo_sidecar::{RestartPolicy, SidecarSink, SidecarSpec, Supervisor, SupervisorTiming};
 
 /// 记录 sink 收到的日志 / 事件（断言上送链路）。
 #[derive(Default)]

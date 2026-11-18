@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-plugin-rollback"
+description = "Enables the plugin_rollback command without any pre-configured scope."
+commands.allow = ["plugin_rollback"]
+
+[[permission]]
+identifier = "deny-plugin-rollback"
+description = "Denies the plugin_rollback command without any pre-configured scope."
+commands.deny = ["plugin_rollback"]

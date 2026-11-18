@@ -201,6 +201,8 @@ const COMMANDS: &[&str] = &[
     "plugin_sidecar_stop",
     "plugin_sidecar_status",
     "plugin_sidecar_request",
+    "plugin_update_from_path",
+    "plugin_rollback",
     // Java Debug 2.0 Attach（commands/java_attach.rs）
     "java_discover_processes",
     "java_probe_pid",
