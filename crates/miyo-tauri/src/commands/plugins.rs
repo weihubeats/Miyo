@@ -24,6 +24,14 @@ use miyo_storage::repository::{
 use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
+/// 会话校验失败 → 统一 FORBIDDEN（不区分未知 / 过期 / 不匹配，防探测）。
+fn session_err() -> CommandError {
+    CommandError::with_code(
+        CommandErrorCode::Forbidden,
+        "缺少或无效的插件会话凭证（sessionToken）：请重新激活插件获取会话",
+    )
+}
+
 /// 本地插件包解包根目录：`{data_dir}/plugins/<插件 id>/`。
 fn plugins_root() -> std::path::PathBuf {
     miyo_storage::db::data_dir().join("plugins")
@@ -74,6 +82,10 @@ pub struct PluginView {
     pub updated_at: String,
     /// 便捷标志（state == enabled）。
     pub enabled: bool,
+    /// 全文件清单最近一次复核是否通过（manifest 2.0 files；无清单恒 false）。
+    pub files_verified: bool,
+    /// 最近一次全文件复核时间（RFC3339；NULL = 从未复核）。
+    pub last_verified_at: Option<String>,
 }
 
 /// 市场目录条目（内置目录 + 已安装合并）。
@@ -100,6 +112,10 @@ pub struct PackageInspectionView {
     pub integrity: String,
     /// 是否通过官方签名校验。
     pub signed: bool,
+    /// 签名信任级：official（官方 keyring）| foreign（自签 / 未命中）| unsigned。
+    pub trust: String,
+    /// 全文件清单校验（检视阶段流式预验）：None = 无 files 声明（v1 包）。
+    pub files_verified: Option<bool>,
     /// 来源种类：package（.miyo）| directory（目录直装，开发期）。
     pub origin: String,
 }
@@ -126,7 +142,7 @@ fn row_to_view(row: PluginRow) -> CommandResult<PluginView> {
             })
     });
     Ok(PluginView {
-        id: row.id,
+        id: row.id.clone(),
         kind: row.kind,
         version: row.version,
         enabled: row.state == STATE_ENABLED,
@@ -140,6 +156,8 @@ fn row_to_view(row: PluginRow) -> CommandResult<PluginView> {
         error,
         installed_at: row.created_at,
         updated_at: row.updated_at,
+        files_verified: row.files_verified,
+        last_verified_at: row.last_verified_at,
     })
 }
 
@@ -224,6 +242,12 @@ pub async fn plugin_inspect_package(path: String) -> CommandResult<PackageInspec
         manifest: info.manifest,
         integrity: info.integrity,
         signed: info.signed,
+        trust: match info.trust {
+            miyo_plugin::package::TrustLevel::Official => "official".into(),
+            miyo_plugin::package::TrustLevel::Foreign => "foreign".into(),
+            miyo_plugin::package::TrustLevel::Unsigned => "unsigned".into(),
+        },
+        files_verified: info.files_verified,
         origin: origin.into(),
     })
 }
@@ -270,6 +294,10 @@ pub async fn plugin_install_from_path(
         install_path.as_deref(),
     )
     .await?;
+    // 全文件清单复核结果落库（extract 已完成校验：Some(true) 才会走到这里）
+    if info.files_verified.is_some() {
+        repo::set_files_verified(&state.db, &info.manifest.id, true).await?;
+    }
     audit(
         &state.db,
         &info.manifest.id,
@@ -361,7 +389,7 @@ pub async fn plugin_update_builtin(
     row_to_view(row)
 }
 
-/// 卸载插件（级联清理私有存储；本地包目录一并删除）。
+/// 卸载插件（级联清理私有存储；本地包目录一并删除；会话吊销）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_uninstall(
     state: State<'_, AppState>,
@@ -384,11 +412,17 @@ pub async fn plugin_uninstall(
         }
     }
     repo::delete_plugin(&state.db, &id).await?;
+    // 数据清理：版本历史（审计与插件日志按既有口径保留）+ 全部在途会话
+    let _ = repo::delete_plugin_versions(&state.db, &id).await;
+    state.plugin_sessions.revoke_plugin(&id);
     let _ = app; // 预留：卸载后 emit 事件
     Ok(())
 }
 
-/// 启用 / 停用（启用前重跑兼容性检查；停用即收回运行时入口）。
+/// 启用 / 停用。
+///
+/// 启用前：重跑兼容性检查 + **全文件完整性复核**（manifest 有 files 清单
+/// 时逐文件 sha256——安装后文件被替换即拒绝启用）；停用即吊销会话。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_set_enabled(
     state: State<'_, AppState>,
@@ -407,17 +441,55 @@ pub async fn plugin_set_enabled(
             .map_err(|e| {
                 CommandError::with_code(CommandErrorCode::PluginIncompatible, e.user_message())
             })?;
+        // 全文件完整性复核（manifest.integrity + files 清单双重锚定）
+        verify_installed_files(&state.db, &row).await.map_err(command_err)?;
         repo::set_plugin_state(&state.db, &id, STATE_ENABLED, None).await?;
         audit(&state.db, &id, &format!("enable v{}", row.version)).await;
     } else {
         repo::set_plugin_state(&state.db, &id, STATE_INSTALLED, None).await?;
+        state.plugin_sessions.revoke_plugin(&id);
         audit(&state.db, &id, "disable").await;
     }
     let row = repo::require_plugin(&state.db, &id).await?;
     row_to_view(row)
 }
 
-/// 调整权限快照（granted ⊆ manifest.permissions；收权后 SDK 调用即被拒）。
+/// 安装态完整性复核：manifest 字节摘要 + files 全文件清单（如有）。
+/// 结果落库（files_verified / last_verified_at）供详情页展示。
+async fn verify_installed_files(
+    db: &sqlx::SqlitePool,
+    row: &repo::PluginRow,
+) -> Result<(), miyo_core::AppError> {
+    use miyo_storage::repository as repo;
+    let Some(path) = &row.install_path else {
+        return Ok(()); // builtin：清单以 DB 内为准，无磁盘文件可复核
+    };
+    let dir = std::path::PathBuf::from(path);
+    if let Some(expected) = &row.integrity {
+        let bytes = std::fs::read(dir.join("manifest.json"))
+            .map_err(miyo_core::AppError::Io)?;
+        miyo_plugin::package::verify_manifest_integrity(&bytes, expected)?;
+    }
+    let manifest = row.manifest()?;
+    match &manifest.files {
+        Some(files) => match miyo_plugin::package::verify_dir_files(&dir, files) {
+            Ok(()) => {
+                repo::set_files_verified(db, &row.id, true).await?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = repo::set_files_verified(db, &row.id, false).await;
+                Err(e)
+            }
+        },
+        None => Ok(()), // v1 包：无清单（integrity 已按需复核）
+    }
+}
+
+/// 调整权限快照（granted ⊆ manifest.permissions）。
+///
+/// 后端强制闭环：收权即吊销该插件全部会话（在途 SDK / 管理界面会话全部
+/// 失效，撤销即时生效）+ 权限变动写 plugin_permission_audit 审计表。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_set_permissions(
     state: State<'_, AppState>,
@@ -434,6 +506,7 @@ pub async fn plugin_set_permissions(
         }
     }
     miyo_plugin::validate_permissions(&granted_permissions).map_err(command_err)?;
+    let old_granted = row.granted_permissions();
     repo::update_plugin(
         &state.db,
         &id,
@@ -443,6 +516,25 @@ pub async fn plugin_set_permissions(
         &granted_permissions,
     )
     .await?;
+    // 审计：授予 / 收回分别记录（diff 基于旧快照）
+    let granted_diff: Vec<&String> = granted_permissions
+        .iter()
+        .filter(|p| !old_granted.contains(*p))
+        .collect();
+    let revoked_diff: Vec<&String> = old_granted
+        .iter()
+        .filter(|p| !granted_permissions.contains(*p))
+        .collect();
+    if !granted_diff.is_empty() {
+        let list: Vec<String> = granted_diff.iter().map(|s| s.to_string()).collect();
+        let _ = repo::insert_permission_audit(&state.db, &id, "grant", &list).await;
+    }
+    if !revoked_diff.is_empty() {
+        let list: Vec<String> = revoked_diff.iter().map(|s| s.to_string()).collect();
+        let _ = repo::insert_permission_audit(&state.db, &id, "revoke", &list).await;
+    }
+    // 撤销即时生效：吊销全部在途会话
+    state.plugin_sessions.revoke_plugin(&id);
     audit(
         &state.db,
         &id,
@@ -453,7 +545,28 @@ pub async fn plugin_set_permissions(
     row_to_view(row)
 }
 
+/// 签发插件会话凭证（std 族能力的后端强制凭据）。
+///
+/// 仅启用态插件可签发；同插件多会话并存（上限 16，超限吊销最旧）。
+/// SDK activate 与管理界面（配置 / 日志操作）都经此换取 token。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn plugin_session_create(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<String> {
+    let row = repo::require_plugin(&state.db, &id).await?;
+    if row.state != STATE_ENABLED {
+        return Err(CommandError::with_code(
+            CommandErrorCode::PluginDisabled,
+            "插件未启用：无法获取会话",
+        ));
+    }
+    let granted = row.granted_permissions();
+    Ok(state.plugin_sessions.create(&id, granted))
+}
+
 /// 上报激活失败（前端 activate 抛错时调用；保留现场供恢复）。
+/// 落 error 态并吊销会话（error 态插件不得继续持有 std 族凭证）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_report_error(
     state: State<'_, AppState>,
@@ -466,26 +579,39 @@ pub async fn plugin_report_error(
     })
     .to_string();
     repo::set_plugin_state(&state.db, &id, STATE_ERROR, Some(&error_json)).await?;
+    state.plugin_sessions.revoke_plugin(&id);
     Ok(())
 }
 
-/// 完整性复核：重算安装的 manifest 摘要与落库值比对（本地包被篡改即失败）。
+/// 完整性复核：manifest 字节摘要 + files 全文件清单（如有），结果落库。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_verify_integrity(
     state: State<'_, AppState>,
     id: String,
 ) -> CommandResult<bool> {
     let row = repo::require_plugin(&state.db, &id).await?;
-    let Some(expected) = &row.integrity else {
-        // builtin / 未记录完整性的插件：无可比对值，视为通过（清单以 DB 内为准）。
-        return Ok(true);
-    };
     let Some(path) = &row.install_path else {
+        // builtin / 无 install_path：无可比对值，视为通过（清单以 DB 内为准）。
         return Ok(true);
     };
-    let bytes = std::fs::read(std::path::PathBuf::from(path).join("manifest.json"))
-        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, e.to_string()))?;
-    miyo_plugin::package::verify_manifest_integrity(&bytes, expected).map_err(command_err)?;
+    if let Some(expected) = &row.integrity {
+        let bytes = std::fs::read(std::path::PathBuf::from(path).join("manifest.json"))
+            .map_err(|e| CommandError::with_code(CommandErrorCode::Io, e.to_string()))?;
+        miyo_plugin::package::verify_manifest_integrity(&bytes, expected).map_err(command_err)?;
+    }
+    let manifest = row.manifest().map_err(command_err)?;
+    if let Some(files) = &manifest.files {
+        let dir = std::path::PathBuf::from(path);
+        match miyo_plugin::package::verify_dir_files(&dir, files) {
+            Ok(()) => {
+                repo::set_files_verified(&state.db, &id, true).await?;
+            }
+            Err(e) => {
+                let _ = repo::set_files_verified(&state.db, &id, false).await;
+                return Err(command_err(e));
+            }
+        }
+    }
     Ok(true)
 }
 
@@ -511,6 +637,9 @@ pub async fn plugin_clear_logs(state: State<'_, AppState>, id: String) -> Comman
 }
 
 /// SDK logger 落库入口（debug/info/warn/error/audit；级别非法在存储层拒绝）。
+///
+/// `session_token`：会话凭证（`plugin_session_create` 签发）——std.log 属
+/// std 族能力，后端逐调用强制校验 token ↔ plugin_id 绑定（收权 / 停用即失效）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_record_log(
     state: State<'_, AppState>,
@@ -518,9 +647,26 @@ pub async fn plugin_record_log(
     level: String,
     message: String,
     context_json: Option<String>,
+    session_token: Option<String>,
 ) -> CommandResult<()> {
+    validate_session(&state, &id, session_token)?;
     repo::insert_plugin_log(&state.db, &id, &level, &message, context_json.as_deref()).await?;
     Ok(())
+}
+
+/// 会话凭证校验（缺 token / 过期 / 跨插件 → FORBIDDEN）。
+fn validate_session(
+    state: &State<'_, AppState>,
+    id: &str,
+    session_token: Option<String>,
+) -> CommandResult<()> {
+    let Some(token) = session_token else {
+        return Err(session_err());
+    };
+    state
+        .plugin_sessions
+        .validate(&token, id)
+        .map_err(|_| session_err())
 }
 
 /// 读插件私有键（值为 JSON）。
@@ -529,7 +675,9 @@ pub async fn plugin_data_get(
     state: State<'_, AppState>,
     id: String,
     key: String,
+    session_token: Option<String>,
 ) -> CommandResult<Option<serde_json::Value>> {
+    validate_session(&state, &id, session_token)?;
     match repo::get_plugin_data(&state.db, &id, &key).await? {
         None => Ok(None),
         Some(raw) => serde_json::from_str(&raw)
@@ -545,7 +693,9 @@ pub async fn plugin_data_set(
     id: String,
     key: String,
     value: serde_json::Value,
+    session_token: Option<String>,
 ) -> CommandResult<()> {
+    validate_session(&state, &id, session_token)?;
     let raw = serde_json::to_string(&value)
         .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))?;
     repo::set_plugin_data(&state.db, &id, &key, &raw).await?;
@@ -558,7 +708,9 @@ pub async fn plugin_data_delete(
     state: State<'_, AppState>,
     id: String,
     key: String,
+    session_token: Option<String>,
 ) -> CommandResult<()> {
+    validate_session(&state, &id, session_token)?;
     Ok(repo::delete_plugin_data(&state.db, &id, &key).await?)
 }
 
@@ -567,8 +719,88 @@ pub async fn plugin_data_delete(
 pub async fn plugin_data_keys(
     state: State<'_, AppState>,
     id: String,
+    session_token: Option<String>,
 ) -> CommandResult<Vec<String>> {
+    validate_session(&state, &id, session_token)?;
     Ok(repo::list_plugin_keys(&state.db, &id).await?)
+}
+
+/// 读插件包内资源（插件入口 HTML 等）。
+///
+/// 收口点：替代通用 `read_text_file`——路径强制限制在受管 `install_path`
+/// 内（canonicalize + 前缀比对）、拒绝符号链接、扩展名白名单、大小上限。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn plugin_read_asset(
+    state: State<'_, AppState>,
+    id: String,
+    rel_path: String,
+) -> CommandResult<String> {
+    const MAX_ASSET_BYTES: u64 = 5 * 1024 * 1024;
+    const ASSET_EXTENSIONS: &[&str] = &[
+        "html", "htm", "js", "mjs", "css", "json", "svg", "txt", "md", "map",
+    ];
+    let row = repo::require_plugin(&state.db, &id).await?;
+    let Some(install_path) = &row.install_path else {
+        return Err(CommandError::with_code(
+            CommandErrorCode::NotFound,
+            "内置插件无磁盘资源可读",
+        ));
+    };
+    // 相对路径校验（与 manifest.files / 解包白名单同口径）
+    if rel_path.is_empty()
+        || rel_path.len() > 200
+        || rel_path.starts_with('/')
+        || rel_path.starts_with('\\')
+        || rel_path.contains('\\')
+        || rel_path.split('/').any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
+        return Err(CommandError::validation(format!(
+            "插件资源路径非法：{rel_path}"
+        )));
+    }
+    let ext = rel_path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !ASSET_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(CommandError::validation(format!(
+            "插件资源扩展名 .{ext} 不在白名单内"
+        )));
+    }
+    let root = std::path::PathBuf::from(install_path).canonicalize().map_err(|e| {
+        CommandError::with_code(CommandErrorCode::Io, format!("插件目录解析失败：{e}"))
+    })?;
+    let target = root.join(&rel_path);
+    let meta = std::fs::symlink_metadata(&target).map_err(|_| {
+        CommandError::with_code(
+            CommandErrorCode::NotFound,
+            format!("插件资源不存在：{rel_path}"),
+        )
+    })?;
+    if meta.is_symlink() {
+        return Err(CommandError::with_code(
+            CommandErrorCode::Forbidden,
+            "插件资源是符号链接，已拒绝",
+        ));
+    }
+    let canonical = target.canonicalize().map_err(|e| {
+        CommandError::with_code(CommandErrorCode::Io, format!("插件资源解析失败：{e}"))
+    })?;
+    if !canonical.starts_with(&root) {
+        return Err(CommandError::with_code(
+            CommandErrorCode::Forbidden,
+            "插件资源路径逃逸，已拒绝",
+        ));
+    }
+    if meta.len() > MAX_ASSET_BYTES {
+        return Err(CommandError::validation("插件资源超过 5 MiB 上限"));
+    }
+    let bytes = std::fs::read(&canonical)
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, e.to_string()))?;
+    String::from_utf8(bytes).map_err(|_| {
+        CommandError::validation("插件资源不是 UTF-8 文本（二进制资源不经此命令读取）")
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +809,10 @@ pub async fn plugin_data_keys(
 
 /// 从 .miyo 文件或目录安装到受管目录：解包 / 校验 / 完整性。
 /// 返回（检视结果, install_path）。
+///
+/// 包安装为**原子两段式**：先解包到 `{plugins_root}/.staging-<uuid>` 并完成
+/// 全文件清单校验，全部通过后一次性 rename 到 `plugins/<id>`——失败时目标
+/// 目录保持原状（更新失败回滚的落点，见 plugin_update_from_path）。
 async fn install_from_source(
     state: &State<'_, AppState>,
     source: &std::path::Path,
@@ -584,7 +820,7 @@ async fn install_from_source(
 ) -> CommandResult<(miyo_plugin::package::PackageInfo, Option<String>)> {
     let _ = &state.db;
     if source.is_dir() {
-        // 目录直装（开发期）：记录路径本身，不复制。
+        // 目录直装（开发期）：记录路径本身，不复制（风险已在 UI 明示）。
         let info = miyo_plugin::package::inspect_package_dir(source).map_err(command_err)?;
         if !info.signed && !trust_unsigned {
             return Err(unsigned_error(&info));
@@ -593,18 +829,37 @@ async fn install_from_source(
     }
     let bytes = std::fs::read(source)
         .map_err(|e| CommandError::with_code(CommandErrorCode::Io, e.to_string()))?;
+    // 预读大小上限（解包限制之外的前置闸：读入内存前先拒绝超大包）
+    const MAX_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
+    let meta = std::fs::metadata(source)
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Io, e.to_string()))?;
+    if meta.len() > MAX_PACKAGE_BYTES {
+        return Err(CommandError::validation("插件包超过 64 MiB 上限"));
+    }
     let info = miyo_plugin::package::inspect_package_bytes(&bytes).map_err(command_err)?;
     if !info.signed && !trust_unsigned {
         return Err(unsigned_error(&info));
     }
     let dest = plugins_root().join(&info.manifest.id);
-    // 重装（卸载残留 / 版本替换）：先清空目标目录。
+    let staging = plugins_root().join(format!(".staging-{}", uuid::Uuid::new_v4().simple()));
+    // 解包 + 全文件清单校验（staging 内完成；失败即清理，不动 dest）
+    let extracted = miyo_plugin::package::extract_package_to_dir(&bytes, &staging)
+        .map_err(|e| {
+            let _ = std::fs::remove_dir_all(&staging);
+            command_err(e)
+        })?;
+    // 重装（卸载残留 / 版本替换）：清空目标目录后原子换入
     if dest.exists() {
-        std::fs::remove_dir_all(&dest)
-            .map_err(|e| CommandError::with_code(CommandErrorCode::Io, e.to_string()))?;
+        if let Err(e) = std::fs::remove_dir_all(&dest) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(CommandError::with_code(CommandErrorCode::Io, e.to_string()));
+        }
     }
-    miyo_plugin::package::extract_package_to_dir(&bytes, &dest).map_err(command_err)?;
-    Ok((info, Some(dest.to_string_lossy().to_string())))
+    if let Err(e) = std::fs::rename(&staging, &dest) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(CommandError::with_code(CommandErrorCode::Io, e.to_string()));
+    }
+    Ok((extracted, Some(dest.to_string_lossy().to_string())))
 }
 
 fn unsigned_error(info: &miyo_plugin::package::PackageInfo) -> CommandError {

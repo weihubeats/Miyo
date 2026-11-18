@@ -50,6 +50,7 @@
 
 pub mod commands;
 pub mod error;
+pub mod sessions;
 pub mod state;
 
 use tauri::Manager;
@@ -342,6 +343,8 @@ pub mod plugin {
                 commands::plugin_data_set,
                 commands::plugin_data_delete,
                 commands::plugin_data_keys,
+                commands::plugin_session_create,
+                commands::plugin_read_asset,
                 // Java 方法实时调试（commands/java_debug.rs，插件门禁见该文件）
                 // Java Debug 2.0 Attach（commands/java_attach.rs）
                 commands::java_discover_processes,

@@ -14,6 +14,7 @@ pub mod history;
 pub mod import_export;
 pub mod java_attach;
 pub mod java_debug;
+pub mod java_gate;
 pub mod load_test;
 pub mod log;
 pub mod mock;

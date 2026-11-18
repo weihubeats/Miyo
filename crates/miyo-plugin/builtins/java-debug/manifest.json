@@ -25,7 +25,10 @@
     "std.notify",
     "std.log",
     "std.events",
-    "java.debug"
+    "java.process.discover",
+    "java.runtime.attach",
+    "java.class.inspect",
+    "java.method.invoke"
   ],
   "runtime_deps": [
     {

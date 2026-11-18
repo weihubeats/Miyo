@@ -29,6 +29,51 @@ pub struct PermissionDef {
 /// 权限目录（封闭集合，按 ID 排序便于二分）。
 pub const PERMISSIONS: &[PermissionDef] = &[
     PermissionDef {
+        id: "database.connect",
+        risk: PermissionRisk::High,
+        summary: "建立数据库连接（能力尚未开放；声明恒拒，登记以显式化风险）",
+    },
+    PermissionDef {
+        id: "database.execute",
+        risk: PermissionRisk::High,
+        summary: "执行数据库语句（能力尚未开放；声明恒拒，登记以显式化风险）",
+    },
+    PermissionDef {
+        id: "java.class.inspect",
+        risk: PermissionRisk::High,
+        summary: "探测目标 JVM 已加载类 / 方法 / Spring Bean（元信息读取，高危）",
+    },
+    PermissionDef {
+        id: "java.debug",
+        risk: PermissionRisk::High,
+        summary: "Java 调试聚合权限（等价 java.* 四个子权限；v2.0 拆分前的兼容项）",
+    },
+    PermissionDef {
+        id: "java.method.invoke",
+        risk: PermissionRisk::High,
+        summary: "在目标 JVM 内执行方法（最高危：可触发任意业务逻辑）",
+    },
+    PermissionDef {
+        id: "java.process.discover",
+        risk: PermissionRisk::Medium,
+        summary: "扫描本机 Java 进程（launcher sidecar 枚举 + OS 扫描）",
+    },
+    PermissionDef {
+        id: "java.runtime.attach",
+        risk: PermissionRisk::High,
+        summary: "向目标 JVM 注入调试 Agent / 断开会话（动态注入，高危）",
+    },
+    PermissionDef {
+        id: "runtime.process.start",
+        risk: PermissionRisk::High,
+        summary: "启动插件 Sidecar 进程（宿主托管的受控子进程）",
+    },
+    PermissionDef {
+        id: "runtime.process.stop",
+        risk: PermissionRisk::Medium,
+        summary: "停止插件自己的 Sidecar 进程",
+    },
+    PermissionDef {
         id: "std.clipboard.write",
         risk: PermissionRisk::Low,
         summary: "写入系统剪贴板",
@@ -44,9 +89,24 @@ pub const PERMISSIONS: &[PermissionDef] = &[
         summary: "订阅插件事件总线",
     },
     PermissionDef {
+        id: "std.files.read",
+        risk: PermissionRisk::Medium,
+        summary: "读取用户显式选择的文件（能力尚未开放；声明恒拒，登记以显式化风险）",
+    },
+    PermissionDef {
+        id: "std.files.write",
+        risk: PermissionRisk::Medium,
+        summary: "写入用户指定位置（能力尚未开放；声明恒拒，登记以显式化风险）",
+    },
+    PermissionDef {
         id: "std.log",
         risk: PermissionRisk::Low,
         summary: "写入插件日志（受脱敏约束，敏感信息不得入日志）",
+    },
+    PermissionDef {
+        id: "std.network",
+        risk: PermissionRisk::Medium,
+        summary: "经宿主代理发起网络请求（能力尚未开放；声明恒拒，登记以显式化风险）",
     },
     PermissionDef {
         id: "std.notify",
@@ -58,12 +118,43 @@ pub const PERMISSIONS: &[PermissionDef] = &[
         risk: PermissionRisk::Low,
         summary: "读写插件私有 KV 存储（按插件隔离）",
     },
-    PermissionDef {
-        id: "java.debug",
-        risk: PermissionRisk::High,
-        summary: "连接并调用 Java Debug Runtime（方法发现与执行，高危）",
-    },
 ];
+
+/// java 聚合权限（`java.debug`）展开的子权限集合：
+/// 命令门禁按子权限检查；granted 含 `java.debug`（含 0033 之前的存量行）
+/// 等价于持有全部子权限。
+pub const JAVA_SUB_PERMISSIONS: &[&str] = &[
+    "java.class.inspect",
+    "java.method.invoke",
+    "java.process.discover",
+    "java.runtime.attach",
+];
+
+/// 展开聚合权限：granted 集合中把 `java.debug` 视为全部 java 子权限。
+/// 返回去重后的有效权限集合。
+pub fn expand_granted(granted: &[String]) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    let has_umbrella = granted.iter().any(|g| g == "java.debug");
+    for g in granted {
+        if g == "java.debug" {
+            continue;
+        }
+        out.push(g.as_str());
+    }
+    if has_umbrella {
+        for sub in JAVA_SUB_PERMISSIONS {
+            if !out.contains(sub) {
+                out.push(sub);
+            }
+        }
+    }
+    out
+}
+
+/// 检查展开后的 granted 是否持有某权限（含聚合展开）。
+pub fn granted_effective(granted: &[String], id: &str) -> bool {
+    expand_granted(granted).contains(&id)
+}
 
 /// 按 ID 查权限定义。
 pub fn lookup(id: &str) -> Option<&'static PermissionDef> {
@@ -127,5 +218,37 @@ mod tests {
         let g = vec!["std.storage".to_string()];
         assert!(granted(&g, "std.storage"));
         assert!(!granted(&g, "java.debug"));
+    }
+
+    #[test]
+    fn java_umbrella_expands_to_sub_permissions() {
+        // 存量行（0033 前）：仅 java.debug → 展开为全部子权限
+        let g = vec!["java.debug".to_string()];
+        for sub in JAVA_SUB_PERMISSIONS {
+            assert!(granted_effective(&g, sub), "{sub}");
+        }
+        // 0033 后的新行：显式子权限，无聚合键
+        let g = vec![
+            "java.process.discover".to_string(),
+            "java.method.invoke".to_string(),
+        ];
+        assert!(granted_effective(&g, "java.process.discover"));
+        assert!(granted_effective(&g, "java.method.invoke"));
+        assert!(!granted_effective(&g, "java.runtime.attach"));
+        assert!(!granted_effective(&g, "java.class.inspect"));
+    }
+
+    #[test]
+    fn capability_catalog_is_closed_and_risk_annotated() {
+        // 高危权限显式存在；无能力权限（database.* / std.network / std.files.*）
+        // 登记为恒拒——文档口径一致
+        for id in [
+            "java.method.invoke",
+            "database.execute",
+            "std.network",
+            "std.files.read",
+        ] {
+            assert!(lookup(id).is_some(), "{id} 应在目录中");
+        }
     }
 }

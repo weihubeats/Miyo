@@ -1,10 +1,15 @@
 //! 插件包（`.miyo` = tar.gz）安装：解包、完整性、签名校验、路径穿越防护。
 //!
-//! 安全模型：
-//! - **完整性**：`integrity` = 插件包内 manifest.json 字节的 sha256（hex）。安装时
-//!   计算并落库；激活前可复核（`verify_manifest_integrity`），包被篡改即拒绝。
-//! - **签名**：ed25519，对 manifest 原文字节签名；官方发布公钥编译期内置。
-//!   未签名包不拒绝安装，但必须由用户显式信任（UI 层确认 + 落库 `signed=false`）。
+//! 安全模型（manifest 2.0）：
+//! - **完整性**：`integrity` = manifest.json 字节的 sha256（hex）。安装时计算
+//!   并落库；激活前可复核（`verify_manifest_integrity`），包被篡改即拒绝。
+//! - **全文件清单**：manifest 可声明 `files`（path + sha256 + size）。声明即
+//!   强制——检视 / 解包 / 启用三个环节逐文件验 sha256，且包内文件集合必须与
+//!   清单完全一致（多余文件拒绝）；`entry` / `sidecar.executable` 必须在清单内。
+//! - **签名**：ed25519，官方公钥编译期内置（keyring 支持轮换，任一命中即
+//!   official）。签名 payload 见 [`signing_payload`]（规范化 manifest +
+//!   files 行清单）——manifest 内容与全部文件摘要都在覆盖范围内。
+//!   未签名包不拒绝安装，但必须由用户显式信任（UI 确认 + 落库 `signed=false`）。
 //! - **解包防护**：仅接受常规文件；拒绝绝对路径、`..` 段、反斜杠、符号链接；
 //!   条目数 ≤ 200、单文件 ≤ 10 MiB、总解包体积 ≤ 64 MiB；落盘路径全部相对 dest。
 //! - **目录形态**：开发期允许直接从目录安装（读取目录内 manifest.json），
@@ -19,18 +24,30 @@ use tar::Archive;
 
 use miyo_core::AppError;
 
-use crate::manifest::PluginManifest;
+use crate::manifest::{PluginFileEntry, PluginManifest};
 
 /// 解包限制。
 pub const MAX_ENTRIES: usize = 200;
 pub const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
-/// ed25519 官方发布公钥（hex，32 字节）。发布流水线接入前为占位零值：
-/// 此时任何 `signature` 都校验失败（signed=false），本地包一律走
-/// 「未签名 + 用户显式信任」通道。接入后替换为真实公钥即可，校验代码无需改动。
-pub const OFFICIAL_SIGNING_PUBKEY_HEX: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+/// ed25519 官方发布公钥 keyring（hex，32 字节；支持密钥轮换——任一命中即
+/// official 信任级）。新密钥追加到表尾，旧密钥退役后移除。
+/// 对应私钥只保存在 CI Secret（建议名 `MIYO_PLUGIN_SIGNING_SEED`），
+/// 签名工具见 scripts/sign_plugin.mjs。
+pub const OFFICIAL_SIGNING_PUBKEYS: &[&str] =
+    &["92739639878299e7f459b10fe3ba2c6994559594ff2feb1cbf61eef3d71cd206"];
+
+/// 签名信任级（安装落库 / UI 展示用）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustLevel {
+    /// 官方 keyring 验签通过。
+    Official,
+    /// 声明了签名但未命中官方 keyring（如第三方自签）。
+    Foreign,
+    /// 未声明签名。
+    Unsigned,
+}
 
 /// 包检视结果（安装确认页展示：清单 + 完整性 + 签名状态）。
 #[derive(Debug, Clone)]
@@ -40,37 +57,111 @@ pub struct PackageInfo {
     pub integrity: String,
     /// 签名是否通过官方公钥校验。
     pub signed: bool,
+    /// 签名信任级。
+    pub trust: TrustLevel,
+    /// 全文件清单校验结果：None = manifest 未声明 files（v1 包）；
+    /// Some(true) = 清单存在且包内全部文件逐字节吻合；Some(false) = 不吻合
+    /// （检视阶段即发现篡改，安装流程拒绝）。
+    pub files_verified: Option<bool>,
 }
 
-/// 从 `.miyo` 包字节检视（不落盘）。
+/// 构造签名 payload（规范化、跨语言确定性）。
+///
+/// 定义（签名工具与验证端必须一致，见 scripts/sign_plugin.mjs）：
+/// 1. manifest.json 解析为 JSON 对象；`signature` 键**恒参与** payload——
+///    值替换为 128 个 `'0'`（原文缺失该键时也插入置零键；解决签名覆盖
+///    自身的鸡生蛋问题，并保证「签名前计算」与「验签时重算」形状一致）；
+/// 2. 按键名字典序、无空白序列化（serde_json 默认 BTreeMap 行为，
+///    Node 侧按同规则排序）→ 字节 A；
+/// 3. files 行清单：`{path} {sha256hex} {size}\n`，按 path 字典序排序 → 字节 B；
+/// 4. payload = A（无 files 时）或 `A || '\n' || B`。
+pub fn signing_payload(manifest_bytes: &[u8]) -> Result<Vec<u8>, AppError> {
+    let mut value: serde_json::Value = serde_json::from_slice(manifest_bytes)
+        .map_err(|e| AppError::Validation(format!("manifest.json 解析失败：{e}")))?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "signature".to_string(),
+            serde_json::Value::String("0".repeat(128)),
+        );
+    }
+    let manifest: PluginManifest = serde_json::from_value(value.clone())
+        .map_err(|e| AppError::Validation(format!("manifest.json 校验失败：{e}")))?;
+    let mut payload =
+        serde_json::to_vec(&value).map_err(|e| AppError::Validation(format!("规范化失败：{e}")))?;
+    if let Some(files) = &manifest.files {
+        payload.push(b'\n');
+        let mut sorted: Vec<&PluginFileEntry> = files.iter().collect();
+        sorted.sort_by(|a, b| a.path.cmp(&b.path));
+        for f in sorted {
+            payload.extend_from_slice(format!("{} {} {}\n", f.path, f.sha256, f.size).as_bytes());
+        }
+    }
+    Ok(payload)
+}
+
+/// 从 `.miyo` 包字节检视（不落盘；files 清单在解包前对流式二次遍历预验）。
 pub fn inspect_package_bytes(bytes: &[u8]) -> Result<PackageInfo, AppError> {
+    inspect_package_bytes_with_keys(bytes, OFFICIAL_SIGNING_PUBKEYS)
+}
+
+pub(crate) fn inspect_package_bytes_with_keys(
+    bytes: &[u8],
+    keys: &[&str],
+) -> Result<PackageInfo, AppError> {
     let manifest_bytes = extract_manifest_bytes(bytes)?;
     let manifest = PluginManifest::parse(&manifest_bytes)?;
     let integrity = sha256_hex(&manifest_bytes);
-    let signed = verify_signature(&manifest, &manifest_bytes);
+    let trust = verify_signature_with_keys(&manifest, &manifest_bytes, keys, TrustLevel::Official);
+    let files_verified = match &manifest.files {
+        Some(files) => Some({ verify_archive_files(bytes, files)?; true }),
+        None => None,
+    };
     Ok(PackageInfo {
         manifest,
         integrity,
-        signed,
+        signed: trust == TrustLevel::Official,
+        trust,
+        files_verified,
     })
 }
 
 /// 从插件目录检视（开发期目录安装）。
 pub fn inspect_package_dir(dir: &Path) -> Result<PackageInfo, AppError> {
+    inspect_package_dir_with_keys(dir, OFFICIAL_SIGNING_PUBKEYS)
+}
+
+pub(crate) fn inspect_package_dir_with_keys(
+    dir: &Path,
+    keys: &[&str],
+) -> Result<PackageInfo, AppError> {
     let manifest_path = dir.join("manifest.json");
     let manifest_bytes = read_file(&manifest_path, "manifest.json")?;
     let manifest = PluginManifest::parse(&manifest_bytes)?;
     let integrity = sha256_hex(&manifest_bytes);
-    let signed = verify_signature(&manifest, &manifest_bytes);
+    let trust = verify_signature_with_keys(&manifest, &manifest_bytes, keys, TrustLevel::Official);
+    let files_verified = match &manifest.files {
+        Some(files) => Some({ verify_dir_files(dir, files)?; true }),
+        None => None,
+    };
     Ok(PackageInfo {
         manifest,
         integrity,
-        signed,
+        signed: trust == TrustLevel::Official,
+        trust,
+        files_verified,
     })
 }
 
 /// 把 `.miyo` 包解包到目标目录（调用方保证 dest 为全新空目录）。
 pub fn extract_package_to_dir(bytes: &[u8], dest: &Path) -> Result<PackageInfo, AppError> {
+    extract_package_to_dir_with_keys(bytes, dest, OFFICIAL_SIGNING_PUBKEYS)
+}
+
+pub(crate) fn extract_package_to_dir_with_keys(
+    bytes: &[u8],
+    dest: &Path,
+    keys: &[&str],
+) -> Result<PackageInfo, AppError> {
     std::fs::create_dir_all(dest).map_err(|e| AppError::Io(io_err("创建插件目录失败", e)))?;
     let dest_canonical = dest
         .canonicalize()
@@ -157,14 +248,20 @@ pub fn extract_package_to_dir(bytes: &[u8], dest: &Path) -> Result<PackageInfo, 
 
     let manifest = PluginManifest::parse(&manifest_bytes)?;
     let integrity = sha256_hex(&manifest_bytes);
-    let signed = verify_signature(&manifest, &manifest_bytes);
+    let trust = verify_signature_with_keys(&manifest, &manifest_bytes, keys, TrustLevel::Official);
+    // 全文件清单复核（解包后落盘状态；防解包环节与流式预验之间的差异）
+    let files_verified = match &manifest.files {
+        Some(files) => Some({ verify_dir_files(dest, files)?; true }),
+        None => None,
+    };
     Ok(PackageInfo {
         manifest,
         integrity,
-        signed,
+        signed: trust == TrustLevel::Official,
+        trust,
+        files_verified,
     })
 }
-
 /// 完整性复核：重算 manifest 字节摘要与落库值比对（激活前可调用）。
 pub fn verify_manifest_integrity(manifest_bytes: &[u8], expected: &str) -> Result<(), AppError> {
     let actual = sha256_hex(manifest_bytes);
@@ -176,25 +273,224 @@ pub fn verify_manifest_integrity(manifest_bytes: &[u8], expected: &str) -> Resul
     Ok(())
 }
 
-/// ed25519 签名校验（manifest 声明了 signature 才尝试；公钥未配置时一律 false）。
-fn verify_signature(manifest: &PluginManifest, manifest_bytes: &[u8]) -> bool {
+/// 全文件清单校验（目录形态）：清单内逐文件 sha256 + 目录文件集合与清单一致。
+/// 返回 Err（清单失配即错误，不是「可选信息」）——install / enable 前强制。
+pub fn verify_dir_files(dir: &Path, files: &[PluginFileEntry]) -> Result<(), AppError> {
+    let mut listed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for f in files {
+        let path = dir.join(&f.path);
+        // 符号链接防护：清单内条目一律不允许是链接（防安装后替换指向）
+        let meta = std::fs::symlink_metadata(&path)
+            .map_err(|_| AppError::Validation(format!("files 清单缺文件：{}", f.path)))?;
+        if meta.is_symlink() {
+            return Err(AppError::Validation(format!(
+                "files 清单条目是符号链接，已拒绝：{}",
+                f.path
+            )));
+        }
+        if !meta.is_file() {
+            return Err(AppError::Validation(format!(
+                "files 清单条目不是常规文件：{}",
+                f.path
+            )));
+        }
+        if meta.len() != f.size {
+            return Err(AppError::Validation(format!(
+                "文件大小与清单不符：{}（实际 {} ≠ 清单 {}）",
+                f.path,
+                meta.len(),
+                f.size
+            )));
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|e| AppError::Io(io_err(&format!("读取 {}", f.path), e)))?;
+        let actual = sha256_hex(&bytes);
+        if !actual.eq_ignore_ascii_case(&f.sha256) {
+            return Err(AppError::Validation(format!(
+                "文件内容与清单不符（sha256 失配，可能被篡改）：{}",
+                f.path
+            )));
+        }
+        listed.insert(f.path.clone());
+    }
+    // 目录内不得出现清单之外的文件（防夹带：清单外文件不经完整性保护）；
+    // manifest.json 由 integrity 单独保护，不计入集合比对
+    let actual_files: Vec<String> = collect_files(dir)?
+        .into_iter()
+        .filter(|p| p != "manifest.json")
+        .collect();
+    if actual_files.len() != listed.len()
+        || actual_files.iter().any(|f| !listed.contains(f))
+    {
+        let extra: Vec<&String> = actual_files
+            .iter()
+            .filter(|f| !listed.contains(*f))
+            .take(5)
+            .collect();
+        return Err(AppError::Validation(format!(
+            "插件目录存在 files 清单之外的文件：{}",
+            extra
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    Ok(())
+}
+
+/// 流式全文件清单校验（检视阶段，不解包）：对 tar.gz 原文二次遍历，
+/// 逐条目 sha256 与清单比对；条目集合（常规文件）必须与清单一致。
+fn verify_archive_files(bytes: &[u8], files: &[PluginFileEntry]) -> Result<(), AppError> {
+    let expected: std::collections::HashMap<String, &PluginFileEntry> =
+        files.iter().map(|f| (f.path.clone(), f)).collect();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let gz = GzDecoder::new(bytes);
+    let mut archive = Archive::new(gz);
+    for entry in archive
+        .entries()
+        .map_err(|e| AppError::Validation(format!("插件包读取失败：{e}")))?
+    {
+        let mut entry =
+            entry.map_err(|e| AppError::Validation(format!("插件包条目读取失败：{e}")))?;
+        if entry.header().entry_type() != tar::EntryType::Regular {
+            continue;
+        }
+        let raw_path = entry
+            .header()
+            .path()
+            .map_err(|e| AppError::Validation(format!("插件包条目路径非法：{e}")))?
+            .to_path_buf();
+        let safe = sanitize_entry_path(&raw_path.to_string_lossy())?;
+        let path_str = safe.to_string_lossy().to_string();
+        // manifest.json 不在 files 清单内——由 integrity（manifest 字节 sha256）
+        // 单独保护，且是签名 payload 的载体
+        if path_str.is_empty() || path_str == "manifest.json" {
+            continue;
+        }
+        let Some(f) = expected.get(path_str.as_str()) else {
+            return Err(AppError::Validation(format!(
+                "插件包含 files 清单之外的文件：{path_str}"
+            )));
+        };
+        let mut hasher = Sha256::new();
+        let mut len: u64 = 0;
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = entry
+                .read(&mut buf)
+                .map_err(|e| AppError::Validation(format!("插件包条目读取失败：{e}")))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+            len += n as u64;
+        }
+        if len != f.size {
+            return Err(AppError::Validation(format!(
+                "文件大小与清单不符：{}（实际 {len} ≠ 清单 {}）",
+                f.path, f.size
+            )));
+        }
+        let actual = hex::encode(hasher.finalize());
+        if !actual.eq_ignore_ascii_case(&f.sha256) {
+            return Err(AppError::Validation(format!(
+                "文件内容与清单不符（sha256 失配，可能被篡改）：{}",
+                f.path
+            )));
+        }
+        seen.insert(path_str);
+    }
+    if seen.len() != expected.len() {
+        let missing: Vec<&String> = expected
+            .keys()
+            .filter(|p| !seen.contains(*p))
+            .take(5)
+            .collect();
+        return Err(AppError::Validation(format!(
+            "插件包缺少 files 清单声明的文件：{}",
+            missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+        )));
+    }
+    Ok(())
+}
+
+/// 递归收集目录内全部文件的相对路径（正斜杠形式，排除目录项）。
+fn collect_files(dir: &Path) -> Result<Vec<String>, AppError> {
+    fn walk(dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), AppError> {
+        let entries = std::fs::read_dir(dir)
+            .map_err(|e| AppError::Io(io_err(&format!("遍历 {}", dir.display()), e)))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| AppError::Io(io_err("遍历插件目录失败", e)))?;
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let rel = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let meta = std::fs::symlink_metadata(&path)
+                .map_err(|e| AppError::Io(io_err("读取插件文件元数据失败", e)))?;
+            if meta.is_symlink() {
+                return Err(AppError::Validation(format!(
+                    "插件目录含符号链接，已拒绝：{rel}"
+                )));
+            }
+            if meta.is_dir() {
+                walk(&path, &rel, out)?;
+            } else if meta.is_file() {
+                out.push(rel);
+            }
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    walk(dir, "", &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+/// ed25519 签名校验（官方 keyring；未声明签名 → Unsigned）。
+///
+/// payload = [`signed_payload`]（manifest 原文 + files 行清单）。
+/// 任一官方公钥命中 → Official；声明了签名但全部失配 → Foreign；
+/// hex / key 解析失败同样归 Foreign（绝不把坏签名当通过）。
+/// 可注入公钥表的验签核心（生产传官方 keyring；测试传临时密钥做
+/// roundtrip / 篡改 / 轮换验证——官方私钥永不进仓库或测试代码）。
+pub(crate) fn verify_signature_with_keys(
+    manifest: &PluginManifest,
+    manifest_bytes: &[u8],
+    keys: &[&str],
+    matched_trust: TrustLevel,
+) -> TrustLevel {
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
     let Some(sig_hex) = manifest.signature.as_deref() else {
-        return false;
+        return TrustLevel::Unsigned;
     };
-    let Ok(pubkey_bytes) = hex::decode(OFFICIAL_SIGNING_PUBKEY_HEX) else {
-        return false;
-    };
-    let Ok(vk) = VerifyingKey::from_bytes(&pubkey_bytes.try_into().unwrap_or([0u8; 32])) else {
-        return false;
+    let Ok(payload) = signing_payload(manifest_bytes) else {
+        return TrustLevel::Foreign;
     };
     let Ok(sig_bytes) = hex::decode(sig_hex) else {
-        return false;
+        return TrustLevel::Foreign;
     };
     let Ok(sig) = Signature::from_slice(&sig_bytes) else {
-        return false;
+        return TrustLevel::Foreign;
     };
-    vk.verify(manifest_bytes, &sig).is_ok()
+    for key_hex in keys {
+        let Ok(pubkey_bytes) = hex::decode(key_hex) else {
+            continue;
+        };
+        let Ok(bytes) = <[u8; 32]>::try_from(pubkey_bytes.as_slice()) else {
+            continue;
+        };
+        let Ok(vk) = VerifyingKey::from_bytes(&bytes) else {
+            continue;
+        };
+        if vk.verify(&payload, &sig).is_ok() {
+            return matched_trust;
+        }
+    }
+    TrustLevel::Foreign
 }
 
 /// 条目路径白名单：相对路径、仅 [A-Za-z0-9._- ]、无 `..`、无反斜杠、非空。
@@ -472,5 +768,178 @@ mod tests {
             r#""entry": "index.html", "signature": "00aa""#,
         );
         assert!(PluginManifest::parse(signed_manifest.as_bytes()).is_err());
+    }
+
+    // ---------------- manifest 2.0：签名 roundtrip / 篡改 / 轮换 ----------------
+
+    use ed25519_dalek::Signer;
+
+    /// 生成临时密钥对（hex 公钥 + SigningKey）。
+    fn test_keypair(seed_byte: u8) -> (String, ed25519_dalek::SigningKey) {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[seed_byte; 32]);
+        (hex::encode(sk.verifying_key().to_bytes()), sk)
+    }
+
+    /// 构造带 files 清单的 manifest JSON（无 signature）+ 对应包内容。
+    fn build_files_package() -> (String, Vec<(String, Vec<u8>)>) {
+        let html = b"<html><body>demo</body></html>";
+        let js = b"console.log('hi')";
+        let html_sha = sha256_hex(html);
+        let js_sha = sha256_hex(js);
+        let manifest = format!(
+            r#"{{
+              "id": "com.example.demo",
+              "name": "Demo",
+              "description": "示例插件",
+              "version": "0.1.0",
+              "authors": ["t"],
+              "kind": "ui",
+              "min_app_version": "0.0.60",
+              "sdk_version": 1,
+              "permissions": ["std.storage"],
+              "entry": "index.html",
+              "files": [
+                {{"path": "index.html", "sha256": "{html_sha}", "size": {}}},
+                {{"path": "assets/app.js", "sha256": "{js_sha}", "size": {}}}
+              ]
+            }}"#,
+            html.len(),
+            js.len()
+        );
+        (
+            manifest,
+            vec![
+                ("index.html".into(), html.to_vec()),
+                ("assets/app.js".into(), js.to_vec()),
+            ],
+        )
+    }
+
+    /// 对 manifest JSON 签名（模拟签名工具流程：无签名原文 → 置零 payload
+    /// 计算 → 签名 → 排序键序列化落回 signature 字段）。
+    fn sign_manifest(manifest_json: &str, sk: &ed25519_dalek::SigningKey) -> String {
+        let payload = signing_payload(manifest_json.as_bytes()).unwrap();
+        let sig = sk.sign(&payload);
+        let mut value: serde_json::Value = serde_json::from_str(manifest_json).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("signature".to_string(), serde_json::Value::String(hex::encode(sig.to_bytes())));
+        serde_json::to_string(&value).unwrap()
+    }
+
+    #[test]
+    fn signing_payload_is_deterministic_and_hides_signature() {
+        let (manifest, _) = build_files_package();
+        let p1 = signing_payload(manifest.as_bytes()).unwrap();
+        // signature 置零后与原 payload 一致（自引用字段不影响 payload）
+        let with_sig = sign_manifest(&manifest, &test_keypair(1).1);
+        let p2 = signing_payload(with_sig.as_bytes()).unwrap();
+        assert_eq!(p1, p2);
+        // 确定性：两次计算结果一致
+        assert_eq!(p1, signing_payload(manifest.as_bytes()).unwrap());
+    }
+
+    #[test]
+    fn signed_package_roundtrip_official_trust() {
+        let (manifest, files) = build_files_package();
+        let (pub_hex, sk) = test_keypair(42);
+        let signed = sign_manifest(&manifest, &sk);
+
+        let pkg = build_tar_gz(&[
+            ("manifest.json", signed.as_bytes()),
+            ("index.html", files[0].1.as_slice()),
+            ("assets/app.js", files[1].1.as_slice()),
+        ]);
+
+        // 检视：注入测试公钥 → Official + files 预验通过
+        let info = inspect_package_bytes_with_keys(&pkg, &[pub_hex.as_str()]);
+        let info = info.unwrap();
+        assert_eq!(info.trust, TrustLevel::Official);
+        assert!(info.signed);
+        assert_eq!(info.files_verified, Some(true));
+
+        // 解包后复核同样通过
+        let tmp = tempfile::tempdir().unwrap();
+        let extracted = extract_package_to_dir_with_keys(&pkg, tmp.path(), &[pub_hex.as_str()])
+            .unwrap();
+        assert_eq!(extracted.trust, TrustLevel::Official);
+        assert_eq!(extracted.files_verified, Some(true));
+
+        // 目录检视（开发期）一致
+        let dir_info = inspect_package_dir_with_keys(tmp.path(), &[pub_hex.as_str()]).unwrap();
+        assert_eq!(dir_info.trust, TrustLevel::Official);
+        assert_eq!(dir_info.files_verified, Some(true));
+    }
+
+    #[test]
+    fn tampered_files_detected_at_inspect_and_extract() {
+        let (manifest, files) = build_files_package();
+        let (pub_hex, sk) = test_keypair(43);
+        let signed = sign_manifest(&manifest, &sk);
+        let tampered_js = b"console.log('Xx')".to_vec(); // 等长篡改（17B）——命中最深一环：内容摘要
+
+        let pkg = build_tar_gz(&[
+            ("manifest.json", signed.as_bytes()),
+            ("index.html", files[0].1.as_slice()),
+            ("assets/app.js", &tampered_js),
+        ]);
+        let err = inspect_package_bytes_with_keys(&pkg, &[pub_hex.as_str()]).unwrap_err();
+        assert!(err.user_message().contains("sha256 失配"), "{err}");
+
+        let tmp = tempfile::tempdir().unwrap();
+        let err = extract_package_to_dir_with_keys(&pkg, tmp.path(), &[pub_hex.as_str()])
+            .unwrap_err();
+        assert!(err.user_message().contains("sha256 失配"), "{err}");
+    }
+
+    #[test]
+    fn extra_file_not_in_list_rejected() {
+        let (manifest, files) = build_files_package();
+        let (pub_hex, sk) = test_keypair(44);
+        let signed = sign_manifest(&manifest, &sk);
+        let pkg = build_tar_gz(&[
+            ("manifest.json", signed.as_bytes()),
+            ("index.html", files[0].1.as_slice()),
+            ("assets/app.js", files[1].1.as_slice()),
+            (" smuggle.js", b"evil".as_slice()),
+        ]);
+        let err = inspect_package_bytes_with_keys(&pkg, &[pub_hex.as_str()]).unwrap_err();
+        assert!(err.user_message().contains("清单之外"), "{err}");
+    }
+
+    #[test]
+    fn key_rotation_second_key_accepted() {
+        let (manifest, files) = build_files_package();
+        let (old_pub, old_sk) = test_keypair(45);
+        let (new_pub, new_sk) = test_keypair(46);
+        let _ = old_sk;
+        let signed = sign_manifest(&manifest, &new_sk);
+        let pkg = build_tar_gz(&[
+            ("manifest.json", signed.as_bytes()),
+            ("index.html", files[0].1.as_slice()),
+            ("assets/app.js", files[1].1.as_slice()),
+        ]);
+        // keyring = [旧钥, 新钥]：新钥命中 → Official（轮换期并存）
+        let info = inspect_package_bytes_with_keys(&pkg, &[old_pub.as_str(), new_pub.as_str()])
+            .unwrap();
+        assert_eq!(info.trust, TrustLevel::Official);
+        // keyring 只剩旧钥（新钥已退役）：Foreign（不再官方信任）
+        let info = inspect_package_bytes_with_keys(&pkg, &[old_pub.as_str()]).unwrap();
+        assert_eq!(info.trust, TrustLevel::Foreign);
+        assert!(!info.signed);
+    }
+
+    #[test]
+    fn unsigned_with_files_still_verifies_files() {
+        let (manifest, files) = build_files_package();
+        let pkg = build_tar_gz(&[
+            ("manifest.json", manifest.as_bytes()),
+            ("index.html", files[0].1.as_slice()),
+            ("assets/app.js", files[1].1.as_slice()),
+        ]);
+        let info = inspect_package_bytes_with_keys(&pkg, &[]).unwrap();
+        assert_eq!(info.trust, TrustLevel::Unsigned);
+        assert_eq!(info.files_verified, Some(true));
     }
 }

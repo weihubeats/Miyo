@@ -195,6 +195,8 @@ const COMMANDS: &[&str] = &[
     "plugin_data_set",
     "plugin_data_delete",
     "plugin_data_keys",
+    "plugin_session_create",
+    "plugin_read_asset",
     // Java Debug 2.0 Attach（commands/java_attach.rs）
     "java_discover_processes",
     "java_probe_pid",

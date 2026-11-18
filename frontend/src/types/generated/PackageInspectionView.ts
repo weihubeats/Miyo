@@ -14,6 +14,14 @@ integrity: string,
  */
 signed: boolean, 
 /**
+ * 签名信任级：official（官方 keyring）| foreign（自签 / 未命中）| unsigned。
+ */
+trust: string, 
+/**
+ * 全文件清单校验（检视阶段流式预验）：None = 无 files 声明（v1 包）。
+ */
+files_verified: boolean | null, 
+/**
  * 来源种类：package（.miyo）| directory（目录直装，开发期）。
  */
 origin: string, };

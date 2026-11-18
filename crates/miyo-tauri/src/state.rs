@@ -113,6 +113,8 @@ pub struct AppState {
     /// Java Debug 2.0 Attach 管理器（进程发现 / launcher sidecar / Agent 会话）。
     /// jar 候选目录由 lib.rs setup 以 AppHandle 解析后传入。
     pub java_attach: Arc<miyo_java_attach::AttachManager>,
+    /// 插件会话凭证表（std 族命令的后端强制凭据；内存态）。
+    pub plugin_sessions: crate::sessions::PluginSessions,
 }
 
 /// 请求热路径的全局设置快照：命中时免去每次请求 2~3 次 settings SELECT +
@@ -208,6 +210,7 @@ impl AppState {
                 jar_candidates,
                 miyo_storage::db::data_dir().join("java-agent"),
             )),
+            plugin_sessions: crate::sessions::PluginSessions::new(),
         }
     }
 

@@ -85,6 +85,17 @@ pub fn java_invoke_hook(
             repo::ensure_plugin_enabled(&db, miyo_plugin::JAVA_DEBUG_PLUGIN_ID)
                 .await
                 .map_err(|e| format!("Java 调试插件不可用：{}", e.user_message()))?;
+            // 权限细分：方法执行单独授权（java.method.invoke；java.debug 聚合
+            // 权限等价展开——与 tauri 命令层同口径，收权即时生效）
+            let granted = repo::require_plugin(&db, miyo_plugin::JAVA_DEBUG_PLUGIN_ID)
+                .await
+                .map_err(|e| format!("Java 调试插件不可用：{}", e.user_message()))?
+                .granted_permissions();
+            if !miyo_plugin::permission::granted_effective(&granted, "java.method.invoke") {
+                return Err(
+                    "插件缺少权限「java.method.invoke」：请在插件管理 → 权限中授权".to_string(),
+                );
+            }
             let project = repo::get_java_project(&db, req.java_project_id)
                 .await
                 .map_err(|e| format!("Java 项目配置加载失败：{}", e.user_message()))?;

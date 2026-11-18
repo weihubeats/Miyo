@@ -139,4 +139,45 @@ export const RPC_ERRORS = {
   PERMISSION_DENIED: 'PERMISSION_DENIED',
   TIMEOUT: 'TIMEOUT',
   INTERNAL: 'INTERNAL',
+  /** 宿主熔断 / 并发超限（插件应退避，不要立即重试）。 */
+  RATE_LIMITED: 'RATE_LIMITED',
 } as const
+
+/**
+ * RPC 安全限额（宿主侧强制；插件侧超限收到错误帧或被静默丢帧）。
+ * - 整帧字符上限：防单帧拖垮主线程 / 内存（值序列化后度量）；
+ * - JSON 深度上限：防深度嵌套的解析放大；
+ * - 并发在途上限：防请求洪泛（超出即快速失败）；
+ * - 订阅上限：防监听器泄漏；
+ * - 熔断：错误率窗口——连续大量失败后暂停服务一段时间（防轰炸 / 防循环）。
+ */
+export const RPC_LIMITS = {
+  /** 整帧 JSON 字符数上限（约 1 MiB）。 */
+  MAX_FRAME_CHARS: 1_000_000,
+  /** params 最大 JSON 嵌套深度。 */
+  MAX_JSON_DEPTH: 16,
+  /** 并发在途请求上限（超出立即返回 RATE_LIMITED）。 */
+  MAX_INFLIGHT: 20,
+  /** 每插件事件订阅上限。 */
+  MAX_SUBSCRIPTIONS: 32,
+  /** 已见请求 ID 去重表容量（重放防护；超限整表轮空——会话生命周期内足够）。 */
+  MAX_SEEN_IDS: 4096,
+  /** 熔断阈值：窗口内错误响应数。 */
+  BREAKER_THRESHOLD: 50,
+  /** 熔断统计窗口。 */
+  BREAKER_WINDOW_MS: 30_000,
+  /** 熔断打开时长。 */
+  BREAKER_OPEN_MS: 60_000,
+} as const
+
+/** JSON 值深度（超限返回 true）。 */
+export function exceedsJsonDepth(value: unknown, maxDepth: number): boolean {
+  if (maxDepth < 0) return true
+  if (Array.isArray(value)) {
+    return value.some((v) => exceedsJsonDepth(v, maxDepth - 1))
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.values(value).some((v) => exceedsJsonDepth(v, maxDepth - 1))
+  }
+  return false
+}

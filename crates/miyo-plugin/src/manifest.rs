@@ -112,6 +112,37 @@ pub struct PluginConfigSchema {
     pub required: Option<Vec<String>>,
 }
 
+/// 文件完整性清单条目（manifest 2.0：覆盖包内全部文件的 sha256）。
+///
+/// 签名 payload 含 files 行清单（见 [`crate::package::signing_payload`]）——
+/// manifest 内容与全部文件摘要都在签名覆盖范围内；安装 / 启用前逐文件复核。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PluginFileEntry {
+    /// 包内相对路径（校验同 entry：禁绝对路径 / 穿越 / 反斜杠）。
+    pub path: String,
+    /// 文件内容 sha256（64 位 hex 小写）。
+    pub sha256: String,
+    /// 文件字节数。
+    pub size: u64,
+}
+
+/// Sidecar 配置（manifest 2.0；kind = ui-sidecar 时必填）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PluginSidecarConfig {
+    /// 可执行文件（包内相对路径；必须在 files 清单内；unix 安装后置 +x）。
+    pub executable: String,
+    /// sidecar 协议版本（宿主侧按协议号协商，破坏性变更递增）。
+    pub protocol: u32,
+    /// 内存上限 MB（进程级；None = 宿主默认上限）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_memory_mb: Option<u32>,
+    /// 崩溃重启策略：off（默认）/ on-crash（指数退避，宿主内置防循环上限）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_policy: Option<String>,
+}
+
 /// 插件清单（manifest.json）。字段集与前端 `PluginManifest` 镜像（ts-rs 生成）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -164,9 +195,20 @@ pub struct PluginManifest {
     /// 完整性摘要（sha256 hex of manifest bytes；安装时由后端计算）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub integrity: Option<String>,
-    /// ed25519 签名（hex；对 manifest 字节摘要签名）。
+    /// ed25519 签名（hex；覆盖 manifest 原文 + files 行清单，见 package.rs）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// 文件完整性清单（manifest 2.0 可选；声明即强制——安装 / 启用 / 检视
+    /// 逐文件验 sha256，包内出现清单外文件即拒绝）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<PluginFileEntry>>,
+    /// Sidecar 配置（kind = ui-sidecar 时必填；ui 插件声明即拒绝）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidecar: Option<PluginSidecarConfig>,
+    /// 支持平台（manifest 2.0 可选；空 = 全平台。值白名单：
+    /// windows / macos / linux，可带 -arm64 / -x64 后缀）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<String>>,
 }
 
 impl PluginManifest {
@@ -318,6 +360,109 @@ impl PluginManifest {
                 ));
             }
         }
+        // manifest 2.0：文件完整性清单（声明即强制；entry 必须在清单内）。
+        if let Some(files) = &self.files {
+            if files.is_empty() {
+                return Err(AppError::Validation(
+                    "files 不能为空数组（省略字段即可）".into(),
+                ));
+            }
+            if files.len() > 200 {
+                return Err(AppError::Validation("files 数量超过 200".into()));
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            for f in files {
+                validate_package_path(&f.path, "files.path")?;
+                validate_sha256_hex(&f.sha256)?;
+                if f.sha256.chars().any(|c| c.is_ascii_uppercase()) {
+                    return Err(AppError::Validation(format!(
+                        "files.sha256 必须小写 hex：{}",
+                        f.path
+                    )));
+                }
+                if f.size == 0 {
+                    return Err(AppError::Validation(format!(
+                        "files.size 必须大于 0：{}",
+                        f.path
+                    )));
+                }
+                if !seen.insert(f.path.clone()) {
+                    return Err(AppError::Validation(format!(
+                        "files.path 重复：{}",
+                        f.path
+                    )));
+                }
+            }
+            if let Some(entry) = &self.entry {
+                if !seen.contains(entry) {
+                    return Err(AppError::Validation(format!(
+                        "entry（{entry}）必须包含在 files 清单内"
+                    )));
+                }
+            }
+        }
+        // manifest 2.0：sidecar 配置（ui 形态声明即拒绝；ui-sidecar 在开放时
+        // 要求 sidecar 必填——见 kind 分支）。
+        if let Some(sidecar) = &self.sidecar {
+            if self.kind != PluginKind::UiSidecar {
+                return Err(AppError::Validation(
+                    "sidecar 配置仅支持 ui-sidecar 插件形态".into(),
+                ));
+            }
+            validate_package_path(&sidecar.executable, "sidecar.executable")?;
+            if sidecar.protocol == 0 {
+                return Err(AppError::Validation("sidecar.protocol 必须 ≥ 1".into()));
+            }
+            if let Some(mem) = sidecar.max_memory_mb {
+                if mem == 0 || mem > 4096 {
+                    return Err(AppError::Validation(
+                        "sidecar.max_memory_mb 必须在 1-4096".into(),
+                    ));
+                }
+            }
+            if let Some(p) = &sidecar.restart_policy {
+                if p != "off" && p != "on-crash" {
+                    return Err(AppError::Validation(
+                        "sidecar.restart_policy 只允许 off / on-crash".into(),
+                    ));
+                }
+            }
+            if let Some(files) = &self.files {
+                if !files.iter().any(|f| f.path == sidecar.executable) {
+                    return Err(AppError::Validation(format!(
+                        "sidecar.executable（{}）必须包含在 files 清单内",
+                        sidecar.executable
+                    )));
+                }
+            }
+        }
+        if let Some(platforms) = &self.platforms {
+            if platforms.is_empty() {
+                return Err(AppError::Validation(
+                    "platforms 不能为空数组（省略字段即可）".into(),
+                ));
+            }
+            if platforms.len() > 6 {
+                return Err(AppError::Validation("platforms 数量超过 6".into()));
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            for p in platforms {
+                let known = ["windows", "macos", "linux"];
+                let base = p.split('-').next().unwrap_or(p);
+                let suffix = p.strip_prefix(base).unwrap_or("");
+                if !known.contains(&base)
+                    || !(suffix.is_empty() || suffix == "-arm64" || suffix == "-x64")
+                {
+                    return Err(AppError::Validation(format!(
+                        "platforms 含不支持的平台：{p}（允许 windows/macos/linux，\
+                         可带 -arm64 / -x64 后缀）"
+                    )));
+                }
+                if !seen.insert(p.as_str()) {
+                    return Err(AppError::Validation(format!("platforms 重复：{p}")));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -423,6 +568,33 @@ fn validate_entry(entry: &str) -> Result<(), AppError> {
         return Err(AppError::Validation(
             "entry 当前仅允许 .html（UI 插件）".into(),
         ));
+    }
+    Ok(())
+}
+
+/// 包内相对路径（files 清单 / sidecar 可执行文件通用）：
+/// 禁绝对路径、反斜杠、`..` 段、空段；字符白名单
+/// `[A-Za-z0-9._-]`（与解包条目白名单一致——声明里合法的路径必须能通过解包）。
+pub fn validate_package_path(path: &str, field: &str) -> Result<(), AppError> {
+    validate_bounded(path, 1, 200, field)?;
+    if path.starts_with('/') || path.starts_with('\\') || path.contains('\\') {
+        return Err(AppError::Validation(format!("{field} 禁止绝对路径 / 反斜杠：{path}")));
+    }
+    let mut segments = path.split('/');
+    for seg in segments.by_ref() {
+        if seg.is_empty() || seg == "." || seg == ".." {
+            return Err(AppError::Validation(format!(
+                "{field} 含非法路径段（空 / . / ..）：{path}"
+            )));
+        }
+        if !seg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            return Err(AppError::Validation(format!(
+                "{field} 路径段含非法字符（白名单 [A-Za-z0-9._-]）：{seg}"
+            )));
+        }
     }
     Ok(())
 }
@@ -630,5 +802,119 @@ mod tests {
         assert!(parse_version("1.2.3.4").is_err());
         assert!(parse_version("1.2.x").is_err());
         assert!(parse_version("").is_err());
+    }
+
+    // ---------------- manifest 2.0：files / sidecar / platforms ----------------
+
+    fn sha_a() -> String {
+        "aa".repeat(32)
+    }
+    fn sha_b() -> String {
+        "bb".repeat(32)
+    }
+
+    fn manifest_with_files(files_json: &str, entry: &str) -> String {
+        base_manifest()
+            .replace(
+                r#""permissions": ["std.storage"]"#,
+                &format!(
+                    r#""permissions": ["std.storage"], "entry": "{entry}", "files": {files_json}"#
+                ),
+            )
+    }
+
+    #[test]
+    fn accepts_valid_files_list() {
+        let (sha_a, sha_b) = (sha_a(), sha_b());
+        let ok = manifest_with_files(
+            &format!(
+                r#"[{{"path": "index.html", "sha256": "{sha_a}", "size": 1024}},
+                    {{"path": "assets/app.js", "sha256": "{sha_b}", "size": 8}}]"#
+            ),
+            "index.html",
+        );
+        let m = PluginManifest::parse(ok.as_bytes()).unwrap();
+        assert_eq!(m.files.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn files_rejects_traversal_uppercase_sha_dup_and_empty() {
+        let sha = sha_a();
+        // 穿越
+        let bad = manifest_with_files(
+            &format!(r#"[{{"path": "../evil.html", "sha256": "{sha}", "size": 1}}]"#),
+            "index.html",
+        );
+        assert!(PluginManifest::parse(bad.as_bytes()).is_err());
+        // 大写 hex
+        let upper: String = sha.to_uppercase();
+        let bad = manifest_with_files(
+            &format!(r#"[{{"path": "index.html", "sha256": "{upper}", "size": 1}}]"#),
+            "index.html",
+        );
+        assert!(PluginManifest::parse(bad.as_bytes()).is_err());
+        // 重复路径
+        let bad = manifest_with_files(
+            &format!(
+                r#"[{{"path": "index.html", "sha256": "{sha}", "size": 1}},
+                    {{"path": "index.html", "sha256": "{sha}", "size": 2}}]"#
+            ),
+            "index.html",
+        );
+        assert!(PluginManifest::parse(bad.as_bytes()).is_err());
+        // size = 0
+        let bad = manifest_with_files(
+            &format!(r#"[{{"path": "index.html", "sha256": "{sha}", "size": 0}}]"#),
+            "index.html",
+        );
+        assert!(PluginManifest::parse(bad.as_bytes()).is_err());
+        // 空数组
+        let bad = manifest_with_files("[]", "index.html");
+        assert!(PluginManifest::parse(bad.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn files_must_cover_entry() {
+        let sha = sha_a();
+        let bad = manifest_with_files(
+            &format!(r#"[{{"path": "other.html", "sha256": "{sha}", "size": 1}}]"#),
+            "index.html",
+        );
+        let err = PluginManifest::parse(bad.as_bytes()).unwrap_err();
+        assert!(err.user_message().contains("files 清单"), "{err}");
+    }
+
+    #[test]
+    fn sidecar_rejected_on_ui_kind() {
+        let sha = sha_a();
+        let bad = base_manifest().replace(
+            r#""permissions": ["std.storage"]"#,
+            &format!(
+                r#""permissions": ["std.storage"],
+                "sidecar": {{"executable": "bin/agent", "protocol": 1, "max_memory_mb": 256}},
+                "files": [{{"path": "bin/agent", "sha256": "{sha}", "size": 1}}]"#
+            ),
+        );
+        let err = PluginManifest::parse(bad.as_bytes()).is_err();
+        assert!(err);
+    }
+
+    #[test]
+    fn platforms_validation() {
+        let ok = base_manifest().replace(
+            r#""permissions": ["std.storage"]"#,
+            r#""permissions": ["std.storage"], "platforms": ["macos-arm64", "linux"]"#,
+        );
+        assert!(PluginManifest::parse(ok.as_bytes()).is_ok());
+        let bad = base_manifest().replace(
+            r#""permissions": ["std.storage"]"#,
+            r#""permissions": ["std.storage"], "platforms": ["android"]"#,
+        );
+        assert!(PluginManifest::parse(bad.as_bytes()).is_err());
+        let dup = base_manifest().replace(
+            r#""permissions": ["std.storage"]"#,
+            r#""permissions": ["std.storage"], "platforms": ["linux", "linux"]"#,
+        );
+        assert!(PluginManifest::parse(dup.as_bytes()).is_err());
     }
 }

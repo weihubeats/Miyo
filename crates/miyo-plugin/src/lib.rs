@@ -34,7 +34,7 @@ pub use manifest::{
     PluginConfigField, PluginConfigFieldType, PluginConfigSchema, PluginKind, PluginManifest,
     PluginNavItem, PluginRuntimeDep, SUPPORTED_SDK_VERSION,
 };
-pub use package::{PackageInfo, OFFICIAL_SIGNING_PUBKEY_HEX};
+pub use package::{PackageInfo, TrustLevel, OFFICIAL_SIGNING_PUBKEYS};
 pub use permission::{
     lookup as lookup_permission, validate_permissions, PermissionDef, PermissionRisk,
 };

@@ -85,6 +85,9 @@ async function savePermissions(): Promise<void> {
       id: v.id,
       grantedPermissions: grantedDraft.value,
     })
+    // 后端已吊销该插件全部会话（撤销即时生效）——本地凭证同步作废
+    sessionToken.value = null
+    configPluginId.value = null
     toast.success(t('plugins.permSavedToast'))
     await manager.refreshInstalled()
     emit('changed')
@@ -110,6 +113,25 @@ const configForm = ref<Record<string, unknown>>({})
 const configSaving = ref(false)
 const configLoaded = ref(false)
 
+/**
+ * 会话凭证：plugin_data_* 现为 std 族后端强制命令（token ↔ plugin_id 绑定）。
+ * 宿主管理界面与插件 SDK 同一模型——打开抽屉时按需换取，插件切换 / 停用后
+ * 重新签发（旧 token 随服务端吊销失效）。
+ */
+const sessionToken = ref<string | null>(null)
+
+async function ensureSession(id: string): Promise<string> {
+  if (sessionToken.value !== null && configPluginId.value === id) {
+    return sessionToken.value
+  }
+  const token = await invoke<string>(`${IPC_PREFIX}plugin_session_create`, { id })
+  sessionToken.value = token
+  configPluginId.value = id
+  return token
+}
+
+const configPluginId = ref<string | null>(null)
+
 async function loadConfig(): Promise<void> {
   const v = view.value
   if (!v) return
@@ -117,10 +139,14 @@ async function loadConfig(): Promise<void> {
     const raw = await invoke<unknown | null>(`${IPC_PREFIX}plugin_data_get`, {
       id: v.id,
       key: '__config',
+      sessionToken: await ensureSession(v.id),
     })
     configForm.value = (raw as Record<string, unknown>) ?? {}
     configLoaded.value = true
   } catch {
+    // 停用 / 会话失效：配置表单保持空态（详情页仍可查看元信息与权限）
+    sessionToken.value = null
+    configPluginId.value = null
     configForm.value = {}
     configLoaded.value = true
   }
@@ -135,6 +161,7 @@ async function saveConfig(): Promise<void> {
       id: v.id,
       key: '__config',
       value: configForm.value,
+      sessionToken: await ensureSession(v.id),
     })
     toast.success(t('plugins.configSavedToast'))
   } catch (e) {
@@ -208,6 +235,10 @@ watch(
     if (open) {
       void loadConfig()
       void loadLogs()
+    } else {
+      // 关闭抽屉即释放本地凭证引用（服务端会话按 TTL / 吊销策略回收）
+      sessionToken.value = null
+      configPluginId.value = null
     }
   },
   { immediate: true },

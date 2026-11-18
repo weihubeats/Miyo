@@ -49,12 +49,22 @@ describe('PluginSDK 权限门禁', () => {
     await expect(context.commands.invoke('java_invoke', {})).rejects.toThrow('PLUGIN_PERMISSION_DENIED')
   })
 
-  it('commands.invoke：java.debug 已批准 → 放行且带 IPC 前缀', async () => {
+  it('commands.invoke：java.debug 聚合权限展开 → java.method.invoke 放行且带 IPC 前缀', async () => {
+    // java.debug（存量行）等价全部 java.* 子权限：java_invoke 需要 java.method.invoke
+    invokeMock.mockResolvedValue({ status: 'success' })
+    const { context } = createPluginSession(javaView(), hostBridge)
+    const res = await context.commands.invoke('java_invoke', { id: 'x' })
+    expect(res).toEqual({ status: 'success' })
+    expect(invokeMock).toHaveBeenCalledWith('plugin:miyo|java_invoke', { id: 'x' })
+  })
+
+  it('commands.invoke：显式子权限不足 → 拒绝（数据管理命令不再白名单）', async () => {
+    // list_java_projects 是数据管理命令：SDK 白名单不登记（宿主 useMiyoApi 专用）
     invokeMock.mockResolvedValue([])
     const { context } = createPluginSession(javaView(), hostBridge)
-    const projects = await context.commands.invoke('list_java_projects', { projectId: null })
-    expect(projects).toEqual([])
-    expect(invokeMock).toHaveBeenCalledWith('plugin:miyo|list_java_projects', { projectId: null })
+    await expect(context.commands.invoke('list_java_projects', {})).rejects.toThrow(
+      'PLUGIN_COMMAND_DENIED',
+    )
   })
 
   it('env：std.env.read 未批准 → 抛权限错误', async () => {
@@ -89,25 +99,57 @@ describe('PluginSDK 权限门禁', () => {
 })
 
 describe('PluginSDK 存储与事件', () => {
-  it('storage：调用携带 pluginId（后端按 id 隔离；__config 键保留给配置）', async () => {
-    // 会话创建即预取 __config（消费一次 get）——统一 resolve，避免 Once 被预取吃掉
-    invokeMock.mockResolvedValue({ a: 1 })
+  /** 会话凭证 mock：plugin_session_create 返回固定 token，其余按 args.key 返回。 */
+  function mockSessionToken(): string {
+    const token = 'tok-1234'
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'plugin:miyo|plugin_session_create') return Promise.resolve(token)
+      if (cmd === 'plugin:miyo|plugin_data_get') return Promise.resolve({ a: 1 })
+      return Promise.resolve(null)
+    })
+    return token
+  }
+
+  it('storage：调用携带 pluginId + sessionToken（后端按 id 隔离 + 会话校验）', async () => {
+    const token = mockSessionToken()
     const { context } = createPluginSession(javaView(), hostBridge)
     await context.storage.set('favorite', ['x'])
     expect(invokeMock).toHaveBeenCalledWith('plugin:miyo|plugin_data_set', {
       id: 'com.miyo.java-debug',
       key: 'favorite',
       value: ['x'],
+      sessionToken: token,
     })
     const got = await context.storage.get('favorite')
     expect(got).toEqual({ a: 1 })
     expect(invokeMock).toHaveBeenLastCalledWith('plugin:miyo|plugin_data_get', {
       id: 'com.miyo.java-debug',
       key: 'favorite',
+      sessionToken: token,
     })
   })
 
+  it('storage：会话失效（FORBIDDEN）→ 重建会话重试一次（撤销即时生效）', async () => {
+    const dataGetTokens: string[] = []
+    let tokenCounter = 0
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "plugin:miyo|plugin_session_create") return Promise.resolve(`tok-${++tokenCounter}`)
+      if (cmd === "plugin:miyo|plugin_data_get") {
+        dataGetTokens.push(args?.sessionToken as string)
+        return Promise.reject({ code: 'FORBIDDEN', message: 'session expired' })
+      }
+      return Promise.resolve(null)
+    })
+    const { context } = createPluginSession(javaView(), hostBridge)
+    // activate 预取 + 本次 get 各自走「失败 → 重建会话 → 重试」路径，
+    // 最终 FORBIDDEN 如实上抛；重试一律使用新签发的 token。
+    await expect(context.storage.get('k')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await vi.waitFor(() => expect(dataGetTokens.length).toBeGreaterThanOrEqual(4))
+    expect(new Set(dataGetTokens).size).toBeGreaterThanOrEqual(2)
+  })
+
   it('config：set 合并写入 __config 键', async () => {
+    const token = mockSessionToken()
     const { context } = createPluginSession(javaView(), hostBridge)
     await context.config.set({ audit_log: false })
     await context.config.set({ extra: 1 })
@@ -115,6 +157,7 @@ describe('PluginSDK 存储与事件', () => {
       id: 'com.miyo.java-debug',
       key: '__config',
       value: { audit_log: false, extra: 1 },
+      sessionToken: token,
     })
     expect(context.config.get()).toEqual({ audit_log: false, extra: 1 })
   })
@@ -144,8 +187,8 @@ describe('PluginSDK 存储与事件', () => {
     b.dispose()
   })
 
-  it('logger：audit/info 落后端（fire-and-forget，携带 pluginId）', async () => {
-    invokeMock.mockResolvedValue(null)
+  it('logger：audit/info 落后端（fire-and-forget，携带 pluginId + sessionToken）', async () => {
+    const token = mockSessionToken()
     const { context } = createPluginSession(javaView(), hostBridge)
     context.logger.audit('invoke demo#method status=ok')
     await vi.waitFor(() => {
@@ -153,6 +196,7 @@ describe('PluginSDK 存储与事件', () => {
         id: 'com.miyo.java-debug',
         level: 'audit',
         message: 'invoke demo#method status=ok',
+        sessionToken: token,
       })
     })
   })

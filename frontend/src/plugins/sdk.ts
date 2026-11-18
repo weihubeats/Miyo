@@ -17,7 +17,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '@/composables/useToast'
 import { tFallback } from '@/stores/locale'
 import { pluginEventBus, type PluginEventHandler } from './events'
-import { requiredPermissionFor } from './permissions'
+import { effectiveGranted, requiredPermissionFor } from './permissions'
 import type {
   PluginContext,
   PluginNavItem,
@@ -48,6 +48,15 @@ function permissionError(permission: string): Error {
   )
 }
 
+/** 判断 IPC 错误是否为权限 / 会话类拒绝（FORBIDDEN 语义）。 */
+function isForbiddenError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: string }).code === 'FORBIDDEN'
+  )
+}
+
 /** 一个已激活插件会话：context 给插件，dispose 由宿主回收。 */
 export interface PluginSession {
   context: PluginContext
@@ -57,12 +66,35 @@ export interface PluginSession {
 /** 为插件构造 SDK 会话。 */
 export function createPluginSession(view: PluginView, host: PluginHostBridge): PluginSession {
   const pluginId = view.id
-  const granted = new Set(view.granted_permissions)
+  const granted = effectiveGranted(view)
   const manifest = view.manifest
 
   const hasPermission = (permission: string): boolean => granted.has(permission)
   const requirePermission = (permission: string): void => {
     if (!hasPermission(permission)) throw permissionError(permission)
+  }
+
+  // ---- 会话凭证（std 族命令的后端强制凭据） ----
+  // 惰性签发（首个 storage / log 调用时换取）；FORBIDDEN（收权 / 停用 /
+  // 过期）时重建一次并重试——撤销即时生效且调用方无感，二次失败如实上抛。
+  let sessionToken: string | null = null
+  const ensureSessionToken = async (): Promise<string> => {
+    if (sessionToken === null) {
+      sessionToken = await callIpc<string>('plugin_session_create', { id: pluginId })
+    }
+    return sessionToken
+  }
+  const dropSessionToken = (): void => {
+    sessionToken = null
+  }
+  const callWithSession = async <T>(command: string, args: Record<string, unknown>): Promise<T> => {
+    try {
+      return await callIpc<T>(command, { ...args, sessionToken: await ensureSessionToken() })
+    } catch (err) {
+      if (!isForbiddenError(err)) throw err
+      dropSessionToken()
+      return callIpc<T>(command, { ...args, sessionToken: await ensureSessionToken() })
+    }
   }
 
   // ---- 事件：记录 handler 以便 dispose 统一解绑 ----
@@ -88,9 +120,11 @@ export function createPluginSession(view: PluginView, host: PluginHostBridge): P
     // 敏感信息不得经普通日志外带：SDK 不做内容过滤（调用方契约 + 管理中心可见），
     // 但长度兜底截断，避免把大对象序列化进日志表。
     const trimmed = message.length > 2000 ? `${message.slice(0, 2000)}…` : message
-    void callIpc('plugin_record_log', { id: pluginId, level, message: trimmed }).catch(() => {
-      // 日志通道失败不影响插件运行
-    })
+    void callWithSession('plugin_record_log', { id: pluginId, level, message: trimmed }).catch(
+      () => {
+        // 日志通道失败不影响插件运行
+      },
+    )
   }
   const logger = {
     debug: (m: string) => log('debug', m),
@@ -121,20 +155,20 @@ export function createPluginSession(view: PluginView, host: PluginHostBridge): P
     },
   }
 
-  // ---- 存储（后端按 plugin_id 隔离；__config 为配置保留键） ----
+  // ---- 存储（后端按 plugin_id 隔离 + 会话凭证逐调用校验；__config 为配置保留键） ----
   const storage = {
     async get<T = unknown>(key: string): Promise<T | null> {
-      const raw = await callIpc<unknown | null>('plugin_data_get', { id: pluginId, key })
+      const raw = await callWithSession<unknown | null>('plugin_data_get', { id: pluginId, key })
       return (raw ?? null) as T | null
     },
     async set(key: string, value: unknown): Promise<void> {
-      await callIpc('plugin_data_set', { id: pluginId, key, value })
+      await callWithSession('plugin_data_set', { id: pluginId, key, value })
     },
     async delete(key: string): Promise<void> {
-      await callIpc('plugin_data_delete', { id: pluginId, key })
+      await callWithSession('plugin_data_delete', { id: pluginId, key })
     },
     async keys(): Promise<string[]> {
-      return callIpc<string[]>('plugin_data_keys', { id: pluginId })
+      return callWithSession<string[]>('plugin_data_keys', { id: pluginId })
     },
   }
 

@@ -197,6 +197,8 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-plugin-data-set`
 - `allow-plugin-data-delete`
 - `allow-plugin-data-keys`
+- `allow-plugin-session-create`
+- `allow-plugin-read-asset`
 - `allow-java-discover-processes`
 - `allow-java-probe-pid`
 - `allow-java-attach-process`
@@ -4294,6 +4296,32 @@ Denies the plugin_logs command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-plugin-read-asset`
+
+</td>
+<td>
+
+Enables the plugin_read_asset command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-read-asset`
+
+</td>
+<td>
+
+Denies the plugin_read_asset command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-plugin-record-log`
 
 </td>
@@ -4339,6 +4367,32 @@ Enables the plugin_report_error command without any pre-configured scope.
 <td>
 
 Denies the plugin_report_error command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-session-create`
+
+</td>
+<td>
+
+Enables the plugin_session_create command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-session-create`
+
+</td>
+<td>
+
+Denies the plugin_session_create command without any pre-configured scope.
 
 </td>
 </tr>

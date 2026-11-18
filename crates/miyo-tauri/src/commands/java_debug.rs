@@ -17,7 +17,7 @@ use miyo_java::protocol::{InvocationStatus, InvokeResponse};
 use miyo_java::{JavaRuntimeClient, SecurityPolicy};
 use miyo_storage::repository as repo;
 
-use crate::error::{CommandError, CommandErrorCode, CommandResult};
+use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
 
 /// 参数体积上限（固定 1 MiB；SDK 侧终检同值）。
@@ -31,24 +31,8 @@ const MAX_TIMEOUT_MS: u64 = 300_000;
 ///
 /// 未安装 → PLUGIN_NOT_INSTALLED；已安装未启用 → PLUGIN_DISABLED。
 /// 场景引擎 / MCP 链路在 miyo-agent::java_hook 内做同源检查（单源执行器）。
-const JAVA_PLUGIN_ID: &str = miyo_plugin::JAVA_DEBUG_PLUGIN_ID;
-
-/// 插件门禁：Java 调试命令只在内置插件「已安装且启用」时放行。
-async fn ensure_java_plugin(db: &sqlx::SqlitePool) -> CommandResult<()> {
-    if !repo::is_plugin_installed(db, JAVA_PLUGIN_ID).await? {
-        return Err(CommandError::with_code(
-            CommandErrorCode::PluginNotInstalled,
-            "Java 调试插件未安装：请在插件管理中安装后使用",
-        ));
-    }
-    if !repo::is_plugin_enabled(db, JAVA_PLUGIN_ID).await? {
-        return Err(CommandError::with_code(
-            CommandErrorCode::PluginDisabled,
-            "Java 调试插件已停用：请在插件管理中启用",
-        ));
-    }
-    Ok(())
-}
+/// 门禁与权限细分实现共享于 [`crate::commands::java_gate`]（v1 / v2 同源）。
+use crate::commands::java_gate::{ensure_java_permission, ensure_java_plugin, JAVA_PLUGIN_ID};
 
 /// 插件配置（plugin_data `__config`；audit_log 默认开）。
 async fn java_plugin_audit_enabled(db: &sqlx::SqlitePool) -> bool {
@@ -178,7 +162,7 @@ pub async fn delete_java_project(state: State<'_, AppState>, id: Uuid) -> Comman
 pub async fn java_discover_local(
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<miyo_java::JavaDiscoveredRuntime>> {
-    ensure_java_plugin(&state.db).await?;
+    ensure_java_permission(&state.db, "java.process.discover").await?;
     Ok(miyo_java::discover_local().await)
 }
 
@@ -189,7 +173,7 @@ pub async fn java_probe_endpoint(
     endpoint: String,
     token: Option<String>,
 ) -> CommandResult<miyo_java::RuntimeInfo> {
-    ensure_java_plugin(&state.db).await?;
+    ensure_java_permission(&state.db, "java.process.discover").await?;
     let client = JavaRuntimeClient::new(&endpoint, token.as_deref(), SecurityPolicy::default())
         .map_err(CommandError::from)?;
     Ok(client.info().await?)
@@ -205,7 +189,7 @@ pub async fn java_test_connection(
     state: State<'_, AppState>,
     id: Uuid,
 ) -> CommandResult<miyo_java::RuntimeInfo> {
-    ensure_java_plugin(&state.db).await?;
+    ensure_java_permission(&state.db, "java.process.discover").await?;
     let project = repo::get_java_project(&state.db, id).await?;
     let client = client_for(&project)?;
     let info = client.info().await?;
@@ -220,7 +204,7 @@ pub async fn java_list_classes(
     id: Uuid,
     search: Option<String>,
 ) -> CommandResult<Vec<miyo_java::JavaClassInfo>> {
-    ensure_java_plugin(&state.db).await?;
+    ensure_java_permission(&state.db, "java.class.inspect").await?;
     let project = repo::get_java_project(&state.db, id).await?;
     let client = client_for(&project)?;
     let mut classes = client.classes().await?;
@@ -248,7 +232,7 @@ pub async fn java_list_methods(
     id: Uuid,
     class_name: String,
 ) -> CommandResult<Vec<miyo_java::JavaMethodInfo>> {
-    ensure_java_plugin(&state.db).await?;
+    ensure_java_permission(&state.db, "java.class.inspect").await?;
     let project = repo::get_java_project(&state.db, id).await?;
     let client = client_for(&project)?;
     Ok(client.methods(&class_name).await?)
@@ -302,7 +286,7 @@ pub async fn java_invoke(
     id: Uuid,
     args: JavaInvokeArgs,
 ) -> CommandResult<InvokeResponse> {
-    ensure_java_plugin(&state.db).await?;
+    ensure_java_permission(&state.db, "java.method.invoke").await?;
     let project = repo::get_java_project(&state.db, id).await?;
     let client = client_for(&project)?;
     let raw_arguments = args.arguments.clone();
@@ -375,7 +359,7 @@ pub async fn java_cancel_invocation(
     id: Uuid,
     invocation_id: Uuid,
 ) -> CommandResult<bool> {
-    ensure_java_plugin(&state.db).await?;
+    ensure_java_permission(&state.db, "java.runtime.attach").await?;
     let project = repo::get_java_project(&state.db, id).await?;
     let client = client_for(&project)?;
     Ok(client.cancel(invocation_id).await?)

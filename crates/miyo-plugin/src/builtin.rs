@@ -57,9 +57,16 @@ mod tests {
         let m = builtin_manifest(JAVA_DEBUG_PLUGIN_ID).unwrap();
         assert_eq!(m.version, "0.1.0");
         assert_eq!(m.kind, crate::manifest::PluginKind::Ui);
-        // 声明的权限必须全部命中目录（含高危 java.debug）。
+        // 声明的权限必须全部命中目录；v2 权限细分：java.debug 聚合键拆为
+        // 四个 java.* 子权限（清单不再声明聚合键）。
         permission::validate_permissions(&m.permissions).unwrap();
-        assert!(permission::granted(&m.permissions, "java.debug"));
+        assert!(!permission::granted(&m.permissions, "java.debug"));
+        for sub in permission::JAVA_SUB_PERMISSIONS {
+            assert!(
+                permission::granted(&m.permissions, sub),
+                "内置清单缺少子权限 {sub}"
+            );
+        }
         // 导航路由与前端历史路由保持一致（迁移期不换路径）。
         let nav = m.nav.as_ref().unwrap();
         assert_eq!(nav[0].route, "/java-debug");

@@ -41,4 +41,12 @@ error: PluginErrorView | null, installed_at: string, updated_at: string,
 /**
  * 便捷标志（state == enabled）。
  */
-enabled: boolean, };
+enabled: boolean, 
+/**
+ * 全文件清单最近一次复核是否通过（manifest 2.0 files；无清单恒 false）。
+ */
+files_verified: boolean, 
+/**
+ * 最近一次全文件复核时间（RFC3339；NULL = 从未复核）。
+ */
+last_verified_at: string | null, };

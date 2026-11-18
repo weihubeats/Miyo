@@ -55,6 +55,8 @@ export function javaView(overrides?: {
     installed_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     enabled: overrides?.view?.enabled ?? true,
+    files_verified: false,
+    last_verified_at: null,
     ...overrides?.view,
   }
 }

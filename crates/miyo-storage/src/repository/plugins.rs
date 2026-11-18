@@ -34,6 +34,10 @@ pub struct PluginRow {
     pub error_json: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 全文件清单最近一次复核是否通过（0033；v1 包无清单恒 0）。
+    pub files_verified: bool,
+    /// 最近一次全文件复核时间（RFC3339；NULL = 从未复核）。
+    pub last_verified_at: Option<String>,
 }
 
 impl PluginRow {
@@ -48,17 +52,20 @@ impl PluginRow {
     }
 }
 
+/// plugins 表 SELECT 列清单（新增列需同步此处与所有 query_as）。
+const PLUGIN_COLUMNS: &str = "id, kind, version, state, manifest_json, source, integrity, signed, \
+     granted_permissions_json, install_path, error_json, created_at, updated_at, \
+     files_verified, last_verified_at";
+
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
 /// 列出全部已安装插件（安装时间倒序）。
 pub async fn list_plugins(db: &SqlitePool) -> Result<Vec<PluginRow>> {
-    let rows: Vec<PluginRow> = sqlx::query_as(
-        "SELECT id, kind, version, state, manifest_json, source, integrity, signed, \
-         granted_permissions_json, install_path, error_json, created_at, updated_at \
-         FROM plugins ORDER BY created_at DESC",
-    )
+    let rows: Vec<PluginRow> = sqlx::query_as(&format!(
+        "SELECT {PLUGIN_COLUMNS} FROM plugins ORDER BY created_at DESC"
+    ))
     .fetch_all(db)
     .await?;
     Ok(rows)
@@ -66,11 +73,9 @@ pub async fn list_plugins(db: &SqlitePool) -> Result<Vec<PluginRow>> {
 
 /// 按 ID 取插件行。
 pub async fn get_plugin(db: &SqlitePool, id: &str) -> Result<Option<PluginRow>> {
-    let row: Option<PluginRow> = sqlx::query_as(
-        "SELECT id, kind, version, state, manifest_json, source, integrity, signed, \
-         granted_permissions_json, install_path, error_json, created_at, updated_at \
-         FROM plugins WHERE id = ?",
-    )
+    let row: Option<PluginRow> = sqlx::query_as(&format!(
+        "SELECT {PLUGIN_COLUMNS} FROM plugins WHERE id = ?"
+    ))
     .bind(id)
     .fetch_optional(db)
     .await?;
@@ -435,6 +440,130 @@ pub async fn clear_plugin_logs(db: &SqlitePool, plugin_id: &str) -> Result<()> {
         .execute(db)
         .await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 版本历史 / 权限审计 / 全文件复核（0033）
+// ---------------------------------------------------------------------------
+
+/// 落库全文件清单复核结果（安装 / 启用 / 手动校验后调用）。
+pub async fn set_files_verified(db: &SqlitePool, plugin_id: &str, ok: bool) -> Result<()> {
+    sqlx::query("UPDATE plugins SET files_verified = ?, last_verified_at = ? WHERE id = ?")
+        .bind(ok)
+        .bind(now())
+        .bind(plugin_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// 版本历史行（回滚选择列表）。
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PluginVersionRow {
+    pub id: i64,
+    pub plugin_id: String,
+    pub version: String,
+    pub manifest_json: String,
+    pub integrity: Option<String>,
+    pub signed: bool,
+    pub created_at: String,
+}
+
+/// 插入版本历史快照（更新 / 升级前调用——回滚锚点）。
+pub async fn insert_plugin_version(
+    db: &SqlitePool,
+    plugin_id: &str,
+    manifest: &PluginManifest,
+    integrity: Option<&str>,
+    signed: bool,
+) -> Result<()> {
+    let manifest_json = serde_json::to_string(manifest)
+        .map_err(|e| AppError::Validation(format!("manifest 序列化失败：{e}")))?;
+    sqlx::query(
+        "INSERT INTO plugin_versions (plugin_id, version, manifest_json, integrity, signed, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(plugin_id)
+    .bind(&manifest.version)
+    .bind(&manifest_json)
+    .bind(integrity)
+    .bind(signed)
+    .bind(now())
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// 版本历史（新→旧；每插件滚动保留 [`PLUGIN_VERSION_CAP`] 条）。
+pub async fn list_plugin_versions(db: &SqlitePool, plugin_id: &str) -> Result<Vec<PluginVersionRow>> {
+    let rows: Vec<PluginVersionRow> = sqlx::query_as(
+        "SELECT id, plugin_id, version, manifest_json, integrity, signed, created_at \
+         FROM plugin_versions WHERE plugin_id = ? ORDER BY id DESC LIMIT ?",
+    )
+    .bind(plugin_id)
+    .bind(PLUGIN_VERSION_CAP)
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}
+
+/// 删除插件全部版本历史（卸载清理）。
+pub async fn delete_plugin_versions(db: &SqlitePool, plugin_id: &str) -> Result<()> {
+    sqlx::query("DELETE FROM plugin_versions WHERE plugin_id = ?")
+        .bind(plugin_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// 每插件版本历史保留上限（滚动，防止无限增长）。
+pub const PLUGIN_VERSION_CAP: i64 = 10;
+
+/// 权限审计行。
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PluginPermissionAuditRow {
+    pub id: i64,
+    pub plugin_id: String,
+    pub action: String,
+    pub permissions_json: String,
+    pub created_at: String,
+}
+
+/// 权限授予 / 收回审计（管理中心的「权限管理」动作轨迹）。
+pub async fn insert_permission_audit(
+    db: &SqlitePool,
+    plugin_id: &str,
+    action: &str,
+    permissions: &[String],
+) -> Result<()> {
+    let perms = serde_json::to_string(permissions)
+        .map_err(|e| AppError::Validation(format!("权限序列化失败：{e}")))?;
+    sqlx::query(
+        "INSERT INTO plugin_permission_audit (plugin_id, action, permissions_json, created_at) \
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(plugin_id)
+    .bind(action)
+    .bind(&perms)
+    .bind(now())
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// 权限审计（新→旧；上限 100 条）。
+pub async fn list_permission_audit(
+    db: &SqlitePool,
+    plugin_id: &str,
+) -> Result<Vec<PluginPermissionAuditRow>> {
+    let rows: Vec<PluginPermissionAuditRow> = sqlx::query_as(
+        "SELECT id, plugin_id, action, permissions_json, created_at \
+         FROM plugin_permission_audit WHERE plugin_id = ? ORDER BY id DESC LIMIT 100",
+    )
+    .bind(plugin_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
 }
 
 #[cfg(test)]

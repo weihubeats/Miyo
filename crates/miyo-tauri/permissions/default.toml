@@ -199,6 +199,8 @@ permissions = [
 "allow-plugin-data-set",
 "allow-plugin-data-delete",
 "allow-plugin-data-keys",
+    "allow-plugin-session-create",
+    "allow-plugin-read-asset",
     "allow-java-discover-processes",
     "allow-java-probe-pid",
     "allow-java-attach-process",
