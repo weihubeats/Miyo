@@ -263,21 +263,27 @@ pub async fn plugin_install_from_path(
     trust_unsigned: bool,
 ) -> CommandResult<PluginView> {
     let version = app_version(&app);
-    install_impl(&state.db, &state.plugin_sessions, std::path::Path::new(&path), trust_unsigned, &version)
-        .await
+    install_impl(
+        &state.db,
+        &state.plugin_sessions,
+        std::path::Path::new(&path),
+        trust_unsigned,
+        &version,
+    )
+    .await
 }
 
 /// 安装核心（State 解耦——可测）。
 pub(crate) async fn install_impl(
     db: &sqlx::SqlitePool,
-    sessions: &crate::sessions::PluginSessions,
+    _sessions: &crate::sessions::PluginSessions,
     source: &std::path::Path,
     trust_unsigned: bool,
     app_version: &str,
 ) -> CommandResult<PluginView> {
     let (info, install_path) = install_from_source(db, source, trust_unsigned).await?;
     let version = app_version;
-    miyo_plugin::ensure_compatible(&info.manifest.id, &info.manifest.min_app_version, &version)
+    miyo_plugin::ensure_compatible(&info.manifest.id, &info.manifest.min_app_version, version)
         .map_err(command_err)?;
     miyo_plugin::ensure_sdk_supported(
         info.manifest.sdk_version,
@@ -430,8 +436,14 @@ pub async fn plugin_update_from_path(
     trust_unsigned: bool,
 ) -> CommandResult<PluginView> {
     let version = app_version(&app);
-    update_impl(&state.db, &state.plugin_sessions, std::path::Path::new(&path), trust_unsigned, &version)
-        .await
+    update_impl(
+        &state.db,
+        &state.plugin_sessions,
+        std::path::Path::new(&path),
+        trust_unsigned,
+        &version,
+    )
+    .await
 }
 
 /// 更新核心（State 解耦——可测）。
@@ -483,7 +495,7 @@ pub(crate) async fn update_impl(
     }
     // 兼容性 / SDK / 依赖满足性（依赖按已安装清单逐项检查）
     let version = app_version;
-    miyo_plugin::ensure_compatible(&info.manifest.id, &info.manifest.min_app_version, &version)
+    miyo_plugin::ensure_compatible(&info.manifest.id, &info.manifest.min_app_version, version)
         .map_err(command_err)?;
     miyo_plugin::ensure_sdk_supported(
         info.manifest.sdk_version,
@@ -511,8 +523,8 @@ pub(crate) async fn update_impl(
     let backup = root.join(format!(".rollback-{}", row.id));
 
     // staging 解包 + 全文件清单校验（失败即清理，不动现有安装）
-    let extracted = miyo_plugin::package::extract_package_to_dir(&bytes, &staging)
-        .map_err(|e| {
+    let extracted =
+        miyo_plugin::package::extract_package_to_dir(&bytes, &staging).map_err(|e| {
             let _ = std::fs::remove_dir_all(&staging);
             command_err(e)
         })?;
@@ -582,8 +594,13 @@ pub(crate) async fn update_impl(
         &row.id,
         &format!(
             "update local {} → v{} signed={} files_ok={}",
-            row.version, info.manifest.version, info.signed,
-            extracted.files_verified.map(|v| v.to_string()).unwrap_or_else(|| "n/a".into())
+            row.version,
+            info.manifest.version,
+            info.signed,
+            extracted
+                .files_verified
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "n/a".into())
         ),
     )
     .await;
@@ -615,8 +632,8 @@ pub(crate) async fn rollback_impl(
     })?;
     let snapshot_manifest = miyo_plugin::PluginManifest::parse(snapshot.manifest_json.as_bytes())
         .map_err(|e| {
-            CommandError::with_code(CommandErrorCode::Internal, format!("版本快照损坏：{e}"))
-        })?;
+        CommandError::with_code(CommandErrorCode::Internal, format!("版本快照损坏：{e}"))
+    })?;
     let root = plugins_root();
     let dest = root.join(id);
     let backup = root.join(format!(".rollback-{id}"));
@@ -656,18 +673,19 @@ pub(crate) async fn rollback_impl(
         &granted,
     )
     .await?;
-    if snapshot_manifest.files.is_some() {
-        let files_ok = miyo_plugin::package::verify_dir_files(&dest, snapshot_manifest.files.as_ref().unwrap()).is_ok();
-        repo::set_files_verified(db, id, files_ok).await?;
-    } else {
-        repo::set_files_verified(db, id, false).await?;
+    match &snapshot_manifest.files {
+        Some(files) => {
+            let files_ok = miyo_plugin::package::verify_dir_files(&dest, files).is_ok();
+            repo::set_files_verified(db, id, files_ok).await?;
+        }
+        None => repo::set_files_verified(db, id, false).await?,
     }
     // 已消费该快照（防重复回滚到同一版本）；会话吊销（版本已回退）
     let _ = repo::delete_plugin_versions(db, id).await;
     sessions.revoke_plugin(id);
     audit(
         db,
-        &id,
+        id,
         &format!("rollback {} → v{}", row.version, snapshot_manifest.version),
     )
     .await;
@@ -697,12 +715,7 @@ async fn check_dependencies(
         })
     };
     miyo_plugin::deps::check_enable(manifest, &lookup, app_version)
-        .map_err(|e| {
-            CommandError::validation(format!(
-                "依赖检查未通过：{}",
-                e.user_message()
-            ))
-        })
+        .map_err(|e| CommandError::validation(format!("依赖检查未通过：{}", e.user_message())))
         .map(|_| ())
 }
 
@@ -1283,15 +1296,14 @@ mod tests {
         );
         // 不带 integrity 自声明（安装端现算 manifest 字节摘要并落库——
         // 自引用字段无法自洽，hello-world 示例同样不带）
-        build_tar_gz(&[
-            ("manifest.json", manifest.as_bytes()),
-            ("index.html", html),
-        ])
+        build_tar_gz(&[("manifest.json", manifest.as_bytes()), ("index.html", html)])
     }
 
     async fn test_db() -> (tempfile::TempDir, sqlx::SqlitePool) {
         let tmp = tempfile::tempdir().unwrap();
-        let db = miyo_storage::db::init_db(&tmp.path().join("t.db")).await.unwrap();
+        let db = miyo_storage::db::init_db(&tmp.path().join("t.db"))
+            .await
+            .unwrap();
         (tmp, db)
     }
 
@@ -1306,23 +1318,35 @@ mod tests {
         let v1 = build_package("1.0.0", b"<html>v1</html>");
         let p1 = pkg_dir.path().join("v1.miyo");
         std::fs::write(&p1, &v1).unwrap();
-        let view = install_impl(&db, &sessions, &p1, true, app_version).await.unwrap();
+        let view = install_impl(&db, &sessions, &p1, true, app_version)
+            .await
+            .unwrap();
         assert_eq!(view.version, "1.0.0");
         assert!(view.files_verified);
-        repo::set_plugin_state(&db, "com.e2e.upd", STATE_ENABLED, None).await.unwrap();
+        repo::set_plugin_state(&db, "com.e2e.upd", STATE_ENABLED, None)
+            .await
+            .unwrap();
         // 会话可用（std 族 token 签发）
         sessions.create("com.e2e.upd", vec![]);
 
         // ---- 篡改包：文件内容与清单不符 → 更新拒绝，v1 原样 ----
         let bad = build_tar_gz(&[
-            ("manifest.json", &build_manifest_bytes("2.0.0", b"<html>v2</html>")),
+            (
+                "manifest.json",
+                &build_manifest_bytes("2.0.0", b"<html>v2</html>"),
+            ),
             ("index.html", b"<html>TAMPERED</html>"),
         ]);
         let pb = pkg_dir.path().join("bad.miyo");
         std::fs::write(&pb, &bad).unwrap();
-        assert!(update_impl(&db, &sessions, &pb, true, app_version).await.is_err());
+        assert!(update_impl(&db, &sessions, &pb, true, app_version)
+            .await
+            .is_err());
         assert_eq!(
-            repo::require_plugin(&db, "com.e2e.upd").await.unwrap().version,
+            repo::require_plugin(&db, "com.e2e.upd")
+                .await
+                .unwrap()
+                .version,
             "1.0.0"
         );
 
@@ -1330,18 +1354,32 @@ mod tests {
         let v2 = build_package("2.0.0", b"<html>v2</html>");
         let p2 = pkg_dir.path().join("v2.miyo");
         std::fs::write(&p2, &v2).unwrap();
-        let view = update_impl(&db, &sessions, &p2, true, app_version).await.unwrap();
+        let view = update_impl(&db, &sessions, &p2, true, app_version)
+            .await
+            .unwrap();
         assert_eq!(view.version, "2.0.0");
         assert!(view.files_verified);
         // 版本历史落库 + 备份目录存在
-        assert_eq!(repo::list_plugin_versions(&db, "com.e2e.upd").await.unwrap().len(), 1);
+        assert_eq!(
+            repo::list_plugin_versions(&db, "com.e2e.upd")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
         assert!(plugins_root().join(".rollback-com.e2e.upd").is_dir());
 
         // ---- 回滚 → v1 ----
         let view = rollback_impl(&db, &sessions, "com.e2e.upd").await.unwrap();
         assert_eq!(view.version, "1.0.0");
         // 快照已消费（防重复回滚）
-        assert_eq!(repo::list_plugin_versions(&db, "com.e2e.upd").await.unwrap().len(), 0);
+        assert_eq!(
+            repo::list_plugin_versions(&db, "com.e2e.upd")
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
         assert!(!plugins_root().join(".rollback-com.e2e.upd").exists());
         // 回滚后的目录文件确为 v1 内容（备份目录原样换回）
         let html = std::fs::read(plugins_root().join("com.e2e.upd/index.html")).unwrap();
