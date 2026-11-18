@@ -11,7 +11,11 @@
  */
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
+import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { useMiyoApi } from '@/composables/useMiyoApi'
+import { useLocaleStore } from '@/stores/locale'
+import { useToast } from '@/composables/useToast'
+import { errorText } from '@/utils/errorText'
 import type {
   JavaAgentInvokeResponse,
   JavaAgentMethodInfo,
@@ -63,6 +67,9 @@ export function normalizeClass(item: {
 
 export const useJavaAttachStore = defineStore('javaAttach', () => {
   const api = useMiyoApi()
+  const t = useLocaleStore().t
+  const toast = useToast()
+  const IPC_PREFIX = 'plugin:miyo|'
 
   // ---------- 进程发现 ----------
   const summary = ref<JavaProcessListSummary | null>(null)
@@ -91,6 +98,62 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
     if (scanTimer !== null) {
       clearInterval(scanTimer)
       scanTimer = null
+    }
+  }
+
+  // ---------- Attach 组件（agent / launcher jar）自动获取 ----------
+
+  interface JavaComponentItem {
+    name: string
+    present: boolean
+    path: string | null
+    download_url: string
+  }
+  interface JavaComponentStatus {
+    ready: boolean
+    base_dir: string
+    items: JavaComponentItem[]
+  }
+
+  const componentStatus = ref<JavaComponentStatus | null>(null)
+  const componentsDownloading = ref(false)
+
+  /** 查询组件状态（幂等）。 */
+  async function loadComponentStatus(): Promise<JavaComponentStatus | null> {
+    try {
+      componentStatus.value = await tauriInvoke<JavaComponentStatus>(
+        `${IPC_PREFIX}java_component_status`,
+      )
+      return componentStatus.value
+    } catch {
+      componentStatus.value = null
+      return null
+    }
+  }
+
+  /** 下载缺失组件（后端 sha256 校验 + 原子落盘；成功后刷新进程诊断）。 */
+  async function downloadComponents(): Promise<boolean> {
+    componentsDownloading.value = true
+    try {
+      componentStatus.value = await tauriInvoke<JavaComponentStatus>(
+        `${IPC_PREFIX}java_component_download`,
+      )
+      // 组件就绪后刷新进程诊断（launcher_ready 变化）
+      void loadProcesses()
+      return componentStatus.value.ready
+    } catch (e) {
+      toast.error(t('java2.componentsDownloadFailed'), { message: errorText(e) })
+      return false
+    } finally {
+      componentsDownloading.value = false
+    }
+  }
+
+  /** 组件缺失 → 自动下载（插件激活时调用；幂等，已就绪零开销）。 */
+  async function ensureComponents(): Promise<void> {
+    const status = await loadComponentStatus()
+    if (status && !status.ready && !componentsDownloading.value) {
+      void downloadComponents()
     }
   }
 
@@ -480,6 +543,12 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
     // 发现
     summary,
     processes,
+    // 组件（agent / launcher jar）自动获取
+    componentStatus,
+    componentsDownloading,
+    loadComponentStatus,
+    downloadComponents,
+    ensureComponents,
     filteredProcesses,
     processSearch,
     autoRefresh,

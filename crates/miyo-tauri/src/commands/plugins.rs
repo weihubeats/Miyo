@@ -1086,7 +1086,7 @@ fn validate_download_url(raw: &str) -> CommandResult<String> {
 }
 
 /// 下载插件包字节（流式累计限额 + 总超时；Content-Length 预检）。
-async fn download_package(url: &str) -> CommandResult<Vec<u8>> {
+pub(crate) async fn download_package(url: &str) -> CommandResult<Vec<u8>> {
     let client = reqwest::Client::builder()
         // 一次性下载：禁用连接池（池化空闲连接的后台任务在测试并行 /
         // 进程内多 runtime 场景下可能被取消——hyper Canceled）

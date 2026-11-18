@@ -223,6 +223,8 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-java-agent-beans`
 - `allow-java-agent-invoke`
 - `allow-java-agent-cancel`
+- `allow-java-component-status`
+- `allow-java-component-download`
 - `allow-list-java-projects`
 - `allow-save-java-project`
 - `allow-delete-java-project`
@@ -2817,6 +2819,58 @@ Enables the java_cancel_invocation command without any pre-configured scope.
 <td>
 
 Denies the java_cancel_invocation command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-component-download`
+
+</td>
+<td>
+
+Enables the java_component_download command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-component-download`
+
+</td>
+<td>
+
+Denies the java_component_download command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-component-status`
+
+</td>
+<td>
+
+Enables the java_component_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-component-status`
+
+</td>
+<td>
+
+Denies the java_component_status command without any pre-configured scope.
 
 </td>
 </tr>

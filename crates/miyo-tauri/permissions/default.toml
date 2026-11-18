@@ -225,6 +225,8 @@ permissions = [
     "allow-java-agent-beans",
     "allow-java-agent-invoke",
     "allow-java-agent-cancel",
+    "allow-java-component-status",
+    "allow-java-component-download",
     "allow-list-java-projects",
     "allow-save-java-project",
     "allow-delete-java-project",

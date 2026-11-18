@@ -105,8 +105,10 @@ impl AttachManager {
             }
         }
         Err(AppError::NotFound(format!(
-            "未找到 Attach 工具 jar（miyo-attach-launcher.jar / miyo-java-agent.jar）。\
-             搜索目录：{}。开发模式请先运行 scripts/build_java_debug.sh",
+            "Attach 工具 jar 缺失（miyo-attach-launcher.jar / miyo-java-agent.jar）。\
+             搜索目录：{}。\
+             组件会在插件启用后自动下载到首选项目录；也可在工作台点「下载组件」手动获取，\
+             或开发模式运行 scripts/build_java_debug.sh",
             self.jar_candidates
                 .iter()
                 .map(|p| p.display().to_string())

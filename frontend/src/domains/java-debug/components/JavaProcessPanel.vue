@@ -19,6 +19,7 @@ defineProps<{
   activePid: number | null
   attachedPids: number[]
   autoRefresh: boolean
+  componentsDownloading: boolean
 }>()
 
 const emit = defineEmits<{
@@ -28,6 +29,7 @@ const emit = defineEmits<{
   (e: 'select', pid: number): void
   (e: 'attach', pid: number): void
   (e: 'manualPid', pid: number): void
+  (e: 'downloadComponents'): void
 }>()
 
 const t = useLocaleStore().t
@@ -102,6 +104,18 @@ function kindLabel(p: JavaProcessInfo): string {
     <!-- 工具链诊断（无 JDK / jar 缺失时给出可操作提示） -->
     <div v-if="summary && !summary.launcher_ready" class="jpp-hint danger">
       {{ t('java2.jarMissing') }}
+      <button
+        class="miyo-btn miyo-btn-sm jpp-download-btn"
+        type="button"
+        :disabled="componentsDownloading"
+        @click="emit('downloadComponents')"
+      >
+        {{
+          componentsDownloading
+            ? t('java2.componentsDownloading')
+            : t('java2.componentsDownload')
+        }}
+      </button>
     </div>
     <div v-else-if="summary && summary.toolchain_count === 0" class="jpp-hint danger">
       {{ t('java2.noToolchain') }}

@@ -92,6 +92,8 @@ onMounted(async () => {
   if (viewMode.value === 'attach') {
     await attachStore.loadProcesses()
     attachStore.setAutoRefresh(true)
+    // 组件自动获取：agent / launcher jar 缺失即后台下载（sha256 校验 + 原子落盘）
+    void attachStore.ensureComponents()
   } else {
     await runtimeStore.loadProjects()
     if (runtimeStore.projects.length > 0 && runtimeStore.connection.state !== 'ok') {
@@ -556,10 +558,12 @@ const modeOptions = computed(() => [
               :active-pid="attachStore.activePid"
               :attached-pids="attachedPids"
               :auto-refresh="attachStore.autoRefresh"
+              :components-downloading="attachStore.componentsDownloading"
               @update:search="attachStore.processSearch = $event"
               @update:auto-refresh="attachStore.setAutoRefresh($event)"
               @refresh="attachStore.loadProcesses()"
               @select="attachStore.activePid = $event"
+              @download-components="attachStore.downloadComponents()"
               @attach="requestAttach"
               @manual-pid="manualProbe"
             />

@@ -222,6 +222,8 @@ const COMMANDS: &[&str] = &[
     "java_agent_beans",
     "java_agent_invoke",
     "java_agent_cancel",
+    "java_component_status",
+    "java_component_download",
     // Java 方法实时调试（commands/java_debug.rs）
     "list_java_projects",
     "save_java_project",

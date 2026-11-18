@@ -300,6 +300,9 @@ jobs:
       - name: Pack market plugins (远程安装附件)
         run: bash scripts/pack_market_plugins.sh artifacts/market
 
+      - name: Pack Java Attach components (jar + sha256)
+        run: bash scripts/pack_java_components.sh artifacts/java
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:

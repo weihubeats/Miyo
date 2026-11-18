@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-component-download"
+description = "Enables the java_component_download command without any pre-configured scope."
+commands.allow = ["java_component_download"]
+
+[[permission]]
+identifier = "deny-java-component-download"
+description = "Denies the java_component_download command without any pre-configured scope."
+commands.deny = ["java_component_download"]

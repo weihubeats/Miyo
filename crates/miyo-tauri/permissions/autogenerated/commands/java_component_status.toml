@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-component-status"
+description = "Enables the java_component_status command without any pre-configured scope."
+commands.allow = ["java_component_status"]
+
+[[permission]]
+identifier = "deny-java-component-status"
+description = "Denies the java_component_status command without any pre-configured scope."
+commands.deny = ["java_component_status"]

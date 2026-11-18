@@ -1930,6 +1930,10 @@ export const en: Record<ZhKey, string> = {
   'java.connectingAuto': 'Auto-connecting…',
 
   // Java Debug 2.0: local JVM attach (zero source-code intrusion)
+  'java2.jarMissingAction': 'Download missing components',
+  'java2.componentsDownload': 'Download components',
+  'java2.componentsDownloading': 'Downloading…',
+  'java2.componentsDownloadFailed': 'Component download failed',
   'java2.modeAttach': 'Local processes',
   'java2.modeRuntime': 'Runtime (SDK)',
   'java2.tabProcesses': 'Processes',

@@ -1924,6 +1924,10 @@ export const zh = {
   'java.connectingAuto': '自动连接中…',
 
   // Java Debug 2.0：本地 JVM Attach（零源码侵入）
+  'java2.jarMissingAction': '下载缺失组件',
+  'java2.componentsDownload': '下载组件',
+  'java2.componentsDownloading': '下载中…',
+  'java2.componentsDownloadFailed': '组件下载失败',
   'java2.modeAttach': '本地进程',
   'java2.modeRuntime': 'Runtime (SDK)',
   'java2.tabProcesses': '进程',

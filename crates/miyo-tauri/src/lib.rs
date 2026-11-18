@@ -89,6 +89,9 @@ fn init_tracing() {
 /// 2. 开发回退：仓库 java/dist/（scripts/build_java_debug.sh 产物）。
 fn java_attach_jar_candidates(app: &tauri::AppHandle) -> Vec<std::path::PathBuf> {
     let mut candidates = Vec::new();
+    // 0. 组件自动下载落地目录（市场远程获取的 jar 优先于随包资源——
+    //    远程版本可能比安装包携带的更新）
+    candidates.push(miyo_storage::db::data_dir().join("java"));
     if let Ok(res_dir) = app
         .path()
         .resolve("java", tauri::path::BaseDirectory::Resource)
@@ -374,6 +377,8 @@ pub mod plugin {
                 commands::java_agent_beans,
                 commands::java_agent_invoke,
                 commands::java_agent_cancel,
+                commands::java_component_status,
+                commands::java_component_download,
                 commands::list_java_projects,
                 commands::save_java_project,
                 commands::delete_java_project,
