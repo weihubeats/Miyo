@@ -28,6 +28,7 @@ miyo-sync = { path = "../miyo-sync" }
 miyo-grpc = { path = "../miyo-grpc" }
 miyo-java = { path = "../miyo-java" }
 miyo-java-attach = { path = "../miyo-java-attach" }
+miyo-sidecar = { path = "../miyo-sidecar" }
 miyo-openapi = { path = "../miyo-openapi" }
 miyo-test = { path = "../miyo-test" }
 miyo-plugin = { path = "../miyo-plugin" }

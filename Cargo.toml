@@ -22,6 +22,7 @@ members = [
     "crates/miyo-java",
     "crates/miyo-java-attach",
     "crates/miyo-plugin",
+    "crates/miyo-sidecar",
 ]
 
 [workspace.package]

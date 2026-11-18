@@ -92,6 +92,10 @@ const COMMAND_PERMISSIONS: Record<string, string> = {
   java_agent_beans: 'java.class.inspect',
   java_agent_invoke: 'java.method.invoke',
   java_agent_cancel: 'java.runtime.attach',
+  // Sidecar 生命周期（常驻型插件进程；宿主视图 plugin_sidecar_status 不经 SDK）
+  plugin_sidecar_start: 'runtime.process.start',
+  plugin_sidecar_stop: 'runtime.process.stop',
+  plugin_sidecar_request: 'runtime.process.start',
   // 环境读取域（std.env.read；只读）
   list_environments: 'std.env.read',
   get_projects: 'std.env.read',

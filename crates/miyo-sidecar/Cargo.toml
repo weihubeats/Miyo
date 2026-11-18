@@ -1,0 +1,28 @@
+[package]
+name = "miyo-sidecar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Miyo 插件 Sidecar Runtime Supervisor：常驻型插件子进程的生命周期 / 心跳 / 资源限制 / 退出清理"
+
+[dependencies]
+miyo-core = { path = "../miyo-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["process"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Job Object（KILL_ON_JOB_CLOSE + 进程内存上限）
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

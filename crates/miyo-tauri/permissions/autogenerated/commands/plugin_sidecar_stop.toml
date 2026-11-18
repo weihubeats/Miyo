@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-plugin-sidecar-stop"
+description = "Enables the plugin_sidecar_stop command without any pre-configured scope."
+commands.allow = ["plugin_sidecar_stop"]
+
+[[permission]]
+identifier = "deny-plugin-sidecar-stop"
+description = "Denies the plugin_sidecar_stop command without any pre-configured scope."
+commands.deny = ["plugin_sidecar_stop"]

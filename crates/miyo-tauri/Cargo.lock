@@ -3099,6 +3099,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "miyo-sidecar"
+version = "0.0.1"
+dependencies = [
+ "libc",
+ "miyo-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "miyo-sign"
 version = "0.0.1"
 dependencies = [
@@ -3170,6 +3185,7 @@ dependencies = [
  "miyo-oauth",
  "miyo-openapi",
  "miyo-plugin",
+ "miyo-sidecar",
  "miyo-storage",
  "miyo-sync",
  "miyo-test",

@@ -345,6 +345,10 @@ pub mod plugin {
                 commands::plugin_data_keys,
                 commands::plugin_session_create,
                 commands::plugin_read_asset,
+                commands::plugin_sidecar_start,
+                commands::plugin_sidecar_stop,
+                commands::plugin_sidecar_status,
+                commands::plugin_sidecar_request,
                 // Java 方法实时调试（commands/java_debug.rs，插件门禁见该文件）
                 // Java Debug 2.0 Attach（commands/java_attach.rs）
                 commands::java_discover_processes,

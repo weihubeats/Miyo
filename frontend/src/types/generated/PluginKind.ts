@@ -3,4 +3,4 @@
 /**
  * 插件形态。
  */
-export type PluginKind = "ui" | "uisidecar";
+export type PluginKind = "ui" | "ui-sidecar";

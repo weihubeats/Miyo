@@ -129,6 +129,10 @@ fn main() {
                 tauri::async_runtime::block_on(
                     miyo_tauri::commands::java_attach::shutdown_attach_on_exit(app),
                 );
+                // 常驻插件 sidecar：进程组全量终止（防残留）
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.sidecar.shutdown_all().await;
+                }
             }
         });
 }

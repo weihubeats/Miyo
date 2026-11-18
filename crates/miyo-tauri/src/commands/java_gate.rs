@@ -34,10 +34,7 @@ pub(crate) async fn ensure_java_plugin(db: &SqlitePool) -> CommandResult<()> {
 }
 
 /// 权限门禁：在插件门禁之上检查 granted 快照是否持有指定 `java.*` 子权限。
-pub(crate) async fn ensure_java_permission(
-    db: &SqlitePool,
-    permission: &str,
-) -> CommandResult<()> {
+pub(crate) async fn ensure_java_permission(db: &SqlitePool, permission: &str) -> CommandResult<()> {
     ensure_java_plugin(db).await?;
     let granted = repo::require_plugin(db, JAVA_PLUGIN_ID)
         .await?

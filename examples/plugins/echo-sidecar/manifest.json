@@ -1,0 +1,29 @@
+{
+  "id": "com.example.echo-sidecar",
+  "name": "Echo Sidecar 示例",
+  "description": "ui-sidecar 形态参考插件：iframe UI + 常驻 echo-sidecar 进程（握手鉴权 / 心跳 / 崩溃恢复）。构建方式见 README.md。",
+  "version": "0.1.0",
+  "authors": ["Miyo Examples"],
+  "kind": "ui-sidecar",
+  "min_app_version": "0.0.60",
+  "sdk_version": 1,
+  "platforms": ["windows", "macos", "linux"],
+  "entry": "index.html",
+  "sidecar": {
+    "executable": "bin/echo-sidecar",
+    "protocol": 1,
+    "max_memory_mb": 256,
+    "restart_policy": "on-crash"
+  },
+  "permissions": [
+    "std.storage",
+    "std.log",
+    "std.notify",
+    "runtime.process.start",
+    "runtime.process.stop"
+  ],
+  "files": [
+    { "path": "index.html", "sha256": "PLACEHOLDER", "size": 0 },
+    { "path": "bin/echo-sidecar", "sha256": "PLACEHOLDER", "size": 0 }
+  ]
+}

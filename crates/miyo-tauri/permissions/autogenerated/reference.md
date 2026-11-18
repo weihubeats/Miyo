@@ -199,6 +199,10 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-plugin-data-keys`
 - `allow-plugin-session-create`
 - `allow-plugin-read-asset`
+- `allow-plugin-sidecar-start`
+- `allow-plugin-sidecar-stop`
+- `allow-plugin-sidecar-status`
+- `allow-plugin-sidecar-request`
 - `allow-java-discover-processes`
 - `allow-java-probe-pid`
 - `allow-java-attach-process`
@@ -4445,6 +4449,110 @@ Enables the plugin_set_permissions command without any pre-configured scope.
 <td>
 
 Denies the plugin_set_permissions command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-sidecar-request`
+
+</td>
+<td>
+
+Enables the plugin_sidecar_request command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-sidecar-request`
+
+</td>
+<td>
+
+Denies the plugin_sidecar_request command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-sidecar-start`
+
+</td>
+<td>
+
+Enables the plugin_sidecar_start command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-sidecar-start`
+
+</td>
+<td>
+
+Denies the plugin_sidecar_start command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-sidecar-status`
+
+</td>
+<td>
+
+Enables the plugin_sidecar_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-sidecar-status`
+
+</td>
+<td>
+
+Denies the plugin_sidecar_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-sidecar-stop`
+
+</td>
+<td>
+
+Enables the plugin_sidecar_stop command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-sidecar-stop`
+
+</td>
+<td>
+
+Denies the plugin_sidecar_stop command without any pre-configured scope.
 
 </td>
 </tr>

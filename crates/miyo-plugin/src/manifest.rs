@@ -20,7 +20,7 @@ pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 /// 插件形态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum PluginKind {
     /// 纯前端页面插件。
     Ui,
@@ -251,10 +251,10 @@ impl PluginManifest {
                 self.sdk_version
             )));
         }
-        // kind：sidecar 形态 v1 预留未启用，明确拒绝而不是静默降级。
-        if self.kind == PluginKind::UiSidecar {
+        // kind：ui-sidecar 必须携带完整 sidecar 配置（协议号 / 可执行文件）。
+        if self.kind == PluginKind::UiSidecar && self.sidecar.is_none() {
             return Err(AppError::Validation(
-                "ui-sidecar 插件形态尚未开放（协议预留）".into(),
+                "ui-sidecar 插件必须提供 sidecar 配置（executable / protocol）".into(),
             ));
         }
         if let Some(entry) = &self.entry {
@@ -769,10 +769,25 @@ mod tests {
     }
 
     #[test]
-    fn rejects_sidecar_kind_for_now() {
+    fn ui_sidecar_requires_sidecar_config() {
+        // ui-sidecar 无 sidecar 配置 → 拒绝
         let bad = base_manifest().replace("\"kind\": \"ui\"", "\"kind\": \"ui-sidecar\"");
         let err = PluginManifest::parse(bad.as_bytes()).unwrap_err();
-        assert!(err.user_message().contains("ui-sidecar"), "{err}");
+        assert!(err.user_message().contains("sidecar"), "{err}");
+        // ui-sidecar + 完整 sidecar 配置 → 通过
+        let sha = sha_a();
+        let ok = base_manifest()
+            .replace("\"kind\": \"ui\"", "\"kind\": \"ui-sidecar\"")
+            .replace(
+                r#""permissions": ["std.storage"]"#,
+                &format!(
+                    r#""permissions": ["std.storage", "runtime.process.start", "runtime.process.stop"],
+                    "entry": "index.html",
+                    "sidecar": {{"executable": "bin/echo-sidecar", "protocol": 1, "max_memory_mb": 256, "restart_policy": "on-crash"}},
+                    "files": [{{"path": "index.html", "sha256": "{sha}", "size": 64}}, {{"path": "bin/echo-sidecar", "sha256": "{sha}", "size": 8}}]"#
+                ),
+            );
+        PluginManifest::parse(ok.as_bytes()).unwrap();
     }
 
     #[test]

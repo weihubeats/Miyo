@@ -115,6 +115,8 @@ pub struct AppState {
     pub java_attach: Arc<miyo_java_attach::AttachManager>,
     /// 插件会话凭证表（std 族命令的后端强制凭据；内存态）。
     pub plugin_sessions: crate::sessions::PluginSessions,
+    /// 常驻型插件 sidecar 监督器（握手 / 心跳 / 崩溃恢复 / 进程组清理）。
+    pub sidecar: Arc<miyo_sidecar::Supervisor>,
 }
 
 /// 请求热路径的全局设置快照：命中时免去每次请求 2~3 次 settings SELECT +
@@ -189,6 +191,7 @@ impl AppState {
     /// 由 lib.rs setup 以 AppHandle 解析后传入）。
     pub fn new(db: SqlitePool, jar_candidates: Vec<std::path::PathBuf>) -> Self {
         AppState {
+            sidecar: crate::commands::sidecar::build_supervisor(db.clone()),
             db,
             active: AsyncRwLock::new(ActiveContext::default()),
             mock: AsyncRwLock::new(None),

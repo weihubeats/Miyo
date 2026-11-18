@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Echo Sidecar</title>
+  <style>
+    /* 沙箱 iframe 不继承主程序样式：自持（与 hello-world 同约定） */
+    body { font-family: system-ui; padding: 16px; color: #222; }
+    button { margin: 4px 4px 4px 0; padding: 6px 12px; }
+    pre { background: #f5f5f5; padding: 8px; min-height: 24px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h3>Echo Sidecar 示例</h3>
+  <button id="start">runtime.start（启动 sidecar）</button>
+  <button id="call">sidecar echo 调用</button>
+  <button id="stop">runtime.stop（停止 sidecar）</button>
+  <pre id="out">（点击 start 后 sidecar 由宿主托管启动）</pre>
+  <script>
+    // RPC 客户端（与 hello-world 相同的最小实现）
+    let seq = 0
+    const pending = new Map()
+    function rpc(method, params) {
+      return new Promise((resolve, reject) => {
+        const id = `r${++seq}`
+        pending.set(id, { resolve, reject })
+        window.parent.postMessage({ v: 1, type: 'req', id, method, params }, '*')
+        setTimeout(() => {
+          if (pending.has(id)) { pending.delete(id); reject(new Error('timeout')) }
+        }, 10000)
+      })
+    }
+    window.addEventListener('message', (ev) => {
+      const f = ev.data
+      if (!f || f.type !== 'res' || !pending.has(f.id)) return
+      const { resolve, reject } = pending.get(f.id)
+      pending.delete(f.id)
+      f.ok ? resolve(f.result) : reject(new Error(`${f.error?.code}: ${f.error?.message}`))
+    })
+    const out = document.getElementById('out')
+    const log = (m) => { out.textContent = `${m}\n${out.textContent}` }
+    document.getElementById('start').onclick = async () => {
+      try { log('start → ' + JSON.stringify(await rpc('commands.invoke', { command: 'plugin_sidecar_start', args: {} }))) }
+      catch (e) { log('start 失败：' + e.message) }
+    }
+    document.getElementById('call').onclick = async () => log('echo → ' + JSON.stringify(await rpc('commands.invoke', { command: 'plugin_sidecar_request', args: { method: 'echo', params: { hi: 'sidecar' } } })))
+    document.getElementById('stop').onclick = async () => {
+      try { log('stop → ' + JSON.stringify(await rpc('commands.invoke', { command: 'plugin_sidecar_stop', args: {} }))) }
+      catch (e) { log('stop 失败：' + e.message) }
+    }
+  </script>
+</body>
+</html>

@@ -442,7 +442,9 @@ pub async fn plugin_set_enabled(
                 CommandError::with_code(CommandErrorCode::PluginIncompatible, e.user_message())
             })?;
         // 全文件完整性复核（manifest.integrity + files 清单双重锚定）
-        verify_installed_files(&state.db, &row).await.map_err(command_err)?;
+        verify_installed_files(&state.db, &row)
+            .await
+            .map_err(command_err)?;
         repo::set_plugin_state(&state.db, &id, STATE_ENABLED, None).await?;
         audit(&state.db, &id, &format!("enable v{}", row.version)).await;
     } else {
@@ -466,8 +468,7 @@ async fn verify_installed_files(
     };
     let dir = std::path::PathBuf::from(path);
     if let Some(expected) = &row.integrity {
-        let bytes = std::fs::read(dir.join("manifest.json"))
-            .map_err(miyo_core::AppError::Io)?;
+        let bytes = std::fs::read(dir.join("manifest.json")).map_err(miyo_core::AppError::Io)?;
         miyo_plugin::package::verify_manifest_integrity(&bytes, expected)?;
     }
     let manifest = row.manifest()?;
@@ -752,7 +753,9 @@ pub async fn plugin_read_asset(
         || rel_path.starts_with('/')
         || rel_path.starts_with('\\')
         || rel_path.contains('\\')
-        || rel_path.split('/').any(|seg| seg.is_empty() || seg == "." || seg == "..")
+        || rel_path
+            .split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
     {
         return Err(CommandError::validation(format!(
             "插件资源路径非法：{rel_path}"
@@ -768,9 +771,11 @@ pub async fn plugin_read_asset(
             "插件资源扩展名 .{ext} 不在白名单内"
         )));
     }
-    let root = std::path::PathBuf::from(install_path).canonicalize().map_err(|e| {
-        CommandError::with_code(CommandErrorCode::Io, format!("插件目录解析失败：{e}"))
-    })?;
+    let root = std::path::PathBuf::from(install_path)
+        .canonicalize()
+        .map_err(|e| {
+            CommandError::with_code(CommandErrorCode::Io, format!("插件目录解析失败：{e}"))
+        })?;
     let target = root.join(&rel_path);
     let meta = std::fs::symlink_metadata(&target).map_err(|_| {
         CommandError::with_code(
@@ -843,8 +848,8 @@ async fn install_from_source(
     let dest = plugins_root().join(&info.manifest.id);
     let staging = plugins_root().join(format!(".staging-{}", uuid::Uuid::new_v4().simple()));
     // 解包 + 全文件清单校验（staging 内完成；失败即清理，不动 dest）
-    let extracted = miyo_plugin::package::extract_package_to_dir(&bytes, &staging)
-        .map_err(|e| {
+    let extracted =
+        miyo_plugin::package::extract_package_to_dir(&bytes, &staging).map_err(|e| {
             let _ = std::fs::remove_dir_all(&staging);
             command_err(e)
         })?;

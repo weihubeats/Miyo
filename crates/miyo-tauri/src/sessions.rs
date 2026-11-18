@@ -149,8 +149,14 @@ mod tests {
         let t1 = s.create("com.a.x", vec![]);
         let t2 = s.create("com.a.x", vec![]);
         s.revoke_plugin("com.a.x");
-        assert!(matches!(s.validate(&t1, "com.a.x"), Err(SessionError::Unknown)));
-        assert!(matches!(s.validate(&t2, "com.a.x"), Err(SessionError::Unknown)));
+        assert!(matches!(
+            s.validate(&t1, "com.a.x"),
+            Err(SessionError::Unknown)
+        ));
+        assert!(matches!(
+            s.validate(&t2, "com.a.x"),
+            Err(SessionError::Unknown)
+        ));
     }
 
     #[test]

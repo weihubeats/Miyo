@@ -197,6 +197,10 @@ const COMMANDS: &[&str] = &[
     "plugin_data_keys",
     "plugin_session_create",
     "plugin_read_asset",
+    "plugin_sidecar_start",
+    "plugin_sidecar_stop",
+    "plugin_sidecar_status",
+    "plugin_sidecar_request",
     // Java Debug 2.0 Attach（commands/java_attach.rs）
     "java_discover_processes",
     "java_probe_pid",
