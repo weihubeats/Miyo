@@ -71,7 +71,12 @@ jobs:
           java-version: '17'
       - name: Build attach jars + e2e demo target (plain-app classes8)
         run: |
-          bash scripts/build_java_debug.sh
+          # Maven Central 偶发解析失败（v0.0.61 CI 实测：已存在的
+          # maven-resources-plugin:3.4.0 报 Could not find artifact）——重试 3 次
+          for i in 1 2 3; do
+            if bash scripts/build_java_debug.sh; then break; fi
+            if [ "$i" -lt 3 ]; then echo "构建失败，20s 后重试（第 $i 次）"; sleep 20; else exit 1; fi
+          done
           mkdir -p java/examples/plain-app/build/classes8
           javac --release 8 -d java/examples/plain-app/build/classes8 $(find java/examples/plain-app/src -name '*.java')
       - name: Java agent/launcher unit tests

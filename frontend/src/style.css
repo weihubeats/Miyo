@@ -891,9 +891,10 @@ kbd,
 }
 
 /* ---- 全局导航（PageHeader 顶栏骨架，components/navigation/ 单点实现） ----
-   页面顶栏基础类：整行拖拽窗口（macOS 交通灯落 Brand 区上方），交互子元素
-   豁免拖拽；高度 44px 对齐 WorkspaceView top-bar / IntegrationView 顶栏现状，
-   AiTestView 的 36px 异构高度随统一收口废弃。 */
+   页面顶栏基础类：整行拖拽窗口（macOS 主窗交通灯空间见文末 Overlay 段的
+   data-window 规则），交互子元素豁免拖拽；高度 44px 对齐 WorkspaceView
+   top-bar / IntegrationView 顶栏现状，AiTestView 的 36px 异构高度随统一
+   收口废弃。 */
 .miyo-topbar {
   flex: none;
   display: flex;
@@ -1533,14 +1534,11 @@ html[data-platform='macos'] .top-bar {
 html[data-platform='macos'] .dash-top {
   padding-left: 88px;
 }
-html[data-platform='macos'] .gql-root > .row {
-  margin-left: 88px;
-}
-html[data-platform='macos'] .it-topbar {
+/* 统一 PageHeader 顶栏（.miyo-topbar）：仅主窗需要预留——实时调试 popout 等
+   弹出子窗是原生标题栏（data-window 标记窗口 label，main.ts 同步设置），
+   子窗也预留反而空出一段死区。 */
+html[data-platform='macos'][data-window='main'] .miyo-topbar {
   padding-left: 88px;
-}
-html[data-platform='macos'] .rt-top {
-  padding-left: 76px;
 }
 
 /* ---- 拖拽中：全局抓取光标 + 禁止选中 ---- */

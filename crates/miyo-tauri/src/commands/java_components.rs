@@ -264,7 +264,7 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         // 正常：jar + 匹配的 sha256 → 落盘
-        let base_ok = spawn_mock(jar, &digest).await;
+        let base_ok = spawn_mock(jar, digest).await;
         fetch_and_store_component(tmp.path(), AGENT_JAR_NAME, &base_ok)
             .await
             .unwrap();
@@ -276,7 +276,7 @@ mod tests {
         // 篡改：sidecar 哈希与 jar 不符 → 拒绝 + 不落盘
         let bad_digest: &'static str =
             Box::leak(hex::encode(Sha256::digest(b"tampered")).into_boxed_str());
-        let base_bad = spawn_mock(jar, &bad_digest).await;
+        let base_bad = spawn_mock(jar, bad_digest).await;
         let err = fetch_and_store_component(tmp.path(), LAUNCHER_JAR_NAME, &base_bad)
             .await
             .unwrap_err();

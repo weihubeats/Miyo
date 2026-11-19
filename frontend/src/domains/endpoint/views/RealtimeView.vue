@@ -834,7 +834,8 @@ defineExpose({
 
 <template>
   <div class="rt-root">
-    <!-- 顶栏：PageHeader 统一导航（macOS 交通灯落 Brand 区上方）；
+    <!-- 顶栏：PageHeader 统一导航（macOS 主窗交通灯空间由 style.css 的
+         data-window 规则预留，仅主窗生效）；
          弹出子窗（非主窗口）无 Brand / 返回语境，仅保留工作台上下文与状态 -->
     <PageHeader
       :title="t('realtime.windowTitle')"

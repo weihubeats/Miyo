@@ -11,7 +11,8 @@
  *
  * 骨架：[Brand(标题，点击回首页)] [BackButton] [default slot] [spacer] [actions slot]
  * - 整行可拖拽窗口（.miyo-topbar 全局类，style.css 单点定义），交互子元素豁免；
- * - macOS 交通灯落在 Brand 区上方（同 WorkspaceView 惯例，可点元素不被遮挡）；
+ * - macOS 主窗交通灯占左上 88px（style.css 的 `data-window='main'` 规则预留，
+ *   同 WorkspaceView 惯例）；弹出子窗是原生标题栏，不留死区；
  * - hideBack：根页面（无需返回）；hideBrand：Tauri 弹出子窗（无 Brand 语境）；
  * - @back：页面监听时完全接管返回（BackButton 默认策略不再触发），用于
  *   编辑器态先回列表 + 脏确认等分层返回。

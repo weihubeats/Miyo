@@ -22,6 +22,19 @@ if (navigator.userAgent.includes('Mac')) {
   document.documentElement.setAttribute('data-platform', 'macos')
 }
 
+// 窗口标记：只有主窗（label 'main'）是 Overlay 标题栏、交通灯压在 Web 内容
+// 左上角；实时调试 popout 等弹出子窗用原生标题栏，无需预留。label 与官方
+// getCurrentWindow() 同源（__TAURI_INTERNALS__.metadata.currentWindow.label），
+// 同步读避免首帧闪烁；浏览器预览无此内部对象，不设置。
+const windowLabel = (
+  window as unknown as {
+    __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } }
+  }
+).__TAURI_INTERNALS__?.metadata?.currentWindow?.label
+if (windowLabel) {
+  document.documentElement.setAttribute('data-window', windowLabel)
+}
+
 const pinia = createPinia()
 
 // 品牌更名（RustFox → Miyo）的 localStorage 旧键迁移：必须先于任何读偏好键的
