@@ -168,6 +168,23 @@ async fn audit(db: &sqlx::SqlitePool, plugin_id: &str, message: &str) {
     }
 }
 
+/// 尽力停止插件的 sidecar（停用 / 卸载 / 更新换入前的资源回收）。
+/// 未运行（NotFound）是常态，静默；其他失败仅记日志，不阻断生命周期动作
+/// （状态落库 / 目录清理不能因回收失败而回滚）。
+async fn stop_sidecar_quiet(sidecar: &miyo_sidecar::Supervisor, plugin_id: &str) {
+    let running = sidecar
+        .status()
+        .await
+        .iter()
+        .any(|s| s.plugin_id == plugin_id);
+    if !running {
+        return;
+    }
+    if let Err(e) = sidecar.stop(plugin_id).await {
+        tracing::warn!("停止插件 {plugin_id} 的 sidecar 失败：{e}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 查询
 // ---------------------------------------------------------------------------
@@ -531,8 +548,9 @@ pub async fn plugin_update_builtin(
 ///
 /// 流程：检视（签名/信任级同安装）→ 同 id 校验 → 版本相同拒绝 → 兼容性 /
 /// SDK / 依赖满足性检查 → 旧清单落 `plugin_versions` 快照 → staging 解包 +
-/// 全文件清单校验 → 旧目录改名 `.rollback-<id>` 备份 → staging 原子换入 →
-/// DB 更新（granted 收敛为旧批准 ∩ 新声明）→ 吊销会话 → 审计。
+/// 全文件清单校验 → 停运行中 sidecar（旧进程不得跨版本存活）→ 旧目录改名
+/// `.rollback-<id>` 备份 → staging 原子换入 → DB 更新（granted 收敛为旧批准
+/// ∩ 新声明）→ 吊销会话 → 审计。
 /// 换入后任何失败：备份目录原样回位（更新失败回滚）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_update_from_path(
@@ -545,6 +563,7 @@ pub async fn plugin_update_from_path(
     update_impl(
         &state.db,
         &state.plugin_sessions,
+        &state.sidecar,
         std::path::Path::new(&path),
         trust_unsigned,
         &version,
@@ -556,6 +575,7 @@ pub async fn plugin_update_from_path(
 pub(crate) async fn update_impl(
     db: &sqlx::SqlitePool,
     sessions: &crate::sessions::PluginSessions,
+    sidecar: &miyo_sidecar::Supervisor,
     source: &std::path::Path,
     trust_unsigned: bool,
     app_version: &str,
@@ -634,6 +654,13 @@ pub(crate) async fn update_impl(
             let _ = std::fs::remove_dir_all(&staging);
             command_err(e)
         })?;
+
+    // 换入前停掉运行中的 sidecar：旧进程持有旧二进制，崩溃重启必须落在新版本
+    // 而非新旧混杂；会话已被吊销，此后的 request 走未运行路径。
+    let sidecar_was_running = sidecar.status().await.iter().any(|s| s.plugin_id == row.id);
+    if sidecar_was_running {
+        sidecar.stop(&row.id).await?;
+    }
 
     // 原子换入：旧目录 → 备份；staging → dest；任何一步失败整体回位
     let swap = || -> CommandResult<()> {
@@ -717,13 +744,14 @@ pub(crate) async fn update_impl(
 /// 回滚到上一版本（plugin_versions 最新快照 + 备份目录原样换回）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_rollback(state: State<'_, AppState>, id: String) -> CommandResult<PluginView> {
-    rollback_impl(&state.db, &state.plugin_sessions, &id).await
+    rollback_impl(&state.db, &state.plugin_sessions, &state.sidecar, &id).await
 }
 
 /// 回滚核心（State 解耦——可测）。
 pub(crate) async fn rollback_impl(
     db: &sqlx::SqlitePool,
     sessions: &crate::sessions::PluginSessions,
+    sidecar: &miyo_sidecar::Supervisor,
     id: &str,
 ) -> CommandResult<PluginView> {
     let row = repo::require_plugin(db, id).await?;
@@ -749,6 +777,8 @@ pub(crate) async fn rollback_impl(
             "无可用回滚备份目录（更新流程未产生备份）",
         ));
     }
+    // 换回前停掉运行中的 sidecar（回滚后的二进制是旧版本——进程必须换代）。
+    stop_sidecar_quiet(sidecar, id).await;
     // 原子换回：当前 → tmp；备份 → dest；tmp 删除
     let tmp = root.join(format!(".staging-{}", uuid::Uuid::new_v4().simple()));
     if dest.exists() {
@@ -826,11 +856,27 @@ async fn check_dependencies(
 }
 
 /// 清理孤儿 staging 目录（更新 / 安装流程异常退出的残留）。
+/// 仅删除 mtime 早于 1 小时的目录：更新收尾时并发安装可能正持有自己的
+/// staging（解包校验进行中），按年龄豁免防误删（失败残留由下次更新收尾兜底）。
 fn cleanup_stale_staging(root: &std::path::Path) {
+    cleanup_stale_staging_with_age(root, std::time::Duration::from_secs(3600));
+}
+
+/// [`cleanup_stale_staging`] 的可测核心（max_age 注入）。
+/// 元数据不可读时保守跳过（宁可残留，不误删在途安装）。
+fn cleanup_stale_staging_with_age(root: &std::path::Path, max_age: std::time::Duration) {
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
             let name = entry.file_name();
-            if name.to_string_lossy().starts_with(".staging-") {
+            if !name.to_string_lossy().starts_with(".staging-") {
+                continue;
+            }
+            let stale = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|t| t.elapsed().unwrap_or_default() >= max_age)
+                .unwrap_or(false);
+            if stale {
                 let _ = std::fs::remove_dir_all(entry.path());
             }
         }
@@ -845,6 +891,9 @@ pub async fn plugin_uninstall(
     id: String,
 ) -> CommandResult<()> {
     let row = repo::require_plugin(&state.db, &id).await?;
+    // 卸载即停 sidecar（进程与安装目录一起清理——目录删掉后崩溃重启连
+    // 二进制都找不到，先停是唯一正确时序）。
+    stop_sidecar_quiet(&state.sidecar, &id).await;
     // 先停用（运行时回收由前端 deactivate 完成；后端先落状态防窗口期调用）。
     if row.state == STATE_ENABLED {
         repo::set_plugin_state(&state.db, &id, STATE_INSTALLED, None).await?;
@@ -898,6 +947,9 @@ pub async fn plugin_set_enabled(
         repo::set_plugin_state(&state.db, &id, STATE_ENABLED, None).await?;
         audit(&state.db, &id, &format!("enable v{}", row.version)).await;
     } else {
+        // 停用即停 sidecar（资源回收：进程 / 心跳 / 崩溃重启链一并终止；
+        // 重启门禁会复查启用态，双保险防复活）。未运行则无操作。
+        stop_sidecar_quiet(&state.sidecar, &id).await;
         repo::set_plugin_state(&state.db, &id, STATE_INSTALLED, None).await?;
         state.plugin_sessions.revoke_plugin(&id);
         audit(&state.db, &id, "disable").await;
@@ -1085,12 +1137,40 @@ fn validate_download_url(raw: &str) -> CommandResult<String> {
     Ok(raw.trim_end_matches('/').to_string())
 }
 
+/// 重定向跳数上限。
+const MAX_REDIRECTS: usize = 5;
+
+/// 重定向策略决策（独立成函数便于单测）：仅跟随 https 目标（防
+/// https→http 降级与任意外协议跳转），超过 [`MAX_REDIRECTS`] 跳即停。
+/// 返回 Err(String) = 拒绝跟随（错误消息）。
+fn redirect_decision(scheme: &str, hops: usize) -> Result<(), String> {
+    if scheme != "https" {
+        return Err(format!("下载重定向禁止非 https 目标（{scheme}://）"));
+    }
+    if hops > MAX_REDIRECTS {
+        return Err(format!("下载重定向次数超过 {MAX_REDIRECTS}"));
+    }
+    Ok(())
+}
+
+fn https_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        match redirect_decision(attempt.url().scheme(), attempt.previous().len()) {
+            Ok(()) => attempt.follow(),
+            Err(message) => attempt.error(message),
+        }
+    })
+}
+
 /// 下载插件包字节（流式累计限额 + 总超时；Content-Length 预检）。
 pub(crate) async fn download_package(url: &str) -> CommandResult<Vec<u8>> {
     let client = reqwest::Client::builder()
         // 一次性下载：禁用连接池（池化空闲连接的后台任务在测试并行 /
         // 进程内多 runtime 场景下可能被取消——hyper Canceled）
         .pool_max_idle_per_host(0)
+        // 重定向白名单：仅 https 目标 + 跳数上限（入口 URL 已强制 https，
+        // 重定向一跳起同样强制——防降级下载）
+        .redirect(https_redirect_policy())
         .connect_timeout(std::time::Duration::from_secs(15))
         .timeout(DOWNLOAD_TIMEOUT)
         .build()
@@ -1148,7 +1228,10 @@ fn sanitize_url(url: &str) -> String {
 
 /// 缓存写入（总量超限驱逐最旧）。
 fn cache_download(state: &AppState, url: &str, bytes: Vec<u8>) {
-    let mut cache = state.market_downloads.lock().unwrap();
+    let mut cache = state
+        .market_downloads
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     cache.retain(|(u, _)| u != url);
     cache.push((
         url.to_string(),
@@ -1229,7 +1312,10 @@ pub async fn plugin_install_from_cached(
 ) -> CommandResult<PluginView> {
     let url = validate_download_url(&url)?;
     let bytes = {
-        let mut cache = state.market_downloads.lock().unwrap();
+        let mut cache = state
+            .market_downloads
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let idx = cache.iter().position(|(u, _)| *u == url).ok_or_else(|| {
             CommandError::with_code(CommandErrorCode::NotFound, "下载缓存不存在（请重新检视）")
         })?;
@@ -1278,6 +1364,8 @@ pub async fn plugin_report_error(
     id: String,
     message: String,
 ) -> CommandResult<()> {
+    // 消息截断（与插件日志 2000 字符口径一致）：错误现场落库，不放大入库体积。
+    let message: String = message.chars().take(2000).collect();
     let error_json = serde_json::json!({
         "message": message,
         "at": chrono::Utc::now().to_rfc3339(),
@@ -1324,7 +1412,8 @@ pub async fn plugin_verify_integrity(
 // 插件日志 / 私有存储（SDK 后端）
 // ---------------------------------------------------------------------------
 
-/// 查询插件日志（新→旧；level 过滤可选）。
+/// 查询插件日志（新→旧；level 过滤可选；limit 封顶 1000——存储层滚动上限
+/// 200，放大 limit 无意义，这里防任意大值直达 SQL LIMIT）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_logs(
     state: State<'_, AppState>,
@@ -1332,7 +1421,8 @@ pub async fn plugin_logs(
     limit: Option<i64>,
     level: Option<String>,
 ) -> CommandResult<Vec<PluginLogRow>> {
-    Ok(repo::list_plugin_logs(&state.db, &id, limit.unwrap_or(200), level.as_deref()).await?)
+    let limit = limit.unwrap_or(200).clamp(1, 1000);
+    Ok(repo::list_plugin_logs(&state.db, &id, limit, level.as_deref()).await?)
 }
 
 /// 清空插件日志。
@@ -1627,6 +1717,7 @@ mod tests {
     async fn install_update_rollback_tamper_full_cycle() {
         let (_dir, db) = test_db().await;
         let sessions = PluginSessions::new();
+        let sidecar = miyo_sidecar::Supervisor::new(std::sync::Arc::new(miyo_sidecar::NoopSink));
         let app_version = "0.0.60";
         let pkg_dir = tempfile::tempdir().unwrap();
 
@@ -1655,9 +1746,11 @@ mod tests {
         ]);
         let pb = pkg_dir.path().join("bad.miyo");
         std::fs::write(&pb, &bad).unwrap();
-        assert!(update_impl(&db, &sessions, &pb, true, app_version)
-            .await
-            .is_err());
+        assert!(
+            update_impl(&db, &sessions, &sidecar, &pb, true, app_version)
+                .await
+                .is_err()
+        );
         assert_eq!(
             repo::require_plugin(&db, "com.e2e.upd")
                 .await
@@ -1670,7 +1763,7 @@ mod tests {
         let v2 = build_package("2.0.0", b"<html>v2</html>");
         let p2 = pkg_dir.path().join("v2.miyo");
         std::fs::write(&p2, &v2).unwrap();
-        let view = update_impl(&db, &sessions, &p2, true, app_version)
+        let view = update_impl(&db, &sessions, &sidecar, &p2, true, app_version)
             .await
             .unwrap();
         assert_eq!(view.version, "2.0.0");
@@ -1686,7 +1779,9 @@ mod tests {
         assert!(plugins_root().join(".rollback-com.e2e.upd").is_dir());
 
         // ---- 回滚 → v1 ----
-        let view = rollback_impl(&db, &sessions, "com.e2e.upd").await.unwrap();
+        let view = rollback_impl(&db, &sessions, &sidecar, "com.e2e.upd")
+            .await
+            .unwrap();
         assert_eq!(view.version, "1.0.0");
         // 快照已消费（防重复回滚）
         assert_eq!(
@@ -1715,6 +1810,39 @@ mod tests {
         assert!(
             validate_download_url(&format!("https://a.b/x?token={}", "x".repeat(2100))).is_err()
         );
+    }
+
+    /// 重定向决策：https 跟随、非 https 拒绝（防降级）、跳数封顶。
+    #[test]
+    fn redirect_policy_https_only_with_hop_cap() {
+        assert!(redirect_decision("https", 0).is_ok());
+        assert!(redirect_decision("https", MAX_REDIRECTS).is_ok());
+        assert!(redirect_decision("https", MAX_REDIRECTS + 1).is_err());
+        for scheme in ["http", "file", "ftp", "data"] {
+            assert!(redirect_decision(scheme, 0).is_err(), "{scheme} 必须拒绝");
+        }
+    }
+
+    /// staging 清理按年龄豁免：新生目录保留（并发安装在途），过期目录删除。
+    #[test]
+    fn cleanup_stale_staging_respects_age() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fresh = tmp.path().join(".staging-fresh");
+        let stale = tmp.path().join(".staging-stale");
+        let unrelated = tmp.path().join("unrelated");
+        std::fs::create_dir_all(&fresh).unwrap();
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::create_dir_all(&unrelated).unwrap();
+        std::fs::write(stale.join("x"), b" leftover").unwrap();
+        // 全部「过期」（max_age = 0）：staging 删，非 staging 保留
+        cleanup_stale_staging_with_age(tmp.path(), std::time::Duration::ZERO);
+        assert!(!stale.exists());
+        assert!(unrelated.exists());
+        // 新生目录 + max_age 1h：保留（豁免并发安装在途的 staging）
+        let fresh = tmp.path().join(".staging-fresh2");
+        std::fs::create_dir_all(&fresh).unwrap();
+        cleanup_stale_staging_with_age(tmp.path(), std::time::Duration::from_secs(3600));
+        assert!(fresh.exists());
     }
 
     /// 手写 HTTP mock（单请求响应；reqwest 走 http://127.0.0.1）。

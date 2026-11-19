@@ -7,7 +7,7 @@
 
 use miyo_core::AppError;
 
-/// 风险等级（管理中心按级着色；High 需在启用确认里单独勾选）。
+/// 风险等级（管理中心按级着色；High 在安装 / 更新确认页需单独勾选确认）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionRisk {
     Low,

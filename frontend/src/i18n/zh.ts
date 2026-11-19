@@ -381,6 +381,11 @@ export const zh = {
   'integration.backDirtyBody': '场景包含未保存的修改，返回列表将丢失这些改动。',
   'integration.backDirtyStay': '留在编辑器',
   'integration.backDirtyDiscard': '放弃修改并返回',
+  'integration.backDirtySave': '保存并返回',
+  'integration.switchDirtyTitle': '切换项目？',
+  'integration.switchDirtyBody': '当前场景有未保存的修改，切换项目将丢失这些改动。',
+  'integration.switchDirtyDiscard': '放弃修改并切换',
+  'integration.switchDirtySave': '保存并切换',
   'integration.projectLabel': '项目',
   'integration.libTitle': '测试场景',
   'integration.libSearchPh': '搜索场景名称或描述...',
@@ -417,10 +422,11 @@ export const zh = {
   'integration.save': '保存',
   'integration.saved': '已保存',
   'integration.saveFail': '保存失败',
-  // 顶栏保存状态（idle / dirty / saving）
+  // 顶栏保存状态（saved / dirty / saving / failed）
   'integration.saveStateSaved': '已保存',
   'integration.saveStateDirty': '未保存',
   'integration.saveStateSaving': '保存中',
+  'integration.saveStateFailed': '保存失败',
   // 工作流连线
   'integration.flowStart': '开始',
   'integration.flowVarsTitle': '变量 {name} 从前序步骤流到这里',
@@ -2812,6 +2818,8 @@ export const zh = {
   'plugins.signed': '已签名',
   'plugins.unsigned': '未签名',
   'plugins.trustUnsigned': '我已确认来源可信，信任此未签名插件',
+  'plugins.confirmHighRisk':
+    '该插件声明了 {count} 项 High 风险权限（含进程 / JVM 调试能力），我已逐项确认并同意授予',
   'plugins.integrityLabel': '完整性 sha256',
   'plugins.permSection': '权限声明',
   'plugins.permUnknown': '未知权限',

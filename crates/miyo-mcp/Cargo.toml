@@ -1,6 +1,6 @@
 [package]
 name = "miyo-mcp"
-version = "0.0.1"
+version.workspace = true
 edition = "2021"
 description = "Miyo MCP Server：stdio JSON-RPC，把 AI Agent 接到 Miyo Agent 控制面"
 license = "Apache-2.0"

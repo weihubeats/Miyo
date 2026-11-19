@@ -21,6 +21,8 @@ import { useIntegrationStore } from '@/domains/integration/stores/integration'
 import PageHeader from '@/components/navigation/PageHeader.vue'
 import Breadcrumbs, { type BreadcrumbItem } from '@/components/navigation/Breadcrumbs.vue'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
+import Modal from '@/components/ui/Modal.vue'
+import Icon from '@/components/ui/Icon.vue'
 import { useGoBack } from '@/composables/useGoBack'
 import EnvironmentSelector from '@/domains/environment/components/EnvironmentSelector.vue'
 import ScenarioLibrary from '@/domains/integration/components/integration/ScenarioLibrary.vue'
@@ -77,15 +79,51 @@ const projectOptions = () =>
   store.projects.map((p) => ({ value: p.id, label: p.name }))
 
 /** 切换项目：先走 workspace 的激活链路（持久化 + 环境加载），再同步本 store。 */
-async function onSelectProject(value: string | number): Promise<void> {
-  const id = String(value ?? '')
-  if (!id) return
+async function doSwitchProject(id: string): Promise<void> {
   try {
     await workspace.switchProject(id)
   } catch {
     // 项目已不存在：仅切换本 store（列表会以 404 空态呈现），不打断视图
   }
   store.setProject(id)
+}
+
+/**
+ * 编辑器态切换项目的脏保护：未保存修改不得被静默丢弃——先确认
+ * （保存并切换 / 放弃并切换 / 留在编辑器）；保存失败不得切换。
+ * 列表态（activeScenarioId 为空）直接切换。
+ */
+const switchDirtyOpen = ref(false)
+const pendingProjectId = ref<string | null>(null)
+
+async function onSelectProject(value: string | number): Promise<void> {
+  const id = String(value ?? '')
+  if (!id || id === store.projectId) return
+  if (store.activeScenarioId && editorRef.value?.isDirty()) {
+    pendingProjectId.value = id
+    switchDirtyOpen.value = true
+    return
+  }
+  await doSwitchProject(id)
+}
+
+/** 保存并切换：保存失败留在编辑器（弹窗保留，toast 已提示原因）。 */
+async function saveAndSwitch(): Promise<void> {
+  const target = pendingProjectId.value
+  if (!target) return
+  const ok = await editorRef.value?.save()
+  if (!ok) return
+  switchDirtyOpen.value = false
+  pendingProjectId.value = null
+  await doSwitchProject(target)
+}
+
+/** 放弃修改并切换：不落库直接切（与返回确认的「放弃」同语义）。 */
+function discardAndSwitch(): void {
+  const target = pendingProjectId.value
+  switchDirtyOpen.value = false
+  pendingProjectId.value = null
+  if (target) void doSwitchProject(target)
 }
 
 onMounted(async () => {
@@ -95,7 +133,9 @@ onMounted(async () => {
   if (target && workspace.project?.id !== target) {
     await onSelectProject(target)
   }
-  void store.loadLibrary()
+  // 跨路由返回不重拉整库：已有缓存时静默刷新（导航规范场景 A——
+  // 返回恢复搜索/筛选/滚动，数据仅后台更新）。
+  void store.loadLibrary(!store.libraryLoaded)
 })
 
 // 项目切换（含首次解析完成）→ 刷新场景库；跨路由返回时已加载则静默刷新。
@@ -143,6 +183,23 @@ watch(
       />
       <ScenarioLibrary v-else />
     </main>
+
+    <!-- 编辑器态切换项目的脏保护：未保存修改不得被静默丢弃；
+         保存并切换失败时弹窗保留（不切换），与返回确认同语义 -->
+    <Modal v-model:open="switchDirtyOpen" :title="t('integration.switchDirtyTitle')" width="420px">
+      <p class="it-switch-body">{{ t('integration.switchDirtyBody') }}</p>
+      <template #footer>
+        <button class="miyo-btn miyo-btn-sm" type="button" @click="switchDirtyOpen = false">
+          {{ t('integration.backDirtyStay') }}
+        </button>
+        <button class="miyo-btn miyo-btn-sm miyo-btn-danger-solid" type="button" @click="discardAndSwitch">
+          {{ t('integration.switchDirtyDiscard') }}
+        </button>
+        <button class="miyo-btn miyo-btn-sm miyo-btn-primary" type="button" @click="saveAndSwitch">
+          <Icon name="save" :size="12" /> {{ t('integration.switchDirtySave') }}
+        </button>
+      </template>
+    </Modal>
   </div>
 </template>
 
@@ -166,5 +223,12 @@ watch(
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.it-switch-body {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  line-height: 1.6;
 }
 </style>

@@ -127,31 +127,96 @@ pub async fn delete_ai_session(db: &SqlitePool, session_id: Uuid) -> Result<()> 
 /// 避免 seq 撞号。
 pub async fn append_ai_message(db: &SqlitePool, msg: &AiMessageRow) -> Result<i64> {
     let mut tx = db.begin().await.map_err(AppError::from)?;
-    let (max,): (Option<i64>,) =
-        sqlx::query_as("SELECT MAX(seq) FROM ai_messages WHERE session_id = ?")
-            .bind(msg.session_id.to_string())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(AppError::from)?;
-    let seq = max.unwrap_or(0) + 1;
-    sqlx::query(
-        "INSERT INTO ai_messages (id, session_id, seq, role, content, tool_calls_json, tool_call_id, artifact_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(msg.id.to_string())
-    .bind(msg.session_id.to_string())
-    .bind(seq)
-    .bind(&msg.role)
-    .bind(&msg.content)
-    .bind(&msg.tool_calls_json)
-    .bind(&msg.tool_call_id)
-    .bind(&msg.artifact_json)
-    .bind(msg.created_at.to_rfc3339())
-    .execute(&mut *tx)
-    .await
-    .map_err(AppError::from)?;
+    let seq = insert_messages_tx(&mut tx, std::slice::from_ref(msg)).await?;
     tx.commit().await.map_err(AppError::from)?;
     Ok(seq)
+}
+
+/// 批量追加消息：单事务内一次分配 seq 连号插入（N+1 治理——AI 循环每轮
+/// 落多条 assistant/tool/artifact 消息，逐条 INSERT 会产生等量事务往返）。
+/// 返回首条消息的 seq。
+pub(crate) async fn insert_messages_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    msgs: &[AiMessageRow],
+) -> Result<i64> {
+    let Some(first) = msgs.first() else {
+        return Ok(0);
+    };
+    let (max,): (Option<i64>,) =
+        sqlx::query_as("SELECT MAX(seq) FROM ai_messages WHERE session_id = ?")
+            .bind(first.session_id.to_string())
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(AppError::from)?;
+    let mut seq = max.unwrap_or(0);
+    for msg in msgs {
+        seq += 1;
+        sqlx::query(
+            "INSERT INTO ai_messages (id, session_id, seq, role, content, tool_calls_json, tool_call_id, artifact_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(msg.id.to_string())
+        .bind(msg.session_id.to_string())
+        .bind(seq)
+        .bind(&msg.role)
+        .bind(&msg.content)
+        .bind(&msg.tool_calls_json)
+        .bind(&msg.tool_call_id)
+        .bind(&msg.artifact_json)
+        .bind(msg.created_at.to_rfc3339())
+        .execute(&mut **tx)
+        .await
+        .map_err(AppError::from)?;
+    }
+    Ok(max.unwrap_or(0) + 1)
+}
+
+/// 批量追加（单事务；调用方组装行后一次提交，失败整体回滚）。
+pub async fn append_ai_messages_bulk(db: &SqlitePool, msgs: &[AiMessageRow]) -> Result<i64> {
+    let mut tx = db.begin().await.map_err(AppError::from)?;
+    let first_seq = insert_messages_tx(&mut tx, msgs).await?;
+    tx.commit().await.map_err(AppError::from)?;
+    Ok(first_seq)
+}
+
+/// 会话消息 seq 游标分页（长会话治理：`after_seq` 之后最多 limit 条，升序）。
+/// `after_seq = 0` 等价于从头取。全量 [`list_ai_messages`] 保留（LLM 上下文
+/// 组装语义需要全量），前端历史渲染走本接口。
+pub async fn list_ai_messages_after(
+    db: &SqlitePool,
+    session_id: Uuid,
+    after_seq: i64,
+    limit: i64,
+) -> Result<Vec<AiMessageRow>> {
+    let rows: Vec<AiMessageTuple> = sqlx::query_as(
+        "SELECT id, seq, role, content, tool_calls_json, tool_call_id, artifact_json, created_at
+         FROM ai_messages WHERE session_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?",
+    )
+    .bind(session_id.to_string())
+    .bind(after_seq)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+    .map_err(AppError::from)?;
+    rows.into_iter()
+        .map(
+            |(id, seq, role, content, calls, call_id, artifact, created)| {
+                Ok(AiMessageRow {
+                    id: Uuid::parse_str(&id).map_err(uuid_err)?,
+                    session_id,
+                    seq,
+                    role,
+                    content,
+                    tool_calls_json: calls,
+                    tool_call_id: call_id,
+                    artifact_json: artifact,
+                    created_at: DateTime::parse_from_rfc3339(&created)
+                        .map_err(ts_err)?
+                        .with_timezone(&Utc),
+                })
+            },
+        )
+        .collect()
 }
 
 /// 会话消息（seq 升序）。

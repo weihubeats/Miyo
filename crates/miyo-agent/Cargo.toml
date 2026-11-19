@@ -1,6 +1,6 @@
 [package]
 name = "miyo-agent"
-version = "0.0.1"
+version.workspace = true
 edition = "2021"
 description = "Agent 控制面：本地 HTTP API，供 AI Agent / MCP 工具把 cURL 导入为 Miyo 接口"
 license = "Apache-2.0"

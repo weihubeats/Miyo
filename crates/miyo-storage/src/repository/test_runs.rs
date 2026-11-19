@@ -9,6 +9,10 @@ use miyo_core::Result;
 use super::rows::TestRunRow;
 
 /// 保存一次测试运行结果。
+/// 每项目保留的运行结果上限（与 request_histories / scenario_runs 同口径的
+/// 滚动清理——此前 test_runs 无任何清理，长期使用无限增长）。
+const TEST_RUNS_KEEP_PER_PROJECT: i64 = 50;
+
 pub async fn save_test_run(db: &SqlitePool, run: &TestRun) -> Result<()> {
     let row = TestRunRow::from_model(run);
     sqlx::query(
@@ -22,6 +26,23 @@ pub async fn save_test_run(db: &SqlitePool, run: &TestRun) -> Result<()> {
     .bind(&row.result_json)
     .bind(row.started_at.clone())
     .bind(&row.finished_at)
+    .execute(db)
+    .await?;
+    prune_test_runs(db, run.project_id, TEST_RUNS_KEEP_PER_PROJECT).await?;
+    Ok(())
+}
+
+/// 修剪：仅保留每项目最近 N 条（按 started_at 倒序）。
+async fn prune_test_runs(db: &SqlitePool, project_id: Uuid, keep: i64) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM test_runs WHERE project_id = ? AND id NOT IN (
+             SELECT id FROM test_runs WHERE project_id = ?
+             ORDER BY started_at DESC LIMIT ?
+         )",
+    )
+    .bind(project_id.to_string())
+    .bind(project_id.to_string())
+    .bind(keep)
     .execute(db)
     .await?;
     Ok(())

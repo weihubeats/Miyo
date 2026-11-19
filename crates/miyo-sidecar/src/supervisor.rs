@@ -19,7 +19,9 @@
 //! - 子进程环境变量最小化（[`crate::limits`]）；token 走握手帧不经 argv。
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -129,6 +131,12 @@ pub struct SidecarStatus {
 /// 挂起请求表（id → 回执）。
 type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, String>>>>>;
 
+/// 崩溃重启门禁（插件生命周期隔离）：重启前按 plugin_id 复查，false = 终止
+/// 重启链。宿主接「插件启用态」查询——停用 / 卸载后的在途重启请求就此终止，
+/// 停用插件不会被崩溃重启复活。未接线（None）= 恒允许（测试 / 未接宿主）。
+pub type RestartGate =
+    Arc<dyn Fn(&str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> + Send + Sync>;
+
 /// 退出信息（wait / 心跳任务 → 监督任务）。
 struct ExitInfo {
     /// 进程退出码（None = 信号终止 / 判死 kill）。
@@ -223,6 +231,8 @@ pub struct Supervisor {
     restart_log: Mutex<HashMap<String, Vec<Instant>>>,
     sink: Arc<dyn SidecarSink>,
     timing: SupervisorTiming,
+    /// 崩溃重启门禁（宿主装配时接线一次；OnceLock 保证 Arc<&self> 下可设）。
+    restart_gate: std::sync::OnceLock<RestartGate>,
 }
 
 impl Supervisor {
@@ -236,7 +246,13 @@ impl Supervisor {
             restart_log: Mutex::new(HashMap::new()),
             sink,
             timing,
+            restart_gate: std::sync::OnceLock::new(),
         }
+    }
+
+    /// 接线崩溃重启门禁（宿主装配时调用；重复设置以首次为准）。
+    pub fn set_restart_gate(&self, gate: RestartGate) {
+        let _ = self.restart_gate.set(gate);
     }
 
     /// 全部会话快照（管理中心 / sidecar 状态展示）。
@@ -526,6 +542,20 @@ impl Supervisor {
                     &format!("sidecar 将在 {backoff:?} 后重启（第 {attempts} 次）"),
                 );
                 tokio::time::sleep(backoff).await;
+                // 门禁复查（换代前一刻）：插件可能在崩溃窗口内被停用 / 卸载
+                //（生命周期动作不等重启窗口）。false = 终止重启链并移除会话
+                //（停用插件不得被崩溃重启复活；DB 查询失败由门禁内部 fail-closed）。
+                if let Some(gate) = supervisor.restart_gate.get() {
+                    if !gate(&spec.plugin_id).await {
+                        supervisor.sessions.lock().await.remove(&spec.plugin_id);
+                        supervisor.sink.log(
+                            &spec.plugin_id,
+                            "warn",
+                            "插件已停用或卸载：sidecar 不再自动重启",
+                        );
+                        break;
+                    }
+                }
                 // 换代重启
                 match supervisor.spawn_session(spec.clone()).await {
                     Ok((session, new_rx)) => {

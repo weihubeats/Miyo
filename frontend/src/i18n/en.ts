@@ -385,6 +385,11 @@ export const en: Record<ZhKey, string> = {
   'integration.backDirtyBody': 'This scenario has unsaved changes; going back to the list will discard them.',
   'integration.backDirtyStay': 'Stay in editor',
   'integration.backDirtyDiscard': 'Discard & go back',
+  'integration.backDirtySave': 'Save & go back',
+  'integration.switchDirtyTitle': 'Switch project?',
+  'integration.switchDirtyBody': 'The current scenario has unsaved changes; switching projects will discard them.',
+  'integration.switchDirtyDiscard': 'Discard & switch',
+  'integration.switchDirtySave': 'Save & switch',
   'integration.projectLabel': 'Project',
   'integration.libTitle': 'Test Scenarios',
   'integration.libSearchPh': 'Search scenarios by name or description...',
@@ -421,10 +426,11 @@ export const en: Record<ZhKey, string> = {
   'integration.save': 'Save',
   'integration.saved': 'Saved',
   'integration.saveFail': 'Save failed',
-  // 顶栏保存状态（idle / dirty / saving）
+  // 顶栏保存状态（saved / dirty / saving / failed）
   'integration.saveStateSaved': 'Saved',
   'integration.saveStateDirty': 'Unsaved',
   'integration.saveStateSaving': 'Saving',
+  'integration.saveStateFailed': 'Save failed',
   // 工作流连线
   'integration.flowStart': 'Start',
   'integration.flowVarsTitle': 'Variable {name} flows here from an earlier step',
@@ -2819,6 +2825,8 @@ export const en: Record<ZhKey, string> = {
   'plugins.signed': 'Signed',
   'plugins.unsigned': 'Unsigned',
   'plugins.trustUnsigned': 'I trust this unsigned plugin and its source',
+  'plugins.confirmHighRisk':
+    'This plugin declares {count} high-risk permission(s) (process / JVM debug capabilities). I have reviewed and consent to granting them',
   'plugins.integrityLabel': 'Integrity sha256',
   'plugins.permSection': 'Permissions',
   'plugins.permUnknown': 'Unknown permission',

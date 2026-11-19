@@ -19,6 +19,21 @@ import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useWorkspaceStore } from '@/stores/workspace'
 import type { Project, ScenarioLibraryItem } from '@/types/miyoApi.d'
 
+/** 场景库列表视图状态（搜索 / 筛选 / 排序 / 滚动位置）。
+ *  进编辑器再返回不丢（useGoBack 导航规范场景 A 的落实——状态由本 store
+ *  承担跨路由存活，返回不重放请求）。 */
+export interface ScenarioLibraryViewState {
+  search: string
+  /** null = 全部分类；'' = 未分类；其余 = 具体分类名。 */
+  categoryFilter: string | null
+  statusFilter: 'all' | 'ok' | 'fail' | 'none'
+  sortBy: 'default' | 'name' | 'recent'
+  /** 离开列表时的滚动位置（scrollTop）；projectIdAtScroll 记录归属——
+   *  换项目后不恢复旧项目的滚动位置（列表内容已换）。 */
+  scrollTop: number
+  projectIdAtScroll: string | null
+}
+
 export const useIntegrationStore = defineStore('integration', () => {
   const api = useMiyoApi()
   const workspace = useWorkspaceStore()
@@ -56,31 +71,46 @@ export const useIntegrationStore = defineStore('integration', () => {
   const libraryItems = ref<ScenarioLibraryItem[]>([]) as Ref<ScenarioLibraryItem[]>
   const libraryLoaded = ref(false)
   const libraryLoading = ref(false)
+  /** 列表视图状态（搜索 / 筛选 / 排序 / 滚动位置；随 store 跨路由存活）。 */
+  const libraryView = ref<ScenarioLibraryViewState>({
+    search: '',
+    categoryFilter: null,
+    statusFilter: 'all',
+    sortBy: 'default',
+    scrollTop: 0,
+    projectIdAtScroll: null,
+  })
 
   /**
    * 加载场景库。`silent` = 后台刷新（已有缓存时不清空，列表不闪骨架）。
+   * 序号仲裁：并发（快速切项目 / 静默刷新撞上整拉）时只有最新一次能落
+   * 结果与 loading——旧请求的迟到响应与 finally 一律丢弃。
    */
+  let loadSeq = 0
   async function loadLibrary(silent = false): Promise<void> {
     const pid = projectId.value
     if (!pid) {
+      loadSeq++
       libraryItems.value = []
       libraryLoaded.value = true
+      libraryLoading.value = false
       return
     }
+    const seq = ++loadSeq
     if (!silent) libraryLoading.value = true
     try {
       const items = await api.listScenarioSummaries(pid)
-      if (projectId.value === pid) {
-        libraryItems.value = items
-        libraryLoaded.value = true
-      }
+      if (seq !== loadSeq || projectId.value !== pid) return // 竞态：已发起新加载 / 已切项目
+      libraryItems.value = items
+      libraryLoaded.value = true
     } catch {
-      if (projectId.value === pid && !libraryLoaded.value) {
+      if (seq !== loadSeq || projectId.value !== pid) return
+      if (!libraryLoaded.value) {
         libraryItems.value = []
         libraryLoaded.value = true
       }
     } finally {
-      libraryLoading.value = false
+      if (seq === loadSeq) libraryLoading.value = false
     }
   }
 
@@ -123,6 +153,7 @@ export const useIntegrationStore = defineStore('integration', () => {
     libraryItems,
     libraryLoaded,
     libraryLoading,
+    libraryView,
     activeScenarioId,
     pendingRunId,
     openScenarioRun,

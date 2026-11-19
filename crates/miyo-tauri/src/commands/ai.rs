@@ -361,7 +361,9 @@ pub async fn ai_chat_send(
         )
         .await;
 
-        // 落库本轮新增消息（assistant / tool）。
+        // 落库本轮新增消息（assistant / tool）：先组装后单事务批量写入
+        //（N+1 治理：逐条 INSERT 产生等量事务往返；失败不再静默吞错）。
+        let mut rows: Vec<repo::AiMessageRow> = Vec::new();
         for m in messages.iter().skip(persist_from) {
             let row = match m.role {
                 miyo_ai::Role::Assistant => repo::AiMessageRow {
@@ -391,7 +393,7 @@ pub async fn ai_chat_send(
                 },
                 _ => continue,
             };
-            let _ = repo::append_ai_message(&db, &row).await;
+            rows.push(row);
         }
         // 产物消息落库（generate_* / analyze_* 的结构化产物）。
         let drained: Vec<serde_json::Value> = artifacts
@@ -400,7 +402,7 @@ pub async fn ai_chat_send(
             .drain(..)
             .collect();
         for artifact in drained {
-            let row = repo::AiMessageRow {
+            rows.push(repo::AiMessageRow {
                 id: Uuid::new_v4(),
                 session_id: sid,
                 seq: 0,
@@ -410,8 +412,11 @@ pub async fn ai_chat_send(
                 tool_call_id: None,
                 artifact_json: Some(serde_json::to_string(&artifact).unwrap_or_default()),
                 created_at: chrono::Utc::now(),
-            };
-            let _ = repo::append_ai_message(&db, &row).await;
+            });
+        }
+        if let Err(e) = repo::append_ai_messages_bulk(&db, &rows).await {
+            // 聊天记录静默丢失不可接受：失败必须留痕（会话仍可继续）
+            tracing::error!("AI 消息批量落库失败（{} 条）：{e}", rows.len());
         }
         // 收尾事件 + 注册表清理（guard 在块内释放，不跨 await）。
         {

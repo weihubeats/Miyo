@@ -8,7 +8,7 @@
  * - 操作：运行（直接跑最近保存的配置）/ 编辑 / 复制 / 导出 / 删除；
  * - 新建（可选分类）+ 导入（openDialog 选文件 → readTextFile → 解析入库）。
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { useLocaleStore } from '@/stores/locale'
@@ -43,12 +43,27 @@ const toast = useToast()
 const router = useRouter()
 
 // ---------- 搜索 + 分类过滤 + 状态过滤 + 排序 ----------
-const search = ref('')
-const categoryFilter = ref<string | null>(null)
+// 视图状态持久化在 integration store（libraryView）：进编辑器再返回时恢复
+// 搜索 / 筛选 / 排序 / 滚动位置（导航规范场景 A；store 跨路由存活，返回不重放请求）。
+const view = store.libraryView
+const search = computed({
+  get: () => view.search,
+  set: (v: string) => (view.search = v),
+})
+const categoryFilter = computed({
+  get: () => view.categoryFilter,
+  set: (v: string | null) => (view.categoryFilter = v),
+})
 /** 最近执行状态过滤：全部 | 通过 | 失败 | 未运行。 */
-const statusFilter = ref<'all' | 'ok' | 'fail' | 'none'>('all')
+const statusFilter = computed({
+  get: () => view.statusFilter,
+  set: (v: 'all' | 'ok' | 'fail' | 'none') => (view.statusFilter = v),
+})
 /** 排序：默认（编排序）| 名称 | 最近执行时间倒序。 */
-const sortBy = ref<'default' | 'name' | 'recent'>('default')
+const sortBy = computed({
+  get: () => view.sortBy,
+  set: (v: 'default' | 'name' | 'recent') => (view.sortBy = v),
+})
 
 /** 全部分类（去重、保序）。 */
 const categories = computed(() => {
@@ -142,6 +157,31 @@ function runSummaryText(r: ScenarioRunSummary | null | undefined): string {
 function goAiCreate(): void {
   void router.push('/ai-test')
 }
+
+// ---------- 列表滚动位置记忆（随 store.libraryView 跨路由存活） ----------
+const listEl = ref<HTMLElement | null>(null)
+
+function saveScroll(): void {
+  view.scrollTop = listEl.value?.scrollTop ?? 0
+  view.projectIdAtScroll = store.projectId
+}
+
+/** 返回列表恢复滚动：同项目且有记忆位置时恢复（列表项来自缓存，一帧内可渲染）。 */
+async function restoreScroll(): Promise<void> {
+  const top = view.scrollTop
+  if (top <= 0 || view.projectIdAtScroll !== store.projectId) return
+  await nextTick()
+  if (listEl.value) listEl.value.scrollTop = top
+}
+
+onMounted(() => {
+  listEl.value?.addEventListener('scroll', saveScroll, { passive: true })
+  void restoreScroll()
+})
+
+onBeforeUnmount(() => {
+  listEl.value?.removeEventListener('scroll', saveScroll)
+})
 
 // ---------- 项目级执行历史面板 ----------
 const historyPanelOpen = ref(false)
@@ -465,7 +505,7 @@ async function onImport(): Promise<void> {
 </script>
 
 <template>
-  <div class="lib-root">
+  <div ref="listEl" class="lib-root">
     <div class="lib-toolbar">
       <div class="lib-search">
         <Icon name="search" :size="12" class="lib-search-icon" />

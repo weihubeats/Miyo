@@ -24,6 +24,6 @@ pub mod supervisor;
 
 pub use protocol::{SidecarFrame, SIDECAR_PROTOCOL_VERSION};
 pub use supervisor::{
-    NoopSink, RestartPolicy, SidecarSession, SidecarSink, SidecarSpec, SidecarStatus, Supervisor,
-    SupervisorTiming,
+    NoopSink, RestartGate, RestartPolicy, SidecarSession, SidecarSink, SidecarSpec, SidecarStatus,
+    Supervisor, SupervisorTiming,
 };

@@ -209,6 +209,17 @@ pub async fn update_projects_order(db: &SqlitePool, project_ids: &[Uuid]) -> Res
     Ok(())
 }
 
+/// 全部项目 id（同步远端存在性检查用；单列小查询）。
+pub async fn list_project_ids(db: &SqlitePool) -> Result<Vec<Uuid>> {
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM projects")
+        .fetch_all(db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id,)| Uuid::parse_str(&id).ok())
+        .collect())
+}
+
 pub async fn get_project(db: &SqlitePool, project_id: Uuid) -> Result<Project> {
     let row: Option<ProjectRow> = sqlx::query_as(
         "SELECT id, name, description, variables_json, team_id, created_at, updated_at

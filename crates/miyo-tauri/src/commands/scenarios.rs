@@ -899,11 +899,20 @@ pub async fn export_scenario_report(
     if run_ids.is_empty() {
         return Err(CommandError::validation("请选择要纳入报告的运行历史"));
     }
-    let mut runs = Vec::with_capacity(run_ids.len());
+    let mut parsed_ids = Vec::with_capacity(run_ids.len());
     for id in &run_ids {
         let uuid = Uuid::parse_str(id)
             .map_err(|_| CommandError::validation(format!("运行历史 id 无效：{id}")))?;
-        let Some(run) = repo::get_scenario_run(&state.db, uuid).await? else {
+        parsed_ids.push(uuid);
+    }
+    // 批量取运行历史（N+1 治理：原逐条 SELECT）；报告按传入顺序映射
+    let fetched = repo::get_scenario_runs_by_ids(&state.db, &parsed_ids).await?;
+    let by_id: std::collections::HashMap<Uuid, _> =
+        fetched.into_iter().map(|r| (r.id, r)).collect();
+    let mut runs = Vec::with_capacity(run_ids.len());
+    for id in &run_ids {
+        let uuid = Uuid::parse_str(id).expect("上方已校验过合法 uuid");
+        let Some(run) = by_id.get(&uuid) else {
             continue;
         };
         let mut results: Vec<miyo_test::runner::EndpointResult> =

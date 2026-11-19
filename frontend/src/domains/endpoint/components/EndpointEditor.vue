@@ -218,6 +218,19 @@ const {
   configBoxEl,
 })
 
+/**
+ * 响应色 tone（与 ResponsePanel 同口径：<300 ok / <400 warn / 其余 err）。
+ * 合并卡内不再画第二层框（收口到分割条单线），失败态把这条接缝线染 danger——
+ * 错误提示仍留在「唯一的一条线」上，不新增视觉元素。
+ */
+const responseTone = computed(() => {
+  const s = response.value?.status
+  if (s == null) return null
+  if (s < 300) return 'ok'
+  if (s < 400) return 'warn'
+  return 'err'
+})
+
 /** 切接口自动收起请求设置弹窗（原与 splitter 的 chrome 归属同 watch，拆分后各自监听）。 */
 watch(
   () => draft.value?.id,
@@ -1205,7 +1218,7 @@ onUnmounted(() => {
            跟随——看到底线即可拖。 -->
       <div
         class="rp-splitter"
-        :class="{ dragging: splitterDragging }"
+        :class="{ dragging: splitterDragging, 'tone-err': responseTone === 'err' }"
         role="separator"
         tabindex="0"
         aria-orientation="horizontal"
@@ -1404,8 +1417,9 @@ onUnmounted(() => {
 .editor {
   display: flex;
   flex-direction: column;
-  /* 卡片间距：请求区面板与响应区面板之间 14px（gap-3.5） */
-  gap: 14px;
+  /* 卡片间距 12px：与容器 padding 对齐同一节奏（此前 14px 与 8/12 形成
+     三种间距碎值，横向节奏不齐） */
+  gap: 12px;
   padding: 12px;
   overflow-y: auto;
   height: 100%;
@@ -2115,7 +2129,9 @@ onUnmounted(() => {
 .req-resp-stack.no-response {
   flex: 1 1 auto;
 }
-/* 核心输入区卡片：比全局背景浅一档，微阴影 + 圆角增强悬浮感 */
+/* 核心输入区卡片：Single Border Architecture——外框 / 圆角 / 阴影由
+ * .req-resp-stack 统一提供，本卡不再画框（此前自带完整边框形成卡中卡，
+ * 接缝处与容器边、分割线叠出三条平行线，即用户指出的「线条问题」）。 */
 .config-box {
   display: flex;
   flex-direction: column;
@@ -2124,9 +2140,6 @@ onUnmounted(() => {
   min-height: 0;
   overflow-y: auto;
   background: var(--bg-card);
-  border: 1px solid var(--border-panel);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-panel);
   padding: 10px 12px;
 }
 
@@ -2555,11 +2568,33 @@ onUnmounted(() => {
 }
 
 /* ---- 响应容器：flex:1 填满分割条以下所有空间 ---- */
+/* ---- 接缝线失败态：响应 tone err 时分割线染 danger ----
+ * 原 .rp 的红框在合并卡内已随边框收口移除，错误态提示收敛到这条
+ * 唯一的接缝线上（hover/拖拽的 accent 高亮 ::before 优先级更高，仍正常）。 */
+.rp-splitter.tone-err {
+  background: var(--danger-border);
+}
+
+.rp-splitter:hover.tone-err::before,
+.rp-splitter.dragging.tone-err::before {
+  background: var(--danger);
+}
+
 .response-zone {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+}
+
+/* Single Border 收口（宿主侧）：ResponsePanel 自带边框/圆角/阴影是独立宿主
+ * （测试用例抽屉 / 场景报告 / GraphQL 等 6 处）的形态，合并卡内由
+ * .req-resp-stack 统一外框——此处剥掉内层框，接缝只剩分割条一条线。
+ * 全屏态 Teleport 到 body，不在本作用域内，独立形态的框/影自动保留。 */
+.response-zone :deep(.rp) {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .response-empty {

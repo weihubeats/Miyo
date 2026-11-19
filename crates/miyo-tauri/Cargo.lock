@@ -2898,7 +2898,6 @@ dependencies = [
  "miyo-core",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
  "tracing",
  "uuid",
 ]
@@ -2997,7 +2996,6 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
  "tokio",
  "tracing",
  "uuid",
@@ -3028,7 +3026,6 @@ dependencies = [
  "rand 0.10.3",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
  "tokio",
  "tracing",
  "uuid",
@@ -3066,7 +3063,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
- "thiserror 2.0.21",
  "uuid",
 ]
 
@@ -3082,7 +3078,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "tar",
- "thiserror 2.0.21",
  "ts-rs",
 ]
 
@@ -3225,7 +3220,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
- "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tracing",

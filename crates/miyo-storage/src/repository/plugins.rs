@@ -561,6 +561,17 @@ pub async fn insert_permission_audit(
     .bind(now())
     .execute(db)
     .await?;
+    // 审计滚动保留 500 条（audit 表无外键、无既有清理——防止无限增长）
+    sqlx::query(
+        "DELETE FROM plugin_permission_audit WHERE plugin_id = ? AND id NOT IN (\
+             SELECT id FROM plugin_permission_audit WHERE plugin_id = ?\
+             ORDER BY id DESC LIMIT 500\
+         )",
+    )
+    .bind(plugin_id)
+    .bind(plugin_id)
+    .execute(db)
+    .await?;
     Ok(())
 }
 

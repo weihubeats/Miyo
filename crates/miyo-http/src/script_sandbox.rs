@@ -76,7 +76,9 @@ impl ScriptResponseData {
 #[derive(Debug, Clone)]
 pub struct ScriptInput {
     pub code: String,
-    pub environment: HashMap<String, String>,
+    /// 变量合并表（调用方构造快照，Arc<Mutex> 共享——脚本可经 `pm.environment`
+    /// 写回；消掉每次请求两份全量 clone，写回即时可见）。
+    pub environment: std::sync::Arc<std::sync::Mutex<HashMap<String, String>>>,
     pub request: ScriptRequestData,
     pub response: Option<ScriptResponseData>,
 }
@@ -281,15 +283,26 @@ fn execute(
         .map_err(|e| classify_eval_error(&ctx, &e, deadline))?;
     drive_promise(&promise, deadline)?;
 
-    let state = state.borrow();
-    if let Some(error) = &state.error {
+    let state_borrow = state.borrow();
+    if let Some(error) = &state_borrow.error {
         return Err(script_error(error.clone()));
     }
+    // 先拷出 owned map（MutexGuard 临时不能进返回结构体字面量——guard 的
+    // Drop 晚于 Rc 释放会触发 E0597）
+    let final_environment = state_borrow
+        .environment
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    let headers = state_borrow.headers.clone();
+    let tests = state_borrow.tests.clone();
+    let logs = state_borrow.logs.clone();
+    drop(state_borrow);
     Ok(ScriptResult {
-        environment: state.environment.clone(),
-        headers: state.headers.clone(),
-        tests: state.tests.clone(),
-        logs: state.logs.clone(),
+        environment: final_environment, // 脚本可写回变量：输出保持 owned map
+        headers,
+        tests,
+        logs,
     })
 }
 
@@ -375,7 +388,7 @@ fn body_text(spec: &RequestSpec) -> String {
 
 /// 脚本内部状态，由 Rust 桥接闭包读写。
 struct ScriptState {
-    environment: HashMap<String, String>,
+    environment: std::sync::Arc<std::sync::Mutex<HashMap<String, String>>>,
     headers: Vec<(String, String)>,
     request: ScriptRequestData,
     response: Option<ScriptResponseData>,
@@ -387,7 +400,7 @@ struct ScriptState {
 impl ScriptState {
     fn new(input: &ScriptInput) -> Self {
         ScriptState {
-            environment: input.environment.clone(),
+            environment: std::sync::Arc::clone(&input.environment),
             headers: input.request.headers.clone(),
             request: input.request.clone(),
             response: input.response.clone(),
@@ -467,7 +480,12 @@ fn register_bindings(ctx: &Ctx<'_>, state: &Rc<RefCell<ScriptState>>) -> Result<
     globals.set(
         "__env_get",
         Function::new(ctx.clone(), move |key: String| -> Option<String> {
-            s.borrow().environment.get(&key).cloned()
+            s.borrow()
+                .environment
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(&key)
+                .cloned()
         })?,
     )?;
 
@@ -475,7 +493,11 @@ fn register_bindings(ctx: &Ctx<'_>, state: &Rc<RefCell<ScriptState>>) -> Result<
     globals.set(
         "__env_set",
         Function::new(ctx.clone(), move |key: String, value: String| {
-            s.borrow_mut().environment.insert(key, value);
+            s.borrow_mut()
+                .environment
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(key, value);
         })?,
     )?;
 
@@ -483,7 +505,11 @@ fn register_bindings(ctx: &Ctx<'_>, state: &Rc<RefCell<ScriptState>>) -> Result<
     globals.set(
         "__env_unset",
         Function::new(ctx.clone(), move |key: String| {
-            s.borrow_mut().environment.remove(&key);
+            s.borrow_mut()
+                .environment
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&key);
         })?,
     )?;
 
@@ -491,7 +517,11 @@ fn register_bindings(ctx: &Ctx<'_>, state: &Rc<RefCell<ScriptState>>) -> Result<
     globals.set(
         "__env_has",
         Function::new(ctx.clone(), move |key: String| -> bool {
-            s.borrow().environment.contains_key(&key)
+            s.borrow()
+                .environment
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .contains_key(&key)
         })?,
     )?;
 
@@ -499,7 +529,11 @@ fn register_bindings(ctx: &Ctx<'_>, state: &Rc<RefCell<ScriptState>>) -> Result<
     globals.set(
         "__env_all",
         Function::new(ctx.clone(), move || -> HashMap<String, String> {
-            s.borrow().environment.clone()
+            s.borrow()
+                .environment
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
         })?,
     )?;
 
@@ -771,7 +805,10 @@ mod tests {
     fn base_input(code: &str) -> ScriptInput {
         ScriptInput {
             code: code.to_string(),
-            environment: HashMap::from([("base_url".to_string(), "http://localhost".to_string())]),
+            environment: std::sync::Arc::new(std::sync::Mutex::new(HashMap::from([(
+                "base_url".to_string(),
+                "http://localhost".to_string(),
+            )]))),
             request: ScriptRequestData {
                 method: "GET".to_string(),
                 url: "http://localhost/api/users".to_string(),

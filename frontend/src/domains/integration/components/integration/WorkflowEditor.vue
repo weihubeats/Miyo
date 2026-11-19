@@ -119,6 +119,8 @@ const steps = ref<EditorStep[]>([])
 const scriptDraft = ref('')
 const loading = ref(true)
 const saving = ref(false)
+/** 最近一次保存是否失败（顶栏保存状态「保存失败」；用户再编辑或保存成功即清除）。 */
+const saveError = ref(false)
 
 /** 保存基线（dirty 判定 + 保存后更新）。 */
 let savedBaseline = ''
@@ -148,14 +150,22 @@ const draftSnapshot = (): string =>
 
 const dirty = computed(() => scenario.value !== null && draftSnapshot() !== savedBaseline)
 
-// ---------- 顶栏保存状态（idle / dirty / saving） ----------
+// 用户再编辑即清除保存失败标记：以草稿内容为源——dirty 布尔在「失败后再改」
+// 时保持 true 不翻变，watch 不会触发；内容变化（含任一字段）才是清除时机。
+watch(draftSnapshot, () => {
+  saveError.value = false
+})
+
+// ---------- 顶栏保存状态（saved / dirty / saving / failed） ----------
 const saveStateText = computed(() => {
   if (saving.value) return t('integration.saveStateSaving')
+  if (saveError.value) return t('integration.saveStateFailed')
   if (dirty.value) return t('integration.saveStateDirty')
   return t('integration.saveStateSaved')
 })
 const saveStateClass = computed(() => {
   if (saving.value) return 'saving'
+  if (saveError.value) return 'failed'
   if (dirty.value) return 'dirty'
   return 'saved'
 })
@@ -165,13 +175,34 @@ const scenarioRef = computed(() => (scenario.value ? { id: scenario.value.id, na
 // ---------- 返回列表（脏数据确认） ----------
 const confirmBackOpen = ref(false)
 
-/** 返回场景列表：有未保存修改先弹确认（编辑器返回钮与顶栏返回共用此入口）。 */
+/**
+ * 返回场景列表：有未保存修改先弹确认（编辑器返回钮与顶栏返回共用此入口）。
+ * 保存进行中不弹窗（脏基线未定型，等保存落地后 dirty 自会刷新）。
+ */
 function requestBack(): void {
+  if (saving.value) {
+    toast.info(t('integration.saveStateSaving'))
+    return
+  }
   if (dirty.value) confirmBackOpen.value = true
   else emit('back')
 }
 
-defineExpose({ requestBack })
+/** 保存并返回：保存失败不返回（弹窗保留，用户可改选放弃 / 留下继续编辑）。 */
+async function saveAndBack(): Promise<void> {
+  if (saving.value) return
+  const ok = await save()
+  if (!ok) return
+  confirmBackOpen.value = false
+  emit('back')
+}
+
+/** 供宿主（IntegrationView）判定：编辑器态切换项目前是否需要脏确认。 */
+function isDirty(): boolean {
+  return dirty.value
+}
+
+defineExpose({ requestBack, save, saveAndBack, isDirty })
 
 async function load(): Promise<void> {
   loading.value = true
@@ -315,10 +346,13 @@ async function save(): Promise<boolean> {
     const saved = await api.saveScenario(toScenario())
     scenario.value = saved
     savedBaseline = draftSnapshot()
+    saveError.value = false
     toast.success(t('integration.saved'))
     void store.loadLibrary(true)
     return true
   } catch (err) {
+    // 失败态顶栏常驻（不只 toast 一闪）：用户改任一字段或保存成功才清除。
+    saveError.value = true
     toast.error(t('integration.saveFail'), {
       message: errorText(err),
     })
@@ -1688,7 +1722,8 @@ function stepTimeoutOf(s: EditorStep): number | null {
       </template>
     </Modal>
 
-    <!-- 返回列表确认：有未保存修改时拦截顶栏 / 编辑器的返回 -->
+    <!-- 返回列表确认：有未保存修改时拦截顶栏 / 编辑器的返回。
+         保存并返回 = 先落库，成功才走返回；失败弹窗保留（不得静默丢失改动） -->
     <Modal
       v-model:open="confirmBackOpen"
       :title="t('integration.backDirtyTitle')"
@@ -1701,8 +1736,21 @@ function stepTimeoutOf(s: EditorStep): number | null {
         <button class="miyo-btn miyo-btn-sm" type="button" @click="confirmBackOpen = false">
           {{ t('integration.backDirtyStay') }}
         </button>
-        <button class="miyo-btn miyo-btn-sm miyo-btn-danger-solid" type="button" @click="discardAndBack">
+        <button
+          class="miyo-btn miyo-btn-sm miyo-btn-danger-solid"
+          type="button"
+          :disabled="saving"
+          @click="discardAndBack"
+        >
           {{ t('integration.backDirtyDiscard') }}
+        </button>
+        <button
+          class="miyo-btn miyo-btn-sm miyo-btn-primary"
+          type="button"
+          :disabled="saving"
+          @click="saveAndBack"
+        >
+          <Icon name="save" :size="12" /> {{ t('integration.backDirtySave') }}
         </button>
       </template>
     </Modal>
@@ -1783,8 +1831,15 @@ function stepTimeoutOf(s: EditorStep): number | null {
         :title="t('response.exitFullscreen')"
         @click="toggleEditorFullscreen"
       />
-      <input v-model="name" class="wf-name" type="text" :placeholder="t('integration.editorNamePh')" spellcheck="false" />
-      <input v-model="category" class="wf-category" type="text" :placeholder="t('integration.categoryLabel')" spellcheck="false" />
+      <!-- 场景名 / 分类：内联编辑标题形态（IDE 惯例）——默认无边框呈现为
+           标题文字，hover 显编辑底色 + 铅笔提示，聚焦才出现输入边界 -->
+      <div class="wf-name-wrap">
+        <input v-model="name" class="wf-name" type="text" :placeholder="t('integration.editorNamePh')" spellcheck="false" />
+        <Icon name="pencil" :size="11" class="wf-name-pen" aria-hidden="true" />
+      </div>
+      <div class="wf-cat-wrap">
+        <input v-model="category" class="wf-category" type="text" :placeholder="t('integration.categoryLabel')" spellcheck="false" />
+      </div>
       <SegmentedControl v-model="viewMode" :options="VIEW_OPTIONS" size="sm" />
       <span class="wf-save-state" :class="saveStateClass" :title="saveStateText">
         <span class="wf-save-dot"></span>{{ saveStateText }}
@@ -2677,13 +2732,92 @@ function stepTimeoutOf(s: EditorStep): number | null {
   background: var(--bg-panel);
 }
 
+/* 场景名 / 分类：内联编辑标题（无边框呈现，hover 显编辑底，聚焦出输入边界；
+   box-shadow 内描边不改变布局高度，避免顶栏跳动） */
+.wf-name-wrap,
+.wf-cat-wrap {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--radius-md);
+  transition: background var(--dur) var(--ease);
+}
+
+.wf-name-wrap {
+  width: 280px;
+  max-width: 30vw;
+}
+
+.wf-cat-wrap {
+  width: 140px;
+  max-width: 18vw;
+}
+
+.wf-name-wrap:hover,
+.wf-cat-wrap:hover {
+  background: var(--bg-hover);
+}
+
+.wf-name-wrap:focus-within,
+.wf-cat-wrap:focus-within {
+  background: var(--bg-card);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
 .wf-name {
-  width: 220px;
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 26px 0 10px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
   font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 铅笔提示只 hover 可见（聚焦后即是编辑态，不再提示） */
+.wf-name-pen {
+  position: absolute;
+  right: 9px;
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.wf-name-wrap:hover .wf-name-pen {
+  opacity: 0.85;
+}
+
+.wf-name-wrap:focus-within .wf-name-pen {
+  opacity: 0;
+}
+
+.wf-name::placeholder,
+.wf-category::placeholder {
+  color: var(--text-3);
+  font-weight: 400;
 }
 
 .wf-category {
-  width: 120px;
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wf-topbar-spacer {
@@ -3096,6 +3230,14 @@ function stepTimeoutOf(s: EditorStep): number | null {
 
 .wf-save-state.dirty .wf-save-dot {
   background: var(--warning);
+}
+
+.wf-save-state.failed {
+  color: var(--danger);
+}
+
+.wf-save-state.failed .wf-save-dot {
+  background: var(--danger);
 }
 
 .wf-save-state.saving .wf-save-dot {

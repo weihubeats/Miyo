@@ -37,6 +37,10 @@ pub struct ScenarioDraftRow {
 }
 
 /// 保存草稿（新草稿总是待应用状态）。
+/// 每场景保留的草稿上限（草稿是「保留修改历史 + 允许撤销」的产品特性——
+/// 不能 upsert 覆盖；但 ai.rs 每次保存都新插一行，不设上限会无限增长）。
+const SCENARIO_DRAFTS_KEEP_PER_SCENARIO: i64 = 10;
+
 pub async fn save_scenario_draft(db: &SqlitePool, draft: &ScenarioDraftRow) -> Result<()> {
     sqlx::query(
         "INSERT INTO scenario_drafts (id, scenario_id, base_json, draft_json, summary, source, created_at, applied_at)
@@ -49,6 +53,19 @@ pub async fn save_scenario_draft(db: &SqlitePool, draft: &ScenarioDraftRow) -> R
     .bind(&draft.summary)
     .bind(&draft.source)
     .bind(draft.created_at.to_rfc3339())
+    .execute(db)
+    .await
+    .map_err(AppError::from)?;
+    // 限界：仅保留每场景最近 N 条（按 created_at 倒序）
+    sqlx::query(
+        "DELETE FROM scenario_drafts WHERE scenario_id = ? AND id NOT IN (
+             SELECT id FROM scenario_drafts WHERE scenario_id = ?
+             ORDER BY created_at DESC LIMIT ?
+         )",
+    )
+    .bind(draft.scenario_id.to_string())
+    .bind(draft.scenario_id.to_string())
+    .bind(SCENARIO_DRAFTS_KEEP_PER_SCENARIO)
     .execute(db)
     .await
     .map_err(AppError::from)?;

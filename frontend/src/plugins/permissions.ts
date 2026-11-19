@@ -60,6 +60,14 @@ export function lookupPermission(id: string): PermissionDef | undefined {
 }
 
 /**
+ * 声明清单中的 High 风险权限（安装 / 更新确认页单独确认用）。
+ * 目录是唯一事实源：未登记权限按未知处理（不算 High，安装本身会拒绝）。
+ */
+export function highRiskPermissions(permissions: string[]): string[] {
+  return permissions.filter((p) => lookupPermission(p)?.risk === 'high')
+}
+
+/**
  * 命令 → 权限映射（SDK commands.invoke 的白名单依据；后端另有插件门禁 +
  * granted 快照逐命令校验，两侧同口径）。
  * 未命中的命令一律拒绝——插件不能调用任意核心命令。

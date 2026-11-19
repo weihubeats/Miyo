@@ -130,7 +130,8 @@ pub fn parse_major(version: &str) -> u32 {
 }
 
 /// 本机 JDK 工具链注册表（进程内缓存；`refresh` 重新扫描）。
-#[derive(Debug, Default)]
+/// Clone 用于「锁内克隆 → 锁外富化 → 锁内写回」模式（锁不再跨子进程 IO）。
+#[derive(Debug, Default, Clone)]
 pub struct ToolchainRegistry {
     toolchains: Vec<JdkToolchain>,
 }

@@ -184,4 +184,54 @@ describe('WorkflowEditor：第二轮 UI 层', () => {
     expect(wrapper.find('.wf-policy').exists()).toBe(false)
     wrapper.unmount()
   })
+
+  it('顶栏保存状态：保存失败显示「保存失败」，再编辑后恢复「未保存」', async () => {
+    api.saveScenario.mockRejectedValueOnce(new Error('net down'))
+    const wrapper = await mountEditor()
+    await wrapper.find('.wf-name').setValue('会失败的名字')
+    const saveBtn = wrapper.findAll('.wf-topbar button').find((b) => b.text().includes('保存'))
+    await saveBtn!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.wf-save-state').classes()).toContain('failed')
+    expect(wrapper.text()).toContain('保存失败')
+
+    // 再编辑任一字段：失败态清除（dirty 布尔不变，清除逻辑以草稿内容为源）
+    await wrapper.find('.wf-name').setValue('再改一次')
+    await flushPromises()
+    expect(wrapper.find('.wf-save-state').classes()).toContain('dirty')
+    expect(wrapper.find('.wf-save-state').text()).not.toContain('保存失败')
+    wrapper.unmount()
+    document.body.innerHTML = ''
+  })
+
+  it('返回确认：保存并返回成功后 emit back；保存失败不得返回（弹窗保留）', async () => {
+    // 先失败：保存失败不得回列表
+    api.saveScenario.mockRejectedValueOnce(new Error('net down'))
+    const wrapper = await mountEditor()
+    const editor = wrapper.findComponent(WorkflowEditor)
+    await wrapper.find('.wf-name').setValue('脏改动')
+
+    ;(editor.vm as unknown as { requestBack: () => void }).requestBack()
+    await flushPromises()
+    // Modal Teleport 到 body：从 document 找按钮
+    const modalBtns = () => Array.from(document.body.querySelectorAll('button'))
+    const saveAndBackBtn = () => modalBtns().find((b) => b.textContent?.includes('保存并返回'))
+    expect(saveAndBackBtn()).toBeTruthy()
+
+    saveAndBackBtn()!.click()
+    await flushPromises()
+    await flushPromises()
+    expect(editor.emitted('back')).toBeUndefined() // 保存失败：不得返回
+    expect(wrapper.find('.wf-save-state').classes()).toContain('failed')
+
+    // 再触发返回确认并保存成功：回列表
+    ;(editor.vm as unknown as { requestBack: () => void }).requestBack()
+    await flushPromises()
+    saveAndBackBtn()!.click()
+    await flushPromises()
+    await flushPromises()
+    expect(editor.emitted('back')).toHaveLength(1)
+    wrapper.unmount()
+    document.body.innerHTML = ''
+  })
 })

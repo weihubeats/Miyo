@@ -193,7 +193,8 @@ async fn audit(db: &sqlx::SqlitePool, plugin_id: &str, message: &str) {
     }
 }
 
-/// Supervisor 装配（AppState::new 调用）：日志经 sink 落 plugin_logs。
+/// Supervisor 装配（AppState::new 调用）：日志经 sink 落 plugin_logs；
+/// 崩溃重启门禁接「插件启用态」查询（停用 / 卸载即终止重启链）。
 pub fn build_supervisor(db: sqlx::SqlitePool) -> Arc<Supervisor> {
     struct LogSink(sqlx::SqlitePool);
     impl miyo_sidecar::SidecarSink for LogSink {
@@ -215,5 +216,13 @@ pub fn build_supervisor(db: sqlx::SqlitePool) -> Arc<Supervisor> {
             tracing::debug!("sidecar 事件（{plugin_id}）：{event} {}", payload);
         }
     }
-    Arc::new(Supervisor::new(Arc::new(LogSink(db))))
+    let supervisor = Arc::new(Supervisor::new(Arc::new(LogSink(db.clone()))));
+    // 重启门禁：重启前复查插件启用态。DB 不可达按禁用处理（fail-closed：
+    // 宁可少一次自动重启，不可把已停用插件的进程复活）。
+    supervisor.set_restart_gate(Arc::new(move |plugin_id: &str| {
+        let pool = db.clone();
+        let id = plugin_id.to_string();
+        Box::pin(async move { matches!(repo::is_plugin_enabled(&pool, &id).await, Ok(true)) })
+    }));
+    supervisor
 }

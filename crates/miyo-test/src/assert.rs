@@ -430,7 +430,7 @@ pub async fn evaluate_javascript(a: &AssertionSpec, resp: &HttpResponseData) -> 
         code: format!(
             "function assert(value, msg) {{ if (!value) throw new Error(msg || 'JS 断言失败'); }}\n{code}"
         ),
-        environment: std::collections::HashMap::new(),
+        environment: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         request: miyo_http::script_sandbox::ScriptRequestData {
             method: String::new(),
             url: String::new(),

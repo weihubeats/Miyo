@@ -24,7 +24,7 @@ import Spinner from '@/components/ui/Spinner.vue'
 import { useLocaleStore } from '@/stores/locale'
 import { useToast } from '@/composables/useToast'
 import { usePluginManager } from '@/plugins/manager'
-import { lookupPermission } from '@/plugins/permissions'
+import { highRiskPermissions, lookupPermission } from '@/plugins/permissions'
 import { errorText } from '@/utils/errorText'
 import type { PluginCatalogView } from '@/types/generated/PluginCatalogView'
 import type { PluginManifest } from '@/types/generated/PluginManifest'
@@ -236,6 +236,12 @@ const inspecting = ref(false)
 /** 检视用途：install（本地新装）/ update（本地包更新）/ remote（市场远程）。 */
 const inspectMode = ref<'install' | 'update' | 'remote'>('install')
 const remoteInspecting = ref<string | null>(null)
+/** High 风险权限单独确认（用户勾选后安装 / 更新按钮才可用；每次检视重置）。 */
+const highRiskConfirmed = ref(false)
+/** 当前检视包声明的 High 风险权限（空 = 无需单独确认）。 */
+const inspectionHighRisk = computed(() =>
+  inspection.value ? highRiskPermissions(inspection.value.manifest.permissions) : [],
+)
 
 /** 市场远程安装：下载 → 检视缓存（后端）→ 复用确认弹窗 → 确认后从缓存安装。 */
 async function onRemoteInstall(entry: {
@@ -255,6 +261,7 @@ async function onRemoteInstall(entry: {
     }>(`${IPC_PREFIX}plugin_inspect_from_url`, { url: entry.download_url })
     inspection.value = { ...info, path: entry.download_url }
     trustUnsigned.value = false
+    highRiskConfirmed.value = false
   } catch (e) {
     toast.error(t('plugins.downloadFailed'), { message: errorText(e) })
   } finally {
@@ -280,6 +287,7 @@ async function pickAndInspect(mode: 'install' | 'update' = 'install'): Promise<v
     }>(`${IPC_PREFIX}plugin_inspect_package`, { path: picked })
     inspection.value = { ...info, path: picked }
     trustUnsigned.value = false
+    highRiskConfirmed.value = false
   } catch (e) {
     toast.error(t('plugins.inspectFailed'), { message: errorText(e) })
   } finally {
@@ -292,6 +300,8 @@ async function confirmInstallFile(): Promise<void> {
   const pkg = inspection.value
   if (!pkg) return
   if (!pkg.signed && !trustUnsigned.value) return
+  // High 风险权限单独确认（PERMISSIONS.md 口径：确认页明示 + High 单独勾选）
+  if (inspectionHighRisk.value.length > 0 && !highRiskConfirmed.value) return
   installFileBusy.value = true
   try {
     if (inspectMode.value === 'remote') {
@@ -681,6 +691,12 @@ function closeDetail(): void {
             <span class="pg-perm-id">{{ p }}</span>
           </li>
         </ul>
+        <!-- High 风险权限单独确认（文档承诺项）：存在 High 声明时必须显式勾选，
+             安装 / 更新按钮才可用——与未签名信任勾选相互独立。 -->
+        <label v-if="inspectionHighRisk.length > 0" class="pg-trust pg-trust-high">
+          <input v-model="highRiskConfirmed" type="checkbox" />
+          <span>{{ t('plugins.confirmHighRisk', { count: inspectionHighRisk.length }) }}</span>
+        </label>
         <label v-if="!inspection.signed" class="pg-trust">
           <input v-model="trustUnsigned" type="checkbox" />
           <span>{{ t('plugins.trustUnsigned') }}</span>
@@ -696,7 +712,11 @@ function closeDetail(): void {
         <button
           class="miyo-btn miyo-btn-sm miyo-btn-primary"
           type="button"
-          :disabled="installFileBusy || (!inspection?.signed && !trustUnsigned)"
+          :disabled="
+            installFileBusy ||
+            (!inspection?.signed && !trustUnsigned) ||
+            (inspectionHighRisk.length > 0 && !highRiskConfirmed)
+          "
           @click="confirmInstallFile"
         >
           {{ t(inspectMode === 'update' ? 'plugins.updateFromPath' : 'plugins.installConfirm') }}
@@ -1011,6 +1031,10 @@ function closeDetail(): void {
   font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
+}
+/* High 风险确认行：危险色强调（与权限 chip 的 risk-high 同色系）。 */
+.pg-trust-high {
+  color: var(--danger);
 }
 .pg-integrity {
   margin: 10px 0 0;

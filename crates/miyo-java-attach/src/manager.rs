@@ -74,6 +74,9 @@ pub struct AttachManager {
     /// infoFile / 临时目录根（Miyo 数据目录下 java-agent/）。
     data_dir: PathBuf,
     inner: Mutex<ManagerInner>,
+    /// attach 进行中的 pid 去重（std Mutex：临界区无 await）。
+    /// 替代「全局锁串行整个 attach 流程」——锁不再跨 launcher 子进程 IO。
+    attaching: std::sync::Mutex<HashSet<i64>>,
 }
 
 struct ManagerInner {
@@ -90,6 +93,7 @@ impl AttachManager {
                 sessions: HashMap::new(),
                 registry: ToolchainRegistry::default(),
             }),
+            attaching: std::sync::Mutex::new(HashSet::new()),
         }
     }
 
@@ -127,23 +131,35 @@ impl AttachManager {
     }
 
     /// 进程发现（OS 扫描 + launcher list 交叉 + 版本富化）。
+    ///
+    /// 锁纪律：launcher 子进程与 OS 扫描均在锁外执行（注册表克隆 → 锁外富化
+    /// → 锁内写回）——launcher JVM 启动可达数秒，持锁会让 discover/probe/
+    /// attach 全部互锁排队。
     pub async fn discover_processes(&self) -> ProcessListSummary {
         let started = std::time::Instant::now();
         let mut hints = Vec::new();
-        let mut inner = self.inner.lock().await;
-        // launcher list：Attach API 视角的可达性（无可用 JDK / 无 HotSpot 时为空 + 提示）
-        let attachable_pids = match self.launch_attachable_pids(&mut inner).await {
+        // 锁内：会话快照 + 注册表克隆（无 IO）
+        let (attached_pids, mut reg) = {
+            let mut inner = self.inner.lock().await;
+            let attached = inner.sessions.keys().copied().collect();
+            if inner.registry.is_empty() {
+                inner.registry.refresh();
+            }
+            (attached, inner.registry.clone())
+        };
+        // 锁外：launcher list 子进程（失败 → 提示而非报错）
+        let attachable_pids = match self.launch_attachable_pids(&mut reg).await {
             Ok(pids) => pids,
             Err(e) => {
                 hints.push(format!("Attach 探测不可用：{}", e.user_message()));
                 HashSet::new()
             }
         };
-        let attached_pids: HashSet<i64> = inner.sessions.keys().copied().collect();
+        // 锁外：OS 扫描 + 注册表富化
         let processes =
-            proc_scan::discover_processes(&mut inner.registry, &attachable_pids, &attached_pids)
-                .await;
-        let toolchain_count = inner.registry.all().len();
+            proc_scan::discover_processes(&mut reg, &attachable_pids, &attached_pids).await;
+        let toolchain_count = reg.all().len();
+        self.inner.lock().await.registry = reg;
         ProcessListSummary {
             processes,
             toolchain_count,
@@ -156,26 +172,26 @@ impl AttachManager {
 
     /// 手动 pid 探测。
     pub async fn probe_pid(&self, pid: i64) -> Result<JavaProcessInfo, AppError> {
-        let mut inner = self.inner.lock().await;
+        let mut reg = self.inner.lock().await.registry.clone();
         let attachable_pids = self
-            .launch_attachable_pids(&mut inner)
+            .launch_attachable_pids(&mut reg)
             .await
             .unwrap_or_default();
-        proc_scan::probe_pid(pid, &mut inner.registry, &attachable_pids)
+        proc_scan::probe_pid(pid, &mut reg, &attachable_pids)
             .await
             .ok_or_else(|| AppError::NotFound(format!("进程 {pid} 不存在或不可见")))
     }
 
-    /// launcher list → attachable pid 集合（附带注册表刷新）。
+    /// launcher list → attachable pid 集合（注册表由调用方克隆传入并写回）。
     async fn launch_attachable_pids(
         &self,
-        inner: &mut ManagerInner,
+        registry: &mut ToolchainRegistry,
     ) -> Result<HashSet<i64>, AppError> {
-        if inner.registry.is_empty() {
-            inner.registry.refresh();
+        if registry.is_empty() {
+            registry.refresh();
         }
         let tools = self.resolve_tools()?;
-        let target = inner.registry.select_for_target(None)?;
+        let target = registry.select_for_target(None)?;
         let runner = LauncherRunner::new(&target, tools);
         let vms = runner.list_attachable().await?;
         Ok(vms.into_iter().map(|vm| vm.pid).collect())
@@ -216,28 +232,58 @@ impl AttachManager {
     }
 
     /// attach：launcher sidecar attach → IPC 连接 → 身份校验 → 会话注册。
+    ///
+    /// 锁纪律：launcher 子进程（可达 25s）与握手 IO 全在锁外；全局锁只在
+    /// 快照 / 上限 / 去重 / 会话登记瞬间持有。并发去重用 `attaching` 集合
+    /// （同 pid 双击 attach 报「进行中」），不同 pid 可并行 attach。
     pub async fn attach(
         &self,
         pid: i64,
         options: &AttachOptions,
     ) -> Result<AttachSessionSnapshot, AppError> {
-        // 已 attach 且健康 → 直接返回（幂等）
-        {
+        struct AttachingGuard<'a>(&'a std::sync::Mutex<HashSet<i64>>, i64);
+        impl Drop for AttachingGuard<'_> {
+            fn drop(&mut self) {
+                self.0
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&self.1);
+            }
+        }
+
+        // 1. 锁内：上限预检 + 去重登记 + 既有会话 client 快照（无 IO）
+        let (existing_client, reg_snapshot) = {
             let inner = self.inner.lock().await;
-            if let Some(session) = inner.sessions.get(&pid) {
-                if session.client.ping().await.is_ok() {
-                    let snapshot = session_to_snapshot(session, true);
-                    return Ok(snapshot);
+            if !inner.sessions.contains_key(&pid) {
+                check_session_limit(inner.sessions.len())?;
+            }
+            let mut attaching = self.attaching.lock().unwrap_or_else(|p| p.into_inner());
+            if attaching.contains(&pid) {
+                return Err(AppError::Validation(format!(
+                    "pid {pid} 的 attach 正在进行中，请稍候"
+                )));
+            }
+            attaching.insert(pid);
+            (
+                inner.sessions.get(&pid).map(|s| s.client.clone()),
+                inner.registry.clone(),
+            )
+        };
+        let _attach_guard = AttachingGuard(&self.attaching, pid);
+
+        // 2. 锁外：幂等 ping（健康即直接返回快照）
+        if let Some(client) = &existing_client {
+            if client.ping().await.is_ok() {
+                let inner = self.inner.lock().await;
+                if let Some(session) = inner.sessions.get(&pid) {
+                    return Ok(session_to_snapshot(session, true));
                 }
             }
         }
-        // 进程身份前置确认（存在且是 Java）
-        let mut inner = self.inner.lock().await;
-        // 会话上限：新 pid 才计数（幂等重连 / 失联重建不受限）
-        if !inner.sessions.contains_key(&pid) {
-            check_session_limit(inner.sessions.len())?;
-        }
-        let proc_info = proc_scan::probe_pid(pid, &mut inner.registry, &HashSet::new())
+
+        // 3. 锁外：进程身份前置确认（registry 克隆上富化）
+        let mut reg = reg_snapshot;
+        let proc_info = proc_scan::probe_pid(pid, &mut reg, &HashSet::new())
             .await
             .ok_or_else(|| AppError::NotFound(format!("进程 {pid} 不存在（可能已退出）")))?;
         if proc_info.main_class.is_empty() && !proc_info.command_line.contains("java") {
@@ -247,10 +293,11 @@ impl AttachManager {
             )));
         }
 
+        // 4. 锁外：工具链选择 + launcher attach（可达 25s）+ 握手
         let tools = self.resolve_tools()?;
         let target_major = crate::jdk::parse_major(&proc_info.java_version);
         let target_major = (target_major > 0).then_some(target_major);
-        let toolchain = inner.registry.select_for_target(target_major)?;
+        let toolchain = reg.select_for_target(target_major)?;
         let runner = LauncherRunner::new(&toolchain, tools);
 
         // 一次性 token（256-bit hex）
@@ -283,20 +330,8 @@ impl AttachManager {
         let client = AgentClient::new(info.port, token.clone());
         client.ping().await.map_err(|e| e.to_app_error())?;
 
-        // 重复 attach 识别：Agent 侧 existing 标记（Agent 已运行 → 仅换发 token，
-        // 无新注入）。detach 后重连同样命中——对用户语义是「无需重新注入」。
+        // 5. 锁内：会话登记 + 注册表写回
         let reattached = info.existing;
-        if let Some(old) = inner.sessions.get(&pid) {
-            if old.vm_start_ms != info.vm_start_ms {
-                // 进程重启（pid 复用）：旧会话作废，按新身份重建
-                tracing::info!(
-                    "pid {pid} 检测到 JVM 重启（vm_start {} → {}），重建会话",
-                    old.vm_start_ms,
-                    info.vm_start_ms
-                );
-            }
-        }
-
         let handshake = AgentHandshakeInfo {
             protocol: info.protocol,
             agent_version: info.agent_version.clone(),
@@ -323,7 +358,19 @@ impl AttachManager {
             reattached,
         };
         let snapshot = session_to_snapshot(&session, reattached);
+        let mut inner = self.inner.lock().await;
+        if let Some(old) = inner.sessions.get(&pid) {
+            if old.vm_start_ms != info.vm_start_ms {
+                // 进程重启（pid 复用）：旧会话作废，按新身份重建
+                tracing::info!(
+                    "pid {pid} 检测到 JVM 重启（vm_start {} → {}），重建会话",
+                    old.vm_start_ms,
+                    info.vm_start_ms
+                );
+            }
+        }
         inner.sessions.insert(pid, session);
+        inner.registry = reg;
         Ok(snapshot)
     }
 

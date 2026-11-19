@@ -11,7 +11,6 @@ description = "Miyo plugin system — manifest validation, compatibility, permis
 miyo-core = { path = "../miyo-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 # .miyo 插件包 = tar.gz；解包做路径穿越 / 体积 / 条目类型白名单防护

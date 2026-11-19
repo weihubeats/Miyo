@@ -346,6 +346,92 @@ async fn total_sidecar_cap_enforced() {
     sup.shutdown_all().await;
 }
 
+/// 崩溃重启门禁（生命周期隔离）：门禁 = false（插件已停用 / 卸载）→ 重启链
+/// 终止、会话移除、不复活新进程；门禁 = true → 正常按 on-crash 重启。
+/// 门禁用可翻转共享开关模拟宿主「插件启用态」查询。
+#[tokio::test]
+async fn restart_gate_blocks_respawn_of_disabled_plugin() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let sink = Arc::new(RecordingSink::default());
+    let sup = fast_supervisor(Arc::clone(&sink));
+    let enabled = Arc::new(AtomicBool::new(true));
+    let gate_enabled = Arc::clone(&enabled);
+    sup.set_restart_gate(Arc::new(move |_plugin_id: &str| {
+        let gate = Arc::clone(&gate_enabled);
+        Box::pin(async move { gate.load(Ordering::Relaxed) })
+    }));
+
+    sup.start(spec("com.test.gate", RestartPolicy::OnCrash))
+        .await
+        .unwrap();
+
+    // 第一次崩溃：门禁 true → 正常重启（新进程应答 echo）
+    let _ = sup
+        .request(
+            "com.test.gate",
+            "crash",
+            serde_json::json!({}),
+            Duration::from_secs(5),
+        )
+        .await;
+    wait_for(
+        || async {
+            sup.request(
+                "com.test.gate",
+                "echo",
+                serde_json::json!(1),
+                Duration::from_millis(800),
+            )
+            .await
+            .is_ok()
+        },
+        "restart allowed while enabled",
+    )
+    .await;
+
+    // 翻转为停用 → 再崩溃：门禁 false → 不重启、会话移除
+    enabled.store(false, Ordering::Relaxed);
+    let _ = sup
+        .request(
+            "com.test.gate",
+            "crash",
+            serde_json::json!({}),
+            Duration::from_secs(5),
+        )
+        .await;
+    wait_for(
+        || async {
+            !sup.status()
+                .await
+                .iter()
+                .any(|s| s.plugin_id == "com.test.gate")
+        },
+        "disabled plugin session removed after crash",
+    )
+    .await;
+    // 门禁拦截日志上送
+    wait_for(
+        || async {
+            sink.logs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(p, _, m)| p == "com.test.gate" && m.contains("不再自动重启"))
+        },
+        "gate-blocked log",
+    )
+    .await;
+    // 给足「退避 + 门禁」窗口后仍无新进程（没有被停用门禁复活）
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(!sup
+        .status()
+        .await
+        .iter()
+        .any(|s| s.plugin_id == "com.test.gate"));
+    sup.shutdown_all().await;
+}
+
 /// 进程存活探测（unix：kill(pid, 0)；Windows：OpenProcess + 退出码）。
 fn process_alive(pid: u32) -> bool {
     #[cfg(unix)]

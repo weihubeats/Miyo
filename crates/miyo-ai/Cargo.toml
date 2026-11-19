@@ -1,6 +1,6 @@
 [package]
 name = "miyo-ai"
-version = "0.0.1"
+version.workspace = true
 edition = "2021"
 description = "AI 大模型客户端：OpenAI 兼容协议（chat/completions 流式 + 工具调用）与应用内 Agent 循环"
 license = "Apache-2.0"

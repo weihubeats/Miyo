@@ -145,7 +145,7 @@ pub async fn execute_request(
         match sandbox
             .run(miyo_http::script_sandbox::ScriptInput {
                 code: pre_code,
-                environment: runtime_vars.clone(),
+                environment: std::sync::Arc::new(std::sync::Mutex::new(runtime_vars.clone())),
                 request: snapshot,
                 response: None,
             })
@@ -329,7 +329,7 @@ async fn run_post_response_script(
     let r = sandbox
         .run(miyo_http::script_sandbox::ScriptInput {
             code,
-            environment: vars.clone(),
+            environment: std::sync::Arc::new(std::sync::Mutex::new(vars.clone())),
             request: snapshot,
             response: Some(response),
         })
