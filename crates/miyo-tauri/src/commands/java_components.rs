@@ -35,7 +35,6 @@ fn component_names() -> [&'static str; 2] {
     [AGENT_JAR_NAME, LAUNCHER_JAR_NAME]
 }
 
-
 fn component_url(name: &str) -> String {
     format!("{COMPONENT_BASE_URL}/{name}")
 }
@@ -146,9 +145,8 @@ pub(crate) async fn fetch_and_store_component(
     let jar = crate::commands::plugins::download_package(&format!("{base_url}/{name}")).await?;
     let sha_raw =
         crate::commands::plugins::download_package(&format!("{base_url}/{name}.sha256")).await?;
-    let expected = parse_sha256_file(&sha_raw).ok_or_else(|| {
-        CommandError::validation(format!("{name} 的 sha256 sidecar 格式非法"))
-    })?;
+    let expected = parse_sha256_file(&sha_raw)
+        .ok_or_else(|| CommandError::validation(format!("{name} 的 sha256 sidecar 格式非法")))?;
     let mut hasher = Sha256::new();
     hasher.update(&jar);
     let actual = hex::encode(hasher.finalize());
@@ -230,14 +228,10 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let jar: &'static [u8] = Box::leak(b"FAKE-JAR-CONTENT".to_vec().into_boxed_slice());
-        let digest: &'static str =
-            Box::leak(hex::encode(Sha256::digest(jar)).into_boxed_str());
+        let digest: &'static str = Box::leak(hex::encode(Sha256::digest(jar)).into_boxed_str());
 
         // 通用 mock：按路径返回 jar / sha256 / 篡改 sha256
-        async fn spawn_mock(
-            jar: &'static [u8],
-            sha: &'static str,
-        ) -> String {
+        async fn spawn_mock(jar: &'static [u8], sha: &'static str) -> String {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
             tokio::spawn(async move {
@@ -246,11 +240,15 @@ mod tests {
                         let mut buf = vec![0u8; 4096];
                         let _ = sock.read(&mut buf).await;
                         let path = String::from_utf8_lossy(&buf).to_string();
-                        let (ctype, body): (&'static str, &'static [u8]) = if path.contains(".sha256") {
-                            ("text/plain", Box::leak(sha.as_bytes().to_vec().into_boxed_slice()))
-                        } else {
-                            ("application/java-archive", jar)
-                        };
+                        let (ctype, body): (&'static str, &'static [u8]) =
+                            if path.contains(".sha256") {
+                                (
+                                    "text/plain",
+                                    Box::leak(sha.as_bytes().to_vec().into_boxed_slice()),
+                                )
+                            } else {
+                                ("application/java-archive", jar)
+                            };
                         let head = format!(
                             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: {ctype}\r\nConnection: close\r\n\r\n",
                             body.len()
@@ -276,7 +274,8 @@ mod tests {
         assert!(!tmp.path().join(format!(".{AGENT_JAR_NAME}.tmp")).exists());
 
         // 篡改：sidecar 哈希与 jar 不符 → 拒绝 + 不落盘
-        let bad_digest: &'static str = Box::leak(hex::encode(Sha256::digest(b"tampered")).into_boxed_str());
+        let bad_digest: &'static str =
+            Box::leak(hex::encode(Sha256::digest(b"tampered")).into_boxed_str());
         let base_bad = spawn_mock(jar, &bad_digest).await;
         let err = fetch_and_store_component(tmp.path(), LAUNCHER_JAR_NAME, &base_bad)
             .await
