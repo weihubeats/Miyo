@@ -342,7 +342,7 @@ async fn total_sidecar_cap_enforced() {
     sup.shutdown_all().await;
 }
 
-/// 进程存活探测（unix：kill(pid, 0)； Dead 进程返回 false）。
+/// 进程存活探测（unix：kill(pid, 0)；Windows：OpenProcess + 退出码）。
 fn process_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
@@ -351,7 +351,24 @@ fn process_alive(pid: u32) -> bool {
     }
     #[cfg(not(unix))]
     {
-        let _ = pid;
-        true
+        // Windows：查询退出码（STILL_ACTIVE=259）；打不开句柄 = 不存在
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        // SAFETY：句柄用后即关
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return false;
+            }
+            let mut code: u32 = 0;
+            let ok = GetExitCodeProcess(h, &mut code);
+            CloseHandle(h);
+            if ok == 0 {
+                return false;
+            }
+            code != 259 // STILL_ACTIVE
+        }
     }
 }
