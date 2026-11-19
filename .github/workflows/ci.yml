@@ -69,6 +69,22 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      # Maven Central 对 GH 共享出口 IP 限流（429 Too Many Requests，v0.0.61
+      # CI 实测三连失败）——切阿里云镜像（public 聚合 central）
+      - name: Configure Maven mirror (Central 429 rate limit)
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<'XML'
+          <settings>
+            <mirrors>
+              <mirror>
+                <id>aliyun</id>
+                <mirrorOf>central</mirrorOf>
+                <url>https://maven.aliyun.com/repository/public</url>
+              </mirror>
+            </mirrors>
+          </settings>
+          XML
       - name: Build attach jars + e2e demo target (plain-app classes8)
         run: |
           # Maven Central 偶发解析失败（v0.0.61 CI 实测：已存在的
