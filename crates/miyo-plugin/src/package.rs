@@ -368,8 +368,11 @@ fn verify_archive_files(bytes: &[u8], files: &[PluginFileEntry]) -> Result<(), A
             .path()
             .map_err(|e| AppError::Validation(format!("插件包条目路径非法：{e}")))?
             .to_path_buf();
-        let safe = sanitize_entry_path(&raw_path.to_string_lossy())?;
-        let path_str = safe.to_string_lossy().to_string();
+        // 清单键恒为正斜杠形式——Windows 上 PathBuf 渲染会转反斜杠，
+        // 必须归一回 '/' 再比对（否则清单键全部失配，v0.0.61 CI 实测）
+        let normalized = raw_path.to_string_lossy().replace('\\', "/");
+        let safe = sanitize_entry_path(&normalized)?;
+        let path_str = safe.to_string_lossy().replace('\\', "/");
         // manifest.json 不在 files 清单内——由 integrity（manifest 字节 sha256）
         // 单独保护，且是签名 payload 的载体
         if path_str.is_empty() || path_str == "manifest.json" {
