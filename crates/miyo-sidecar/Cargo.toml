@@ -20,9 +20,11 @@ uuid = { workspace = true }
 libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-# Job Object（KILL_ON_JOB_CLOSE + 进程内存上限）
+# Job Object（KILL_ON_JOB_CLOSE + 进程内存上限）；CreateJobObjectW 依赖
+# Security::SECURITY_ATTRIBUTES 类型——Win32_Security feature 必开
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_Security",
     "Win32_System_JobObjects",
     "Win32_System_Threading",
 ] }

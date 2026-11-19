@@ -154,19 +154,19 @@ mod windows_job {
             use windows_sys::Win32::Foundation::CloseHandle;
             use windows_sys::Win32::System::JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-                SetInformationJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
-                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+                SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
             };
             unsafe {
                 let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
                 if job.is_null() {
-                    return Err(AppError::Internal("CreateJobObjectW 失败".into()));
+                    return Err(AppError::Io(std::io::Error::other("CreateJobObjectW 失败")));
                 }
                 let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
                 limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
                 if let Some(mb) = max_memory_mb {
-                    limits.ProcessMemoryLimit = mb as u64 * 1024 * 1024;
+                    // windows-sys 0.59：ProcessMemoryLimit 为 usize（指针宽度）
+                    limits.ProcessMemoryLimit = mb as usize * 1024 * 1024;
                     limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
                 }
                 let ok = SetInformationJobObject(
@@ -177,7 +177,9 @@ mod windows_job {
                 );
                 if ok == 0 {
                     CloseHandle(job);
-                    return Err(AppError::Internal("SetInformationJobObject 失败".into()));
+                    return Err(AppError::Io(std::io::Error::other(
+                        "SetInformationJobObject 失败",
+                    )));
                 }
                 let proc = windows_sys::Win32::System::Threading::OpenProcess(
                     0x0100 | 0x0001, // PROCESS_SET_QUOTA | PROCESS_TERMINATE
@@ -186,15 +188,17 @@ mod windows_job {
                 );
                 if proc.is_null() {
                     CloseHandle(job);
-                    return Err(AppError::Internal(format!(
+                    return Err(AppError::Io(std::io::Error::other(format!(
                         "OpenProcess({pid}) 失败（权限不足或进程已退出）"
-                    )));
+                    ))));
                 }
                 let ok = AssignProcessToJobObject(job, proc);
                 CloseHandle(proc);
                 if ok == 0 {
                     CloseHandle(job);
-                    return Err(AppError::Internal("AssignProcessToJobObject 失败".into()));
+                    return Err(AppError::Io(std::io::Error::other(
+                        "AssignProcessToJobObject 失败",
+                    )));
                 }
                 Ok(JobHandle { handle: job })
             }
