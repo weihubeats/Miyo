@@ -665,6 +665,9 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <!-- 全屏时 Teleport 到 body：脱离工作区布局的层叠压制（top-bar / 页签行 /
+       编辑器栏会盖住原位 fixed 面板，v0.0.61 用户实测）；非全屏原位渲染。 -->
+  <Teleport to="body" :disabled="!fullscreen">
   <div class="rp" :class="[`tone-${tone}`, { collapsed, fullscreen }]">
     <!-- 第一层：执行信息（状态 / 耗时 / 大小 / 类型）+ 面板级操作 -->
     <div class="rp-toolbar">
@@ -949,6 +952,7 @@ onUnmounted(() => {
 
     <Menu ref="moreMenu" @select="onMoreMenuSelect" />
   </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -972,11 +976,13 @@ onUnmounted(() => {
   height: auto;
 }
 
-/* 全屏：fixed 覆盖编辑器（祖先链无 transform，fixed 可靠）；Esc / 菜单退出 */
+/* 全屏：Teleport 到 body 后 fixed 覆盖视口（原位渲染会被工作区 chrome
+ * 的层叠上下文压住，v0.0.61 用户实测）；Esc / 菜单退出。
+ * 层级取 --z-overlay：覆盖工作区 chrome，低于 Toast（阶梯见 style.css）。 */
 .rp.fullscreen {
   position: fixed;
   inset: 14px;
-  z-index: 80;
+  z-index: var(--z-overlay);
   height: auto;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
 }

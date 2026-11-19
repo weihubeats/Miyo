@@ -463,6 +463,9 @@ async function copyJson(): Promise<void> {
 </script>
 
 <template>
+  <!-- 全屏时 Teleport 到 body：脱离工作区布局的层叠压制（top-bar / 页签行 /
+       编辑器栏会盖住原位 fixed 面板，v0.0.61 用户实测）；非全屏原位渲染。 -->
+  <Teleport to="body" :disabled="!fullscreen">
   <div ref="editorRef" class="json-editor" :class="{ fullscreen }">
     <!-- 顶部工具栏：状态 Tag + 快捷操作（替代原悬浮层，不遮挡代码） -->
     <div class="je-toolbar">
@@ -558,6 +561,7 @@ async function copyJson(): Promise<void> {
       ></textarea>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -573,7 +577,8 @@ async function copyJson(): Promise<void> {
 .json-editor.fullscreen {
   position: fixed;
   inset: 16px;
-  z-index: 80;
+  /* 全屏层：覆盖工作区 chrome，低于 Toast（层级阶梯见 style.css） */
+  z-index: var(--z-overlay);
   gap: 6px;
   padding: 10px;
   border: 1px solid var(--border-strong);
