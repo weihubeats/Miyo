@@ -227,7 +227,7 @@ pub mod plugin {
                             .java_attach
                             .spawn_heartbeat(std::time::Duration::from_secs(30));
                         let _ = state.tasks.start(
-                            "internal:java-attach-heartbeat".into(),
+                            "internal:java-attach-heartbeat".to_string(),
                             miyo_tasks::TaskKind::JavaAttach,
                             None,
                         );
