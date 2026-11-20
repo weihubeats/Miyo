@@ -731,7 +731,7 @@ async function copyJson(): Promise<void> {
   align-items: center;
   gap: 4px;
   padding: 1px 6px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   font-size: var(--fs-xxs);
   font-weight: 500;
   line-height: 1.4;
@@ -752,7 +752,7 @@ async function copyJson(): Promise<void> {
 .je-dot {
   width: 4px;
   height: 4px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   background: currentColor;
 }
 

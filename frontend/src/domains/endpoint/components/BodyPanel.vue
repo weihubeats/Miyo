@@ -796,7 +796,7 @@ defineExpose({
   align-items: center;
   gap: 5px;
   padding: 2px 10px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   font-size: var(--fs-xs);
   font-weight: 500;
   line-height: 1.4;
@@ -818,7 +818,7 @@ defineExpose({
 .bp-json-dot {
   width: 4px;
   height: 4px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   background: currentColor;
 }
 

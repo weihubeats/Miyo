@@ -66,11 +66,12 @@ const displayName = computed(() =>
 .jac-mask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--mask);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  /* 确认弹层语义档（popconfirm），压过抽屉但让位 popover/tooltip/toast */
+  z-index: var(--z-popconfirm);
 }
 .jac {
   width: 440px;

@@ -219,7 +219,7 @@ async function pickLang(lang: CodeLang): Promise<void> {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 60;
+  z-index: var(--z-popover);
   min-width: 200px;
   padding: 4px;
   border: 1px solid var(--border);

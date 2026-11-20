@@ -2215,10 +2215,10 @@ onUnmounted(() => {
   background: var(--accent);
 }
 
-/* 请求设置 Popover（Teleport 到 body，fixed 定位） */
+/* 请求设置 Popover（Teleport 到 body，fixed 定位；层级走 z 阶梯 popover 档） */
 .rs-pop {
   position: fixed;
-  z-index: 90;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   gap: 10px;
