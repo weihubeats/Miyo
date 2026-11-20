@@ -176,15 +176,9 @@ async function confirmCreate(): Promise<void> {
 }
 
 .form-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
-.miyo-input-error {
-  border-color: var(--danger) !important;
-}
-.miyo-input-error:focus {
-  border-color: var(--danger) !important;
-  box-shadow: 0 0 0 2px var(--danger-tint) !important;
-}
+/* 校验错误态走全局 .miyo-input-error（style.css 单源），本组件不再复制 */
 </style>
