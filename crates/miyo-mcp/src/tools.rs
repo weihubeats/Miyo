@@ -907,7 +907,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("ENDPOINT", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "list_projects" => serde_json::to_value(
             client
@@ -915,7 +915,7 @@ async fn call_tool(
                 .await
                 .map_err(|e| tool_fail("PROJECT", &e))?,
         )
-        .expect("序列化失败"),
+        .unwrap_or(serde_json::Value::Null),
         "get_endpoint" => {
             let endpoint_id: Uuid = str_arg(&args, "endpointId")
                 .ok_or_else(|| {
@@ -931,7 +931,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("ENDPOINT", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "send_endpoint" => {
             let endpoint_id: Uuid = str_arg(&args, "endpointId")
@@ -964,7 +964,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("ENDPOINT", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "run_scenario" => {
             let scenario_id: Uuid = str_arg(&args, "scenarioId")
@@ -1051,7 +1051,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败");
+            .unwrap_or(serde_json::Value::Null);
             if let Some(task) = progress_task {
                 task.abort();
             }
@@ -1071,7 +1071,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("PROJECT", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "create_scenario" => {
             let name = str_arg(&args, "name")
@@ -1102,7 +1102,7 @@ async fn call_tool(
                         .await
                         .map_err(|e| tool_fail("SCENARIO", &e))?,
                 )
-                .expect("序列化失败")
+                .unwrap_or(serde_json::Value::Null)
             } else {
                 serde_json::to_value(
                     client
@@ -1110,7 +1110,7 @@ async fn call_tool(
                         .await
                         .map_err(|e| tool_fail("SCENARIO", &e))?,
                 )
-                .expect("序列化失败")
+                .unwrap_or(serde_json::Value::Null)
             }
         }
         "get_scenario" => {
@@ -1128,7 +1128,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "save_scenario_script" => {
             let scenario_id: Uuid = str_arg(&args, "scenarioId")
@@ -1153,7 +1153,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "list_endpoints" => {
             let project_id: Uuid = str_arg(&args, "projectId")
@@ -1187,7 +1187,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("ENDPOINT", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "list_environments" => {
             let project_id = opt_uuid_arg(&args, "projectId")
@@ -1198,7 +1198,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("ENVIRONMENT", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "get_environment" => {
             let env_id = uuid_req(&args, "environmentId")?;
@@ -1208,7 +1208,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("ENVIRONMENT", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "update_scenario" => {
             let scenario_id = uuid_req(&args, "scenarioId")?;
@@ -1226,7 +1226,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "delete_scenario" => {
             let scenario_id = uuid_req(&args, "scenarioId")?;
@@ -1236,7 +1236,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "add_scenario_step" => {
             let scenario_id = uuid_req(&args, "scenarioId")?;
@@ -1251,7 +1251,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "update_scenario_step" => {
             let scenario_id = uuid_req(&args, "scenarioId")?;
@@ -1263,7 +1263,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "delete_scenario_step" => {
             let scenario_id = uuid_req(&args, "scenarioId")?;
@@ -1274,7 +1274,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "validate_scenario" => {
             let scenario_id = uuid_req(&args, "scenarioId")?;
@@ -1296,7 +1296,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "list_test_cases" => {
             let endpoint_id = uuid_req(&args, "endpointId")?;
@@ -1306,7 +1306,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("TESTCASE", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "get_test_case" => {
             let case_id = uuid_req(&args, "caseId")?;
@@ -1316,7 +1316,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("TESTCASE", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "create_test_case" => {
             let endpoint_id = uuid_req(&args, "endpointId")?;
@@ -1327,7 +1327,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("TESTCASE", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "update_test_case" => {
             let case_id = uuid_req(&args, "caseId")?;
@@ -1343,7 +1343,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("TESTCASE", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "delete_test_case" => {
             let case_id = uuid_req(&args, "caseId")?;
@@ -1353,7 +1353,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("TESTCASE", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "run_test_case" => {
             let case_id = uuid_req(&args, "caseId")?;
@@ -1365,7 +1365,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("TESTCASE", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "list_test_case_runs" => {
             let case_id = uuid_req(&args, "caseId")?;
@@ -1376,7 +1376,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("TESTCASE", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "get_test_case_run" => {
             let run_id = uuid_req(&args, "runId")?;
@@ -1386,7 +1386,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("TESTCASE", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "get_run_result" => {
             let run_id = uuid_req(&args, "runId")?;
@@ -1396,7 +1396,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("RUN", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "get_step_result" => {
             let run_id = uuid_req(&args, "runId")?;
@@ -1407,7 +1407,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("RUN", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "analyze_run_failure" => {
             let run_id = uuid_req(&args, "runId")?;
@@ -1417,7 +1417,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("RUN", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         // ---- AI 测试中心：分析 / 生成类（只读，产出草稿不落库）----
         "analyze_api_dependencies" => {
@@ -1429,7 +1429,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("PROJECT", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "analyze_project_test_coverage" => {
             let project_id = opt_uuid_arg(&args, "projectId")
@@ -1440,7 +1440,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("PROJECT", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "generate_test_cases" => {
             let endpoint_id = uuid_req(&args, "endpointId")?;
@@ -1450,7 +1450,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("TEST_CASE", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "generate_integration_scenario" => {
             let project_id = opt_uuid_arg(&args, "projectId")
@@ -1465,7 +1465,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "propose_scenario_fix" => {
             let run_id = uuid_req(&args, "runId")?;
@@ -1479,7 +1479,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("SCENARIO", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "cancel_run" => {
             let run_id = uuid_req(&args, "runId")?;
@@ -1489,7 +1489,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("RUN", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "get_context" => serde_json::to_value(
             client
@@ -1497,7 +1497,7 @@ async fn call_tool(
                 .await
                 .map_err(|e| tool_fail("CONTEXT", &e))?,
         )
-        .expect("序列化失败"),
+        .unwrap_or(serde_json::Value::Null),
         "agent_info" => json!({
             "address": client.base(),
             "tokenPath": miyo_agent::token::token_path(&miyo_agent::default_data_dir()),
@@ -1511,7 +1511,7 @@ async fn call_tool(
                 .await
                 .map_err(|e| tool_fail("JAVA", &e))?,
         )
-        .expect("序列化失败"),
+        .unwrap_or(serde_json::Value::Null),
         "get_java_project" => {
             let project_id = uuid_req(&args, "projectId")?;
             serde_json::to_value(
@@ -1520,7 +1520,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("JAVA", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "list_java_classes" => {
             let project_id = uuid_req(&args, "projectId")?;
@@ -1531,7 +1531,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("JAVA", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "list_java_methods" => {
             let project_id = uuid_req(&args, "projectId")?;
@@ -1544,7 +1544,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("JAVA", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "get_java_method" => {
             let project_id = uuid_req(&args, "projectId")?;
@@ -1557,7 +1557,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("JAVA", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "create_java_invocation" => {
             let project_id = uuid_req(&args, "projectId")?;
@@ -1571,7 +1571,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("JAVA", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "run_java_method" => {
             let project_id = uuid_req(&args, "projectId")?;
@@ -1586,7 +1586,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("JAVA", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "get_java_execution_result" => {
             let invocation_id = uuid_req(&args, "invocationId")?;
@@ -1596,7 +1596,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("JAVA", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         "list_java_execution_history" => {
             let project_id = uuid_req(&args, "projectId")?;
@@ -1607,7 +1607,7 @@ async fn call_tool(
                     .await
                     .map_err(|e| tool_fail("JAVA", &e))?,
             )
-            .expect("序列化失败")
+            .unwrap_or(serde_json::Value::Null)
         }
         other => {
             return Err(ToolFailure::new(
