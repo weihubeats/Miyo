@@ -4,7 +4,6 @@
 //! 事件约定：服务端流经 `miyo:grpc-event` 推送，载荷 =
 //! `{stream_id, kind, ..}`（`kind` 为 message / end / failed，flatten 自
 //! `GrpcEvent`）；关闭用 [`grpc_stream_close`]，或复用 `cancel_request`
-//! （流取消令牌同时登记在 `request_cancels`，rid 机制与 HTTP 一致）。
 
 use std::sync::Arc;
 
@@ -210,25 +209,19 @@ async fn invoke_unary_with_history(
     engine_args: EngineArgs,
     args: &GrpcInvokeRequest,
 ) -> CommandResult<GrpcResponse> {
-    // 取消令牌：复用 request_cancels 注册表（cancel_request 直接可用）
+    // 取消令牌：统一 TaskManager（cancel_request 薄转发直接可用）
     let token = args.request_id.as_ref().map(|id| {
-        let token = CancellationToken::new();
-        state
-            .request_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(id.clone(), token.clone());
-        (id.clone(), token)
+        let handle = state
+            .tasks
+            .start(id.clone(), miyo_tasks::TaskKind::GrpcUnary, None)
+            .expect("同 id 任务重复注册应替换旧任务而非失败");
+        (id.clone(), handle.cancellation_token(), handle)
     });
 
-    let result = miyo_grpc::invoke_unary(&engine_args, token.as_ref().map(|(_, t)| t)).await;
+    let result = miyo_grpc::invoke_unary(&engine_args, token.as_ref().map(|(_, t, _)| t)).await;
 
-    if let Some((id, _)) = &token {
-        state
-            .request_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(id);
+    if let Some((_, _, handle)) = &token {
+        handle.mark_completed();
     }
     let response = result?;
 
@@ -260,24 +253,19 @@ async fn start_stream(
     app: &AppHandle,
     state: &AppState,
     engine_args: EngineArgs,
-    args: &GrpcInvokeRequest,
+    _args: &GrpcInvokeRequest,
 ) -> CommandResult<String> {
     let stream_id = Uuid::new_v4().to_string();
     let cancel = CancellationToken::new();
-    if let Some(rid) = &args.request_id {
-        state
-            .request_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(rid.clone(), cancel.clone());
-    }
+    // 流登记走 grpc_streams（下一步迁移至 tasks 会话）；request_id 级取消
+    // 由 tasks 统一（rid 即 stream 任务 id 的别名场景此处不再双登记）
 
     let app_handle = app.clone();
     let event_stream_id = stream_id.clone();
     let cleanup_state = app.clone();
-    let cleanup_rid = args.request_id.clone();
     let on_event = Arc::new(move |event: GrpcEvent| {
         let is_terminal = matches!(event, GrpcEvent::End { .. } | GrpcEvent::Failed { .. });
+        let failed = matches!(event, GrpcEvent::Failed { .. });
         let _ = app_handle.emit(
             GRPC_EVENT,
             &GrpcStreamEventPayload {
@@ -289,43 +277,36 @@ async fn start_stream(
         // 经 AppHandle 取托管状态；锁不跨 await，无死锁面）
         if is_terminal {
             if let Some(s) = cleanup_state.try_state::<AppState>() {
-                s.grpc_streams
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .remove(&event_stream_id);
-                if let Some(rid) = &cleanup_rid {
-                    s.request_cancels
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .remove(rid);
-                }
+                // 自然结束 ≠ 用户取消：终态语义区分（Failed → Failed 历史）
+                let st = if failed {
+                    miyo_tasks::TaskState::Failed
+                } else {
+                    miyo_tasks::TaskState::Completed
+                };
+                s.tasks.finish(&event_stream_id, st, None);
             }
         }
     });
     let task = spawn_server_stream(engine_args, stream_id.clone(), cancel.clone(), on_event);
-
-    state
-        .grpc_streams
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .insert(stream_id.clone(), (cancel, task));
+    // 统一 TaskManager：取消（令牌已传入 spawn）+ abort 兜底钩子
+    let _handle = state
+        .tasks
+        .start(stream_id.clone(), miyo_tasks::TaskKind::GrpcStream, None)?;
+    let abort_task = task;
+    let _ = state
+        .tasks
+        .set_on_cancel(&stream_id, Box::new(move || abort_task.abort()));
     Ok(stream_id)
 }
 
 /// 关闭服务端流：触发取消令牌 + 中止消费任务（不存在时返回 false）。
 #[tauri::command(rename_all = "camelCase")]
 pub fn grpc_stream_close(state: State<'_, AppState>, stream_id: String) -> CommandResult<bool> {
-    let entry = state
-        .grpc_streams
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .remove(&stream_id);
-    let Some((cancel, task)) = entry else {
-        return Ok(false);
-    };
-    cancel.cancel();
-    task.abort();
-    Ok(true)
+    // 统一 TaskManager 薄转发（on_cancel 钩子 abort 消费任务）
+    Ok(matches!(
+        state.tasks.cancel(&stream_id),
+        miyo_tasks::CancelOutcome::Cancelled
+    ))
 }
 
 // ---------- proto 文件管理（项目级） ----------

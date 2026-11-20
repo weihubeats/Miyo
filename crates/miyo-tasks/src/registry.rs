@@ -292,7 +292,7 @@ impl TaskSupervisor {
     }
 
     /// 终态化并写历史（mark_* 与 RAII Drop 共用入口）。
-    pub(crate) fn finish(&self, id: &str, state: TaskState, error: Option<String>) {
+    pub fn finish(&self, id: &str, state: TaskState, error: Option<String>) {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(mut entry) = inner.tasks.remove(id) {
             entry.state = state;

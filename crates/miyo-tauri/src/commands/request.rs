@@ -172,21 +172,20 @@ pub async fn execute_request(
         }
     }
 
-    // 3. 注册取消令牌（前端「取消请求」→ `cancel_request` 触发中止）。
+    // 3. 注册取消令牌（统一 TaskManager：HTTP 请求仅登记取消令牌，无进度 /
+    //    历史改造——保持轻量语义；RAII 句柄 Drop 自动摘除）。
     let token = args.request_id.as_ref().map(|id| {
-        let token = tokio_util::sync::CancellationToken::new();
-        state
-            .request_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(id.clone(), token.clone());
-        (id.clone(), token)
+        let handle = state
+            .tasks
+            .start(id.clone(), miyo_tasks::TaskKind::HttpRequest, None)
+            .expect("同 id 任务重复注册应替换旧任务而非失败");
+        (id.clone(), handle.cancellation_token(), handle)
     });
 
     // 4. 发送（超时已在第 1 步随变量同波次解析）。
     let result = async {
         let resp: HttpResponseData = match token.as_ref() {
-            Some((_, t)) => {
+            Some((_, t, _)) => {
                 miyo_http::client::send_request_cancel(
                     args.method,
                     &url,
@@ -292,13 +291,8 @@ pub async fn execute_request(
     }
     .await;
 
-    // 7. 无论成功 / 取消 / 失败，都从注册表移除，避免泄漏。
-    if let Some((id, _)) = &token {
-        state
-            .request_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(id);
+    if let Some((_, _, handle)) = &token {
+        handle.mark_completed();
     }
 
     // 8. 自增序列若被本次请求推进，回写磁盘（尽力而为，失败仅告警不阻断）。
@@ -389,17 +383,11 @@ fn apply_script_headers(spec: &mut RequestSpec, headers: &[(String, String)]) {
 /// `execute_request` 随即以 `CANCELLED` 错误码返回。
 #[tauri::command(rename_all = "camelCase")]
 pub fn cancel_request(state: State<'_, AppState>, request_id: String) -> CommandResult<bool> {
-    let token = state
-        .request_cancels
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .remove(&request_id);
-    if let Some(token) = token {
-        token.cancel();
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    // 统一 TaskManager 薄转发（原 request_cancels 注册表已迁移）
+    Ok(matches!(
+        state.tasks.cancel(&request_id),
+        miyo_tasks::CancelOutcome::Cancelled
+    ))
 }
 
 /// 按 `request_id` 取被 IPC 预览截断的完整响应正文。

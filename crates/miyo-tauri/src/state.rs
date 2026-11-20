@@ -14,7 +14,6 @@ use miyo_core::model::{Environment, GlobalParam, Project};
 use miyo_core::VariableMap;
 use sqlx::SqlitePool;
 use tokio::sync::RwLock as AsyncRwLock;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use miyo_storage::repository as repo;
@@ -80,21 +79,10 @@ pub struct AppState {
     pub mock: AsyncRwLock<Option<miyo_mock::server::MockServer>>,
     /// 正在运行的 Agent 控制面服务（未启动为 `None`）。
     pub agent: AsyncRwLock<Option<miyo_agent::server::AgentServer>>,
-    /// 在途请求的取消令牌注册表（request_id → token；「取消请求」时触发中止）。
-    /// 持有期间不 await，普通 `Mutex` 即可。
-    pub request_cancels: Mutex<HashMap<String, CancellationToken>>,
-    /// 在途长任务的取消令牌注册表（run_id → token；
-    /// 压测 `cancel_load_test` 与集合测试 `cancel_test_collection` 共用）。
-    /// 在途场景运行注册表（scenario_id → run_id）：同一场景同时只允许一个
-    /// 运行（并发限制 + 变量上下文不互扰的 UI 兜底）；场景粒度而非全局，
-    /// 不同场景仍可并行。
     /// WebSocket 会话（connection_id → 会话；含事件转发任务句柄）。
     pub ws: AsyncRwLock<HashMap<String, crate::commands::ws::WsSession>>,
     /// SSE 订阅任务（connection_id → 转发任务句柄；断开即 abort）。
     pub sse: AsyncRwLock<HashMap<String, tokio::task::JoinHandle<()>>>,
-    /// 在途 gRPC 服务端流（stream_id → 取消令牌 + 消费任务句柄）。
-    /// 与 `request_cancels` 同为普通 Mutex：持有期间不 await。
-    pub grpc_streams: Mutex<HashMap<String, (CancellationToken, tokio::task::JoinHandle<()>)>>,
     /// 被 IPC 预览截断（>2MB）的响应全文缓存（request_id → 全文）：
     /// 前端复制 / 保存示例时经 `get_response_body` 按需取回。
     pub response_bodies: Mutex<ResponseBodyCache>,
@@ -205,11 +193,9 @@ impl AppState {
             active: AsyncRwLock::new(ActiveContext::default()),
             mock: AsyncRwLock::new(None),
             agent: AsyncRwLock::new(None),
-            request_cancels: Mutex::new(HashMap::new()),
 
             ws: AsyncRwLock::new(HashMap::new()),
             sse: AsyncRwLock::new(HashMap::new()),
-            grpc_streams: Mutex::new(HashMap::new()),
             response_bodies: Mutex::new(ResponseBodyCache::new()),
             global_settings_cache: RwLock::new(None),
             settings_gen: AtomicU64::new(0),
