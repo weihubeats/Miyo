@@ -2191,6 +2191,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "miyo-tasks"
+version = "0.0.1"
+dependencies = [
+ "miyo-core",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "miyo-test"
 version = "0.0.1"
 dependencies = [

@@ -1,0 +1,17 @@
+[package]
+name = "miyo-tasks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "统一 TaskManager：长时任务的注册 / 状态机 / 取消 / 进度 / 历史与退出清理"
+
+[dependencies]
+miyo-core = { path = "../miyo-core" }
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
