@@ -4,6 +4,8 @@
  * - openAt(el, side) 依触发元素定位，底部空间不足自动上翻；
  * - 项支持 icon / danger（红色）/ disabled / dividerBefore 分隔线；
  * - 项带 confirm 文案时先进入行内确认视图，确认后 emit('confirm')；
+ * - 键盘导航：容器聚焦 + aria-activedescendant，↑↓/Home/End 漫游、Enter/Space
+ *   激活、确认视图内 Enter 确认 / Esc 返回列表；关闭后焦点归还触发元素；
  * - 外部点击 / Esc / 滚动 / 窗口缩放自动关闭。
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -39,11 +41,18 @@ const emit = defineEmits<{
 
 type View = { kind: 'list' } | { kind: 'confirm'; item: MenuItem }
 
+/** 模块级实例计数（aria id 多实例隔离；每次 setup 递增）。 */
+let MENU_SEQ = 0
+
 const open = ref(false)
 const view = ref<View>({ kind: 'list' })
 const items = ref<MenuItem[]>([])
 const pos = ref({ left: 0, top: 0 })
 const menuEl = ref<HTMLElement | null>(null)
+
+/** aria-activedescendant 实例前缀（同页多菜单实例 id 不冲突）。 */
+const UID = `miyo-menu-${++MENU_SEQ}`
+const activeKey = ref<string | null>(null)
 
 const locale = useLocaleStore()
 const t = locale.t
@@ -58,6 +67,8 @@ const confirmDanger = computed(
 /** 触发元素矩形与弹出方向：openAt 记录，渲染后按实测尺寸校正定位时复用。 */
 let triggerRect: DOMRect | null = null
 let triggerSide: 'right' | 'left' = 'right'
+/** 触发元素引用：关闭时归还焦点（键盘用户从原位置继续）。 */
+let triggerEl: HTMLElement | null = null
 
 /** 按实测宽高定位：默认贴按钮下方，底部放不下且上方放得下时紧贴按钮上翻。
  *  原实现用写死 220px 估高，两三项的小菜单上翻后与按钮间留出大片空隙（悬在半空）。 */
@@ -80,6 +91,7 @@ function openAt(el: HTMLElement, menuItems: MenuItem[], side: 'right' | 'left' =
   items.value = menuItems
   triggerRect = el.getBoundingClientRect()
   triggerSide = side
+  triggerEl = el
   // 首帧先用估算位置渲染，nextTick 拿到实测尺寸后立即校正（微任务先于绘制，无跳动）
   const width = 176
   const height = 220
@@ -93,13 +105,21 @@ function openAt(el: HTMLElement, menuItems: MenuItem[], side: 'right' | 'left' =
   view.value = { kind: 'list' }
   open.value = true
   emit('open')
-  void nextTick(applyPosition)
+  // 键盘起点：首个可用项高亮 + 容器聚焦（↑↓ 立即可用）
+  activeKey.value = items.value.find((it) => !it.disabled)?.key ?? null
+  void nextTick(() => {
+    applyPosition()
+    menuEl.value?.focus()
+  })
 }
 
 function close(): void {
   if (!open.value) return
   open.value = false
   view.value = { kind: 'list' }
+  activeKey.value = null
+  triggerEl?.focus()
+  triggerEl = null
   emit('close')
 }
 
@@ -129,6 +149,71 @@ function onDocMouseDown(event: MouseEvent): void {
   const target = event.target as Node
   if (menuEl.value?.contains(target)) return
   close()
+}
+
+/* ---- 键盘导航：容器 tabindex=-1 聚焦 + aria-activedescendant 漫游 ---- */
+
+/** 可激活项（disabled 不参与漫游）。 */
+const enabledItems = computed(() => items.value.filter((it) => !it.disabled))
+
+/** 漫游：1/-1 相对移动，'first'/'last' 跳边界；溢出时滚动跟随。 */
+function moveActive(step: 1 | -1 | 'first' | 'last'): void {
+  const list = enabledItems.value
+  if (!list.length) return
+  const idx = list.findIndex((it) => it.key === activeKey.value)
+  let next: number
+  if (step === 'first') next = 0
+  else if (step === 'last') next = list.length - 1
+  else if (idx === -1) next = step === 1 ? 0 : list.length - 1
+  else next = (idx + step + list.length) % list.length
+  activeKey.value = list[next].key
+  void nextTick(() => {
+    const el = menuEl.value?.querySelector<HTMLElement>('.miyo-menu-item.active')
+    // jsdom 无 scrollIntoView（单测环境守卫）
+    el?.scrollIntoView?.({ block: 'nearest' })
+  })
+}
+
+function onMenuKeydown(e: KeyboardEvent): void {
+  if (view.value.kind === 'confirm') {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      onConfirm()
+    } else if (e.key === 'Escape') {
+      // 确认视图：Esc 回列表而非关菜单（容器先于 escStack 收到，stopPropagation 拦截）
+      e.preventDefault()
+      e.stopPropagation()
+      backToList()
+    }
+    return
+  }
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault()
+      moveActive(1)
+      break
+    case 'ArrowUp':
+      e.preventDefault()
+      moveActive(-1)
+      break
+    case 'Home':
+      e.preventDefault()
+      moveActive('first')
+      break
+    case 'End':
+      e.preventDefault()
+      moveActive('last')
+      break
+    case 'Enter':
+    case ' ': {
+      e.preventDefault()
+      const item = items.value.find((it) => it.key === activeKey.value)
+      if (item && !item.disabled) onItemClick(item)
+      break
+    }
+    default:
+      break
+  }
 }
 
 /** escStack 卸载函数（打开期间持有）。 */
@@ -172,18 +257,30 @@ defineExpose({ openAt, close })
       class="miyo-menu"
       :style="menuStyle"
       role="menu"
+      tabindex="-1"
+      :aria-activedescendant="activeKey ? `${UID}-item-${activeKey}` : undefined"
       @click.stop
+      @keydown="onMenuKeydown"
     >
       <template v-if="view.kind === 'list'">
         <template v-for="item in items" :key="item.key">
           <div v-if="item.dividerBefore" class="miyo-menu-divider"></div>
           <button
+            :id="`${UID}-item-${item.key}`"
             class="miyo-menu-item"
-            :class="{ danger: item.danger, disabled: item.disabled, checked: item.checked }"
+            :class="{
+              danger: item.danger,
+              disabled: item.disabled,
+              checked: item.checked,
+              active: view.kind === 'list' && item.key === activeKey,
+            }"
             type="button"
             role="menuitem"
+            :aria-disabled="item.disabled || undefined"
+            :tabindex="-1"
             :disabled="item.disabled"
             @click="onItemClick(item)"
+            @mouseenter="activeKey = item.key"
           >
             <span
               v-if="item.icon"
@@ -240,12 +337,15 @@ defineExpose({ openAt, close })
   padding: 6px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow:
     0 25px 50px -12px rgb(0 0 0 / 0.5),
     var(--shadow-lg);
   animation: menu-in 120ms var(--ease);
   transform-origin: top center;
+}
+.miyo-menu:focus-visible {
+  outline: none;
 }
 
 .miyo-menu-item {
@@ -257,14 +357,15 @@ defineExpose({ openAt, close })
   border: none;
   background: none;
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   color: var(--text-2);
   cursor: pointer;
   text-align: left;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.miyo-menu-item:hover {
+.miyo-menu-item:hover,
+.miyo-menu-item.active {
   background: var(--bg-hover);
   color: var(--text-1);
 }
@@ -283,7 +384,8 @@ defineExpose({ openAt, close })
   color: var(--text-3);
   cursor: default;
 }
-.miyo-menu-item.disabled:hover {
+.miyo-menu-item.disabled:hover,
+.miyo-menu-item.disabled.active {
   background: none;
 }
 
