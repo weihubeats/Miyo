@@ -171,15 +171,22 @@ impl AttachManager {
     }
 
     /// 手动 pid 探测。
+    ///
+    /// 富化结果必须写回注册表：目标 JVM 以裸 `java`（PATH 查找）启动时，
+    /// 命令行推不出 java home，probe 无法插入 toolchain——attach 侧
+    /// `select_for_target` 依赖本函数留下的 refresh/富化缓存（e2e 实证：
+    /// 不写回则 registry 恒空，attach 报「本机未发现可用 JDK」）。
     pub async fn probe_pid(&self, pid: i64) -> Result<JavaProcessInfo, AppError> {
         let mut reg = self.inner.lock().await.registry.clone();
         let attachable_pids = self
             .launch_attachable_pids(&mut reg)
             .await
             .unwrap_or_default();
-        proc_scan::probe_pid(pid, &mut reg, &attachable_pids)
+        let info = proc_scan::probe_pid(pid, &mut reg, &attachable_pids)
             .await
-            .ok_or_else(|| AppError::NotFound(format!("进程 {pid} 不存在或不可见")))
+            .ok_or_else(|| AppError::NotFound(format!("进程 {pid} 不存在或不可见")))?;
+        self.inner.lock().await.registry = reg;
+        Ok(info)
     }
 
     /// launcher list → attachable pid 集合（注册表由调用方克隆传入并写回）。
@@ -297,6 +304,11 @@ impl AttachManager {
         let tools = self.resolve_tools()?;
         let target_major = crate::jdk::parse_major(&proc_info.java_version);
         let target_major = (target_major > 0).then_some(target_major);
+        // 旧共享锁时代 registry 已被 probe 路径 refresh 富化；锁外克隆流程下
+        // 冷启动 attach（无 discover/probe 前置）可能拿到空表——此处兜底重扫。
+        if reg.is_empty() {
+            reg.refresh();
+        }
         let toolchain = reg.select_for_target(target_major)?;
         let runner = LauncherRunner::new(&toolchain, tools);
 
