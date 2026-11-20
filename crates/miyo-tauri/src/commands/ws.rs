@@ -21,10 +21,9 @@ use miyo_http::ws_client::{WsClient, WsEvent, WsMessage, WsOptions};
 use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
-/// 一个 WS 会话：可克隆的客户端 + 事件转发任务句柄。
+/// 一个 WS 会话：可克隆的客户端（转发任务句柄与生命周期归 miyo-tasks）。
 pub struct WsSession {
     pub client: WsClient,
-    pub forward: JoinHandle<()>,
 }
 
 /// WS 入参。
@@ -146,8 +145,24 @@ pub async fn ws_connect(
         }
     });
 
-    ws.insert(id.clone(), WsSession { client, forward });
+    ws.insert(
+        id.clone(),
+        WsSession {
+            client: client.clone(),
+        },
+    );
     drop(ws);
+    // 生命周期归统一 TaskManager：断开/退出触发 on_cancel（abort 转发 +
+    // 优雅停止客户端），历史进 AiChat 之外的 WsSession 桶。
+    let _ = state.tasks.set_on_cancel(
+        &id,
+        Box::new(move || {
+            forward.abort();
+        }),
+    );
+    let _ = state
+        .tasks
+        .start(id.clone(), miyo_tasks::TaskKind::WsSession, None);
     Ok(id)
 }
 
@@ -209,13 +224,14 @@ pub async fn ws_disconnect(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> CommandResult<bool> {
+    // tasks.cancel 触发 on_cancel（abort 转发任务）；客户端优雅停止在此处
     let session = state.ws.write().await.remove(&connection_id);
-    let Some(session) = session else {
-        return Ok(false);
-    };
-    session.forward.abort();
-    session.client.stop().await.map_err(CommandError::from)?;
-    Ok(true)
+    let cancelled = state.tasks.cancel(&connection_id) == miyo_tasks::CancelOutcome::Cancelled
+        || session.is_some();
+    if let Some(session) = session {
+        session.client.stop().await.map_err(CommandError::from)?;
+    }
+    Ok(cancelled)
 }
 
 // ---------- SSE ----------
@@ -277,10 +293,7 @@ pub async fn sse_connect(
     let id = args
         .connection_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    // 校验 / 占位 / 建客户端 / 启动转发任务在同一把写锁内完成，
-    // 关闭 contains_key 与 insert 之间的 check-then-act 竞态窗口。
-    let mut sse = state.sse.write().await;
-    if sse.contains_key(&id) {
+    if state.tasks.status(&id).is_some() {
         return Err(CommandError::validation("该订阅已存在，请先断开"));
     }
 
@@ -360,18 +373,25 @@ pub async fn sse_connect(
             });
         }
         .await;
-        // 任务自然结束（连接失败 / 服务端关流 / 读中断）统一清理自身条目：
-        // 防止句柄泄漏与同 id 重连被拒；abort 路径由 sse_disconnect 清理。
-        app_handle
-            .state::<AppState>()
-            .sse
-            .write()
-            .await
-            .remove(&forward_id);
+        // 任务自然结束（连接失败 / 服务端关流 / 读中断）→ Completed 终态
+        // 自摘除（防同 id 重连被拒；abort 路径由 sse_disconnect 走 tasks.cancel）。
+        app_handle.state::<AppState>().tasks.finish(
+            &forward_id,
+            miyo_tasks::TaskState::Completed,
+            None,
+        );
     });
 
-    sse.insert(id.clone(), task);
-    drop(sse);
+    // 生命周期归统一 TaskManager（注册 + on_cancel 钩子 abort 拉流任务）
+    let _ = state
+        .tasks
+        .start(id.clone(), miyo_tasks::TaskKind::SseSession, None);
+    let _ = state.tasks.set_on_cancel(
+        &id,
+        Box::new(move || {
+            task.abort();
+        }),
+    );
     Ok(id)
 }
 
@@ -381,11 +401,9 @@ pub async fn sse_disconnect(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> CommandResult<bool> {
-    let task = state.sse.write().await.remove(&connection_id);
-    if let Some(task) = task {
-        task.abort();
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    // 统一 TaskManager 薄转发（on_cancel 钩子 abort 拉流任务）
+    Ok(matches!(
+        state.tasks.cancel(&connection_id),
+        miyo_tasks::CancelOutcome::Cancelled
+    ))
 }

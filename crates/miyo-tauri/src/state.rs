@@ -81,8 +81,6 @@ pub struct AppState {
     pub agent: AsyncRwLock<Option<miyo_agent::server::AgentServer>>,
     /// WebSocket 会话（connection_id → 会话；含事件转发任务句柄）。
     pub ws: AsyncRwLock<HashMap<String, crate::commands::ws::WsSession>>,
-    /// SSE 订阅任务（connection_id → 转发任务句柄；断开即 abort）。
-    pub sse: AsyncRwLock<HashMap<String, tokio::task::JoinHandle<()>>>,
     /// 被 IPC 预览截断（>2MB）的响应全文缓存（request_id → 全文）：
     /// 前端复制 / 保存示例时经 `get_response_body` 按需取回。
     pub response_bodies: Mutex<ResponseBodyCache>,
@@ -195,7 +193,6 @@ impl AppState {
             agent: AsyncRwLock::new(None),
 
             ws: AsyncRwLock::new(HashMap::new()),
-            sse: AsyncRwLock::new(HashMap::new()),
             response_bodies: Mutex::new(ResponseBodyCache::new()),
             global_settings_cache: RwLock::new(None),
             settings_gen: AtomicU64::new(0),
