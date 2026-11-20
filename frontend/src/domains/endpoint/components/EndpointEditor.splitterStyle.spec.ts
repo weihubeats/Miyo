@@ -80,8 +80,11 @@ describe('EndpointEditor 底部单分割线契约', () => {
     // hover / dragging 才显形
     expect(SOURCE).toMatch(/\.rp-splitter:hover::before[\s\S]{0,240}?height:\s*[1-9]/)
     expect(SOURCE).toMatch(/\.rp-splitter\.dragging::before/)
-    // dragging 类确实被绑定（否则上面的规则是死代码）
-    expect(SOURCE).toContain(':class="{ dragging: splitterDragging }"')
+    // dragging 类确实被绑定（否则上面的规则是死代码）。允许绑定对象带附加键
+    //（如 tone-err 响应错误染色），但 dragging: splitterDragging 必须在场。
+    expect(SOURCE).toMatch(
+      /:class="\{[^}]*dragging:\s*splitterDragging[^}]*\}"/,
+    )
   })
 })
 
