@@ -249,15 +249,20 @@ pub async fn ai_delete_session(
 ) -> CommandResult<()> {
     let sid = Uuid::parse_str(&session_id)
         .map_err(|_| CommandError::validation("sessionId 不是合法 UUID"))?;
-    // 在途循环先取消。
-    if let Some(token) = state
-        .ai_chats
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .cancels
-        .remove(&session_id)
+    // 在途循环先取消（统一 TaskManager）+ 挂起审批前缀回收。
+    let _ = state.tasks.cancel(&session_id);
     {
-        token.cancel();
+        let mut reg = state.ai_chats.lock().unwrap_or_else(|p| p.into_inner());
+        let prefix = format!("{session_id}:");
+        let stale: Vec<String> = reg
+            .approvals
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for k in stale {
+            reg.approvals.remove(&k);
+        }
     }
     repo::delete_ai_session(&state.db, sid).await?;
     Ok(())
@@ -322,14 +327,24 @@ pub async fn ai_chat_send(
     // 工具清单（统一 Registry：按权限设置 + 停用列表过滤，与 tools/list 同规则）。
     let tools = build_tool_specs(&state.db).await?;
 
-    // 运行注册：取消令牌。
-    let token = CancellationToken::new();
-    state
-        .ai_chats
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .cancels
-        .insert(session_id.clone(), token.clone());
+    // 运行注册：统一 TaskManager（重发时先取消旧循环——修复「覆盖令牌导致
+    // 旧循环不可取消」漏洞）；同会话在途 → 明确拒绝。
+    if state
+        .tasks
+        .status(&session_id)
+        .map(|t| t.state == miyo_tasks::TaskState::Running)
+        .unwrap_or(false)
+    {
+        return Err(CommandError::with_code(
+            CommandErrorCode::Validation,
+            "该会话已有在途 AI 运行：请先停止或等待完成",
+        ));
+    }
+    let handle = state
+        .tasks
+        .start(session_id.clone(), miyo_tasks::TaskKind::AiChat, None)
+        .expect("同 id 任务重复注册应替换旧任务而非失败");
+    let token = handle.cancellation_token();
 
     // spawn 循环任务。
     let db = state.db.clone();
@@ -505,15 +520,20 @@ pub async fn ai_chat_approve(
 /// 取消会话在途循环。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn ai_chat_cancel(state: State<'_, AppState>, session_id: String) -> CommandResult<()> {
-    let token = state
-        .ai_chats
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .cancels
-        .get(&session_id)
-        .cloned();
-    if let Some(t) = token {
-        t.cancel();
+    // 统一 TaskManager 取消（幂等）+ 挂起审批前缀回收
+    let _ = state.tasks.cancel(&session_id);
+    {
+        let mut reg = state.ai_chats.lock().unwrap_or_else(|p| p.into_inner());
+        let prefix = format!("{session_id}:");
+        let stale: Vec<String> = reg
+            .approvals
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for k in stale {
+            reg.approvals.remove(&k);
+        }
     }
     Ok(())
 }
