@@ -5,7 +5,7 @@ use tauri::State;
 use miyo_core::model::{AuthSpec, OAuth2Token};
 use miyo_oauth::client::{self, OAuth2Error};
 
-use crate::error::{CommandError, CommandErrorCode, CommandResult};
+use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
 
 /// 发起完整授权码流程：本地回调服务器 + 打开系统浏览器 + 换 token。

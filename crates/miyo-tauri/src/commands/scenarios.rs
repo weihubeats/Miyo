@@ -246,20 +246,14 @@ pub async fn run_scenario(
         return Err(CommandError::validation("场景没有启用中的步骤"));
     }
 
-    // 执行并发限制：同一场景同时只允许一个运行（不同场景互不影响）。
-    // 运行上下文本就按 run 隔离（独立 runtime），这里挡的是重复触发。
-    if let Some(scenario_id) = args.scenario_id {
-        let mut running = state
-            .scenario_running
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if running.contains_key(&scenario_id) {
+    // 执行并发限制：同一场景同时只允许一个运行（统一 TaskManager 资源键守卫；
+    // 修复：无 run_id 的调用此前不守卫，现在按 scenario_id 恒守卫）。
+    let resource_key = args.scenario_id.map(|sid| format!("scenario:{sid}"));
+    if let Some(key) = &resource_key {
+        if state.tasks.status(key).is_some() {
             return Err(CommandError::validation(
                 "该场景正在运行中，请等待当前运行结束",
             ));
-        }
-        if let Some(run_id) = &args.run_id {
-            running.insert(scenario_id, run_id.clone());
         }
     }
     let started_at = chrono::Utc::now();
@@ -269,15 +263,17 @@ pub async fn run_scenario(
     // get_scenario_run 回传前端（与 results_json / variables_json 同口径）。
     let steps_snapshot_json = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".to_string());
 
-    // 取消令牌注册（「停止运行」→ 中止）。
+    // 取消令牌注册（统一 TaskManager；resource_key = scenario 守卫键）。
     let cancel = args.run_id.as_ref().map(|id| {
-        let token = tokio_util::sync::CancellationToken::new();
-        state
-            .run_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(id.clone(), token.clone());
-        (id.clone(), token)
+        let handle = state
+            .tasks
+            .start(
+                id.clone(),
+                miyo_tasks::TaskKind::ScenarioRun,
+                resource_key.clone(),
+            )
+            .expect("同 id 任务重复注册应替换旧任务而非失败");
+        (id.clone(), handle.cancellation_token(), handle)
     });
 
     // 进度事件（带 run_id：同前端多编辑器实例可过滤只认自己的那次运行）。
@@ -316,7 +312,7 @@ pub async fn run_scenario(
     };
     let options = ScenarioOptions {
         timeout_ms: Some(timeout_ms),
-        cancel: cancel.as_ref().map(|(_, t)| t.clone()),
+        cancel: cancel.as_ref().map(|(_, t, _)| t.clone()),
         stop_on_failure: args.stop_on_failure,
         java_invoke: java_hook_for(&state).await,
     };
@@ -334,22 +330,10 @@ pub async fn run_scenario(
     )
     .await;
 
-    // 无论完成 / 取消，都从注册表移除，避免泄漏。
-    if let Some((id, _)) = &cancel {
-        state
-            .run_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(id);
+    if let Some((_, _, handle)) = &cancel {
+        handle.mark_completed();
     }
-    // 释放场景级并发守卫。
-    if let Some(scenario_id) = args.scenario_id {
-        state
-            .scenario_running
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(&scenario_id);
-    }
+    // 资源键由 RAII 释放（守卫键 = scenario:{id}，无 run_id 的调用也恒守卫）。
 
     // 正文 IPC 预览口径与单请求流程一致：超 2MB 截断，全文入缓存
     // （键 `{run_id}:{结果位次}`），前端经 get_response_body 按需取回；
@@ -492,26 +476,24 @@ pub async fn run_scenario_matrix(
     let settings = state.global_settings().await?;
     let global_params = settings.global_params.clone();
 
-    // 场景级并发守卫（矩阵运行同样只允许一个在途实例）。
-    if let Some(scenario_id) = args.scenario_id {
-        let mut running = state
-            .scenario_running
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if running.contains_key(&scenario_id) {
+    // 场景级并发守卫 + 组级取消注册（统一 TaskManager 资源键守卫）。
+    let resource_key = args.scenario_id.map(|sid| format!("scenario:{sid}"));
+    if let Some(key) = &resource_key {
+        if state.tasks.status(key).is_some() {
             return Err(CommandError::validation(
                 "该场景正在运行中，请等待当前运行结束",
             ));
         }
-        running.insert(scenario_id, args.group_id.clone());
     }
-    // 取消令牌（组级：取消整个矩阵）。
-    let cancel = tokio_util::sync::CancellationToken::new();
-    state
-        .run_cancels
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .insert(args.group_id.clone(), cancel.clone());
+    let cancel_handle = state
+        .tasks
+        .start(
+            args.group_id.clone(),
+            miyo_tasks::TaskKind::ScenarioMatrix,
+            resource_key.clone(),
+        )
+        .expect("同 id 任务重复注册应替换旧任务而非失败");
+    let cancel = cancel_handle.cancellation_token();
 
     let options = ScenarioOptions {
         timeout_ms: None, // 每行用步骤级 / 全局超时（同单场景口径）
@@ -841,19 +823,8 @@ pub async fn run_scenario_matrix(
             outcomes.push(outcome);
         }
 
-        // 释放守卫 / 取消令牌。
-        state
-            .run_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(&args.group_id);
-        if let Some(scenario_id) = args.scenario_id {
-            state
-                .scenario_running
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .remove(&scenario_id);
-        }
+        // 资源键由 RAII 释放（mark_completed → Completed 历史）。
+        cancel_handle.mark_completed();
     }
     let ok_rows = outcomes.iter().filter(|o| o.ok).count();
     Ok(MatrixRunOutcome {
@@ -1380,17 +1351,11 @@ pub async fn get_scenario_run(
 /// 取消一个在途场景运行（run_id 不存在或已完成时返回 `false`）。
 #[tauri::command(rename_all = "camelCase")]
 pub fn cancel_scenario_run(state: State<'_, AppState>, run_id: String) -> CommandResult<bool> {
-    let token = state
-        .run_cancels
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .remove(&run_id);
-    if let Some(token) = token {
-        token.cancel();
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    // 统一 TaskManager 薄转发（语义与 load_test 三命令一致）
+    Ok(matches!(
+        state.tasks.cancel(&run_id),
+        miyo_tasks::CancelOutcome::Cancelled
+    ))
 }
 
 #[cfg(test)]

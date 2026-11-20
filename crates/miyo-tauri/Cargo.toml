@@ -29,6 +29,7 @@ miyo-grpc = { path = "../miyo-grpc" }
 miyo-java = { path = "../miyo-java" }
 miyo-java-attach = { path = "../miyo-java-attach" }
 miyo-sidecar = { path = "../miyo-sidecar" }
+miyo-tasks = { path = "../miyo-tasks" }
 miyo-openapi = { path = "../miyo-openapi" }
 # Java 组件下载哈希校验（sha256 sidecar）
 sha2 = "0.11"

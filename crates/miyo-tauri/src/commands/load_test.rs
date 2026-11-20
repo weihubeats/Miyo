@@ -50,14 +50,13 @@ pub async fn test_endpoint(
         &vars,
     );
     // 取消令牌（测试用例单跑「取消」按钮；run_id 不提供则不可取消）。
+    // 统一 TaskManager：注册即 RAII，Drop 自动摘除（原 run_cancels 显式 remove）。
     let cancel = args.run_id.as_ref().map(|id| {
-        let token = tokio_util::sync::CancellationToken::new();
-        state
-            .run_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(id.clone(), token.clone());
-        (id.clone(), token)
+        let handle = state
+            .tasks
+            .start(id.clone(), miyo_tasks::TaskKind::TestEndpoint, None)
+            .expect("同 id 任务重复注册应替换旧任务而非失败");
+        (id.clone(), handle.cancellation_token(), handle)
     });
     let started_at = chrono::Utc::now();
     let mut runtime = std::collections::HashMap::new();
@@ -67,17 +66,13 @@ pub async fn test_endpoint(
         &spec,
         &mut runtime,
         Some(timeout_ms),
-        cancel.as_ref().map(|(_, t)| t),
+        cancel.as_ref().map(|(_, t, _)| t),
         // 用例运行 = 请求快照，无断言也真实发送。
         args.case_id.is_some(),
     )
     .await;
-    if let Some((id, _)) = &cancel {
-        state
-            .run_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(id);
+    if let Some((_, _, handle)) = &cancel {
+        handle.mark_completed();
     }
     // 用例运行落执行历史（fail-open）：case_id 提供时才落。
     if let Some(case_id) = args.case_id {
@@ -157,19 +152,17 @@ pub async fn load_test(
         max_error_rate: args.max_error_rate,
     };
 
-    // 注册取消令牌（前端「取消压测」→ `cancel_load_test` 触发中止）。
+    // 注册取消令牌（统一 TaskManager；前端「取消压测」→ `cancel_load_test`）。
     let cancel = args.run_id.as_ref().map(|id| {
-        let token = tokio_util::sync::CancellationToken::new();
-        state
-            .run_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(id.clone(), token.clone());
-        (id.clone(), token)
+        let handle = state
+            .tasks
+            .start(id.clone(), miyo_tasks::TaskKind::LoadTest, None)
+            .expect("同 id 任务重复注册应替换旧任务而非失败");
+        (id.clone(), handle.cancellation_token(), handle)
     });
     let options = miyo_test::load::LoadOptions {
         timeout_ms: Some(timeout_ms),
-        cancel: cancel.as_ref().map(|(_, t)| t.clone()),
+        cancel: cancel.as_ref().map(|(_, t, _)| t.clone()),
         body_cap_bytes: Some(64 * 1024),
     };
 
@@ -189,13 +182,8 @@ pub async fn load_test(
         miyo_test::load::run_load_with(args.method, &url, &spec, &cfg, &options, Some(&progress))
             .await;
 
-    // 无论完成 / 取消，都从注册表移除，避免泄漏。
-    if let Some((id, _)) = &cancel {
-        state
-            .run_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(id);
+    if let Some((_, _, handle)) = &cancel {
+        handle.mark_completed();
     }
     // 压测结束后回写一次自增序列（高并发下避免逐请求落库）。
     if let Err(e) = super::seq::sync_seq_counters_if_dirty(&state.db).await {
@@ -222,19 +210,14 @@ pub fn cancel_test_endpoint(state: State<'_, AppState>, run_id: String) -> Comma
     Ok(cancel_run(&state, &run_id))
 }
 
-/// 长任务取消的公共实现（压测 / 集合测试共用 `run_cancels` 注册表）。
+/// 长任务取消的公共实现（统一 TaskManager；原 run_cancels 注册表已迁移）。
+/// 三条取消命令共用；返回「是否发生了取消」（幂等：已终态 / 不存在 → false，
+/// 与原 remove 型语义一致，前端零改动）。
 fn cancel_run(state: &AppState, run_id: &str) -> bool {
-    let token = state
-        .run_cancels
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .remove(run_id);
-    if let Some(token) = token {
-        token.cancel();
-        true
-    } else {
-        false
-    }
+    matches!(
+        state.tasks.cancel(run_id),
+        miyo_tasks::CancelOutcome::Cancelled
+    )
 }
 
 /// 集合测试条目（url/spec 由前端按当前草稿原文透传，后端统一渲染）。
@@ -312,18 +295,16 @@ pub async fn test_collection(
         .collect();
 
     let cancel = args.run_id.as_ref().map(|id| {
-        let token = tokio_util::sync::CancellationToken::new();
-        state
-            .run_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(id.clone(), token.clone());
-        (id.clone(), token)
+        let handle = state
+            .tasks
+            .start(id.clone(), miyo_tasks::TaskKind::TestCollection, None)
+            .expect("同 id 任务重复注册应替换旧任务而非失败");
+        (id.clone(), handle.cancellation_token(), handle)
     });
     let options = miyo_test::runner::CollectionOptions {
         concurrency: args.concurrency,
         timeout_ms: Some(timeout_ms),
-        cancel: cancel.as_ref().map(|(_, t)| t.clone()),
+        cancel: cancel.as_ref().map(|(_, t, _)| t.clone()),
     };
     let progress = move |done: usize, total: usize| {
         let _ = app.emit(
@@ -335,12 +316,8 @@ pub async fn test_collection(
     let result =
         miyo_test::runner::run_collection(items, &mut runtime, &options, Some(&progress)).await;
 
-    if let Some((id, _)) = &cancel {
-        state
-            .run_cancels
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(id);
+    if let Some((_, _, handle)) = &cancel {
+        handle.mark_completed();
     }
     // 用例运行逐条落执行历史（fail-open）：仅带 case_id 的条目落。
     for (item, r) in args.items.iter().zip(result.results.iter()) {

@@ -85,11 +85,9 @@ pub struct AppState {
     pub request_cancels: Mutex<HashMap<String, CancellationToken>>,
     /// 在途长任务的取消令牌注册表（run_id → token；
     /// 压测 `cancel_load_test` 与集合测试 `cancel_test_collection` 共用）。
-    pub run_cancels: Mutex<HashMap<String, CancellationToken>>,
     /// 在途场景运行注册表（scenario_id → run_id）：同一场景同时只允许一个
     /// 运行（并发限制 + 变量上下文不互扰的 UI 兜底）；场景粒度而非全局，
     /// 不同场景仍可并行。
-    pub scenario_running: Mutex<HashMap<uuid::Uuid, String>>,
     /// WebSocket 会话（connection_id → 会话；含事件转发任务句柄）。
     pub ws: AsyncRwLock<HashMap<String, crate::commands::ws::WsSession>>,
     /// SSE 订阅任务（connection_id → 转发任务句柄；断开即 abort）。
@@ -117,6 +115,8 @@ pub struct AppState {
     pub plugin_sessions: crate::sessions::PluginSessions,
     /// 常驻型插件 sidecar 监督器（握手 / 心跳 / 崩溃恢复 / 进程组清理）。
     pub sidecar: Arc<miyo_sidecar::Supervisor>,
+    /// 统一 TaskManager（长任务注册 / 状态机 / 取消 / 历史 / 退出清理）。
+    pub tasks: Arc<miyo_tasks::TaskSupervisor>,
     /// 市场远程下载缓存（检视 → 确认两步安装：装的就是检视的那份字节）。
     /// key = 下载 URL；总量超限驱逐最旧。
     pub market_downloads: std::sync::Mutex<Vec<(String, CachedDownload)>>,
@@ -206,8 +206,7 @@ impl AppState {
             mock: AsyncRwLock::new(None),
             agent: AsyncRwLock::new(None),
             request_cancels: Mutex::new(HashMap::new()),
-            run_cancels: Mutex::new(HashMap::new()),
-            scenario_running: Mutex::new(HashMap::new()),
+
             ws: AsyncRwLock::new(HashMap::new()),
             sse: AsyncRwLock::new(HashMap::new()),
             grpc_streams: Mutex::new(HashMap::new()),
@@ -223,6 +222,7 @@ impl AppState {
                 miyo_storage::db::data_dir().join("java-agent"),
             )),
             plugin_sessions: crate::sessions::PluginSessions::new(),
+            tasks: miyo_tasks::TaskSupervisor::new(),
             market_downloads: std::sync::Mutex::new(Vec::new()),
         }
     }

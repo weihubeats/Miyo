@@ -333,11 +333,7 @@ async fn apply_snapshot(
     project_id: Uuid,
     snapshot: &BackupFile,
 ) -> Result<(), miyo_core::AppError> {
-    let mut tx = state
-        .db
-        .begin()
-        .await
-        .map_err(miyo_storage::db_err)?;
+    let mut tx = state.db.begin().await.map_err(miyo_storage::db_err)?;
 
     // 先 upsert 团队（项目 team_id 外键）。
     if let Some(team) = &snapshot.team {

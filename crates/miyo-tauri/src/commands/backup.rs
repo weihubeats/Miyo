@@ -135,11 +135,7 @@ pub async fn backup_restore(
     let file = BackupFile::parse(&text)?;
     let restored = restore_backup(&file);
 
-    let mut tx = state
-        .db
-        .begin()
-        .await
-        .map_err(miyo_storage::db_err)?;
+    let mut tx = state.db.begin().await.map_err(miyo_storage::db_err)?;
     let result: miyo_core::Result<()> = async {
         // v4 备份带团队元数据：先 upsert 团队（项目 team_id 外键引用它）。
         if let Some(team) = &file.team {
