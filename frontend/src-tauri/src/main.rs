@@ -136,6 +136,11 @@ fn main() {
                         state.sidecar.shutdown_all().await;
                     }
                 });
+                // 统一 TaskManager：在途任务全量取消（WS/SSE/gRPC/AI/压测/场景/
+                // Mock 等此前不在退出清理内的类别自此全覆盖）。
+                if let Some(state) = app.try_state::<miyo_tauri::state::AppState>() {
+                    state.tasks.shutdown_all();
+                }
             }
         });
 }

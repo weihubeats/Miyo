@@ -3162,6 +3162,7 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "futures",
+ "miyo-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -3179,7 +3180,6 @@ dependencies = [
  "miyo-core",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
  "tracing",
  "uuid",
 ]
@@ -3206,11 +3206,9 @@ dependencies = [
  "dirs",
  "rand 0.10.3",
  "regex",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
  "shell-words",
- "sqlx",
  "thiserror 2.0.21",
  "tracing",
  "uuid",
@@ -3273,10 +3271,10 @@ dependencies = [
  "chrono",
  "dirs",
  "miyo-core",
+ "miyo-http",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
  "tokio",
  "tracing",
  "uuid",
@@ -3307,7 +3305,6 @@ dependencies = [
  "rand 0.10.3",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
  "tokio",
  "tracing",
  "uuid",
@@ -3345,7 +3342,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
- "thiserror 2.0.21",
  "uuid",
 ]
 
@@ -3361,7 +3357,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "tar",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3442,6 +3437,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "miyo-tasks"
+version = "0.0.1"
+dependencies = [
+ "miyo-core",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "miyo-tauri"
 version = "0.0.2"
 dependencies = [
@@ -3467,6 +3475,7 @@ dependencies = [
  "miyo-sidecar",
  "miyo-storage",
  "miyo-sync",
+ "miyo-tasks",
  "miyo-test",
  "reqwest 0.12.28",
  "rfd 0.18.0",
@@ -3499,7 +3508,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
- "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tracing",

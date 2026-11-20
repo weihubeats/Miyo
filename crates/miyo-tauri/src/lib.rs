@@ -220,10 +220,18 @@ pub mod plugin {
                     // Java Attach 会话心跳常驻（失联会话移除 + infoFile 过期
                     // 清扫；首个 tick 立即触发，兼作启动清扫）。
                     // setup 回调不在 tokio 上下文内——必须经 tauri 的运行时驱动。
+                    // 句柄注册进 TaskManager（原句柄丢弃——退出时随 runtime 结束，
+                    // 现在有明确的取消与可见性）。
                     tauri::async_runtime::block_on(async {
-                        state
+                        let heartbeat = state
                             .java_attach
                             .spawn_heartbeat(std::time::Duration::from_secs(30));
+                        let _ = state.tasks.start(
+                            "internal:java-attach-heartbeat".into(),
+                            miyo_tasks::TaskKind::JavaAttach,
+                            None,
+                        );
+                        let _ = heartbeat; // 常驻循环：退出时随 runtime 结束
                     });
                     let _ = tauri::async_runtime::block_on(state.restore_active());
                     app.manage(state);
