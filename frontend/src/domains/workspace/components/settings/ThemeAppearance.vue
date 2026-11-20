@@ -2,9 +2,9 @@
 /**
  * ThemeAppearance：设置 → 通用设置 → 主题外观。
  *
- * 结构：模式分段（跟随系统 / 固定主题）→ 主题预览卡网格（6 内置 + 自定义入口，
+ * 结构：模式分段（跟随系统 / 固定主题）→ 主题预览卡网格（8 内置 + 自定义入口，
  * radiogroup + 方向键漫游）→ 自定义主题编辑器（选中「自定义」时展开：基调 /
- * 五色 / 背景四形态 / 卡片透明度 / 圆角 / 字号）→ 导入 / 导出 / 恢复默认主题。
+ * 五色 / 背景四形态 / 卡片透明度 / 圆角 / 字号 / 密度 / 字体）→ 导入 / 导出 / 恢复默认主题。
  *
  * 所有改动经 theme store 立即写 DOM（实时预览，免刷新）；背景图上传走
  * theme/backgroundImage.ts 压缩管线，错误经稳定 code 映射 i18n 文案。
@@ -40,6 +40,8 @@ const THEME_NAME_KEYS: Record<Exclude<ThemeId, 'custom'>, string> = {
   light: 'settings.themeNameLight',
   dark: 'settings.themeNameDark',
   ocean: 'settings.themeNameOcean',
+  'ocean-light': 'settings.themeNameOceanLight',
+  'forest-dark': 'settings.themeNameForestDark',
   forest: 'settings.themeNameForest',
   sand: 'settings.themeNameSand',
   lavender: 'settings.themeNameLavender',
@@ -86,7 +88,7 @@ function selectTheme(id: ThemeId): void {
 
 /** 网格 roving tabindex：←/→/↑/↓/Home/End 移动焦点（选中由点击/Enter 完成）。 */
 const GRID_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']
-const GRID_COLS = 4
+const GRID_COLS = 3
 function onGridKeydown(e: KeyboardEvent): void {
   if (!GRID_KEYS.includes(e.key)) return
   const root = e.currentTarget as HTMLElement
@@ -268,6 +270,23 @@ const fontScalePct = computed({
   set: (v: number) => theme.updateCustom({ fontScale: v / 100 }),
 })
 
+/* ---- 密度 / 字体（数组随语言刷新，必须包 computed） ---- */
+const densityOptions = computed(() => [
+  { value: 'compact', label: t('settings.themeDensityCompact') },
+  { value: 'default', label: t('settings.themeDensityDefault') },
+  { value: 'cozy', label: t('settings.themeDensityCozy') },
+])
+const fontOptions = computed(() => [
+  { value: 'default', label: t('settings.themeFontDefault') },
+  { value: 'system', label: t('settings.themeFontSystem') },
+])
+const setDensity = (v: string): void => {
+  theme.updateCustom({ density: v === 'compact' ? 'compact' : v === 'cozy' ? 'cozy' : 'default' })
+}
+const setFont = (v: string): void => {
+  theme.updateCustom({ font: v === 'system' ? 'system' : 'default' })
+}
+
 /* ---- 导入 / 导出 / 恢复默认 ---- */
 function exportTheme(): void {
   const blob = new Blob([theme.exportConfig()], { type: 'application/json' })
@@ -324,9 +343,9 @@ function targetNumber(e: Event): number {
     </div>
     <p v-if="systemHint" class="mt-2 text-xs text-ink3 num">{{ systemHint }}</p>
 
-    <!-- 主题预览卡网格（radiogroup + 方向键漫游） -->
+    <!-- 主题预览卡网格（radiogroup + 方向键漫游；8 内置 + 自定义 = 9 卡，3 列 × 3 行） -->
     <div
-      class="mt-4 grid grid-cols-4 gap-2"
+      class="mt-4 grid grid-cols-3 gap-2"
       role="radiogroup"
       :aria-label="t('settings.theme')"
       @keydown="onGridKeydown"
@@ -555,6 +574,14 @@ function targetNumber(e: Event): number {
           />
           <span class="ce-val num">{{ fontScalePct }}%</span>
         </div>
+      </div>
+      <div class="ce-row">
+        <span class="ce-label">{{ t('settings.themeDensity') }}</span>
+        <SegmentedControl size="sm" :model-value="custom.density" :options="densityOptions" @change="setDensity" />
+      </div>
+      <div class="ce-row">
+        <span class="ce-label">{{ t('settings.themeFont') }}</span>
+        <SegmentedControl size="sm" :model-value="custom.font" :options="fontOptions" @change="setFont" />
       </div>
 
       <div class="mt-3 flex justify-end">

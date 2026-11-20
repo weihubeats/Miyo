@@ -232,6 +232,38 @@ describe('theme store', () => {
       expect(store.custom!.background.type).toBe('default')
       expect(store.custom!.radius).toBe(12)
     })
+
+    it('密度与字体：updateCustom 写内联 --density/--font-ui，恢复默认档清除内联', () => {
+      const store = useThemeStore()
+      store.init()
+      store.setThemeId('custom')
+      const root = document.documentElement
+      store.updateCustom({ density: 'compact', font: 'system' })
+      expect(store.custom!.density).toBe('compact')
+      expect(store.custom!.font).toBe('system')
+      expect(root.style.getPropertyValue('--density')).toBe('0.9')
+      expect(root.style.getPropertyValue('--font-ui')).toContain('-apple-system')
+      // 回到默认档：内联清除，样式表基准值生效
+      store.updateCustom({ density: 'default', font: 'default' })
+      expect(root.style.getPropertyValue('--density')).toBe('')
+      expect(root.style.getPropertyValue('--font-ui')).toBe('')
+    })
+
+    it('旧配置缺 density/font 字段时回退默认值（向后兼容）', () => {
+      localStorage.setItem(
+        'miyo.theme.config',
+        JSON.stringify({
+          version: 1,
+          mode: 'manual',
+          current: 'custom',
+          custom: { version: 1, base: 'dark', colors: {}, background: { type: 'default' }, cardOpacity: 1, radius: 6, fontScale: 1 },
+        }),
+      )
+      const store = useThemeStore()
+      store.init()
+      expect(store.custom!.density).toBe('default')
+      expect(store.custom!.font).toBe('default')
+    })
   })
 
   describe('导入 / 导出', () => {

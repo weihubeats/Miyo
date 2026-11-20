@@ -27,12 +27,14 @@ describe('ThemeAppearance', () => {
     document.body.innerHTML = ''
   })
 
-  it('渲染 6 内置主题卡 + 自定义入口（radiogroup）', () => {
+  it('渲染 8 内置主题卡 + 自定义入口（radiogroup）', () => {
     const wrapper = mount(ThemeAppearance)
     const radios = wrapper.findAll('[role="radio"][aria-checked]')
-    expect(radios.length).toBe(7)
+    expect(radios.length).toBe(9)
     expect(wrapper.text()).toContain('石墨深色')
     expect(wrapper.text()).toContain('海盐蓝')
+    expect(wrapper.text()).toContain('海盐浅蓝')
+    expect(wrapper.text()).toContain('森林绿')
     expect(wrapper.text()).toContain('自定义')
     expect(wrapper.text()).toContain('跟随系统')
     wrapper.unmount()

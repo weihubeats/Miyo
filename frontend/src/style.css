@@ -163,11 +163,16 @@
   --radius-xl: 16px;
   --radius-pill: 999px;
 
-  /* ---- 控件高度 24/28/32/36 ---- */
-  --h-xs: 24px;
-  --h-sm: 28px;
-  --h-md: 32px;
-  --h-lg: 36px;
+  /* ---- 界面密度系数（自定义主题 density 档位写内联覆盖；1 = 标准） ----
+     控件高度与间距档乘以该系数：紧凑 0.9 / 标准 1 / 宽松 1.1；
+     字号档不参与（缩放走 --fs-* 的 fontScale）。 */
+  --density: 1;
+
+  /* ---- 控件高度 24/28/32/36（随密度缩放） ---- */
+  --h-xs: calc(24px * var(--density));
+  --h-sm: calc(28px * var(--density));
+  --h-md: calc(32px * var(--density));
+  --h-lg: calc(36px * var(--density));
 
   /* ---- 字号（正文 13 / 辅助 12 / 标题 14/16/20，微标签 11，微徽章 10） ---- */
   --fs-2xxs: 10px;
@@ -178,13 +183,13 @@
   --fs-lg: 16px;
   --fs-xl: 20px;
 
-  /* ---- 间距（4px 网格） ---- */
-  --sp-1: 4px;
-  --sp-2: 8px;
-  --sp-3: 12px;
-  --sp-4: 16px;
-  --sp-5: 20px;
-  --sp-6: 24px;
+  /* ---- 间距（4px 网格，随密度缩放） ---- */
+  --sp-1: calc(4px * var(--density));
+  --sp-2: calc(8px * var(--density));
+  --sp-3: calc(12px * var(--density));
+  --sp-4: calc(16px * var(--density));
+  --sp-5: calc(20px * var(--density));
+  --sp-6: calc(24px * var(--density));
 
   /* ---- 阴影 / 动效 / 焦点 ---- */
   --shadow-sm: 0 1px 2px rgba(9, 12, 22, 0.5);
@@ -268,6 +273,22 @@
   --miyo-shadow: var(--shadow);
   --miyo-radius: var(--radius);
   --miyo-radius-sm: var(--radius-sm);
+
+  /* ---- 遗留命名别名（Java 调试域等历史写法引用的旧 token 名）----
+     此前这些名字从未定义：var() 解析失败 → 颜色静默降级为继承值，
+     次级/三级文本层级与语义色（浅色主题）全部丢失。现映射到现行 token。 */
+  --text-secondary: var(--text-2);
+  --text-tertiary: var(--text-3);
+  --ok: var(--success);
+  --warn: var(--warning);
+  --danger-bg: var(--danger-tint);
+  --primary-tint: var(--accent-tint);
+  --bg: var(--bg-panel);
+  --bg-input: var(--bg-code);
+  --muted: var(--text-3);
+  --text: var(--text-1);
+  --fs-2xs: var(--fs-xs);
+  --text-on-accent: #ffffff;
 }
 
 [data-theme='light'] {
@@ -468,7 +489,180 @@
   --overflow-tip-text: #dce3ee;
 }
 
-/* ---- 森林绿 Forest Green：柔和灰绿浅色基调（data-theme-id="forest"），低饱和绿强调 ---- */
+/* ---- 海盐浅蓝 Sea Salt Light：冷蓝灰白浅色基调（data-theme-id="ocean-light"），
+   与深色海盐蓝同色相成对，低饱和海蓝强调 ---- */
+[data-theme-id='ocean-light'] {
+  color-scheme: light;
+  --bg-app: #f2f5f9;
+  --bg-panel: #ffffff;
+  --bg-card: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-code: #f5f8fb;
+  --bg-hover: rgba(38, 68, 110, 0.05);
+  --bg-active: rgba(38, 68, 110, 0.09);
+  --border: #dbe3ec;
+  --border-strong: #c3cfdd;
+  --border-editor: rgba(38, 68, 110, 0.12);
+  --border-panel: rgba(38, 68, 110, 0.09);
+  --shadow-panel:
+    0 20px 25px -5px rgba(23, 38, 58, 0.08),
+    0 8px 10px -6px rgba(23, 38, 58, 0.06);
+  --text-1: #1e2630;
+  --text-2: #47566a;
+  --text-3: #64748b;
+  --text-value: #3a4656;
+  --accent: #2e6da8;
+  --accent-hover: #275f96;
+  --primary: #2e6da8;
+  --grad-primary: linear-gradient(135deg, #3d7ab8, #2a5f96);
+  --grad-primary-hover: linear-gradient(135deg, #4a86c2, #2e6da8);
+  --primary-glow: rgba(46, 109, 168, 0.16);
+  --primary-glow-hover: rgba(46, 109, 168, 0.24);
+  --success: #15803d;
+  --warning: #b45309;
+  --orange: #c2410c;
+  --danger: #dc2626;
+  --info: #1d4ed8;
+  --get: #047857;
+  --post: #b45309;
+  --put: #1d4ed8;
+  --patch: #6d28d9;
+  --delete: #b91c1c;
+  --grpc: #0e7490;
+  --accent-tint: rgba(46, 109, 168, 0.12);
+  --success-tint: rgba(21, 128, 61, 0.1);
+  --warning-tint: rgba(180, 83, 9, 0.1);
+  --danger-tint: rgba(185, 28, 28, 0.08);
+  --info-tint: rgba(29, 78, 216, 0.08);
+  --patch-tint: rgba(109, 40, 217, 0.1);
+  --shadow-sm: 0 1px 2px rgba(23, 38, 58, 0.1);
+  --shadow: 0 8px 24px rgba(23, 38, 58, 0.1);
+  --shadow-lg: 0 16px 48px rgba(17, 28, 44, 0.16);
+  --shadow-drawer: -8px 0 32px rgba(23, 38, 58, 0.1);
+  --inset-input-bg: #ffffff;
+  --inset-input-border: rgba(38, 68, 110, 0.16);
+  --inset-input-border-hover: rgba(38, 68, 110, 0.26);
+  --dialog-bg: #ffffff;
+  --dialog-border-strong: rgba(38, 68, 110, 0.14);
+  --dialog-shadow: 0 25px 60px -12px rgba(23, 38, 58, 0.18);
+  --update-card-bg: linear-gradient(to right, rgba(46, 109, 168, 0.12), rgba(250, 251, 253, 0.9));
+  --check-bg: color-mix(in srgb, black 5%, transparent);
+  --danger-fg: var(--danger);
+  --projcard-bg: var(--bg-panel);
+  --projcard-border: var(--border);
+  --projcard-shadow: var(--shadow);
+  --projcard-hover-bg: var(--bg-panel);
+  --projcard-hover-shadow: var(--shadow-lg);
+  --focus-ring: rgba(46, 109, 168, 0.45);
+  --danger-border: rgba(220, 38, 38, 0.3);
+  --info-border: rgba(37, 99, 235, 0.3);
+  --mask: rgba(13, 26, 42, 0.4);
+  --sidebar-bg: var(--bg-panel);
+  --sidebar-border: var(--border);
+  --sidebar-search-bg: var(--bg-code);
+  --overflow-tip-bg: rgba(33, 35, 41, 0.95);
+  --overflow-tip-border: rgba(74, 78, 90, 0.5);
+  --overflow-tip-text: #e9eaee;
+  --tok-key: #a626a4;
+  --tok-str: #50a14f;
+  --tok-num: #986801;
+  --tok-bool: #4078f2;
+  --tok-null: #986801;
+  --tok-punct: #5c6670;
+  --tok-gutter: #94a3b8;
+  --bg-3: rgba(38, 68, 110, 0.06);
+  --code-bg: #f5f8fb;
+  --code-fg: #1e2630;
+  --code-caret: #2e6da8;
+  --code-placeholder: rgba(30, 38, 48, 0.35);
+}
+
+/* ---- 森林绿 Forest Green（深色）：深绿灰基调（data-theme-id="forest-dark"），
+   与浅色森林浅绿同色相成对，低饱和林绿强调 ---- */
+[data-theme-id='forest-dark'] {
+  color-scheme: dark;
+  --bg-app: #0e1411;
+  --bg-panel: #121815;
+  --bg-card: #182019;
+  --bg-elevated: #1e2820;
+  --bg-code: #101613;
+  --bg-hover: rgba(148, 210, 170, 0.07);
+  --bg-active: rgba(148, 210, 170, 0.11);
+  --border: #243029;
+  --border-strong: #33453a;
+  --border-editor: rgba(148, 210, 170, 0.12);
+  --shadow-drawer: -12px 0 40px rgba(4, 10, 7, 0.45);
+  --inset-input-bg: rgba(5, 12, 8, 0.4);
+  --inset-input-border: rgba(148, 210, 170, 0.12);
+  --inset-input-border-hover: rgba(148, 210, 170, 0.22);
+  --dialog-bg: #0f1512;
+  --dialog-border-strong: rgba(148, 210, 170, 0.12);
+  --dialog-shadow: 0 25px 60px -12px rgba(4, 10, 7, 0.75);
+  --update-card-bg: linear-gradient(to right, rgba(76, 167, 124, 0.22), rgba(18, 24, 21, 0.5));
+  --check-bg: color-mix(in srgb, black 30%, transparent);
+  --danger-fg: color-mix(in srgb, var(--danger) 72%, #fff);
+  --projcard-bg:
+    linear-gradient(180deg, rgba(148, 210, 170, 0.03), rgba(148, 210, 170, 0) 60%),
+    rgba(148, 210, 170, 0.02);
+  --projcard-border: rgba(148, 210, 170, 0.08);
+  --projcard-shadow: 0 1px 2px rgba(4, 10, 7, 0.3);
+  --projcard-hover-bg:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent), rgba(148, 210, 170, 0) 60%),
+    rgba(148, 210, 170, 0.03);
+  --projcard-hover-shadow: 0 14px 34px rgba(4, 12, 8, 0.5);
+  --border-panel: rgba(148, 210, 170, 0.09);
+  --shadow-panel:
+    0 20px 25px -5px rgba(4, 10, 7, 0.5),
+    0 8px 10px -6px rgba(4, 10, 7, 0.5);
+  --text-1: #dde7df;
+  --text-2: #9db2a5;
+  --text-3: #6f8477;
+  --text-value: #c4d3c8;
+  --accent: #4ca77c;
+  --accent-hover: #5fbb8d;
+  --primary: #4ca77c;
+  --grad-primary: linear-gradient(135deg, #4ca77c, #35875f);
+  --grad-primary-hover: linear-gradient(135deg, #5fbb8d, #4ca77c);
+  --primary-glow: rgba(53, 135, 95, 0.4);
+  --primary-glow-hover: rgba(53, 135, 95, 0.5);
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --orange: #f97316;
+  --danger: #ef4444;
+  --info: #3b82f6;
+  --get: #22c55e;
+  --post: #f59e0b;
+  --put: #3b82f6;
+  --patch: #a855f7;
+  --delete: #ef4444;
+  --grpc: #06b6d4;
+  --accent-tint: rgba(76, 167, 124, 0.16);
+  --success-tint: rgba(34, 197, 94, 0.12);
+  --warning-tint: rgba(245, 158, 11, 0.12);
+  --danger-tint: rgba(239, 68, 68, 0.12);
+  --info-tint: rgba(59, 130, 246, 0.12);
+  --patch-tint: rgba(167, 139, 250, 0.14);
+  --danger-border: rgba(239, 68, 68, 0.35);
+  --info-border: rgba(59, 130, 246, 0.35);
+  --mask: rgba(6, 14, 10, 0.6);
+  --shadow-sm: 0 1px 2px rgba(4, 10, 7, 0.45);
+  --shadow: 0 8px 24px rgba(4, 10, 7, 0.45);
+  --shadow-lg: 0 16px 48px rgba(4, 10, 7, 0.5);
+  --focus-ring: rgba(76, 167, 124, 0.5);
+  --bg-3: rgba(148, 210, 170, 0.07);
+  --code-bg: #0d120f;
+  --code-fg: #d5e0d8;
+  --code-caret: #5fbb8d;
+  --code-placeholder: rgba(213, 224, 216, 0.35);
+  --sidebar-bg: #0b100d;
+  --sidebar-border: #1e2a22;
+  --sidebar-search-bg: #141c16;
+  --overflow-tip-bg: rgba(24, 34, 28, 0.95);
+  --overflow-tip-border: rgba(74, 98, 84, 0.5);
+  --overflow-tip-text: #dde7df;
+}
+
+/* ---- 森林浅绿 Forest Light：柔和灰绿浅色基调（data-theme-id="forest"），低饱和绿强调 ---- */
 [data-theme-id='forest'] {
   color-scheme: light;
   --bg-app: #eff3ee;
@@ -868,7 +1062,7 @@ kbd,
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   border: 2px solid transparent;
   background-clip: content-box;
 }
@@ -1082,6 +1276,18 @@ kbd,
 }
 .miyo-input[type='number'] {
   font-variant-numeric: tabular-nums;
+}
+
+/* ---- 表单校验错误态（单源：此前 WorkspaceView / ProjectRenameModal /
+   ProjectCreateModal 三处 scoped !important 同构复制，收敛至此） ---- */
+.miyo-input.miyo-input-error,
+.miyo-textarea.miyo-input-error {
+  border-color: var(--danger);
+}
+.miyo-input.miyo-input-error:focus,
+.miyo-textarea.miyo-input-error:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px var(--danger-tint);
 }
 
 .miyo-textarea {

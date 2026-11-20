@@ -8,7 +8,7 @@
  * 应用顺序（顺序敏感）：
  *   1. 清空全部托管内联变量（回到样式表主题块的原值）；
  *   2. 读取基调主题在样式表中的原值（面板/卡片底色，用于派生透明度）；
- *   3. 写入用户覆盖值与派生值（accent 家族 / 文本梯度 / 圆角 / 字号）。
+ *   3. 写入用户覆盖值与派生值（accent 家族 / 文本梯度 / 圆角 / 字号 / 密度 / 字体）。
  */
 import type { CustomThemeConfig } from './types'
 
@@ -70,6 +70,19 @@ const darken = (hex: string, amt: number): string => mix(hex, '#000000', amt)
 /* ---- 托管内联变量清单（apply 前先整体清空，避免上一次覆盖残留） ---- */
 const RADIUS_KEYS = ['--radius-sm', '--radius', '--radius-md', '--radius-lg', '--radius-xl'] as const
 const FS_KEYS = ['--fs-2xxs', '--fs-xxs', '--fs-xs', '--fs-sm', '--fs-md', '--fs-lg', '--fs-xl'] as const
+/** 密度/字体为单值开关型变量（非清单派生），单独托管。 */
+const SINGLE_KEYS = ['--density', '--font-ui'] as const
+
+/** 系统字体栈（font='system' 时覆盖 --font-ui；与内置栈除首段 Plex 外一致）。 */
+const SYSTEM_FONT_STACK =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif"
+
+/** 密度档 → --density 系数（style.css 的控件高度与间距档乘以该值缩放）。 */
+const DENSITY_FACTOR: Record<CustomThemeConfig['density'], string> = {
+  compact: '0.9',
+  default: '1',
+  cozy: '1.1',
+}
 const COLOR_KEYS = [
   '--bg-app',
   '--bg-panel',
@@ -114,6 +127,7 @@ export function clearCustomTheme(root: HTMLElement): void {
   for (const key of COLOR_KEYS) root.style.removeProperty(key)
   for (const key of RADIUS_KEYS) root.style.removeProperty(key)
   for (const key of FS_KEYS) root.style.removeProperty(key)
+  for (const key of SINGLE_KEYS) root.style.removeProperty(key)
 }
 
 /**
@@ -183,7 +197,7 @@ export function applyCustomTheme(root: HTMLElement, custom: CustomThemeConfig | 
     setVar(root, '--focus-ring', withAlpha(accent, 0.45))
   }
 
-  /* ---- 圆角 / 字号（偏离默认才写，保持内联层最小化） ---- */
+  /* ---- 圆角 / 字号 / 密度 / 字体（偏离默认才写，保持内联层最小化） ---- */
   if (custom.radius !== 6) {
     const r = custom.radius
     setVar(root, '--radius-sm', `${Math.max(0, Math.round(r - 2))}px`)
@@ -194,5 +208,11 @@ export function applyCustomTheme(root: HTMLElement, custom: CustomThemeConfig | 
   }
   if (custom.fontScale !== 1) {
     for (const key of FS_KEYS) setVar(root, key, `${Math.round(FS_BASE[key] * custom.fontScale * 10) / 10}px`)
+  }
+  if (custom.density !== 'default') {
+    setVar(root, '--density', DENSITY_FACTOR[custom.density])
+  }
+  if (custom.font === 'system') {
+    setVar(root, '--font-ui', SYSTEM_FONT_STACK)
   }
 }

@@ -8,7 +8,15 @@
  *   预留后续迁移；system 模式在 lastDark/lastLight 两主题间跟随系统深浅切换。
  */
 
-export type BuiltinThemeId = 'light' | 'dark' | 'ocean' | 'forest' | 'sand' | 'lavender'
+export type BuiltinThemeId =
+  | 'light'
+  | 'dark'
+  | 'ocean'
+  | 'ocean-light'
+  | 'forest'
+  | 'forest-dark'
+  | 'sand'
+  | 'lavender'
 export type ThemeId = BuiltinThemeId | 'custom'
 export type ThemeBase = 'dark' | 'light'
 
@@ -17,6 +25,12 @@ export type ThemeMode = 'system' | 'manual'
 
 /** 自定义背景类型：default 跟随主题色板 / 纯色 / 渐变 / 本地图片。 */
 export type BackgroundType = 'default' | 'color' | 'gradient' | 'image'
+
+/** 界面密度：紧凑 / 标准 / 宽松（缩放控件高度与间距档，字号不受影响）。 */
+export type ThemeDensity = 'compact' | 'default' | 'cozy'
+
+/** 界面字体：default 内置 IBM Plex Sans / system 跟随操作系统。 */
+export type ThemeFont = 'default' | 'system'
 
 export interface GradientBackground {
   from: string
@@ -65,6 +79,10 @@ export interface CustomThemeConfig {
   radius: number
   /** 字号缩放（默认 1，0.85..1.3，作用于 --fs-* 全档）。 */
   fontScale: number
+  /** 界面密度（默认 'default'，映射 --density 系数缩放控件高度与间距档）。 */
+  density: ThemeDensity
+  /** 界面字体（默认 'default' = 内置 IBM Plex Sans）。 */
+  font: ThemeFont
 }
 
 /** 持久化主题配置（localStorage `miyo.theme.config`）。 */
