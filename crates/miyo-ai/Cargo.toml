@@ -8,6 +8,8 @@ repository = "https://github.com/weihubeats/Miyo"
 homepage = "https://weihubeats.github.io/Miyo/"
 
 [dependencies]
+# 目标分层：Infrastructure → Domain（错误收敛 From<AiError> for AppError）
+miyo-core = { path = "../miyo-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }

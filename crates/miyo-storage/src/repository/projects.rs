@@ -1,5 +1,6 @@
 //! Project CRUD。
 
+use crate::db::db_err;
 use std::collections::HashMap;
 
 use chrono::Utc;
@@ -27,7 +28,8 @@ pub async fn create_project(db: &SqlitePool, name: &str, description: &str) -> R
     let sort_order: i64 =
         sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projects")
             .fetch_one(db)
-            .await?;
+            .await
+            .map_err(db_err)?;
     let row = ProjectRow::from_model(&model)?;
     sqlx::query(
         "INSERT INTO projects (id, name, description, variables_json, created_at, updated_at, sort_order, team_id)
@@ -42,7 +44,7 @@ pub async fn create_project(db: &SqlitePool, name: &str, description: &str) -> R
     .bind(sort_order)
     .bind(row.team_id.clone())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     Ok(model)
 }
 
@@ -54,7 +56,8 @@ pub async fn list_projects<'e>(
          FROM projects ORDER BY sort_order ASC, created_at ASC",
     )
     .fetch_all(executor)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(ProjectRow::into_model).collect()
 }
 
@@ -101,7 +104,8 @@ pub async fn list_endpoint_stats(db: &SqlitePool) -> Result<Vec<ProjectEndpointS
          FROM projects p",
     )
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(stats)
 }
 
@@ -187,25 +191,27 @@ pub async fn list_project_quality(db: &SqlitePool) -> Result<Vec<ProjectQualityS
          ) c ON c.project_id = p.id",
     )
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(rows)
 }
 
 /// 拖拽排序持久化：按给定 id 顺序（事务）批量重写 sort_order。
 /// 任一 id 不存在则整体回滚并报错，避免前端的脏顺序污染数据库。
 pub async fn update_projects_order(db: &SqlitePool, project_ids: &[Uuid]) -> Result<()> {
-    let mut tx = db.begin().await?;
+    let mut tx = db.begin().await.map_err(db_err)?;
     for (index, id) in project_ids.iter().enumerate() {
         let result = sqlx::query("UPDATE projects SET sort_order = ? WHERE id = ?")
             .bind(index as i64)
             .bind(id.to_string())
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(db_err)?;
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound(format!("项目（{id}）")));
         }
     }
-    tx.commit().await?;
+    tx.commit().await.map_err(db_err)?;
     Ok(())
 }
 
@@ -213,7 +219,8 @@ pub async fn update_projects_order(db: &SqlitePool, project_ids: &[Uuid]) -> Res
 pub async fn list_project_ids(db: &SqlitePool) -> Result<Vec<Uuid>> {
     let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM projects")
         .fetch_all(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(rows
         .into_iter()
         .filter_map(|(id,)| Uuid::parse_str(&id).ok())
@@ -227,7 +234,8 @@ pub async fn get_project(db: &SqlitePool, project_id: Uuid) -> Result<Project> {
     )
     .bind(project_id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     row.map(ProjectRow::into_model)
         .transpose()?
         .ok_or_else(|| AppError::NotFound(format!("项目（{project_id}）")))
@@ -248,7 +256,7 @@ pub async fn update_project(db: &SqlitePool, project: &Project) -> Result<Projec
     .bind(&row.team_id)
     .bind(&row.id)
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("项目（{}）", project.id)));
     }
@@ -259,7 +267,8 @@ pub async fn delete_project(db: &SqlitePool, project_id: Uuid) -> Result<()> {
     sqlx::query("DELETE FROM projects WHERE id = ?")
         .bind(project_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -285,18 +294,21 @@ pub async fn delete_project_children(
         sqlx::query(&format!("DELETE FROM {table} WHERE project_id = ?"))
             .bind(&pid)
             .execute(&mut *executor)
-            .await?;
+            .await
+            .map_err(db_err)?;
     }
     // 接口及其从属（示例/用例）：先按 project_id 删接口，从属表 CASCADE。
     sqlx::query("DELETE FROM endpoints WHERE project_id = ?")
         .bind(&pid)
         .execute(&mut *executor)
-        .await?;
+        .await
+        .map_err(db_err)?;
     // 文件夹最后删（接口已随 endpoints 表删净）。
     sqlx::query("DELETE FROM folders WHERE project_id = ?")
         .bind(&pid)
         .execute(&mut *executor)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -325,7 +337,7 @@ pub async fn save_project<'e>(
     .bind(row.updated_at.clone())
     .bind(&row.team_id)
     .execute(executor)
-    .await?;
+    .await.map_err(db_err)? ;
     Ok(())
 }
 

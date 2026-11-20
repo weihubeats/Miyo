@@ -337,7 +337,7 @@ async fn apply_snapshot(
         .db
         .begin()
         .await
-        .map_err(miyo_core::AppError::Database)?;
+        .map_err(miyo_storage::db_err)?;
 
     // 先 upsert 团队（项目 team_id 外键）。
     if let Some(team) = &snapshot.team {
@@ -402,7 +402,7 @@ async fn apply_snapshot(
     repo::save_proto_files_bulk(tx.as_mut(), &snapshot.proto_files).await?;
     repo::save_scenarios_bulk(tx.as_mut(), &scenarios).await?;
 
-    tx.commit().await.map_err(miyo_core::AppError::Database)?;
+    tx.commit().await.map_err(miyo_storage::db_err)?;
     Ok(())
 }
 

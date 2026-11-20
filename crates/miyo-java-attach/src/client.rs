@@ -409,6 +409,27 @@ pub enum AgentClientError {
     Agent { code: String, message: String },
 }
 
+// ---------------------------------------------------------------------------
+// 统一错误收敛：AgentClientError → AppError（attach 命令层经此单点转换，
+// 不再各自手拼；Auth → Forbidden 保持「鉴权失败」语义）
+// ---------------------------------------------------------------------------
+
+impl From<AgentClientError> for miyo_core::AppError {
+    fn from(err: AgentClientError) -> Self {
+        match err {
+            AgentClientError::Connection(msg) => miyo_core::AppError::Connection(msg),
+            AgentClientError::Auth(msg) => miyo_core::AppError::Forbidden(msg),
+            AgentClientError::Protocol(msg) => {
+                miyo_core::AppError::Connection(format!("协议不匹配：{msg}"))
+            }
+            AgentClientError::Timeout(msg) => miyo_core::AppError::NetworkTimeout(msg),
+            AgentClientError::Agent { code, message } => {
+                miyo_core::AppError::Test(format!("Agent 错误 [{code}]：{message}"))
+            }
+        }
+    }
+}
+
 impl AgentClientError {
     /// 连接级错误（重连可能恢复）。
     pub fn is_connection_level(&self) -> bool {

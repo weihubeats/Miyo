@@ -1,5 +1,6 @@
 //! Request History。
 
+use crate::db::db_err;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -58,7 +59,7 @@ pub async fn save_request_history(db: &SqlitePool, model: &RequestHistory) -> Re
     .bind(&row.response_summary_json)
     .bind(row.created_at.clone())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     // 保留策略节流：该项目超额最多延迟 N 条被清理，换热路径少一次写。
     // `tick` 为 1 起的写入序号，取 `tick % N == 1` 让首轮写入就裁一次
     //（清掉历史遗留的超额行），此后每 N 条一轮，与原全局节流节奏一致。
@@ -82,7 +83,8 @@ pub async fn trim_request_history(db: &SqlitePool, project_id: &str) -> Result<(
     .bind(project_id)
     .bind(HISTORY_RETENTION_PER_PROJECT)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -100,25 +102,23 @@ pub async fn list_request_histories(
                 request_summary_json, response_summary_json, created_at
          FROM request_histories";
     let rows: Vec<HistoryRow> = match endpoint_id {
-        Some(ep_id) => {
-            sqlx::query_as(&format!(
-                "{BASE} WHERE project_id = ? AND endpoint_id = ? ORDER BY created_at DESC LIMIT ?"
-            ))
-            .bind(project_id.to_string())
-            .bind(ep_id.to_string())
-            .bind(limit)
-            .fetch_all(db)
-            .await?
-        }
-        None => {
-            sqlx::query_as(&format!(
-                "{BASE} WHERE project_id = ? ORDER BY created_at DESC LIMIT ?"
-            ))
-            .bind(project_id.to_string())
-            .bind(limit)
-            .fetch_all(db)
-            .await?
-        }
+        Some(ep_id) => sqlx::query_as(&format!(
+            "{BASE} WHERE project_id = ? AND endpoint_id = ? ORDER BY created_at DESC LIMIT ?"
+        ))
+        .bind(project_id.to_string())
+        .bind(ep_id.to_string())
+        .bind(limit)
+        .fetch_all(db)
+        .await
+        .map_err(db_err)?,
+        None => sqlx::query_as(&format!(
+            "{BASE} WHERE project_id = ? ORDER BY created_at DESC LIMIT ?"
+        ))
+        .bind(project_id.to_string())
+        .bind(limit)
+        .fetch_all(db)
+        .await
+        .map_err(db_err)?,
     };
     rows.into_iter().map(HistoryRow::into_model).collect()
 }
@@ -139,14 +139,14 @@ pub async fn clear_request_histories(
                 .bind(project_id.to_string())
                 .bind(ep_id.to_string())
                 .execute(db)
-                .await?
+                .await
+                .map_err(db_err)?
         }
-        None => {
-            sqlx::query("DELETE FROM request_histories WHERE project_id = ?")
-                .bind(project_id.to_string())
-                .execute(db)
-                .await?
-        }
+        None => sqlx::query("DELETE FROM request_histories WHERE project_id = ?")
+            .bind(project_id.to_string())
+            .execute(db)
+            .await
+            .map_err(db_err)?,
     };
     Ok(result.rows_affected())
 }
@@ -156,7 +156,8 @@ pub async fn delete_request_history(db: &SqlitePool, id: Uuid) -> Result<()> {
     sqlx::query("DELETE FROM request_histories WHERE id = ?")
         .bind(id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -193,6 +194,7 @@ pub async fn list_recent_activities(db: &SqlitePool, limit: i64) -> Result<Vec<R
     )
     .bind(limit)
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(rows)
 }

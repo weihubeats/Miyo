@@ -1,6 +1,7 @@
 //! TestCase Run（测试用例执行历史）：每次运行落一行，append-only；
 //! 修改用例不覆盖历史。保留策略镜像 scenario_runs（每用例 KEEP 条）。
 
+use crate::db::db_err;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -32,7 +33,8 @@ pub async fn save_test_case_run(db: &SqlitePool, run: &TestCaseRun) -> Result<()
     .bind(&run.error)
     .bind(&run.results_json)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -52,7 +54,8 @@ pub async fn list_test_case_run_summaries(
     .bind(case_id.to_string())
     .bind(limit)
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(|r| r.into_model()).collect()
 }
 
@@ -71,7 +74,8 @@ pub async fn list_test_case_runs(
     .bind(case_id.to_string())
     .bind(limit)
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(|r| r.into_model()).collect()
 }
 
@@ -84,7 +88,8 @@ pub async fn get_test_case_run(db: &SqlitePool, run_id: Uuid) -> Result<Option<T
     )
     .bind(run_id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     row.map(|r| r.into_model()).transpose()
 }
 
@@ -93,7 +98,8 @@ pub async fn delete_test_case_run(db: &SqlitePool, run_id: Uuid) -> Result<bool>
     let result = sqlx::query("DELETE FROM test_case_runs WHERE id = ?")
         .bind(run_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -109,7 +115,8 @@ pub async fn prune_test_case_runs(db: &SqlitePool, case_id: Uuid, keep: i64) -> 
     .bind(case_id.to_string())
     .bind(keep)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 

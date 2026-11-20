@@ -1,5 +1,6 @@
 //! WebSocket 离线消息（ws_messages）。
 
+use crate::db::db_err;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -32,7 +33,8 @@ pub async fn enqueue_ws_message(
     .bind(&record.payload)
     .bind(record.created_at.to_rfc3339())
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(record)
 }
 
@@ -53,7 +55,8 @@ pub async fn list_pending_ws_messages(
     .bind(target)
     .bind(max)
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     let mut records: Vec<WsMessageRecord> = rows
         .into_iter()
         .map(WsMessageRow::into_model)
@@ -74,7 +77,7 @@ pub async fn delete_ws_messages(db: &SqlitePool, ids: &[Uuid]) -> Result<()> {
     for id in ids {
         query = query.bind(id.to_string());
     }
-    query.execute(db).await?;
+    query.execute(db).await.map_err(db_err)?;
     Ok(())
 }
 
@@ -89,6 +92,7 @@ pub async fn purge_expired_ws_messages(
         .bind(target)
         .bind(cutoff)
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(result.rows_affected())
 }

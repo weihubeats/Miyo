@@ -3,6 +3,7 @@
 //! 会话按项目归属；消息按 `seq` 有序追加（模型消息 / 工具调用 / 工具结果
 //! / 产物快照统一走一张表，role 区分）。会话删除级联清消息（迁移 0028）。
 
+use crate::db::db_err;
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -58,7 +59,7 @@ pub async fn create_ai_session(db: &SqlitePool, session: &AiSession) -> Result<(
         .bind(session.updated_at.to_rfc3339())
         .execute(db)
         .await
-        .map_err(AppError::from)?;
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -71,7 +72,7 @@ pub async fn list_ai_sessions(db: &SqlitePool, project_id: Uuid) -> Result<Vec<A
     .bind(project_id.to_string())
     .fetch_all(db)
     .await
-    .map_err(AppError::from)?;
+    .map_err(db_err)?;
     rows.into_iter()
         .map(|(id, pid, title, created, updated)| {
             Ok(AiSession {
@@ -106,7 +107,7 @@ pub async fn touch_ai_session(
     }
     .execute(db)
     .await
-    .map_err(AppError::from)?;
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -116,7 +117,7 @@ pub async fn delete_ai_session(db: &SqlitePool, session_id: Uuid) -> Result<()> 
         .bind(session_id.to_string())
         .execute(db)
         .await
-        .map_err(AppError::from)?;
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -126,9 +127,9 @@ pub async fn delete_ai_session(db: &SqlitePool, session_id: Uuid) -> Result<()> 
 /// 事务保证「取最大 → 插入」不被交错（SQLite 写串行 + 事务原子性），
 /// 避免 seq 撞号。
 pub async fn append_ai_message(db: &SqlitePool, msg: &AiMessageRow) -> Result<i64> {
-    let mut tx = db.begin().await.map_err(AppError::from)?;
+    let mut tx = db.begin().await.map_err(db_err)?;
     let seq = insert_messages_tx(&mut tx, std::slice::from_ref(msg)).await?;
-    tx.commit().await.map_err(AppError::from)?;
+    tx.commit().await.map_err(db_err)?;
     Ok(seq)
 }
 
@@ -147,7 +148,7 @@ pub(crate) async fn insert_messages_tx(
             .bind(first.session_id.to_string())
             .fetch_one(&mut **tx)
             .await
-            .map_err(AppError::from)?;
+            .map_err(db_err)?;
     let mut seq = max.unwrap_or(0);
     for msg in msgs {
         seq += 1;
@@ -166,16 +167,16 @@ pub(crate) async fn insert_messages_tx(
         .bind(msg.created_at.to_rfc3339())
         .execute(&mut **tx)
         .await
-        .map_err(AppError::from)?;
+        .map_err(db_err)?;
     }
     Ok(max.unwrap_or(0) + 1)
 }
 
 /// 批量追加（单事务；调用方组装行后一次提交，失败整体回滚）。
 pub async fn append_ai_messages_bulk(db: &SqlitePool, msgs: &[AiMessageRow]) -> Result<i64> {
-    let mut tx = db.begin().await.map_err(AppError::from)?;
+    let mut tx = db.begin().await.map_err(db_err)?;
     let first_seq = insert_messages_tx(&mut tx, msgs).await?;
-    tx.commit().await.map_err(AppError::from)?;
+    tx.commit().await.map_err(db_err)?;
     Ok(first_seq)
 }
 
@@ -197,7 +198,7 @@ pub async fn list_ai_messages_after(
     .bind(limit)
     .fetch_all(db)
     .await
-    .map_err(AppError::from)?;
+    .map_err(db_err)?;
     rows.into_iter()
         .map(
             |(id, seq, role, content, calls, call_id, artifact, created)| {
@@ -228,7 +229,7 @@ pub async fn list_ai_messages(db: &SqlitePool, session_id: Uuid) -> Result<Vec<A
     .bind(session_id.to_string())
     .fetch_all(db)
     .await
-    .map_err(AppError::from)?;
+    .map_err(db_err)?;
     rows.into_iter()
         .map(
             |(id, seq, role, content, calls, call_id, artifact, created)| {
@@ -251,11 +252,11 @@ pub async fn list_ai_messages(db: &SqlitePool, session_id: Uuid) -> Result<Vec<A
 }
 
 fn uuid_err(e: uuid::Error) -> AppError {
-    AppError::Database(sqlx::Error::Protocol(format!("UUID 解析失败：{e}")))
+    AppError::Database(format!("UUID 解析失败：{e}"))
 }
 
 fn ts_err(e: chrono::ParseError) -> AppError {
-    AppError::Database(sqlx::Error::Protocol(format!("时间戳解析失败：{e}")))
+    AppError::Database(format!("时间戳解析失败：{e}"))
 }
 
 #[cfg(test)]

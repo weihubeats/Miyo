@@ -1029,7 +1029,7 @@ async fn send_request_inner(
         if cancel.is_some_and(|t| t.is_cancelled()) {
             return Err(AppError::Cancelled("request aborted by user".to_string()));
         }
-        let chunk = chunk.map_err(AppError::from_reqwest)?;
+        let chunk = chunk.map_err(crate::network::from_reqwest)?;
         if body.len() + chunk.len() > body_cap {
             let remaining = body_cap - body.len();
             body.extend_from_slice(&chunk[..remaining]);
@@ -1165,10 +1165,10 @@ async fn send_hop(
                     _ = token.cancelled() => {
                         return Err(AppError::Cancelled("request aborted by user".to_string()));
                     }
-                    r = fut => r.map_err(AppError::from_reqwest)?,
+                    r = fut => r.map_err(crate::network::from_reqwest)?,
                 }
             }
-            None => req.send().await.map_err(AppError::from_reqwest)?,
+            None => req.send().await.map_err(crate::network::from_reqwest)?,
         };
 
         // 重定向判定：不跟随 / 非重定向状态 / 无可解析 Location → 返回本响应。
@@ -1240,7 +1240,7 @@ fn effective_port(u: &Url) -> Option<u16> {
 ///
 /// 分类逻辑统一收敛在 [`AppError::classify`]，此处仅取其用户消息。
 pub fn describe_http_error(e: &reqwest::Error) -> String {
-    AppError::classify(e)
+    crate::network::classify(e)
         .map(|err| err.user_message())
         .unwrap_or_else(|| "请求失败：服务端未返回有效响应".to_string())
 }

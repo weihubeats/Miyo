@@ -41,9 +41,8 @@ pub async fn oauth_fetch_token(
 
 impl From<OAuth2Error> for CommandError {
     fn from(err: OAuth2Error) -> Self {
-        CommandError {
-            code: CommandErrorCode::Oauth2,
-            message: err.to_string(),
-        }
+        // 统一经 AppError 单源映射（impl 定义在 miyo-oauth crate——孤儿规则；
+        // 此前旁路直连 CommandError 是错误体系的双通道漂移点）
+        CommandError::from(miyo_core::AppError::from(err))
     }
 }

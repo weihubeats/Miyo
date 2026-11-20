@@ -139,7 +139,7 @@ pub async fn backup_restore(
         .db
         .begin()
         .await
-        .map_err(miyo_core::AppError::Database)?;
+        .map_err(miyo_storage::db_err)?;
     let result: miyo_core::Result<()> = async {
         // v4 备份带团队元数据：先 upsert 团队（项目 team_id 外键引用它）。
         if let Some(team) = &file.team {
@@ -171,7 +171,7 @@ pub async fn backup_restore(
         }
         return Err(e.into());
     }
-    tx.commit().await.map_err(miyo_core::AppError::Database)?;
+    tx.commit().await.map_err(miyo_storage::db_err)?;
 
     // 全局维度合并（commit 之后、尽力而为，失败仅告警不回滚项目数据）：
     // 全部为保守合并（缺失才补 / 取 max），幂等可重试，故放在事务外，

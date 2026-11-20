@@ -30,6 +30,18 @@ pub enum OAuth2Error {
     Unauthorized(String),
 }
 
+// ---------------------------------------------------------------------------
+// 统一错误收敛：OAuth2Error → AppError（与 miyo-sync 的 TransportError 同款
+// 单点映射；tauri 命令层 From<OAuth2Error> for CommandError 经此中转，
+// 不再旁路直拼错误码）
+// ---------------------------------------------------------------------------
+
+impl From<OAuth2Error> for miyo_core::AppError {
+    fn from(err: OAuth2Error) -> Self {
+        miyo_core::AppError::OAuth2(err.to_string())
+    }
+}
+
 /// 授权流程互斥：同一时刻只有一个授权会话在监听 9090 端口。
 static AUTHORIZE_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 

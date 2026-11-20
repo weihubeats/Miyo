@@ -1,5 +1,6 @@
 //! Settings（通用键值）。
 
+use crate::db::db_err;
 use std::collections::HashMap;
 
 use sqlx::{QueryBuilder, SqlitePool};
@@ -14,7 +15,8 @@ pub async fn set_setting(db: &SqlitePool, key: &str, value: &str) -> Result<()> 
     .bind(key)
     .bind(value)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -22,7 +24,8 @@ pub async fn get_setting(db: &SqlitePool, key: &str) -> Result<Option<String>> {
     let row: Option<(String,)> = sqlx::query_as("SELECT value_json FROM settings WHERE key = ?")
         .bind(key)
         .fetch_optional(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(row.map(|r| r.0))
 }
 
@@ -31,7 +34,8 @@ pub async fn delete_setting(db: &SqlitePool, key: &str) -> Result<()> {
     sqlx::query("DELETE FROM settings WHERE key = ?")
         .bind(key)
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -51,7 +55,8 @@ pub async fn get_settings(db: &SqlitePool, keys: &[&str]) -> Result<HashMap<Stri
             separated.push_bind(*key);
         }
         separated.push_unseparated(")");
-        let rows: Vec<(String, String)> = qb.build_query_as().fetch_all(db).await?;
+        let rows: Vec<(String, String)> =
+            qb.build_query_as().fetch_all(db).await.map_err(db_err)?;
         out.extend(rows);
     }
     Ok(out)

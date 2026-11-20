@@ -1,5 +1,6 @@
 //! TestCase（测试用例）仓储：CRUD / 分组 / 排序 / 断言提取配置 / 运行状态与摘要。
 
+use crate::db::db_err;
 use sqlx::{QueryBuilder, SqlitePool};
 use uuid::Uuid;
 
@@ -39,7 +40,7 @@ pub async fn create_test_case(db: &SqlitePool, case: &TestCase) -> Result<TestCa
     .bind(case.last_run_fail.map(|v| v as i64))
     .bind(case.created_at.to_rfc3339())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     Ok(case.clone())
 }
 
@@ -66,7 +67,8 @@ pub async fn list_test_cases(db: &SqlitePool, request_id: Uuid) -> Result<Vec<Te
     ))
     .bind(request_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(TestCaseRow::into_model).collect()
 }
 
@@ -92,7 +94,7 @@ pub async fn list_test_cases_by_endpoints(
             separated.push_bind(id.to_string());
         }
         separated.push_unseparated(") ORDER BY request_id, sort_order, created_at");
-        let rows: Vec<TestCaseRow> = qb.build_query_as().fetch_all(db).await?;
+        let rows: Vec<TestCaseRow> = qb.build_query_as().fetch_all(db).await.map_err(db_err)?;
         for row in rows {
             out.push(row.into_model()?);
         }
@@ -107,7 +109,8 @@ pub async fn get_test_case(db: &SqlitePool, case_id: Uuid) -> Result<Option<Test
     ))
     .bind(case_id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     row.map(|r| r.into_model()).transpose()
 }
 
@@ -116,7 +119,8 @@ pub async fn delete_test_case(db: &SqlitePool, case_id: Uuid) -> Result<()> {
     sqlx::query("DELETE FROM test_cases WHERE id = ?")
         .bind(case_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -134,7 +138,8 @@ pub async fn update_test_case_meta(
         .bind(folder)
         .bind(case_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -151,7 +156,8 @@ pub async fn rename_test_case_folder(
             .bind(request_id.to_string())
             .bind(old_folder)
             .execute(db)
-            .await?;
+            .await
+            .map_err(db_err)?;
     Ok(result.rows_affected())
 }
 
@@ -174,7 +180,12 @@ pub async fn set_test_cases_folder(
             separated.push_bind(id.to_string());
         }
         separated.push_unseparated(")");
-        affected += qb.build().execute(db).await?.rows_affected();
+        affected += qb
+            .build()
+            .execute(db)
+            .await
+            .map_err(db_err)?
+            .rows_affected();
     }
     Ok(affected)
 }
@@ -186,7 +197,8 @@ pub async fn reorder_test_cases(db: &SqlitePool, ordered_ids: &[Uuid]) -> Result
             .bind(idx as i64)
             .bind(id.to_string())
             .execute(db)
-            .await?;
+            .await
+            .map_err(db_err)?;
     }
     Ok(())
 }
@@ -201,7 +213,8 @@ pub async fn update_test_case_status(
         .bind(status.as_str())
         .bind(case_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -225,7 +238,8 @@ pub async fn update_test_case_run_summary(
     .bind(fail_count.map(|v| v as i64))
     .bind(case_id.to_string())
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -268,7 +282,8 @@ pub async fn update_test_case_content(
     .bind(disable_cookies)
     .bind(case_id.to_string())
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 

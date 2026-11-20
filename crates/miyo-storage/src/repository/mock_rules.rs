@@ -1,5 +1,6 @@
 //! Mock Rules（自定义 Mock 规则）。
 
+use crate::db::db_err;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -58,7 +59,8 @@ pub async fn create_mock_rule<'e>(
     .bind(row.created_at.clone())
     .bind(row.updated_at.clone())
     .execute(executor)
-    .await?;
+    .await
+    .map_err(db_err)?;
     let _ = project_id;
     Ok(rule.clone())
 }
@@ -118,7 +120,7 @@ pub async fn save_mock_rules_bulk(
                 priority = excluded.priority,
                 updated_at = excluded.updated_at",
         );
-        qb.build().execute(&mut *conn).await?;
+        qb.build().execute(&mut *conn).await.map_err(db_err)?;
     }
     Ok(())
 }
@@ -133,7 +135,7 @@ pub async fn list_mock_rules(db: &SqlitePool, project_id: Uuid) -> Result<Vec<Mo
     )
     .bind(project_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await.map_err(db_err)? ;
     rows.into_iter().map(MockRuleRow::into_model).collect()
 }
 
@@ -162,7 +164,7 @@ pub async fn update_mock_rule(db: &SqlitePool, rule: &MockRule) -> Result<MockRu
     .bind(row.updated_at.clone())
     .bind(&row.id)
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("Mock 规则（{}）", rule.id)));
     }
@@ -173,7 +175,8 @@ pub async fn delete_mock_rule(db: &SqlitePool, rule_id: Uuid) -> Result<()> {
     sqlx::query("DELETE FROM mock_rules WHERE id = ?")
         .bind(rule_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 

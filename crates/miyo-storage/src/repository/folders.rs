@@ -1,5 +1,6 @@
 //! Folder CRUD。
 
+use crate::db::db_err;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -38,7 +39,8 @@ pub async fn create_folder(
     .bind(row.created_at.clone())
     .bind(row.updated_at.clone())
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(model)
 }
 
@@ -49,7 +51,8 @@ pub async fn list_folders(db: &SqlitePool, project_id: Uuid) -> Result<Vec<Folde
     )
     .bind(project_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(FolderRow::into_model).collect()
 }
 
@@ -60,7 +63,8 @@ pub async fn get_folder(db: &SqlitePool, folder_id: Uuid) -> Result<Folder> {
     )
     .bind(folder_id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     row.map(FolderRow::into_model)
         .transpose()?
         .ok_or_else(|| AppError::NotFound(format!("文件夹（{folder_id}）")))
@@ -78,7 +82,8 @@ pub async fn update_folder(db: &SqlitePool, folder: &Folder) -> Result<Folder> {
     .bind(row.updated_at.clone())
     .bind(&row.id)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(folder.clone())
 }
 
@@ -96,7 +101,7 @@ const FOLDER_SUBTREE_SQL: &str = "WITH RECURSIVE subtree(id) AS (
 /// 删除文件夹及其全部子孙文件夹、子孙文件夹下的接口（事务内级联）。
 pub async fn delete_folder(db: &SqlitePool, folder_id: Uuid) -> Result<()> {
     let id = folder_id.to_string();
-    let mut tx = db.begin().await?;
+    let mut tx = db.begin().await.map_err(db_err)?;
 
     // 先清掉子树下全部接口（外键为 SET NULL，不会自动级联删除）。
     sqlx::query(&format!(
@@ -104,7 +109,8 @@ pub async fn delete_folder(db: &SqlitePool, folder_id: Uuid) -> Result<()> {
     ))
     .bind(&id)
     .execute(&mut *tx)
-    .await?;
+    .await
+    .map_err(db_err)?;
 
     // 再递归删除子树全部文件夹。
     let affected = sqlx::query(&format!(
@@ -112,9 +118,10 @@ pub async fn delete_folder(db: &SqlitePool, folder_id: Uuid) -> Result<()> {
     ))
     .bind(&id)
     .execute(&mut *tx)
-    .await?;
+    .await
+    .map_err(db_err)?;
 
-    tx.commit().await?;
+    tx.commit().await.map_err(db_err)?;
     if affected.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("文件夹（{folder_id}）")));
     }
@@ -145,7 +152,8 @@ pub async fn save_folder<'e>(
     .bind(row.created_at.clone())
     .bind(row.updated_at.clone())
     .execute(executor)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -183,7 +191,7 @@ pub async fn save_folders_bulk(
                 sort_order = excluded.sort_order,
                 updated_at = excluded.updated_at",
         );
-        qb.build().execute(&mut *conn).await?;
+        qb.build().execute(&mut *conn).await.map_err(db_err)?;
     }
     Ok(())
 }

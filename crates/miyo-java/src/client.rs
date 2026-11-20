@@ -196,7 +196,7 @@ impl JavaRuntimeClient {
             req = req.json(body);
         }
         let resp = req.send().await.map_err(|e| {
-            AppError::classify(&e)
+            miyo_http::network::classify(&e)
                 .unwrap_or_else(|| AppError::Connection(format!("{RUNTIME_LABEL} 请求失败：{e}")))
         })?;
         let status = resp.status();

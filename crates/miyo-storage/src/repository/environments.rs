@@ -3,6 +3,7 @@
 //! 环境按项目归属（`project_id` 外键，删项目级联删环境），
 //! 每个环境持有单一前置 Base URL `base_url` 与一组结构化变量。
 
+use crate::db::db_err;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -42,7 +43,7 @@ pub async fn create_environment(
     .bind(row.created_at.clone())
     .bind(row.updated_at.clone())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     Ok(model)
 }
 
@@ -53,7 +54,8 @@ pub async fn get_environment(db: &SqlitePool, environment_id: Uuid) -> Result<En
     )
     .bind(environment_id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     row.map(EnvironmentRow::into_model)
         .transpose()?
         .ok_or_else(|| AppError::NotFound(format!("环境（{environment_id}）")))
@@ -73,7 +75,7 @@ pub async fn update_environment(db: &SqlitePool, environment: &Environment) -> R
     .bind(row.updated_at.clone())
     .bind(&row.id)
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("环境（{}）", environment.id)));
     }
@@ -84,7 +86,8 @@ pub async fn delete_environment(db: &SqlitePool, environment_id: Uuid) -> Result
     sqlx::query("DELETE FROM environments WHERE id = ?")
         .bind(environment_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -99,7 +102,8 @@ pub async fn list_environments(db: &SqlitePool, project_id: Uuid) -> Result<Vec<
     )
     .bind(project_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     let mut out = Vec::with_capacity(rows.len());
     for mut row in rows {
         if decrypt_env_json(&row.variables_json).is_err() {
@@ -132,7 +136,7 @@ pub async fn save_environment(db: &SqlitePool, env: &Environment) -> Result<Envi
     .bind(row.created_at.clone())
     .bind(row.updated_at.clone())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     Ok(env.clone())
 }
 
@@ -171,7 +175,7 @@ pub async fn save_environments_bulk(
                 variables_json = excluded.variables_json,
                 updated_at = excluded.updated_at",
         );
-        qb.build().execute(&mut *conn).await?;
+        qb.build().execute(&mut *conn).await.map_err(db_err)?;
     }
     Ok(())
 }

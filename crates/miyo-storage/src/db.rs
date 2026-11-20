@@ -3,6 +3,12 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// sqlx 错误 → AppError 的唯一入口（Domain 层已剥离 sqlx，Database 变体载荷
+/// 为用户可见明细）。分类信息保留在明细文本中（唯一约束 / 超时 / 协议等）。
+pub fn db_err(e: sqlx::Error) -> AppError {
+    AppError::Database(e.to_string())
+}
+
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
 
@@ -106,7 +112,7 @@ pub async fn init_db(path: &Path) -> Result<SqlitePool> {
     fn migrate_error(e: sqlx::migrate::MigrateError) -> AppError {
         match e {
             sqlx::migrate::MigrateError::VersionMissing(v) => AppError::SchemaTooNew(v),
-            other => AppError::Database(sqlx::Error::Protocol(other.to_string())),
+            other => AppError::Database(other.to_string()),
         }
     }
 
@@ -369,15 +375,16 @@ fn copy_and_prune_snapshots(path: &Path, dir: &Path) {
 async fn integrity_check(pool: &SqlitePool, path: &Path) -> Result<()> {
     let row: (String,) = sqlx::query_as("PRAGMA integrity_check")
         .fetch_one(pool)
-        .await?;
+        .await
+        .map_err(db_err)?;
     if row.0.eq_ignore_ascii_case("ok") {
         return Ok(());
     }
-    Err(AppError::Database(sqlx::Error::Protocol(format!(
+    Err(AppError::Database(format!(
         "数据库完整性检查失败（{}）：请用设置页备份 JSON 恢复，或从 snapshots/ 复制快照回 {} 后重启",
         row.0.lines().next().unwrap_or(&row.0),
         path.display()
-    ))))
+    )))
 }
 
 /// 只建连接，不跑迁移（测试用）。
@@ -393,7 +400,8 @@ pub async fn connect(path: &Path) -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(pool)
 }
 
@@ -405,11 +413,12 @@ pub async fn memory_pool() -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await?;
+        .await
+        .map_err(db_err)?;
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
-        .map_err(|e| AppError::Database(sqlx::Error::Protocol(e.to_string())))?;
+        .map_err(|e| AppError::Database(e.to_string()))?;
     Ok(pool)
 }
 

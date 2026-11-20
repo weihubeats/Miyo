@@ -3,6 +3,7 @@
 //! 保存走「整体替换」语义：编辑器每次提交全部文件集（含新增/修改），
 //! 删除的文件由命令层先调 [`delete_proto_file`]（或恢复时清空后批量写入）。
 
+use crate::db::db_err;
 use sqlx::QueryBuilder;
 use uuid::Uuid;
 
@@ -17,7 +18,8 @@ pub async fn list_proto_files(db: &sqlx::SqlitePool, project_id: Uuid) -> Result
     )
     .bind(project_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(ProtoFileRow::into_model).collect()
 }
 
@@ -26,7 +28,8 @@ pub async fn delete_proto_file(db: &sqlx::SqlitePool, proto_id: Uuid) -> Result<
     sqlx::query("DELETE FROM proto_files WHERE id = ?")
         .bind(proto_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -55,7 +58,7 @@ pub async fn save_proto_files_bulk(
                 .push_bind(&row.created_at)
                 .push_bind(&row.updated_at);
         });
-        qb.build().execute(&mut *conn).await?;
+        qb.build().execute(&mut *conn).await.map_err(db_err)?;
     }
     Ok(())
 }
@@ -82,7 +85,7 @@ pub async fn save_proto_files(db: &sqlx::SqlitePool, files: &[ProtoFile]) -> Res
                 .push_bind(&row.updated_at);
         });
         qb.push(" ON CONFLICT(id) DO UPDATE SET name = excluded.name, content = excluded.content, updated_at = excluded.updated_at");
-        qb.build().execute(db).await?;
+        qb.build().execute(db).await.map_err(db_err)?;
     }
     Ok(())
 }

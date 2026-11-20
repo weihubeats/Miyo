@@ -5,6 +5,7 @@
 //!   外键 ON DELETE CASCADE 随卸载清理）；
 //! - `plugin_logs`：统一日志（debug/info/warn/error/audit），按插件滚动保留。
 
+use crate::db::db_err;
 use sqlx::SqlitePool;
 
 use miyo_core::{AppError, Result};
@@ -67,7 +68,8 @@ pub async fn list_plugins(db: &SqlitePool) -> Result<Vec<PluginRow>> {
         "SELECT {PLUGIN_COLUMNS} FROM plugins ORDER BY created_at DESC"
     ))
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(rows)
 }
 
@@ -78,7 +80,8 @@ pub async fn get_plugin(db: &SqlitePool, id: &str) -> Result<Option<PluginRow>> 
     ))
     .bind(id)
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(row)
 }
 
@@ -127,7 +130,8 @@ pub async fn insert_plugin(
     .bind(now())
     .bind(now())
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -156,7 +160,8 @@ pub async fn update_plugin(
     .bind(now())
     .bind(id)
     .execute(db)
-    .await?
+    .await
+    .map_err(db_err)?
     .rows_affected();
     if n == 0 {
         return Err(AppError::NotFound(format!("插件未安装：{id}")));
@@ -203,7 +208,8 @@ pub async fn set_plugin_state(
         .bind(now())
         .bind(id)
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -213,7 +219,8 @@ pub async fn delete_plugin(db: &SqlitePool, id: &str) -> Result<()> {
     sqlx::query("DELETE FROM plugins WHERE id = ?")
         .bind(id)
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -222,7 +229,8 @@ pub async fn is_plugin_enabled(db: &SqlitePool, id: &str) -> Result<bool> {
     let row: Option<(String,)> = sqlx::query_as("SELECT state FROM plugins WHERE id = ?")
         .bind(id)
         .fetch_optional(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(row.is_some_and(|(s,)| s == STATE_ENABLED))
 }
 
@@ -231,7 +239,8 @@ pub async fn is_plugin_installed(db: &SqlitePool, id: &str) -> Result<bool> {
     let row: Option<(String,)> = sqlx::query_as("SELECT state FROM plugins WHERE id = ?")
         .bind(id)
         .fetch_optional(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(row.is_some())
 }
 
@@ -241,7 +250,8 @@ pub async fn ensure_plugin_enabled(db: &SqlitePool, id: &str) -> Result<()> {
     let row: Option<(String,)> = sqlx::query_as("SELECT state FROM plugins WHERE id = ?")
         .bind(id)
         .fetch_optional(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     match row.map(|(s,)| s) {
         None => Err(AppError::NotFound(format!(
             "插件未安装：{id}（请在插件管理中安装后使用）"
@@ -286,7 +296,8 @@ pub async fn get_plugin_data(
             .bind(plugin_id)
             .bind(key)
             .fetch_optional(db)
-            .await?;
+            .await
+            .map_err(db_err)?;
     Ok(row.map(|(v,)| v))
 }
 
@@ -312,7 +323,8 @@ pub async fn set_plugin_data(
     .bind(value_json)
     .bind(now())
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -324,7 +336,8 @@ pub async fn delete_plugin_data(db: &SqlitePool, plugin_id: &str, key: &str) -> 
         .bind(plugin_id)
         .bind(key)
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -335,7 +348,8 @@ pub async fn list_plugin_keys(db: &SqlitePool, plugin_id: &str) -> Result<Vec<St
         sqlx::query_as("SELECT key FROM plugin_data WHERE plugin_id = ? ORDER BY key")
             .bind(plugin_id)
             .fetch_all(db)
-            .await?;
+            .await
+            .map_err(db_err)?;
     Ok(rows.into_iter().map(|(k,)| k).collect())
 }
 
@@ -367,7 +381,8 @@ pub async fn insert_plugin_log(
     .bind(context_json)
     .bind(now())
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     prune_plugin_logs(db, plugin_id).await?;
     Ok(())
 }
@@ -382,7 +397,8 @@ pub async fn prune_plugin_logs(db: &SqlitePool, plugin_id: &str) -> Result<()> {
     .bind(plugin_id)
     .bind(PLUGIN_LOG_CAP)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -396,27 +412,25 @@ pub async fn list_plugin_logs(
     require_plugin(db, plugin_id).await?;
     let limit = limit.clamp(1, 500);
     let rows: Vec<PluginLogRow> = match level {
-        Some(lv) if matches!(lv, "debug" | "info" | "warn" | "error" | "audit") => {
-            sqlx::query_as(
-                "SELECT id, plugin_id, level, message, context_json, created_at \
+        Some(lv) if matches!(lv, "debug" | "info" | "warn" | "error" | "audit") => sqlx::query_as(
+            "SELECT id, plugin_id, level, message, context_json, created_at \
                  FROM plugin_logs WHERE plugin_id = ? AND level = ? ORDER BY id DESC LIMIT ?",
-            )
-            .bind(plugin_id)
-            .bind(lv)
-            .bind(limit)
-            .fetch_all(db)
-            .await?
-        }
-        _ => {
-            sqlx::query_as(
-                "SELECT id, plugin_id, level, message, context_json, created_at \
+        )
+        .bind(plugin_id)
+        .bind(lv)
+        .bind(limit)
+        .fetch_all(db)
+        .await
+        .map_err(db_err)?,
+        _ => sqlx::query_as(
+            "SELECT id, plugin_id, level, message, context_json, created_at \
                  FROM plugin_logs WHERE plugin_id = ? ORDER BY id DESC LIMIT ?",
-            )
-            .bind(plugin_id)
-            .bind(limit)
-            .fetch_all(db)
-            .await?
-        }
+        )
+        .bind(plugin_id)
+        .bind(limit)
+        .fetch_all(db)
+        .await
+        .map_err(db_err)?,
     };
     Ok(rows)
 }
@@ -438,7 +452,8 @@ pub async fn clear_plugin_logs(db: &SqlitePool, plugin_id: &str) -> Result<()> {
     sqlx::query("DELETE FROM plugin_logs WHERE plugin_id = ?")
         .bind(plugin_id)
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -453,7 +468,8 @@ pub async fn set_files_verified(db: &SqlitePool, plugin_id: &str, ok: bool) -> R
         .bind(now())
         .bind(plugin_id)
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -490,7 +506,7 @@ pub async fn insert_plugin_version(
     .bind(signed)
     .bind(now())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     // 滚动保留 PLUGIN_VERSION_CAP 条（防无限增长）
     sqlx::query(
         "DELETE FROM plugin_versions WHERE plugin_id = ? AND id NOT IN \
@@ -500,7 +516,8 @@ pub async fn insert_plugin_version(
     .bind(plugin_id)
     .bind(PLUGIN_VERSION_CAP)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -516,7 +533,8 @@ pub async fn list_plugin_versions(
     .bind(plugin_id)
     .bind(PLUGIN_VERSION_CAP)
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(rows)
 }
 
@@ -525,7 +543,8 @@ pub async fn delete_plugin_versions(db: &SqlitePool, plugin_id: &str) -> Result<
     sqlx::query("DELETE FROM plugin_versions WHERE plugin_id = ?")
         .bind(plugin_id)
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -560,7 +579,8 @@ pub async fn insert_permission_audit(
     .bind(&perms)
     .bind(now())
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     // 审计滚动保留 500 条（audit 表无外键、无既有清理——防止无限增长）
     sqlx::query(
         "DELETE FROM plugin_permission_audit WHERE plugin_id = ? AND id NOT IN (\
@@ -571,7 +591,8 @@ pub async fn insert_permission_audit(
     .bind(plugin_id)
     .bind(plugin_id)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -586,7 +607,8 @@ pub async fn list_permission_audit(
     )
     .bind(plugin_id)
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(rows)
 }
 

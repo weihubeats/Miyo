@@ -3,6 +3,7 @@
 //! 团队维度：一个团队绑定远端路径（不同团队可复用同一路径）；
 //! 推/拉按项目触发，仓库内按 `projects/{project_id}.json` 分文件存快照。
 
+use crate::db::db_err;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -74,7 +75,8 @@ pub async fn create_sync_remote(
     .bind(model.created_at.to_rfc3339())
     .bind(model.updated_at.to_rfc3339())
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(model)
 }
 
@@ -86,7 +88,8 @@ pub async fn list_sync_remotes(db: &SqlitePool, team_id: Uuid) -> Result<Vec<Syn
     )
     .bind(team_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(SyncRemoteRow::into_model).collect()
 }
 
@@ -97,7 +100,8 @@ pub async fn get_sync_remote(db: &SqlitePool, remote_id: Uuid) -> Result<SyncRem
     )
     .bind(remote_id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     row.map(SyncRemoteRow::into_model)
         .transpose()?
         .ok_or_else(|| AppError::NotFound(format!("同步远端（{remote_id}）")))
@@ -116,7 +120,8 @@ pub async fn set_last_synced_revision(
     .bind(Utc::now().to_rfc3339())
     .bind(remote_id.to_string())
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("同步远端（{remote_id}）")));
     }
@@ -127,7 +132,8 @@ pub async fn delete_sync_remote(db: &SqlitePool, remote_id: Uuid) -> Result<()> 
     sqlx::query("DELETE FROM sync_remotes WHERE id = ?")
         .bind(remote_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 

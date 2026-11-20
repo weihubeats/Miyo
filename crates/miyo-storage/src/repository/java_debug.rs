@@ -5,6 +5,7 @@
 //! - `last_info_json` 是握手缓存（非权威），仅用于列表页快速展示。
 //! - 调用历史按项目滚动保留（`prune_java_invocations`），插入方负责触发。
 
+use crate::db::db_err;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -107,14 +108,14 @@ pub async fn list_java_projects(
             ))
             .bind(pid.to_string())
             .fetch_all(db)
-            .await?
+            .await.map_err(db_err)?
         }
         None => {
             sqlx::query_as(&format!(
                 "SELECT {PROJECT_COLUMNS} FROM java_projects ORDER BY updated_at DESC"
             ))
             .fetch_all(db)
-            .await?
+            .await.map_err(db_err)?
         }
     };
     rows.into_iter().map(JavaProjectRow::into_model).collect()
@@ -126,7 +127,8 @@ pub async fn get_java_project(db: &SqlitePool, id: Uuid) -> Result<JavaDebugProj
     ))
     .bind(id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     row.map(JavaProjectRow::into_model)
         .transpose()?
         .ok_or_else(|| AppError::NotFound(format!("Java 调试项目（{id}）")))
@@ -177,7 +179,7 @@ pub async fn save_java_project(db: &SqlitePool, project: &JavaDebugProject) -> R
     .bind(project.created_at.to_rfc3339())
     .bind(project.updated_at.to_rfc3339())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!(
             "Java 调试项目（{}）",
@@ -201,7 +203,7 @@ pub async fn touch_java_project_connected(
     .bind(chrono::Utc::now().to_rfc3339())
     .bind(id.to_string())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("Java 调试项目（{id}）")));
     }
@@ -212,7 +214,8 @@ pub async fn delete_java_project(db: &SqlitePool, id: Uuid) -> Result<()> {
     let result = sqlx::query("DELETE FROM java_projects WHERE id = ?")
         .bind(id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("Java 调试项目（{id}）")));
     }
@@ -231,7 +234,7 @@ pub async fn find_attach_project(
     .bind(pid)
     .bind(vm_start_ms)
     .fetch_optional(db)
-    .await?;
+    .await.map_err(db_err)? ;
     row.map(JavaProjectRow::into_model).transpose()
 }
 
@@ -245,7 +248,7 @@ pub async fn find_attach_project_by_pid(
     ))
     .bind(pid)
     .fetch_optional(db)
-    .await?;
+    .await.map_err(db_err)? ;
     row.map(JavaProjectRow::into_model).transpose()
 }
 
@@ -267,7 +270,8 @@ pub async fn upsert_attach_project(
         .bind(chrono::Utc::now().to_rfc3339())
         .bind(project.id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
         return Ok(project.id);
     }
     let id = Uuid::new_v4();
@@ -284,7 +288,7 @@ pub async fn upsert_attach_project(
     .bind(&now)
     .bind(&now)
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     Ok(id)
 }
 
@@ -369,7 +373,7 @@ pub async fn insert_java_invocation(db: &SqlitePool, record: &JavaInvocationReco
     .bind(record.finished_at.as_deref())
     .bind(record.created_at.to_rfc3339())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     prune_java_invocations(db, record.project_id, JAVA_INVOCATION_KEEP).await;
     Ok(())
 }
@@ -406,7 +410,7 @@ pub async fn list_java_invocations(
     .bind(project_id.to_string())
     .bind(limit)
     .fetch_all(db)
-    .await?;
+    .await.map_err(db_err)? ;
     rows.into_iter().map(InvocationRow::into_model).collect()
 }
 
@@ -417,7 +421,7 @@ pub async fn get_java_invocation(db: &SqlitePool, id: Uuid) -> Result<JavaInvoca
     )
     .bind(id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await.map_err(db_err)? ;
     row.map(InvocationRow::into_model)
         .transpose()?
         .ok_or_else(|| AppError::NotFound(format!("调用历史（{id}）")))
@@ -427,7 +431,8 @@ pub async fn delete_java_invocation(db: &SqlitePool, id: Uuid) -> Result<()> {
     let result = sqlx::query("DELETE FROM java_invocations WHERE id = ?")
         .bind(id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("调用历史（{id}）")));
     }
@@ -438,7 +443,8 @@ pub async fn clear_java_invocations(db: &SqlitePool, project_id: Uuid) -> Result
     sqlx::query("DELETE FROM java_invocations WHERE project_id = ?")
         .bind(project_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 

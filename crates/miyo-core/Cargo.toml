@@ -19,8 +19,6 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 regex = { workspace = true }
 rand = { workspace = true }
-sqlx = { workspace = true }
-reqwest = { workspace = true }
 shell-words = { workspace = true }
 # `ts` feature：为公共模型 derive TS，导出 frontend/src/types/generated/
 #（仅 bindings 导出测试编译，不进正常构建路径）

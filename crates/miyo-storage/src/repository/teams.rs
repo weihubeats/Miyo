@@ -1,5 +1,6 @@
 //! Team CRUD（现阶段：项目的容器，schema 预留成员/权限扩展）。
 
+use crate::db::db_err;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -40,7 +41,8 @@ pub async fn create_team(db: &SqlitePool, name: &str) -> Result<Team> {
         .bind(model.created_at.to_rfc3339())
         .bind(model.updated_at.to_rfc3339())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(model)
 }
 
@@ -49,7 +51,8 @@ pub async fn list_teams(db: &SqlitePool) -> Result<Vec<Team>> {
         "SELECT id, name, created_at, updated_at FROM teams ORDER BY created_at ASC",
     )
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(TeamRow::into_model).collect()
 }
 
@@ -58,7 +61,8 @@ pub async fn get_team(db: &SqlitePool, team_id: Uuid) -> Result<Team> {
         sqlx::query_as("SELECT id, name, created_at, updated_at FROM teams WHERE id = ?")
             .bind(team_id.to_string())
             .fetch_optional(db)
-            .await?;
+            .await
+            .map_err(db_err)?;
     row.map(TeamRow::into_model)
         .transpose()?
         .ok_or_else(|| AppError::NotFound(format!("团队（{team_id}）")))
@@ -78,7 +82,8 @@ pub async fn save_team<'e>(
     .bind(team.created_at.to_rfc3339())
     .bind(team.updated_at.to_rfc3339())
     .execute(executor)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -90,7 +95,8 @@ pub async fn update_team(db: &SqlitePool, team: &Team) -> Result<Team> {
         .bind(updated.updated_at.to_rfc3339())
         .bind(updated.id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("团队（{}）", team.id)));
     }
@@ -102,7 +108,8 @@ pub async fn delete_team(db: &SqlitePool, team_id: Uuid) -> Result<()> {
     let project_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE team_id = ?")
         .bind(team_id.to_string())
         .fetch_one(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     if project_count > 0 {
         return Err(AppError::Validation(format!(
             "团队下仍有 {project_count} 个项目，请先迁移或删除"
@@ -111,7 +118,8 @@ pub async fn delete_team(db: &SqlitePool, team_id: Uuid) -> Result<()> {
     let result = sqlx::query("DELETE FROM teams WHERE id = ?")
         .bind(team_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("团队（{team_id}）")));
     }
@@ -125,7 +133,8 @@ pub async fn move_project_to_team(db: &SqlitePool, project_id: Uuid, team_id: Uu
         .bind(team_id.to_string())
         .bind(project_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("项目（{project_id}）")));
     }

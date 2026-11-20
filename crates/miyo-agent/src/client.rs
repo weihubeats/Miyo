@@ -102,14 +102,14 @@ impl ControlClient {
             .timeout(PROBE_TIMEOUT)
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         if !res.status().is_success() {
             return Err(AppError::Connection(format!(
                 "/agent/health 返回 {}",
                 res.status()
             )));
         }
-        let body: serde_json::Value = res.json().await.map_err(AppError::from_reqwest)?;
+        let body: serde_json::Value = res.json().await.map_err(miyo_http::network::from_reqwest)?;
         let proof = body["proof"]
             .as_str()
             .ok_or_else(|| AppError::Connection("存活探针缺少证明（非 Miyo 控制面？）".into()))?;
@@ -182,7 +182,7 @@ impl ControlClient {
             .json(&args)
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -200,7 +200,7 @@ impl ControlClient {
             .json(&args)
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -218,7 +218,7 @@ impl ControlClient {
             .json(&args)
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -311,7 +311,7 @@ impl ControlClient {
             .header("Authorization", self.auth())
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -441,7 +441,7 @@ impl ControlClient {
             .header("Authorization", self.auth())
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -566,7 +566,7 @@ impl ControlClient {
             .header("Authorization", self.auth())
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -611,7 +611,7 @@ impl ControlClient {
             .header("Authorization", self.auth())
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -633,7 +633,7 @@ impl ControlClient {
             .header("Authorization", self.auth())
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -649,7 +649,7 @@ impl ControlClient {
             .json(&body)
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -665,7 +665,7 @@ impl ControlClient {
             .json(&body)
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -763,7 +763,7 @@ impl ControlClient {
             .json(&body)
             .send()
             .await
-            .map_err(AppError::from_reqwest)?;
+            .map_err(miyo_http::network::from_reqwest)?;
         decode(res).await
     }
 
@@ -814,7 +814,11 @@ async fn decode<T: serde::de::DeserializeOwned>(mut res: reqwest::Response) -> R
     if !status.is_success() {
         // 流式读取并截断：恶意 / 异常服务端的超大错误体不整体进内存。
         let mut buf: Vec<u8> = Vec::new();
-        while let Some(chunk) = res.chunk().await.map_err(AppError::from_reqwest)? {
+        while let Some(chunk) = res
+            .chunk()
+            .await
+            .map_err(miyo_http::network::from_reqwest)?
+        {
             let room = ERROR_BODY_LIMIT - buf.len();
             if room == 0 {
                 break;

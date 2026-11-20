@@ -1,5 +1,6 @@
 //! RequestExample（请求用例）仓储：新建 / 列表 / 删除。
 
+use crate::db::db_err;
 use std::collections::HashMap;
 
 use sqlx::{QueryBuilder, SqlitePool};
@@ -28,7 +29,8 @@ pub async fn create_request_example<'e>(
     .bind(example.created_at.to_rfc3339())
     .bind(example.updated_at.to_rfc3339())
     .execute(executor)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(example.clone())
 }
 
@@ -43,7 +45,8 @@ pub async fn list_request_examples(
     )
     .bind(endpoint_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter()
         .map(RequestExampleRow::into_model)
         .collect()
@@ -68,7 +71,8 @@ pub async fn list_request_examples_by_endpoints(
             separated.push_bind(id.to_string());
         }
         separated.push_unseparated(") ORDER BY endpoint_id, created_at DESC");
-        let rows: Vec<RequestExampleRow> = qb.build_query_as().fetch_all(db).await?;
+        let rows: Vec<RequestExampleRow> =
+            qb.build_query_as().fetch_all(db).await.map_err(db_err)?;
         for row in rows {
             let model = row.into_model()?;
             map.entry(model.endpoint_id).or_default().push(model);
@@ -82,7 +86,8 @@ pub async fn delete_request_example(db: &SqlitePool, example_id: Uuid) -> Result
     sqlx::query("DELETE FROM request_examples WHERE id = ?")
         .bind(example_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -122,7 +127,7 @@ pub async fn save_request_examples_bulk(
                 .push_bind(&row.created_at)
                 .push_bind(&row.updated_at);
         });
-        qb.build().execute(&mut *conn).await?;
+        qb.build().execute(&mut *conn).await.map_err(db_err)?;
     }
     Ok(())
 }

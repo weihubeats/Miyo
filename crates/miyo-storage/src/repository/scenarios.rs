@@ -1,5 +1,6 @@
 //! 集成测试场景 CRUD（项目级接口链路；步骤内嵌 steps_json）。
 
+use crate::db::db_err;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -85,7 +86,7 @@ pub async fn list_scenarios(db: &SqlitePool, project_id: Uuid) -> Result<Vec<Sce
     ))
     .bind(project_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await.map_err(db_err)? ;
     rows.into_iter().map(ScenarioRow::into_model).collect()
 }
 
@@ -95,7 +96,8 @@ pub async fn get_scenario(db: &SqlitePool, scenario_id: Uuid) -> Result<Scenario
     ))
     .bind(scenario_id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     row.map(ScenarioRow::into_model)
         .transpose()?
         .ok_or_else(|| AppError::NotFound(format!("场景（{scenario_id}）")))
@@ -143,7 +145,7 @@ pub async fn save_scenario(db: &SqlitePool, scenario: &Scenario) -> Result<()> {
     .bind(scenario.created_at.to_rfc3339())
     .bind(scenario.updated_at.to_rfc3339())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     Ok(())
 }
 
@@ -151,16 +153,18 @@ pub async fn delete_scenario(db: &SqlitePool, scenario_id: Uuid) -> Result<()> {
     // 运行历史一并清理（scenario_runs 有 FK ON DELETE CASCADE，但 sqlite
     // 需 PRAGMA foreign_keys 才生效，显式删除不依赖连接参数）。
     // 两步 DELETE 包进事务：第二步失败不再留下孤儿 runs。
-    let mut tx = db.begin().await.map_err(AppError::from)?;
+    let mut tx = db.begin().await.map_err(db_err)?;
     sqlx::query("DELETE FROM scenario_runs WHERE scenario_id = ?")
         .bind(scenario_id.to_string())
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(db_err)?;
     let result = sqlx::query("DELETE FROM scenarios WHERE id = ?")
         .bind(scenario_id.to_string())
         .execute(&mut *tx)
-        .await?;
-    tx.commit().await.map_err(AppError::from)?;
+        .await
+        .map_err(db_err)?;
+    tx.commit().await.map_err(db_err)?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("场景（{scenario_id}）")));
     }
@@ -203,7 +207,7 @@ pub async fn save_scenarios_bulk(
         .bind(scenario.created_at.to_rfc3339())
         .bind(scenario.updated_at.to_rfc3339())
         .execute(&mut *conn)
-        .await?;
+        .await.map_err(db_err)? ;
     }
     Ok(())
 }

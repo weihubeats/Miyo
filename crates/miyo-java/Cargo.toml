@@ -10,6 +10,7 @@ homepage.workspace = true
 
 [dependencies]
 miyo-core = { path = "../miyo-core" }
+miyo-http = { path = "../miyo-http" }
 dirs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

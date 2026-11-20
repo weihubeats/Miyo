@@ -3,8 +3,10 @@ use uuid::Uuid;
 /// 统一错误类型：所有用户可见错误都必须映射到该类型，UI 层统一转换为中文提示。
 #[derive(thiserror::Error, Debug)]
 pub enum AppError {
+    /// 数据库错误（载荷为 sqlx 错误的用户可见明细——由 miyo-storage 边界
+    /// 显式映射；Domain 层不再依赖 sqlx）。
     #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
 
     /// 库 schema 比当前程序新（用户回退到旧版本）：sqlx 的 `MigrateError::VersionMissing`
     /// 归此变体，给出可操作提示，而不是笼统的「数据库操作失败」。
@@ -15,8 +17,10 @@ pub enum AppError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// 未分类 HTTP 错误（载荷为 reqwest 错误的用户可见明细——分类由
+    /// miyo-http 的 from_reqwest 完成；Domain 层不再依赖 reqwest）。
     #[error("http error: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(String),
 
     /// 网络超时（连接 / 读取 / 总请求超时）。
     #[error("network timeout: {0}")]
@@ -90,23 +94,6 @@ pub enum AppError {
 }
 
 impl AppError {
-    /// 将 reqwest 错误分类为面向用户的网络错误变体。
-    ///
-    /// 判断顺序（与识别准确度匹配）：
-    /// 1. 超时（`is_timeout`）→ [`AppError::NetworkTimeout`]；
-    /// 2. 错误链含 DNS 关键词 → [`AppError::Dns`]；
-    /// 3. 错误链含 TLS / 证书关键词 → [`AppError::Ssl`]（证书错误可能以连接错误形态出现）；
-    /// 4. 连接失败 → [`AppError::Connection`]；
-    /// 5. 请求构建失败（参数非法）→ [`AppError::Validation`]；
-    /// 6. 其余保留 [`AppError::Http`] 兜底。
-    pub fn from_reqwest(e: reqwest::Error) -> AppError {
-        // reqwest 错误 Display 携带完整请求 URL（`?token=…` 类 query 凭据会随
-        // 错误消息进入日志 / AI 上下文 / 前端 toast）：统一在入口脱敏。
-        Self::classify(&e)
-            .map(Self::sanitize_message_urls)
-            .unwrap_or_else(|| AppError::Http(e))
-    }
-
     /// 错误消息内的 URL query 脱敏（NetworkTimeout / Ssl / Dns / Connection /
     /// Validation 载荷统一处理）。
     pub fn sanitize_message_urls(self) -> AppError {
@@ -123,30 +110,6 @@ impl AppError {
                 AppError::Validation(crate::sensitive::redact_message_urls(&m))
             }
             other => other,
-        }
-    }
-
-    /// 只做分类（借用错误，无所有权）。无法识别时返回 `None`，由调用方兜底。
-    pub fn classify(e: &reqwest::Error) -> Option<AppError> {
-        let chain = source_chain(e);
-        if e.is_timeout() {
-            Some(AppError::NetworkTimeout(e.to_string()))
-        } else if chain.contains("lookup")
-            || chain.contains("name or service not known")
-            || chain.contains("dns")
-            || (chain.contains("resolve") && !chain.contains("certificate"))
-        {
-            Some(AppError::Dns(e.to_string()))
-        } else if chain.contains("certificate") || chain.contains("tls") {
-            Some(AppError::Ssl(e.to_string()))
-        } else if e.is_connect() {
-            Some(AppError::Connection(e.to_string()))
-        } else if e.is_builder() {
-            Some(AppError::Validation(
-                "HTTP 请求参数非法，无法构建请求".to_string(),
-            ))
-        } else {
-            None
         }
     }
 
@@ -201,17 +164,6 @@ pub fn script_error(msg: impl Into<String>) -> AppError {
 
 pub fn ws_error(msg: impl Into<String>) -> AppError {
     AppError::WebSocket(msg.into())
-}
-
-/// 收集错误链（自身 + 所有 source）为小写文本，用于关键词识别。
-fn source_chain(e: &(dyn std::error::Error + 'static)) -> String {
-    let mut parts = vec![e.to_string().to_lowercase()];
-    let mut cur = e.source();
-    while let Some(cause) = cur {
-        parts.push(cause.to_string().to_lowercase());
-        cur = cause.source();
-    }
-    parts.join(" | ")
 }
 
 #[cfg(test)]

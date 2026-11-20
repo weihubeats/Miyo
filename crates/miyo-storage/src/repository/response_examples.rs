@@ -1,5 +1,6 @@
 //! ResponseExample（响应示例）。
 
+use crate::db::db_err;
 use std::collections::HashMap;
 
 use sqlx::{QueryBuilder, SqlitePool};
@@ -42,7 +43,7 @@ pub async fn create_response_example<'e>(
     .bind(row.created_at.clone())
     .bind(row.updated_at.clone())
     .execute(executor)
-    .await?;
+    .await.map_err(db_err)? ;
     let _ = endpoint_id;
     Ok(example.clone())
 }
@@ -57,7 +58,7 @@ pub async fn list_response_examples(
     )
     .bind(endpoint_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await.map_err(db_err)? ;
     rows.into_iter()
         .map(ResponseExampleRow::into_model)
         .collect()
@@ -84,7 +85,8 @@ pub async fn list_response_examples_by_endpoints(
             separated.push_bind(id.to_string());
         }
         separated.push_unseparated(") ORDER BY endpoint_id, created_at");
-        let rows: Vec<ResponseExampleRow> = qb.build_query_as().fetch_all(db).await?;
+        let rows: Vec<ResponseExampleRow> =
+            qb.build_query_as().fetch_all(db).await.map_err(db_err)?;
         for row in rows {
             let model = row.into_model()?;
             map.entry(model.endpoint_id).or_default().push(model);
@@ -98,7 +100,8 @@ pub async fn delete_response_example(db: &SqlitePool, example_id: Uuid) -> Resul
     sqlx::query("DELETE FROM response_examples WHERE id = ?")
         .bind(example_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -107,7 +110,8 @@ pub async fn delete_response_examples(db: &SqlitePool, endpoint_id: Uuid) -> Res
     sqlx::query("DELETE FROM response_examples WHERE endpoint_id = ?")
         .bind(endpoint_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -161,7 +165,7 @@ pub async fn save_response_examples_bulk(
                 docs_json = excluded.docs_json,
                 updated_at = excluded.updated_at",
         );
-        qb.build().execute(&mut *conn).await?;
+        qb.build().execute(&mut *conn).await.map_err(db_err)?;
     }
     Ok(())
 }

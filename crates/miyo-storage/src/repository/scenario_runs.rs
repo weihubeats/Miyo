@@ -1,5 +1,6 @@
 //! Scenario Run（场景运行历史）：run_scenario 完成落一行，回看与重开恢复。
 
+use crate::db::db_err;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -36,7 +37,8 @@ pub async fn save_scenario_run(db: &SqlitePool, run: &ScenarioRun) -> Result<()>
     .bind(&row.variables_json)
     .bind(&row.meta_json)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -55,7 +57,8 @@ pub async fn list_scenario_runs(
     .bind(scenario_id.to_string())
     .bind(limit)
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(|r| r.into_model()).collect()
 }
 
@@ -99,7 +102,8 @@ pub async fn latest_run_summaries_for_project(
     )
     .bind(project_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(rows)
 }
 
@@ -119,7 +123,8 @@ pub async fn list_scenario_run_summaries(
     .bind(scenario_id.to_string())
     .bind(limit)
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(rows)
 }
 
@@ -133,7 +138,8 @@ pub async fn get_scenario_run(db: &SqlitePool, id: Uuid) -> Result<Option<Scenar
     )
     .bind(id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     row.map(|r| r.into_model()).transpose()
 }
 
@@ -153,7 +159,7 @@ pub async fn get_scenario_runs_by_ids(db: &SqlitePool, ids: &[Uuid]) -> Result<V
     for id in ids {
         query = query.bind(id.to_string());
     }
-    let rows: Vec<ScenarioRunRow> = query.fetch_all(db).await?;
+    let rows: Vec<ScenarioRunRow> = query.fetch_all(db).await.map_err(db_err)?;
     rows.into_iter().map(|r| r.into_model()).collect()
 }
 
@@ -162,7 +168,8 @@ pub async fn delete_scenario_run(db: &SqlitePool, run_id: Uuid) -> Result<bool> 
     let result = sqlx::query("DELETE FROM scenario_runs WHERE id = ?")
         .bind(run_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -171,7 +178,8 @@ pub async fn delete_scenario_runs_all(db: &SqlitePool, scenario_id: Uuid) -> Res
     let result = sqlx::query("DELETE FROM scenario_runs WHERE scenario_id = ?")
         .bind(scenario_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(result.rows_affected())
 }
 
@@ -180,7 +188,8 @@ pub async fn count_scenario_runs(db: &SqlitePool, scenario_id: Uuid) -> Result<i
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM scenario_runs WHERE scenario_id = ?")
         .bind(scenario_id.to_string())
         .fetch_one(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(n)
 }
 
@@ -196,7 +205,8 @@ pub async fn prune_scenario_runs(db: &SqlitePool, scenario_id: Uuid, keep: i64) 
     .bind(scenario_id.to_string())
     .bind(keep)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -216,7 +226,8 @@ pub async fn list_recent_run_summaries_for_project(
     .bind(project_id.to_string())
     .bind(limit)
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(rows)
 }
 
@@ -244,6 +255,6 @@ pub async fn project_run_stats(
     )
     .bind(project_id.to_string())
     .fetch_one(db)
-    .await?;
+    .await.map_err(db_err)? ;
     Ok(stats)
 }

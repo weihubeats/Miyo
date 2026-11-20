@@ -1,5 +1,6 @@
 //! Endpoint CRUD。
 
+use crate::db::db_err;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -15,7 +16,8 @@ pub async fn touch_project(db: &SqlitePool, project_id: &Uuid) -> Result<()> {
         .bind(Utc::now().to_rfc3339())
         .bind(project_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -59,7 +61,7 @@ pub async fn create_endpoint(
     .bind(row.created_at.clone())
     .bind(row.updated_at.clone())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     touch_project(db, &model.project_id).await?;
     Ok(model)
 }
@@ -72,7 +74,8 @@ pub async fn get_endpoint(db: &SqlitePool, endpoint_id: Uuid) -> Result<Endpoint
     )
     .bind(endpoint_id.to_string())
     .fetch_optional(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     row.map(EndpointRow::into_model)
         .transpose()?
         .ok_or_else(|| AppError::NotFound(format!("接口（{endpoint_id}）")))
@@ -98,7 +101,8 @@ pub async fn update_endpoint(db: &SqlitePool, endpoint: &Endpoint) -> Result<End
     .bind(row.updated_at.clone())
     .bind(&row.id)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("接口（{}）", endpoint.id)));
     }
@@ -114,11 +118,12 @@ pub async fn delete_endpoint(db: &SqlitePool, endpoint_id: Uuid) -> Result<()> {
     .bind(Utc::now().to_rfc3339())
     .bind(endpoint_id.to_string())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     sqlx::query("DELETE FROM endpoints WHERE id = ?")
         .bind(endpoint_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -158,7 +163,7 @@ pub async fn duplicate_endpoint(db: &SqlitePool, endpoint_id: Uuid) -> Result<En
     .bind(row.created_at.clone())
     .bind(row.updated_at.clone())
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     touch_project(db, &duplicate.project_id).await?;
     Ok(duplicate)
 }
@@ -171,7 +176,8 @@ pub async fn list_endpoints(db: &SqlitePool, project_id: Uuid) -> Result<Vec<End
     )
     .bind(project_id.to_string())
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(EndpointRow::into_model).collect()
 }
 
@@ -209,7 +215,7 @@ pub async fn save_endpoint<'e>(
     .bind(row.created_at.clone())
     .bind(row.updated_at.clone())
     .execute(executor)
-    .await?;
+    .await.map_err(db_err)? ;
     Ok(())
 }
 
@@ -259,7 +265,7 @@ pub async fn save_endpoints_bulk(
                 request_json = excluded.request_json,
                 updated_at = excluded.updated_at",
         );
-        qb.build().execute(&mut *conn).await?;
+        qb.build().execute(&mut *conn).await.map_err(db_err)?;
     }
     Ok(())
 }

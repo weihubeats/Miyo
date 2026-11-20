@@ -1,5 +1,6 @@
 //! Test Run（测试运行结果）。
 
+use crate::db::db_err;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -27,7 +28,7 @@ pub async fn save_test_run(db: &SqlitePool, run: &TestRun) -> Result<()> {
     .bind(row.started_at.clone())
     .bind(&row.finished_at)
     .execute(db)
-    .await?;
+    .await.map_err(db_err)? ;
     prune_test_runs(db, run.project_id, TEST_RUNS_KEEP_PER_PROJECT).await?;
     Ok(())
 }
@@ -44,7 +45,8 @@ async fn prune_test_runs(db: &SqlitePool, project_id: Uuid, keep: i64) -> Result
     .bind(project_id.to_string())
     .bind(keep)
     .execute(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 
@@ -53,7 +55,8 @@ pub async fn delete_test_run(db: &SqlitePool, run_id: Uuid) -> Result<()> {
     sqlx::query("DELETE FROM test_runs WHERE id = ?")
         .bind(run_id.to_string())
         .execute(db)
-        .await?;
+        .await
+        .map_err(db_err)?;
     Ok(())
 }
 
@@ -66,6 +69,7 @@ pub async fn list_test_runs(db: &SqlitePool, project_id: Uuid, limit: i64) -> Re
     .bind(project_id.to_string())
     .bind(limit)
     .fetch_all(db)
-    .await?;
+    .await
+    .map_err(db_err)?;
     rows.into_iter().map(|r| r.into_model()).collect()
 }
