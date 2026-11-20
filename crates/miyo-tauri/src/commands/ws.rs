@@ -14,7 +14,6 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::task::JoinHandle;
 
 use miyo_http::ws_client::{WsClient, WsEvent, WsMessage, WsOptions};
 
