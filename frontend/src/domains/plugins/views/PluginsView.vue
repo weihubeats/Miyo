@@ -16,6 +16,7 @@ import { invoke } from '@tauri-apps/api/core'
 import PageHeader from '@/components/navigation/PageHeader.vue'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
+import SearchInput from '@/components/ui/SearchInput.vue'
 import Modal from '@/components/ui/Modal.vue'
 import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
@@ -502,10 +503,10 @@ function closeDetail(): void {
       <!-- 市场 -->
       <section v-else class="pg-list" aria-label="market">
         <div class="pg-market-tools">
-          <input
+          <SearchInput
             v-model="marketQuery"
+            size="md"
             class="pg-market-search"
-            type="search"
             :placeholder="t('plugins.marketSearch')"
           />
           <div class="pg-market-cats">
@@ -757,19 +758,9 @@ function closeDetail(): void {
   gap: 8px;
   margin-bottom: 8px;
 }
+/* 搜索框：统一 SearchInput，仅保留通栏占位 */
 .pg-market-search {
   width: 100%;
-  height: 32px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--bg-input, var(--bg-hover));
-  color: var(--text-1);
-  padding: 0 10px;
-  font-size: 13px;
-}
-.pg-market-search:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 .pg-market-cats {
   display: flex;

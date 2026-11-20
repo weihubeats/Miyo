@@ -48,12 +48,12 @@ describe('FrameLog', () => {
 
   it('关键字过滤（内容命中）+ 计数显示 n/m，无命中显示无匹配', async () => {
     const w = mountLog()
-    await w.find('.fl-search-input').setValue('orderNo')
+    await w.find('.fl-search .si-input').setValue('orderNo')
     await nextTick()
     expect(w.findAll('.fl-row')).toHaveLength(1)
     expect(w.find('.fl-count').text()).toBe('1/4')
 
-    await w.find('.fl-search-input').setValue('不存在的帧')
+    await w.find('.fl-search .si-input').setValue('不存在的帧')
     await nextTick()
     expect(w.findAll('.fl-row')).toHaveLength(0)
     expect(w.find('.fl-nomatch').exists()).toBe(true)

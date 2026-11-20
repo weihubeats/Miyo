@@ -162,7 +162,7 @@ describe('ProjectList：加载与渲染', () => {
   it('搜索过滤项目；无命中展示空态文案', async () => {
     const wrapper = mountList()
     await flushPromises()
-    const input = wrapper.find('.toolbar-filter-input')
+    const input = wrapper.find('.toolbar-filter .si-input')
     await input.setValue('支付')
     await nextTick()
     expect(projectNames(wrapper)).toContain('支付网关')
@@ -310,7 +310,7 @@ describe('ProjectList：仪表板第五轮精修', () => {
   it('清空筛选：一键还原搜索 / 分组 / 排序', async () => {
     const wrapper = mountList()
     await flushPromises()
-    await wrapper.find('.toolbar-filter-input').setValue('支付')
+    await wrapper.find('.toolbar-filter .si-input').setValue('支付')
     await nextTick()
     expect(wrapper.findAll('.proj-title')).toHaveLength(1)
     expect(wrapper.text()).toContain('匹配 1/2 个项目')
@@ -478,7 +478,7 @@ describe('ProjectList：仪表板第六轮精修', () => {
   it('⌘K 聚焦搜索框；Esc 清空', async () => {
     const wrapper = mountList()
     await flushPromises()
-    const input = wrapper.find('.toolbar-filter-input')
+    const input = wrapper.find('.toolbar-filter .si-input')
     expect(wrapper.find('.toolbar-kbd').exists()).toBe(true)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))
     await nextTick()
@@ -500,7 +500,7 @@ describe('ProjectList：仪表板第六轮精修', () => {
     await flushPromises()
     // 无搜索：按偏好保持折叠
     expect(wrapper.find('.team-grid').exists()).toBe(false)
-    await wrapper.find('.toolbar-filter-input').setValue('支付')
+    await wrapper.find('.toolbar-filter .si-input').setValue('支付')
     await nextTick()
     // 搜索命中落在折叠组里：临时展开，能看到卡片
     expect(wrapper.findAll('.proj-title').map((n) => n.text())).toEqual(['支付网关'])

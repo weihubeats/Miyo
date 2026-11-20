@@ -21,6 +21,7 @@ import WindowControls from '@/domains/workspace/components/WindowControls.vue'
 import EndpointTree from '@/domains/endpoint/components/EndpointTree.vue'
 import EnvironmentBar from '@/domains/environment/components/EnvironmentBar.vue'
 import Icon from '@/components/ui/Icon.vue'
+import SearchInput from '@/components/ui/SearchInput.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import Menu, { type MenuItem } from '@/components/ui/Menu.vue'
@@ -661,26 +662,13 @@ onBeforeUnmount(() => {
         </div>
         <div v-show="sidebarTab === 'collections'" class="sidebar-collections">
           <div class="sidebar-toolbar">
-            <div class="sidebar-search">
-              <Icon name="search" :size="13" class="ss-icon" />
-              <input
-                v-model="apiSearchInput"
-                class="ss-input"
-                type="text"
-                :placeholder="t('workspace.searchPh')"
-                spellcheck="false"
-              />
-              <button
-                v-if="apiSearchInput"
-                class="ss-clear"
-                type="button"
-                :title="t('common.clearSearch')"
-                :aria-label="t('common.clearSearch')"
-                @click="clearApiSearch"
-              >
-                <Icon name="x" :size="12" />
-              </button>
-            </div>
+            <SearchInput
+              v-model="apiSearchInput"
+              class="sidebar-search"
+              size="md"
+              :placeholder="t('workspace.searchPh')"
+              @clear="clearApiSearch"
+            />
             <div class="sidebar-tools">
               <Tooltip :content="t('workspace.newHint')" :disabled="createOpen">
                 <button
@@ -884,11 +872,12 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-/* ---- 顶栏：左（品牌）/ 中（状态）/ 右（操作 + 环境）三区 ---- */
+/* ---- 顶栏：左（品牌）/ 中（状态）/ 右（操作 + 环境）三区 ----
+   高度对齐全局顶栏阶梯（PageHeader .miyo-topbar 44px 单源） */
 .top-bar {
   display: flex;
   align-items: center;
-  height: 48px;
+  height: 44px;
   padding: 0 12px;
   gap: 12px;
   flex-shrink: 0;
@@ -917,7 +906,7 @@ onBeforeUnmount(() => {
   .top-bar {
     flex-wrap: wrap;
     height: auto;
-    min-height: 48px;
+    min-height: 44px;
     padding: 4px 12px;
     row-gap: 4px;
   }
@@ -1194,68 +1183,11 @@ onBeforeUnmount(() => {
   transform: translateY(1px);
 }
 
-/* ---- 接口搜索栏：内嵌凹陷质感，聚焦时紫色柔光 ---- */
+/* ---- 接口搜索栏：统一 SearchInput（md 高），仅保留外边距与侧栏底色微调 ---- */
 .sidebar-search {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--h-md);
+  width: calc(100% - 24px);
   margin: 8px 12px 0;
-  padding: 0 10px;
-  flex-shrink: 0;
-  border: 1px solid var(--sidebar-border);
-  border-radius: var(--radius-lg);
   background: var(--sidebar-search-bg);
-  transition:
-    border-color var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease),
-    background var(--dur) var(--ease);
-}
-.sidebar-search:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-tint);
-}
-
-.ss-icon {
-  flex-shrink: 0;
-  color: var(--text-3);
-  opacity: 0.7;
-}
-
-.ss-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  color: var(--text-1);
-}
-.ss-input::placeholder {
-  color: var(--text-3);
-}
-
-.ss-clear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-3);
-  cursor: pointer;
-  padding: 0;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-.ss-clear:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
 }
 
 .tree-wrap {
@@ -1341,11 +1273,5 @@ onBeforeUnmount(() => {
   color: var(--text-2);
 }
 
-.miyo-input-error {
-  border-color: var(--danger) !important;
-}
-.miyo-input-error:focus {
-  border-color: var(--danger) !important;
-  box-shadow: 0 0 0 2px var(--danger-tint) !important;
-}
+/* 校验错误态走全局 .miyo-input-error（style.css 单源），本组件不再复制 */
 </style>

@@ -197,7 +197,7 @@ describe('TestCasesPanel', () => {
     ])
     const wrapper = mountPanel(draft())
     expect(wrapper.findAll('.tcp-body-row')).toHaveLength(2)
-    await wrapper.find('.tcp-search-input').setValue('cny')
+    await wrapper.find('.tcp-search .si-input').setValue('cny')
     expect(wrapper.findAll('.tcp-body-row')).toHaveLength(1)
     expect(wrapper.text()).toContain('内部划转-SGB')
     expect(wrapper.text()).not.toContain('金额超限')
@@ -205,10 +205,10 @@ describe('TestCasesPanel', () => {
 
   it('搜索无命中时显示无匹配空态，可一键清空恢复', async () => {
     const wrapper = mountPanel(draft())
-    await wrapper.find('.tcp-search-input').setValue('no-such-body-zzz')
+    await wrapper.find('.tcp-search .si-input').setValue('no-such-body-zzz')
     expect(wrapper.findAll('.tcp-body-row')).toHaveLength(0)
     expect(wrapper.text()).toContain('无匹配用例')
-    await wrapper.find('.tcp-search-clear').trigger('click')
+    await wrapper.find('.tcp-search .si-clear').trigger('click')
     expect(wrapper.findAll('.tcp-body-row')).toHaveLength(2)
   })
 

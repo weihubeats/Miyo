@@ -15,6 +15,7 @@ import { useLocaleStore } from '@/stores/locale'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
+import SearchInput from '@/components/ui/SearchInput.vue'
 import Popconfirm from '@/components/ui/Popconfirm.vue'
 import type { CookieEntry } from '@/types/miyoApi.d'
 import { errorText } from '@/utils/errorText'
@@ -106,17 +107,12 @@ function displayValue(v: string): string {
 <template>
   <div class="cookie-panel">
     <div class="cp-head">
-      <div class="cp-search">
-        <Icon name="search" :size="13" class="cp-search-icon" />
-        <input
-          v-model="filter"
-          class="cp-input"
-          type="text"
-          :placeholder="t('cookie.filterPh')"
-          spellcheck="false"
-          @input="onFilterInput"
-        />
-      </div>
+      <SearchInput
+        v-model="filter"
+        class="cp-search"
+        :placeholder="t('cookie.filterPh')"
+        @update:model-value="onFilterInput"
+      />
       <span class="cp-count">{{ t('cookie.count', { n: cookies.length }) }}</span>
       <button
         class="cp-reload"
@@ -202,23 +198,7 @@ function displayValue(v: string): string {
 }
 .cp-search {
   flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
   min-width: 0;
-}
-.cp-search-icon {
-  color: var(--text-3);
-  flex-shrink: 0;
-}
-.cp-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--text-1);
-  font-size: 12px;
 }
 .cp-count {
   font-size: var(--fs-xxs);

@@ -17,6 +17,7 @@ import { computed, ref } from 'vue'
 import { useLocaleStore } from '@/stores/locale'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
+import SearchInput from '@/components/ui/SearchInput.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import type { VarChainEntry } from '@/utils/scenarioVars'
 import { isSensitiveVarName } from '@/utils/scenarioVars'
@@ -149,25 +150,7 @@ function varBrief(v: VarChainEntry): string {
     <!-- 展开体：搜索 + 分类过滤 + 条目列表 -->
     <div v-if="expanded" class="se-vars-body">
       <div class="se-vars-toolbar">
-        <div class="se-vars-search">
-          <Icon name="search" :size="12" class="se-vars-search-icon" />
-          <input
-            v-model="query"
-            class="se-vars-search-input"
-            type="text"
-            :placeholder="t('scenario.varsSearchPh')"
-            spellcheck="false"
-          />
-          <button
-            v-if="query"
-            class="se-vars-search-clear"
-            type="button"
-            :aria-label="t('common.clearSearch')"
-            @click="query = ''"
-          >
-            <Icon name="x" :size="11" />
-          </button>
-        </div>
+        <SearchInput v-model="query" class="se-vars-search" :placeholder="t('scenario.varsSearchPh')" />
         <div class="se-vars-filters" role="tablist">
           <button
             v-for="f in FILTERS"
@@ -354,61 +337,9 @@ function varBrief(v: VarChainEntry): string {
   flex-wrap: wrap;
 }
 
-/* 搜索框：与工作区侧栏同语言的凹陷质感 */
+/* 搜索框：统一 SearchInput，仅保留定宽占位 */
 .se-vars-search {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
   width: 200px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-code);
-}
-
-.se-vars-search:focus-within {
-  border-color: var(--accent);
-}
-
-.se-vars-search-icon {
-  flex: none;
-  color: var(--text-3);
-  opacity: 0.7;
-}
-
-.se-vars-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: var(--fs-xs);
-  color: var(--text-1);
-}
-
-.se-vars-search-input::placeholder {
-  color: var(--text-3);
-}
-
-.se-vars-search-clear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 16px;
-  height: 16px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-3);
-  cursor: pointer;
-  padding: 0;
-}
-
-.se-vars-search-clear:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
 }
 
 /* 分类过滤：分段胶囊 */

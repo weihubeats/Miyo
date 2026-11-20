@@ -34,6 +34,7 @@ import ImportDialog from '@/domains/endpoint/components/ImportDialog.vue'
 import ProjectCard from '@/domains/workspace/components/projectlist/projectlist/ProjectCard.vue'
 import ProjectListRow from '@/domains/workspace/components/projectlist/projectlist/ProjectListRow.vue'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
+import SearchInput from '@/components/ui/SearchInput.vue'
 import type { SelectOption } from '@/components/ui/CustomSelect.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import ProjectCreateModal from '@/domains/workspace/components/projectlist/projectlist/ProjectCreateModal.vue'
@@ -376,7 +377,7 @@ function closeFilters(): void {
 }
 
 // ---------- 搜索快捷键（⌘K / Ctrl+K 聚焦；Esc 清空） ----------
-const searchEl = ref<HTMLInputElement | null>(null)
+const searchEl = ref<InstanceType<typeof SearchInput> | null>(null)
 
 // 快捷键走全局注册表（useShortcuts）：帮助面板自动收录、键位可自定义、
 // 卸载自动注销。路由级注册——离开仪表板即失效，工作区的 ⌘K 命令面板互不抢占。
@@ -1015,28 +1016,17 @@ useWindowDrag(topBarEl)
 
           <section class="toolbar">
             <div class="toolbar-left">
-              <div class="toolbar-filter">
-                <Icon name="search" :size="14" />
-                <input
-                  ref="searchEl"
-                  v-model="search"
-                  class="toolbar-filter-input"
-                  :placeholder="t('projectlist.filterPh')"
-                  :aria-label="t('projectlist.filterPh')"
-                  spellcheck="false"
-                  @keydown.esc="search = ''"
-                />
-                <button
-                  v-if="search"
-                  class="toolbar-filter-clear"
-                  type="button"
-                  :aria-label="t('common.clearSearch')"
-                  @click="search = ''"
-                >
-                  <Icon name="x" :size="12" />
-                </button>
-                <kbd v-else class="toolbar-kbd" aria-hidden="true">⌘K</kbd>
-              </div>
+              <SearchInput
+                ref="searchEl"
+                v-model="search"
+                size="md"
+                class="toolbar-filter"
+                :placeholder="t('projectlist.filterPh')"
+              >
+                <template #append>
+                  <kbd v-if="!search" class="toolbar-kbd" aria-hidden="true">⌘K</kbd>
+                </template>
+              </SearchInput>
               <CustomSelect
                 v-model="teamFilter"
                 class="toolbar-team"
@@ -1283,9 +1273,9 @@ useWindowDrag(topBarEl)
   background: var(--bg-app);
 }
 
-/* ---------- 顶部栏 ---------- */
+/* ---------- 顶部栏（高度对齐全局顶栏阶梯 44px：PageHeader .miyo-topbar 单源） ---------- */
 .dash-top {
-  height: 56px;
+  height: 44px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -1873,27 +1863,6 @@ useWindowDrag(topBarEl)
 
 /* .clear-btn 仅存类名作为测试/结构钩子，视觉全部由 miyo-btn 承担 */
 
-.toolbar-filter-clear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  margin-left: auto;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-3);
-  cursor: pointer;
-  padding: 0;
-}
-
-.toolbar-filter-clear:hover {
-  color: var(--text-1);
-  background: var(--bg-hover);
-}
-
 /* ⌘K 提示：输入框空时占位显示快捷键，聚焦时隐藏避免抢注意力 */
 .toolbar-kbd {
   flex-shrink: 0;
@@ -1916,39 +1885,10 @@ useWindowDrag(topBarEl)
   margin-left: 8px;
 }
 
+/* 搜索框：统一 SearchInput，仅保留定宽与工具行同款高度 */
 .toolbar-filter {
-  /* w-60：固定宽度 */
   width: 240px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
   height: var(--h-lg);
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  color: var(--text-3);
-  transition:
-    border-color var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease);
-}
-.toolbar-filter:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-tint);
-}
-
-.toolbar-filter-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: none;
-  color: var(--text-1);
-  font-family: inherit;
-  font-size: var(--fs-xs);
-}
-.toolbar-filter-input::placeholder {
-  color: var(--text-3);
 }
 
 /* 分组 / 排序下拉：统一 36px 触发高度 */

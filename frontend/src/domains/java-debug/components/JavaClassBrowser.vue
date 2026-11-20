@@ -56,16 +56,12 @@ const visibleClasses = computed(() => {
 <template>
   <aside class="jcb">
     <div class="jcb-head">
-      <div class="jcb-search">
-        <Icon name="search" :size="13" />
-        <input
-          :value="search"
-          class="jcb-search-input"
-          :placeholder="t('java.searchClasses')"
-          :aria-label="t('java.searchClasses')"
-          @input="emit('update:search', ($event.target as HTMLInputElement).value)"
-        />
-      </div>
+      <SearchInput
+        :model-value="search"
+        class="jcb-search"
+        :placeholder="t('java.searchClasses')"
+        @update:model-value="emit('update:search', $event)"
+      />
     </div>
 
     <div v-if="loading" class="jcb-loading">
@@ -139,24 +135,7 @@ const visibleClasses = computed(() => {
 .jcb-head {
   padding: 10px 10px 6px;
 }
-.jcb-search {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text-tertiary, var(--text-secondary));
-}
-.jcb-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--text);
-  font-size: 12px;
-}
+/* 搜索框：统一 SearchInput，无本地布局占位 */
 .jcb-loading {
   display: flex;
   justify-content: center;

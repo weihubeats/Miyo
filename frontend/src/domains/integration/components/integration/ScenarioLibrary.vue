@@ -26,6 +26,7 @@ import RunHistoryPanel from '@/domains/integration/components/integration/RunHis
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import Modal from '@/components/ui/Modal.vue'
+import SearchInput from '@/components/ui/SearchInput.vue'
 import Popconfirm from '@/components/ui/Popconfirm.vue'
 import { formatDurationShort } from '@/utils/format'
 import type {
@@ -507,19 +508,7 @@ async function onImport(): Promise<void> {
 <template>
   <div ref="listEl" class="lib-root">
     <div class="lib-toolbar">
-      <div class="lib-search">
-        <Icon name="search" :size="12" class="lib-search-icon" />
-        <input
-          v-model="search"
-          class="lib-search-input"
-          type="text"
-          :placeholder="t('integration.libSearchPh')"
-          spellcheck="false"
-        />
-        <button v-if="search" class="lib-search-clear" type="button" :aria-label="t('common.clearSearch')" @click="search = ''">
-          <Icon name="x" :size="11" />
-        </button>
-      </div>
+      <SearchInput v-model="search" class="lib-search" :placeholder="t('integration.libSearchPh')" />
       <IconButton name="upload" :size="14" :title="t('integration.libImport')" @click="onImport" />
       <IconButton name="history" :size="14" :title="t('integration.histProjectTitle')" @click="historyPanelOpen = true" />
       <CustomSelect
@@ -728,61 +717,10 @@ async function onImport(): Promise<void> {
   gap: 8px;
 }
 
+/* 搜索框：统一 SearchInput，仅保留布局占位 */
 .lib-search {
   flex: 1;
   max-width: 420px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-}
-
-.lib-search:focus-within {
-  border-color: var(--accent);
-}
-
-.lib-search-icon {
-  flex: none;
-  color: var(--text-3);
-  opacity: 0.7;
-}
-
-.lib-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: var(--fs-xs);
-  color: var(--text-1);
-}
-
-.lib-search-input::placeholder {
-  color: var(--text-3);
-}
-
-.lib-search-clear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 16px;
-  height: 16px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-3);
-  cursor: pointer;
-  padding: 0;
-}
-
-.lib-search-clear:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
 }
 
 .lib-cats {

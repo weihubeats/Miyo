@@ -20,6 +20,7 @@ import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import Menu, { type MenuItem } from '@/components/ui/Menu.vue'
 import Modal from '@/components/ui/Modal.vue'
+import SearchInput from '@/components/ui/SearchInput.vue'
 import Popconfirm from '@/components/ui/Popconfirm.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import TestCaseDrawer from '@/domains/test-case/components/TestCaseDrawer.vue'
@@ -935,26 +936,7 @@ watch(
           <span class="tcp-count">{{ counts[key] }}</span>
         </button>
       </div>
-      <div class="tcp-search">
-        <Icon name="search" :size="12" class="tcp-search-icon" />
-        <input
-          v-model="keyword"
-          class="tcp-search-input"
-          type="text"
-          :placeholder="t('cases.searchPh')"
-          spellcheck="false"
-        />
-        <button
-          v-if="keyword"
-          class="tcp-search-clear"
-          type="button"
-          :title="t('cases.clearSearch')"
-          :aria-label="t('cases.clearSearch')"
-          @click="keyword = ''"
-        >
-          <Icon name="x" :size="12" />
-        </button>
-      </div>
+      <SearchInput v-model="keyword" class="tcp-search" :placeholder="t('cases.searchPh')" />
       <div class="tcp-actions">
         <!-- 运行环境上下文：全部运行 / 行内运行均走 store.activeEnvId，此处同源可见 -->
         <EnvBadge />
@@ -1471,60 +1453,11 @@ watch(
   color: var(--accent);
 }
 
+/* 搜索框：统一 SearchInput，仅保留布局占位 */
 .tcp-search {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   flex: 1;
   min-width: 140px;
   max-width: 280px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-1);
-  transition:
-    border-color var(--dur) var(--ease),
-    box-shadow var(--dur) var(--ease);
-}
-.tcp-search:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-tint, rgba(168, 85, 247, 0.18));
-}
-.tcp-search-icon {
-  flex-shrink: 0;
-  color: var(--text-3);
-}
-.tcp-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  padding: 0;
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  color: var(--text-1);
-}
-.tcp-search-input::placeholder {
-  color: var(--text-3);
-}
-.tcp-search-clear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: none;
-  color: var(--text-3);
-  cursor: pointer;
-}
-.tcp-search-clear:hover {
-  color: var(--text-1);
-  background: var(--bg-hover);
 }
 
 .tcp-actions {

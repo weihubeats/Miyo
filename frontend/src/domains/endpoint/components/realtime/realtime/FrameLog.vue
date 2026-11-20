@@ -14,9 +14,9 @@
 import { computed, ref, watch } from 'vue'
 import { useLocaleStore } from '@/stores/locale'
 import { useVirtualList } from '@/composables/useVirtualList'
-import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import SearchInput from '@/components/ui/SearchInput.vue'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
 import Menu, { type MenuItem } from '@/components/ui/Menu.vue'
 
@@ -198,16 +198,7 @@ function dirGlyph(dir: FrameItem['dir']): string {
   <div class="fl">
     <!-- 过滤条 -->
     <div class="fl-bar">
-      <div class="fl-search">
-        <Icon name="search" :size="12" class="fl-search-icon" />
-        <input
-          v-model="query"
-          class="fl-search-input"
-          type="text"
-          :placeholder="t('realtime.filterPh')"
-          spellcheck="false"
-        />
-      </div>
+      <SearchInput v-model="query" class="fl-search" :placeholder="t('realtime.filterPh')" />
       <div class="fl-dirs" role="group" :aria-label="t('realtime.dirFilterGroup')">
         <button
           v-for="d in DIRS"
@@ -321,38 +312,10 @@ function dirGlyph(dir: FrameItem['dir']): string {
   gap: 6px;
   flex-shrink: 0;
 }
+/* 搜索框：统一 SearchInput，仅保留布局占位 */
 .fl-search {
-  position: relative;
   flex: 1;
   min-width: 120px;
-}
-.fl-search-icon {
-  position: absolute;
-  left: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-3);
-  pointer-events: none;
-}
-.fl-search-input {
-  width: 100%;
-  height: var(--h-sm);
-  padding: 0 8px 0 26px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-  color: var(--text-1);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  outline: none;
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
-}
-.fl-search-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-tint);
-}
-.fl-search-input::placeholder {
-  color: var(--text-3);
 }
 
 .fl-kind {

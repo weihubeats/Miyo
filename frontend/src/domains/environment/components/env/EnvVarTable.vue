@@ -16,6 +16,7 @@ import { computed, ref } from 'vue'
 import { useLocaleStore } from '@/stores/locale'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
+import SearchInput from '@/components/ui/SearchInput.vue'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
 import Modal from '@/components/ui/Modal.vue'
 import Tooltip from '@/components/ui/Tooltip.vue'
@@ -166,10 +167,7 @@ function applyBatch(): void {
   <div class="evt">
     <!-- 工具行：搜索 + 批量导入 + 敏感值遮蔽总开关 -->
     <div class="evt-toolbar">
-      <div class="evt-search">
-        <Icon name="search" :size="12" />
-        <input v-model="search" class="evt-search-input" :placeholder="t('envmgr.searchPh')" spellcheck="false" />
-      </div>
+      <SearchInput v-model="search" class="evt-search" :placeholder="t('envmgr.searchPh')" />
       <button class="evt-tool-btn miyo-btn miyo-btn-sm miyo-btn-ghost" type="button" :title="t('envmgr.batchImportTitle')" @click="openBatch">
         <Icon name="file-plus" :size="12" />
         {{ t('envmgr.batchImport') }}
@@ -345,33 +343,10 @@ function applyBatch(): void {
   gap: 6px;
 }
 
+/* 搜索框：统一 SearchInput，仅保留布局占位 */
 .evt-search {
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--h-sm);
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-code);
-  color: var(--text-3);
-}
-
-.evt-search:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-}
-
-.evt-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: none;
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  color: var(--text-1);
 }
 
 /* 工具行文字钮：视觉收敛到全局 miyo-btn-sm/ghost，仅留激活态语义色 */

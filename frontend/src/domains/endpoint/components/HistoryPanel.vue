@@ -16,9 +16,9 @@ import { methodTone } from '@/utils/methodTone'
 import { useVirtualList } from '@/composables/useVirtualList'
 import type { RequestHistory } from '@/types/miyoApi.d'
 import EmptyState from '@/components/ui/EmptyState.vue'
-import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import Popconfirm from '@/components/ui/Popconfirm.vue'
+import SearchInput from '@/components/ui/SearchInput.vue'
 
 const store = useWorkspaceStore()
 const locale = useLocaleStore()
@@ -152,22 +152,18 @@ function shortTime(iso: string): string {
     </div>
 
     <div class="hp-search-box">
-      <Icon name="search" :size="12" class="hp-search-icon" />
-      <input
-        v-model="keyword"
-        class="hp-search"
-        type="text"
-        :placeholder="t('history.searchPh')"
-        spellcheck="false"
-      />
-      <button
-        class="hp-status-filter"
-        type="button"
-        :title="t('history.statusFilter', { v: statusFilter === 'all' ? t('history.all') : statusFilter })"
-        @click="cycleStatusFilter"
-      >
-        {{ statusFilter === 'all' ? t('history.all') : statusFilter }}
-      </button>
+      <SearchInput v-model="keyword" :placeholder="t('history.searchPh')" class="hp-search">
+        <template #append>
+          <button
+            class="hp-status-filter"
+            type="button"
+            :title="t('history.statusFilter', { v: statusFilter === 'all' ? t('history.all') : statusFilter })"
+            @click="cycleStatusFilter"
+          >
+            {{ statusFilter === 'all' ? t('history.all') : statusFilter }}
+          </button>
+        </template>
+      </SearchInput>
     </div>
 
     <div ref="listEl" class="hp-list" @scroll="onScroll">
@@ -301,37 +297,13 @@ function shortTime(iso: string): string {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- 搜索框：内嵌图标 + 关键字 + 状态筛选 Tag，聚焦描边点亮 ---- */
+/* ---- 搜索框：统一 SearchInput（图标/清除钮/焦点态内聚），仅保留外边距与筛选 Tag ---- */
 .hp-search-box {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   flex-shrink: 0;
   margin: 4px 12px 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-  transition: border-color var(--dur) var(--ease);
-}
-.hp-search-box:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
-}
-.hp-search-icon {
-  color: var(--text-3);
-  flex-shrink: 0;
 }
 .hp-search {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--text-1);
-  font-size: var(--fs-xs);
-}
-.hp-search::placeholder {
-  color: var(--text-3);
+  width: 100%;
 }
 .hp-status-filter {
   flex-shrink: 0;
