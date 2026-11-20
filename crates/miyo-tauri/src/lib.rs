@@ -231,7 +231,7 @@ pub mod plugin {
                             miyo_tasks::TaskKind::JavaAttach,
                             None,
                         );
-                        let _ = heartbeat; // 常驻循环：退出时随 runtime 结束
+                        drop(heartbeat); // 常驻循环：退出时随 runtime 结束
                     });
                     let _ = tauri::async_runtime::block_on(state.restore_active());
                     app.manage(state);
