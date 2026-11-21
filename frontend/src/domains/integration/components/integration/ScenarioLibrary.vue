@@ -922,7 +922,7 @@ async function onImport(): Promise<void> {
 
 .lib-empty-hint {
   margin: 0;
-  font-size: var(--fs-xxs);
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

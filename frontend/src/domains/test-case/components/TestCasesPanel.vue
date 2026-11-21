@@ -1441,7 +1441,7 @@ watch(
 .tcp-filter.active {
   color: var(--accent);
   border-color: var(--accent);
-  background: var(--accent-tint, rgba(168, 85, 247, 0.12));
+  background: var(--accent-tint);
 }
 
 .tcp-count {
@@ -1625,7 +1625,6 @@ watch(
   height: 7px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 6px currentColor;
 }
 
 .tcp-dur {
