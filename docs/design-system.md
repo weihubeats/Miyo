@@ -196,6 +196,9 @@ aria-activedescendant) / `Tooltip`(11) / `SegmentedControl`(10) / `StatusBadge`(
 
 - **顶栏单源 44px**：PageHeader(.miyo-topbar) = WorkspaceView(.top-bar) = ProjectList(.dash-top)；
   macOS 主窗 `data-window="main"` 左侧预留 88px 交通灯区；
+  **全屏面板（fixed inset:0）首行工具栏同样预留 88px**——全局规则集中在
+  style.css「全屏面板」段（rp/json-editor/se-report/wf-root/rv-root/drawer 六面），
+  新增全屏面必须同步登记；inset 留缝会让底层 chrome 渗出（用户实测）；
 - **侧边栏**：WorkspaceView 左栏可拖拽（220–520px，useSidebarResize：键盘微调/双击复位/
   持久化）且可折叠；面板分割 → SplitPanes（JavaDebug 四层嵌套 / Realtime / WorkflowEditor）；
 - 面板间距走 `--sp-*`；弹窗宽度由 Modal `width` prop 统一（420px 表单级 / 720px+ 内容级）。

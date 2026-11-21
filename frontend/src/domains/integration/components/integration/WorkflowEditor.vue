@@ -2711,14 +2711,15 @@ function stepTimeoutOf(s: EditorStep): number | null {
   color: var(--text-1);
 }
 
-/* 编辑器全屏：覆盖视口（Esc 经 escStack 退出；见 useOverlayFullscreen） */
+/* 编辑器全屏：全出血覆盖视口（Esc 经 escStack 退出；见 useOverlayFullscreen）；
+ * macOS 交通灯预留见 style.css 全局规则 */
 .wf-root.fullscreen {
   position: fixed;
-  inset: 14px;
+  inset: 0;
   z-index: var(--z-overlay);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* ---- 顶栏 ---- */

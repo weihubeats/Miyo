@@ -6,7 +6,9 @@
  * body 滚动锁不在此管理（宿主 Modal/Drawer 已锁；嵌套场景各管各的会互相解锁）。
  *
  * 样式约定：宿主根元素加 `fullscreen` class，用
- * `position: fixed; inset: 14px; z-index: var(--z-overlay)` 落位。
+ * `position: fixed; inset: 0; z-index: var(--z-overlay)` 全出血落位
+ * （inset 留缝会让底层 chrome 从缝里渗出，用户实测）；macOS 主窗交通灯
+ * 左缘预留走 style.css 全局规则（.fullscreen 面板首行工具栏 padding-left 88px）。
  */
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { pushEscHandler } from '@/utils/escStack'

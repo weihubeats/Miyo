@@ -687,24 +687,39 @@ onUnmounted(() => {
         <span v-if="response.truncated" class="rp-truncated" :title="t('response.truncatedHint')">{{ t('response.truncated') }}</span>
       </div>
       <span class="rp-toolbar-spacer"></span>
-      <Tooltip :content="collapsed ? t('response.expand') : t('response.collapse')" placement="bottom">
-        <IconButton
-          class="rp-icon-btn"
-          :name="collapsed ? 'chevron-down' : 'chevron-up'"
-          :size="13"
-          :label="collapsed ? t('response.expand') : t('response.collapse')"
-          @click="toggleCollapsed"
-        />
-      </Tooltip>
-      <!-- 面板高度拖拽把手（视觉 affordance）：按下向宿主上报，拖拽热区仍在整条分割带 -->
-      <span
-        class="rp-drag-grip"
-        aria-hidden="true"
-        :title="t('editor.splitterHint')"
-        @mousedown="emit('dragStart', $event as MouseEvent)"
-      >
-        <Icon name="chevrons-up-down" :size="14" />
-      </span>
+      <!-- 全屏态：退出全屏按钮常驻（原入口只在「更多」菜单里，不可发现——用户实测）；
+           Esc 也可退出。复用 jsonEditor.exitFullscreen 文案（含 Esc 提示）。 -->
+      <template v-if="fullscreen">
+        <Tooltip :content="t('jsonEditor.exitFullscreen')" placement="bottom">
+          <IconButton
+            class="rp-icon-btn"
+            name="minimize-2"
+            :size="13"
+            :label="t('jsonEditor.exitFullscreen')"
+            @click="toggleFullscreen"
+          />
+        </Tooltip>
+      </template>
+      <template v-else>
+        <Tooltip :content="collapsed ? t('response.expand') : t('response.collapse')" placement="bottom">
+          <IconButton
+            class="rp-icon-btn"
+            :name="collapsed ? 'chevron-down' : 'chevron-up'"
+            :size="13"
+            :label="collapsed ? t('response.expand') : t('response.collapse')"
+            @click="toggleCollapsed"
+          />
+        </Tooltip>
+        <!-- 面板高度拖拽把手（视觉 affordance）：按下向宿主上报，拖拽热区仍在整条分割带 -->
+        <span
+          class="rp-drag-grip"
+          aria-hidden="true"
+          :title="t('editor.splitterHint')"
+          @mousedown="emit('dragStart', $event as MouseEvent)"
+        >
+          <Icon name="chevrons-up-down" :size="14" />
+        </span>
+      </template>
     </div>
 
     <!-- 第二层：内容页签 + 视图模式 + 行内操作（低频操作收进「更多」菜单） -->
@@ -976,15 +991,19 @@ onUnmounted(() => {
   height: auto;
 }
 
-/* 全屏：Teleport 到 body 后 fixed 覆盖视口（原位渲染会被工作区 chrome
+/* 全屏：Teleport 到 body 后 fixed 全出血覆盖视口（原位渲染会被工作区 chrome
  * 的层叠上下文压住，v0.0.61 用户实测）；Esc / 菜单退出。
+ * inset 必须为 0：此前 14px 四周留缝，底层 chrome 从缝里渗出（用户实测截图）；
+ * macOS 主窗交通灯左缘预留见 style.css 全局规则。
  * 层级取 --z-overlay：覆盖工作区 chrome，低于 Toast（阶梯见 style.css）。 */
 .rp.fullscreen {
   position: fixed;
-  inset: 14px;
+  inset: 0;
   z-index: var(--z-overlay);
   height: auto;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* ---- 两层工具栏 ----

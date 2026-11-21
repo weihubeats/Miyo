@@ -1834,6 +1834,18 @@ html[data-platform='macos'] .dash-top {
 html[data-platform='macos'][data-window='main'] .miyo-topbar {
   padding-left: 88px;
 }
+/* 全屏面板（fixed inset:0）：首行工具栏与交通灯同区，主窗预留左缘；
+ * popout 子窗（原生标题栏）无需预留。响应面板前两行 34px 高，交通灯
+ * （y≈20-45）跨行，两行都预留。 */
+html[data-platform='macos'][data-window='main'] .rp.fullscreen .rp-toolbar,
+html[data-platform='macos'][data-window='main'] .rp.fullscreen .rp-subtoolbar,
+html[data-platform='macos'][data-window='main'] .json-editor.fullscreen .je-toolbar,
+html[data-platform='macos'][data-window='main'] .se-report.fullscreen .se-report-headrow,
+html[data-platform='macos'][data-window='main'] .wf-root.fullscreen .wf-topbar,
+html[data-platform='macos'][data-window='main'] .rv-root.fullscreen .rv-overview,
+html[data-platform='macos'][data-window='main'] .d-drawer.is-fullscreen .d-head {
+  padding-left: 88px;
+}
 
 /* ---- 拖拽中：全局抓取光标 + 禁止选中 ---- */
 body.dragging-dnd {

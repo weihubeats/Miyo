@@ -427,14 +427,17 @@ function peekOf(response: { body?: string | null } | null | undefined): string {
   background: var(--bg-panel);
 }
 
-/* 全屏查看：覆盖视口（CSS 全屏，Esc 经 escStack 退出；见 useOverlayFullscreen） */
+/* 全屏查看：全出血覆盖视口（Esc 经 escStack 退出；见 useOverlayFullscreen）；
+ * macOS 交通灯预留见 style.css 全局规则 */
 .se-report.fullscreen {
   position: fixed;
-  inset: 14px;
+  inset: 0;
   z-index: var(--z-overlay);
   display: flex;
   flex-direction: column;
-  box-shadow: var(--shadow-lg);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 .se-report.fullscreen .se-report-headrow {
   flex: none;

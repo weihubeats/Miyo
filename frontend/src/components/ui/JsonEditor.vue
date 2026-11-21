@@ -573,18 +573,20 @@ async function copyJson(): Promise<void> {
   min-height: 0;
 }
 
-/* 全屏：fixed 覆盖视口（祖先链无 transform），wrap 由 flex:1 拉伸 */
+/* 全屏：fixed 全出血覆盖视口（祖先链无 transform），wrap 由 flex:1 拉伸。
+ * inset 必须为 0：留缝会让底层 chrome 从缝里渗出（用户实测截图）；
+ * macOS 主窗交通灯左缘预留见 style.css 全局规则。 */
 .json-editor.fullscreen {
   position: fixed;
-  inset: 16px;
+  inset: 0;
   /* 全屏层：覆盖工作区 chrome，低于 Toast（层级阶梯见 style.css） */
   z-index: var(--z-overlay);
   gap: 6px;
   padding: 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border: none;
+  border-radius: 0;
   background: var(--bg-panel);
-  box-shadow: var(--shadow-lg);
+  box-shadow: none;
 }
 
 .hl-wrap {
