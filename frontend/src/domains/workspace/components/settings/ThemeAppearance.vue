@@ -17,8 +17,9 @@ import { useLocaleStore } from '@/stores/locale'
 import { useToast } from '@/composables/useToast'
 import { BUILTIN_THEMES } from '@/theme/presets'
 import { processImageFile, type ImageProcessErrorCode } from '@/theme/backgroundImage'
-import type { BackgroundType, CustomColors, ImageBackground, ThemeId } from '@/theme/types'
+import type { BackgroundType, CustomColors, ImageBackground, ThemeId, ThemeStyle } from '@/theme/types'
 import ThemeCard from './ThemeCard.vue'
+import StyleCard from './StyleCard.vue'
 
 const theme = useThemeStore()
 const locale = useLocaleStore()
@@ -84,6 +85,34 @@ const custom = computed(() => theme.custom)
 
 function selectTheme(id: ThemeId): void {
   theme.setThemeId(id)
+}
+
+/* ---- 视觉风格（与颜色主题正交；三卡实时预览 = 当前色板 × 该风格） ---- */
+const STYLE_ITEMS: { id: ThemeStyle; nameKey: string; descKey: string }[] = [
+  { id: 'studio', nameKey: 'settings.styleNameStudio', descKey: 'settings.styleDescStudio' },
+  { id: 'minimal', nameKey: 'settings.styleNameMinimal', descKey: 'settings.styleDescMinimal' },
+  { id: 'soft', nameKey: 'settings.styleNameSoft', descKey: 'settings.styleDescSoft' },
+]
+
+/** 风格网格 roving tabindex（与主题网格同一交互模型）。 */
+const STYLE_KEYS = ['ArrowLeft', 'ArrowRight', 'Home', 'End']
+function onStyleKeydown(e: KeyboardEvent): void {
+  if (!STYLE_KEYS.includes(e.key)) return
+  const root = e.currentTarget as HTMLElement
+  const cards = [...root.querySelectorAll<HTMLButtonElement>('button[role="radio"]')]
+  if (!cards.length) return
+  e.preventDefault()
+  let idx = cards.indexOf(document.activeElement as HTMLButtonElement)
+  if (idx === -1) idx = 0
+  if (e.key === 'ArrowRight') idx = (idx + 1) % cards.length
+  else if (e.key === 'ArrowLeft') idx = (idx - 1 + cards.length) % cards.length
+  else if (e.key === 'Home') idx = 0
+  else idx = cards.length - 1
+  cards[idx]?.focus()
+}
+
+function selectStyle(id: ThemeStyle): void {
+  theme.setStyle(id)
 }
 
 /** 网格 roving tabindex：←/→/↑/↓/Home/End 移动焦点（选中由点击/Enter 完成）。 */
@@ -359,6 +388,32 @@ function targetNumber(e: Event): number {
         :selected="theme.themeId === item.id"
         :tabbable="theme.themeId === item.id || item.id === gridItems[0].id"
         @select="selectTheme(item.id)"
+      />
+    </div>
+
+    <!-- 视觉风格（与颜色主题正交的第二维度；预览卡用真实组件 token 渲染迷你界面，
+         即「当前色板 × 该风格」的组合实时预览） -->
+    <div class="mt-4 flex items-center justify-between gap-4">
+      <div class="min-w-0">
+        <div class="text-sm font-medium text-ink1">{{ t('settings.style') }}</div>
+        <p class="mt-0.5 text-xs text-ink2">{{ t('settings.styleDesc') }}</p>
+      </div>
+    </div>
+    <div
+      class="mt-2 grid grid-cols-3 gap-2"
+      role="radiogroup"
+      :aria-label="t('settings.style')"
+      @keydown="onStyleKeydown"
+    >
+      <StyleCard
+        v-for="item in STYLE_ITEMS"
+        :key="item.id"
+        :style-id="item.id"
+        :label="t(item.nameKey)"
+        :description="t(item.descKey)"
+        :selected="theme.style === item.id"
+        :tabbable="theme.style === item.id || item.id === 'studio'"
+        @select="selectStyle(item.id)"
       />
     </div>
 

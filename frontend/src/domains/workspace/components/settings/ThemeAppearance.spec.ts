@@ -21,6 +21,7 @@ describe('ThemeAppearance', () => {
     }
     document.documentElement.removeAttribute('data-theme')
     document.documentElement.removeAttribute('data-theme-id')
+    document.documentElement.removeAttribute('data-style')
   })
 
   afterEach(() => {
@@ -29,7 +30,8 @@ describe('ThemeAppearance', () => {
 
   it('渲染 8 内置主题卡 + 自定义入口（radiogroup）', () => {
     const wrapper = mount(ThemeAppearance)
-    const radios = wrapper.findAll('[role="radio"][aria-checked]')
+    // radiogroup[0] = 主题网格（风格网格另见下方专属用例）
+    const radios = wrapper.findAll('[role="radiogroup"]')[0].findAll('[role="radio"][aria-checked]')
     expect(radios.length).toBe(9)
     expect(wrapper.text()).toContain('石墨深色')
     expect(wrapper.text()).toContain('海盐蓝')
@@ -37,6 +39,34 @@ describe('ThemeAppearance', () => {
     expect(wrapper.text()).toContain('森林绿')
     expect(wrapper.text()).toContain('自定义')
     expect(wrapper.text()).toContain('跟随系统')
+    wrapper.unmount()
+  })
+
+  it('渲染 3 张视觉风格卡（radiogroup）并选中当前档', () => {
+    const wrapper = mount(ThemeAppearance)
+    const groups = wrapper.findAll('[role="radiogroup"]')
+    expect(groups.length).toBe(2)
+    const styleCards = groups[1].findAll('[role="radio"]')
+    expect(styleCards.length).toBe(3)
+    expect(wrapper.text()).toContain('开发者工作台')
+    expect(wrapper.text()).toContain('极简')
+    expect(wrapper.text()).toContain('柔和')
+    // 预览子树按风格重新作用域 token（真实界面预览的数据源即 [data-style] 块）
+    const preview = groups[1].findAll('.sc-preview')
+    expect(preview.map((n) => n.attributes('data-style'))).toEqual(['studio', 'minimal', 'soft'])
+    wrapper.unmount()
+  })
+
+  it('点击风格卡立即生效（data-style + 持久化），与颜色主题独立', async () => {
+    const wrapper = mount(ThemeAppearance)
+    const groups = wrapper.findAll('[role="radiogroup"]')
+    const soft = groups[1].findAll('[role="radio"]').find((n) => n.text().includes('柔和'))!
+    await soft.trigger('click')
+    const theme = useThemeStore()
+    expect(theme.style).toBe('soft')
+    expect(document.documentElement.getAttribute('data-style')).toBe('soft')
+    expect(theme.themeId).toBe('dark') // 颜色主题未被风格切换牵动
+    expect(JSON.parse(localStorage.getItem('miyo.theme.config')!).style).toBe('soft')
     wrapper.unmount()
   })
 

@@ -14,7 +14,7 @@
  */
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { CustomThemeConfig, ThemeBase, ThemeConfigV1, ThemeEventDetail, ThemeId, ThemeMode } from '@/theme/types'
+import type { CustomThemeConfig, ThemeBase, ThemeConfigV1, ThemeEventDetail, ThemeId, ThemeMode, ThemeStyle } from '@/theme/types'
 import { DEFAULT_CONFIG, DEFAULT_CUSTOM, isThemeId, parseThemeConfig, themeBase } from '@/theme/presets'
 import { applyCustomTheme } from '@/theme/apply'
 
@@ -25,7 +25,7 @@ const LEGACY_KEY = 'miyo.theme.mode'
 /** 全局主题切换事件（CodeMirror 等编辑器监听）。 */
 export const THEME_EVENT = 'miyo:theme'
 
-export type { CustomThemeConfig, ThemeBase, ThemeConfigV1, ThemeId, ThemeMode }
+export type { CustomThemeConfig, ThemeBase, ThemeConfigV1, ThemeId, ThemeMode, ThemeStyle }
 
 function systemPrefersDark(): boolean {
   try {
@@ -84,12 +84,18 @@ function scheduleGuardRemoval(root: HTMLElement): void {
   })
 }
 
-/** 把生效主题写到 <html>（基调 + 身份 + 内联自定义覆盖）并广播编辑器事件。 */
-function applyToDom(base: ThemeBase, themeId: ThemeId, custom: CustomThemeConfig | null): void {
+/** 把生效主题写到 <html>（基调 + 身份 + 视觉风格 + 内联自定义覆盖）并广播编辑器事件。 */
+function applyToDom(
+  base: ThemeBase,
+  themeId: ThemeId,
+  style: ThemeStyle,
+  custom: CustomThemeConfig | null,
+): void {
   const root = document.documentElement
   root.classList.add('theme-switching')
   root.setAttribute('data-theme', base)
   root.setAttribute('data-theme-id', themeId)
+  root.setAttribute('data-style', style)
   root.classList.toggle('dark', base === 'dark')
   root.classList.toggle('light', base === 'light')
   applyCustomTheme(root, themeId === 'custom' ? custom : null)
@@ -123,12 +129,23 @@ export const useThemeStore = defineStore('theme', () => {
   /** 生效主题的深浅基调（custom 跟随其 base）。 */
   const resolved = computed<ThemeBase>(() => themeBase(themeId.value, custom.value))
 
+  /** 视觉风格（与颜色主题正交的第二维度）。 */
+  const style = computed<ThemeStyle>(() => config.value.style)
+
+  /** 切换视觉风格并持久化（data-style 由 apply 统一写 DOM，守卫类防闪烁）。 */
+  function setStyle(next: ThemeStyle): void {
+    if (next !== 'studio' && next !== 'minimal' && next !== 'soft') return
+    config.value = { ...config.value, style: next }
+    persist(config.value)
+    apply()
+  }
+
   let media: MediaQueryList | null = null
   let onSystemChange: ((e: MediaQueryListEvent) => void) | null = null
 
   /** 应用当前生效主题到 DOM。 */
   function apply(): void {
-    applyToDom(resolved.value, themeId.value, custom.value)
+    applyToDom(resolved.value, themeId.value, style.value, custom.value)
   }
 
   /** 系统偏好变化 → 同步 systemDark，仅 system 模式需要实时重刷。 */
@@ -224,11 +241,13 @@ export const useThemeStore = defineStore('theme', () => {
     config,
     mode: computed<ThemeMode>(() => config.value.mode),
     themeId,
+    style,
     custom,
     resolved,
     systemDark,
     setMode,
     setThemeId,
+    setStyle,
     updateCustom,
     resetBackground,
     resetTheme,

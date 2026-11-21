@@ -184,16 +184,18 @@ export function applyCustomTheme(root: HTMLElement, custom: CustomThemeConfig | 
 
   if (colors.accent) {
     const accent = colors.accent
-    const gradFrom = lighten(accent, 0.07)
-    const gradTo = darken(accent, 0.12)
     setVar(root, '--accent', accent)
     setVar(root, '--accent-hover', dark ? lighten(accent, 0.12) : darken(accent, 0.12))
     setVar(root, '--accent-tint', withAlpha(accent, dark ? 0.16 : 0.12))
+    // 主行动色双轨：--accent 亮（tint/文字/caret），实心按钮底（grad-primary）
+    // 取加深档保证白字 ≥4.5:1（impeccable low-contrast 规则）
     setVar(root, '--primary', accent)
-    setVar(root, '--grad-primary', `linear-gradient(135deg, ${gradFrom}, ${gradTo})`)
-    setVar(root, '--grad-primary-hover', `linear-gradient(135deg, ${lighten(accent, 0.14)}, ${accent})`)
-    setVar(root, '--primary-glow', withAlpha(darken(accent, 0.15), dark ? 0.4 : 0.18))
-    setVar(root, '--primary-glow-hover', withAlpha(darken(accent, 0.15), dark ? 0.5 : 0.26))
+    const primarySolid = darken(accent, dark ? 0.25 : 0.1)
+    const primaryHover = darken(accent, dark ? 0.32 : 0.16)
+    setVar(root, '--grad-primary', `linear-gradient(135deg, ${primarySolid}, ${primarySolid})`)
+    setVar(root, '--grad-primary-hover', `linear-gradient(135deg, ${primaryHover}, ${primaryHover})`)
+    setVar(root, '--primary-glow', withAlpha(accent, dark ? 0.14 : 0.1))
+    setVar(root, '--primary-glow-hover', withAlpha(accent, dark ? 0.2 : 0.14))
     setVar(root, '--focus-ring', withAlpha(accent, 0.45))
   }
 

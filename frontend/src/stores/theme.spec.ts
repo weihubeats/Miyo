@@ -266,6 +266,63 @@ describe('theme store', () => {
     })
   })
 
+  describe('视觉风格（与颜色主题正交）', () => {
+    it('旧配置缺 style 字段回退 studio，并写入 <html data-style>', () => {
+      localStorage.setItem(
+        'miyo.theme.config',
+        JSON.stringify({ version: 1, mode: 'manual', current: 'dark' }),
+      )
+      const store = useThemeStore()
+      store.init()
+      expect(store.style).toBe('studio')
+      expect(document.documentElement.getAttribute('data-style')).toBe('studio')
+    })
+
+    it('setStyle 切换三态：持久化 + data-style 实时更新 + 守卫类防闪烁', () => {
+      const store = useThemeStore()
+      store.init()
+      const root = document.documentElement
+      store.setStyle('minimal')
+      expect(store.style).toBe('minimal')
+      expect(root.getAttribute('data-style')).toBe('minimal')
+      expect(JSON.parse(localStorage.getItem('miyo.theme.config')!).style).toBe('minimal')
+      store.setStyle('soft')
+      expect(root.getAttribute('data-style')).toBe('soft')
+      store.setStyle('studio')
+      expect(root.getAttribute('data-style')).toBe('studio')
+    })
+
+    it('非法 style 值不生效（保持当前档）', () => {
+      const store = useThemeStore()
+      store.init()
+      store.setStyle('glass' as never)
+      expect(store.style).toBe('studio')
+    })
+
+    it('style 与颜色主题独立：切换主题不重置风格', () => {
+      const store = useThemeStore()
+      store.init()
+      store.setStyle('soft')
+      store.setThemeId('ocean')
+      expect(store.style).toBe('soft')
+      expect(store.themeId).toBe('ocean')
+      expect(document.documentElement.getAttribute('data-style')).toBe('soft')
+      expect(document.documentElement.getAttribute('data-theme-id')).toBe('ocean')
+    })
+
+    it('exportConfig / importConfig 往返携带 style；旧导入缺省回退 studio', () => {
+      const store = useThemeStore()
+      store.init()
+      store.setStyle('minimal')
+      const exported = store.exportConfig()
+      expect(JSON.parse(exported).style).toBe('minimal')
+      // 旧版导出（无 style 字段）导入 → studio
+      const legacy = JSON.stringify({ version: 1, mode: 'manual', current: 'light' })
+      expect(store.importConfig(legacy)).toBe(true)
+      expect(store.style).toBe('studio')
+    })
+  })
+
   describe('导入 / 导出', () => {
     it('exportConfig → importConfig 往返恢复', () => {
       const store = useThemeStore()

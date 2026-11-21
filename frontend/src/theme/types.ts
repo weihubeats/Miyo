@@ -32,6 +32,13 @@ export type ThemeDensity = 'compact' | 'default' | 'cozy'
 /** 界面字体：default 内置 IBM Plex Sans / system 跟随操作系统。 */
 export type ThemeFont = 'default' | 'system'
 
+/**
+ * 视觉风格（与颜色主题正交的第二维度）：style.css 的 [data-style] 块通过
+ * 组件级语义 token（btn/input/card/menu 等）表达组件视觉语言，
+ * <html data-style> 承载。旧配置缺省 → 'studio'。
+ */
+export type ThemeStyle = 'studio' | 'minimal' | 'soft'
+
 export interface GradientBackground {
   from: string
   to: string
@@ -95,6 +102,8 @@ export interface ThemeConfigV1 {
   lastLight: ThemeId
   /** system 模式系统深色时生效主题。 */
   lastDark: ThemeId
+  /** 视觉风格（v1 后增字段；旧配置缺省回退 'studio'，无需迁移）。 */
+  style: ThemeStyle
   custom: CustomThemeConfig | null
 }
 
