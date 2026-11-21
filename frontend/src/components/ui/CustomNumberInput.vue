@@ -192,8 +192,8 @@ function onBlur(): void {
   border-color: var(--inset-input-border-hover);
 }
 .cni.tone-inset .cni-input:focus {
-  border-color: rgba(168, 85, 247, 0.5);
-  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.12);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  box-shadow: 0 0 0 2px var(--accent-tint);
 }
 .cni.tone-inset .cni-step:hover:not(:disabled) {
   color: var(--text-2);

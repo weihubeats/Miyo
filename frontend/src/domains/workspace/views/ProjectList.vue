@@ -932,7 +932,33 @@ useWindowDrag(topBarEl)
               </div>
             </div>
 
-            <!-- 卡片 2：最近活动（真实请求历史：方法 / 项目 / 接口 / 状态 / 耗时 / 时间） -->
+            <!-- 卡片 2：快速开始（右列 2×2 操作入口，填满 hero 右侧留白） -->
+            <div class="stat-card">
+              <span class="stat-icon tint-amber"><Icon name="zap" :size="16" /></span>
+              <div class="stat-body">
+                <span class="stat-label">{{ t('projectlist.quickStart') }}</span>
+                <div class="quick-grid">
+                  <button class="miyo-btn miyo-btn-primary" type="button" :title="t('projectlist.scratchHint')" @click="showScratch = true">
+                    <Icon name="send" :size="13" /> {{ t('projectlist.quickRequest') }}
+                  </button>
+                  <button class="miyo-btn" type="button" :title="t('projectlist.newProject')" @click="showCreate = true">
+                    <Icon name="plus" :size="13" /> {{ t('projectlist.createProject') }}
+                  </button>
+                  <button
+                    class="miyo-btn"
+                    type="button"
+                    :title="t('projectlist.importHint')"
+                    @click="droppedText = ''; showImport = true"
+                  >
+                    <Icon name="download" :size="13" /> {{ t('projectlist.importProject') }}
+                  </button>
+                  <button class="miyo-btn" type="button" :title="t('pnav.realtimeHint')" @click="router.push('/realtime')">
+                    <Icon name="globe" :size="13" /> {{ t('pnav.realtime') }}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <!-- 卡片 3：最近活动（通栏时间线：方法 / 项目 / 接口 / 状态 / 耗时 / 时间） -->
             <div class="stat-card">
               <span class="stat-icon tint-violet"><Icon name="history" :size="16" /></span>
               <div class="stat-body">
@@ -986,32 +1012,6 @@ useWindowDrag(topBarEl)
               </div>
             </div>
 
-            <!-- 卡片 3：快速开始（紧凑 2×2 操作入口，四按钮同尺寸同对齐） -->
-            <div class="stat-card">
-              <span class="stat-icon tint-amber"><Icon name="zap" :size="16" /></span>
-              <div class="stat-body">
-                <span class="stat-label">{{ t('projectlist.quickStart') }}</span>
-                <div class="quick-grid">
-                  <button class="miyo-btn miyo-btn-primary" type="button" :title="t('projectlist.scratchHint')" @click="showScratch = true">
-                    <Icon name="send" :size="13" /> {{ t('projectlist.quickRequest') }}
-                  </button>
-                  <button class="miyo-btn" type="button" :title="t('projectlist.newProject')" @click="showCreate = true">
-                    <Icon name="plus" :size="13" /> {{ t('projectlist.createProject') }}
-                  </button>
-                  <button
-                    class="miyo-btn"
-                    type="button"
-                    :title="t('projectlist.importHint')"
-                    @click="droppedText = ''; showImport = true"
-                  >
-                    <Icon name="download" :size="13" /> {{ t('projectlist.importProject') }}
-                  </button>
-                  <button class="miyo-btn" type="button" :title="t('pnav.realtimeHint')" @click="router.push('/realtime')">
-                    <Icon name="globe" :size="13" /> {{ t('pnav.realtime') }}
-                  </button>
-                </div>
-              </div>
-            </div>
           </section>
 
           <section class="toolbar">
@@ -1332,12 +1332,10 @@ useWindowDrag(topBarEl)
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--text-on-accent);
   border-radius: var(--radius-md);
   background: var(--grad-primary);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    0 2px 8px var(--primary-glow);
+  box-shadow: 0 2px 8px var(--primary-glow);
 }
 
 .top-title {
@@ -1720,11 +1718,12 @@ useWindowDrag(topBarEl)
   font-family: var(--font-mono);
 }
 
-/* ---- 快速开始：紧凑 2×2 操作入口（按钮视觉走全局 miyo-btn 系，不再自绘） ---- */
+/* ---- 快速开始：紧凑 2×2 操作入口（列内容器上限 460px 防巨条；按钮走全局 miyo-btn 系） ---- */
 .quick-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  max-width: 460px;
   margin-top: 8px;
 }
 
@@ -1754,7 +1753,7 @@ useWindowDrag(topBarEl)
   background: var(--accent-tint);
   box-shadow:
     0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent),
-    0 8px 30px rgba(9, 12, 22, 0.45);
+    var(--shadow-lg);
   transform: translateY(-1px);
 }
 
@@ -2097,8 +2096,8 @@ useWindowDrag(topBarEl)
   backdrop-filter: blur(8px);
   border: 1px solid var(--accent) !important;
   box-shadow:
-    0 20px 50px rgba(9, 12, 22, 0.6),
-    0 0 40px rgba(9, 12, 22, 0.4) !important;
+    0 20px 50px rgba(0, 0, 0, 0.45),
+    0 0 40px rgba(0, 0, 0, 0.3) !important;
   transform: scale(1.03) rotate(1.5deg);
   cursor: grabbing;
 }

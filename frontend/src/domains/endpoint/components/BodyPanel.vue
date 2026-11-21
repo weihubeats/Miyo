@@ -842,9 +842,9 @@ defineExpose({
   border-color: var(--border-strong);
 }
 .bp-icon-btn.active {
-  background: var(--accent-tint, rgba(168, 85, 247, 0.15));
-  color: var(--accent, #a855f7);
-  border-color: var(--accent, #a855f7);
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .mode-tabs {

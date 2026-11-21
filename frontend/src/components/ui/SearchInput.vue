@@ -112,9 +112,9 @@ defineExpose({ focus, select })
   gap: 6px;
   height: var(--h-sm);
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--input-border);
   border-radius: var(--radius);
-  background: var(--bg-code);
+  background: var(--input-bg);
   transition:
     border-color var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease);

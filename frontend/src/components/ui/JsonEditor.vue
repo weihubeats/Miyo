@@ -584,7 +584,7 @@ async function copyJson(): Promise<void> {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-panel);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 
 .hl-wrap {
@@ -610,10 +610,10 @@ async function copyJson(): Promise<void> {
   flex: 0 0 auto;
 }
 
-/* 1px 紫色聚焦光晕（替代原 3px 重描边） */
+/* 聚焦光晕走 accent token（此前硬编码亮紫，浅色主题下刺眼） */
 .hl-wrap:focus-within {
-  border-color: rgba(168, 85, 247, 0.6);
-  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.5);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 0 1px var(--focus-ring);
 }
 
 .hl-pre,
@@ -668,15 +668,15 @@ async function copyJson(): Promise<void> {
 /* ---- 查找标记 ---- */
 /* （.hl-* 语法色已收口到 style.css 全局单源，此处不再重复定义） */
 :deep(.rp-find-mark) {
-  background: var(--accent-tint, rgba(99, 102, 241, 0.25));
+  background: var(--accent-tint);
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
 }
 :deep(.rp-find-mark.active) {
-  background: var(--accent, #a855f7);
-  color: #fff;
-  outline: 1px solid var(--accent, #a855f7);
+  background: var(--accent);
+  color: var(--text-on-accent);
+  outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
 
@@ -708,7 +708,7 @@ async function copyJson(): Promise<void> {
    * 行号与内容错位、行号先于内容走完 */
   height: calc(var(--fs-sm) * 1.55);
   line-height: calc(var(--fs-sm) * 1.55);
-  color: var(--tok-gutter, #5c6370);
+  color: var(--tok-gutter);
   text-align: right;
   padding-right: var(--code-gutter-gap);
 }
@@ -771,7 +771,7 @@ async function copyJson(): Promise<void> {
   height: 24px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
@@ -786,9 +786,9 @@ async function copyJson(): Promise<void> {
   color: var(--text-1);
 }
 .je-btn.active {
-  background: var(--accent-tint, rgba(168, 85, 247, 0.15));
-  color: var(--accent, #a855f7);
-  border-color: var(--accent, #a855f7);
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .je-btn:disabled {
   opacity: 0.35;

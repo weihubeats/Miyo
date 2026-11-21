@@ -541,7 +541,7 @@ function setAuthType(type: string): void {
   user-select: none;
 }
 .oauth-pkce input[type='checkbox'] {
-  accent-color: var(--accent, #7c5cff);
+  accent-color: var(--accent);
   width: 14px;
   height: 14px;
   cursor: pointer;

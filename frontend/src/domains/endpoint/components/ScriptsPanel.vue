@@ -105,7 +105,7 @@ const postResponse = computed({
 }
 
 .script-editor:focus {
-  border-color: var(--accent, #a78bfa);
+  border-color: var(--accent);
 }
 
 .script-hint {

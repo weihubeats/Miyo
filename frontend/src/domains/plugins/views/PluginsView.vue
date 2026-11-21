@@ -937,7 +937,7 @@ function closeDetail(): void {
 }
 .pg-switch input:checked + .pg-switch-track::after {
   transform: translateX(14px);
-  background: #fff;
+  background: var(--text-on-accent);
 }
 .pg-switch input:focus-visible + .pg-switch-track {
   outline: 2px solid var(--accent);

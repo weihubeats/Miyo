@@ -183,10 +183,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   max-width: 92vw;
   max-height: 84vh;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-strong);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--modal-radius);
+  border: 1px solid var(--modal-border);
+  background: var(--modal-bg);
+  box-shadow: var(--modal-shadow);
   overflow: hidden;
   outline: none;
 }

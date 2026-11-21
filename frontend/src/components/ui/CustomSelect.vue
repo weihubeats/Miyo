@@ -395,13 +395,11 @@ defineExpose({ close })
   z-index: var(--z-toast);
   /* 病态超宽内容的兜底：任何情况下不越出视口两侧（与 measure() 的右缘夹取双保险） */
   max-width: calc(100vw - 16px);
-  background: var(--bg-elevated);
-  /* 发丝边框（深色近 border-white/10，浅色跟随变量不隐形）+ 深部大阴影拉开暗部层级 */
-  border: 1px solid color-mix(in srgb, var(--border-strong) 80%, transparent);
-  border-radius: var(--radius-lg);
-  box-shadow:
-    0 24px 48px -12px rgb(0 0 0 / 0.55),
-    0 8px 20px rgb(0 0 0 / 0.45);
+  background: var(--menu-bg);
+  /* 浮层视觉走 menu token（视觉风格三态统一驱动） */
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-radius);
+  box-shadow: var(--menu-shadow);
   padding: 4px;
   transform-origin: top;
   animation: cs-in 100ms ease-out;

@@ -243,12 +243,12 @@ function skipVersion(): void {
   width: 64px;
   height: 64px;
   margin-bottom: 6px;
-  color: #fff;
+  color: var(--text-on-accent);
   border-radius: var(--radius-xl);
   background: var(--accent);
   box-shadow:
-    0 10px 24px rgba(9, 12, 22, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    0 10px 24px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .a-title {

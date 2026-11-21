@@ -335,12 +335,10 @@ defineExpose({ openAt, close })
   min-width: 176px;
   max-width: 240px;
   padding: 6px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  box-shadow:
-    0 25px 50px -12px rgb(0 0 0 / 0.5),
-    var(--shadow-lg);
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-radius);
+  box-shadow: var(--menu-shadow);
   animation: menu-in 120ms var(--ease);
   transform-origin: top center;
 }

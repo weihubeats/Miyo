@@ -10,7 +10,6 @@ import { json, jsonParseLinter } from '@codemirror/lang-json'
 import { linter } from '@codemirror/lint'
 import { bracketMatching, defaultHighlightStyle, foldGutter, indentOnInput, syntaxHighlighting, HighlightStyle } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
-import { THEME_EVENT } from '@/stores/theme'
 
 const props = withDefaults(
   defineProps<{
@@ -42,23 +41,12 @@ const emit = defineEmits<{
 const host = ref<HTMLElement | null>(null)
 let view: EditorView | null = null
 const readOnlyCompartment = new Compartment()
-const themeCompartment = new Compartment()
 const searchCompartment = new Compartment()
-
-/** 当前主题：以 <html> 的 data-theme 为准，并监听 miyo:theme 全局事件联动。 */
-const theme = ref<'dark' | 'light'>(readThemeFromDom())
-function readThemeFromDom(): 'dark' | 'light' {
-  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark'
-}
-function onThemeEvent(e: Event): void {
-  const mode = (e as CustomEvent<{ mode: 'dark' | 'light' }>).detail?.mode
-  if (mode === 'dark' || mode === 'light') theme.value = mode
-}
 
 /**
  * 语法色唯一真源是 style.css 的 --tok-*（深浅各一套，随 data-theme 联动），
  * 这里只引用 var()：同一份 JSON 在请求编辑器与响应树两侧颜色一致，
- * 组件内不再维护第二套硬编码色。
+ * 组件内不再维护第二套硬编码色（表面主题同规则，见 cmTheme）。
  */
 const syntaxHighlight = HighlightStyle.define([
   { tag: [tags.propertyName], color: 'var(--tok-key)' },
@@ -71,11 +59,22 @@ const syntaxHighlight = HighlightStyle.define([
   { tag: [tags.lineComment], color: 'var(--tok-gutter)' },
 ])
 
-const darkTheme = EditorView.theme({
+/**
+ * 编辑器表面主题：单套 CSS 变量驱动（不再区分 dark/light 两份硬编码主题）。
+ *
+ * - 色源全部走主题 token：--code-*（表面/文字/光标）、--tok-*（行号）、
+ *   --accent（选区）、--bg-hover（活动行）、--bg-elevated/--border-strong（tooltip）、
+ *   --warning/--orange（搜索匹配）——深浅主题、8 套色板、自定义主题自动跟随；
+ * - 主题切换 = CSS 变量换值，CodeMirror 无需 reconfigure / 重新初始化
+ *   （不再监听 miyo:theme；themeCompartment 已随双主题一并移除）；
+ * - 浅色下 --code-bg 是显式浅底，编辑器任何包裹处都不会退回深色残留。
+ */
+const cmTheme = EditorView.theme({
   '&': {
     height: '100%',
-    fontSize: '12px',
-    color: '#e2e8f0',
+    fontSize: 'var(--fs-xs)',
+    color: 'var(--code-fg)',
+    backgroundColor: 'var(--code-bg)',
   },
   '.cm-scroller': {
     fontFamily: 'var(--font-mono)',
@@ -83,15 +82,15 @@ const darkTheme = EditorView.theme({
   },
   '.cm-content': {
     padding: '8px 0',
-    caretColor: '#a78bfa',
+    caretColor: 'var(--code-caret)',
   },
   '.cm-line': {
     padding: '0 8px',
   },
   '.cm-gutters': {
     backgroundColor: 'transparent',
-    borderRight: '1px solid rgba(148, 163, 184, 0.15)',
-    color: '#64748b',
+    borderRight: '1px solid var(--border-editor)',
+    color: 'var(--tok-gutter)',
   },
   '.cm-foldGutter .cm-gutterElement': {
     cursor: 'pointer',
@@ -100,102 +99,41 @@ const darkTheme = EditorView.theme({
     outline: 'none',
   },
   '.cm-cursor': {
-    borderLeftColor: '#a78bfa',
+    borderLeftColor: 'var(--code-caret)',
   },
   '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, ::selection':
     {
-      backgroundColor: 'rgba(168, 85, 247, 0.25) !important',
+      backgroundColor: 'color-mix(in srgb, var(--accent) 25%, transparent) !important',
     },
   '.cm-activeLine': {
-    backgroundColor: 'rgba(148, 163, 184, 0.06)',
+    backgroundColor: 'var(--bg-hover)',
   },
   '.cm-activeLineGutter': {
-    backgroundColor: 'rgba(148, 163, 184, 0.06)',
+    backgroundColor: 'var(--bg-hover)',
   },
   '.cm-tooltip': {
-    backgroundColor: '#1e293b',
-    border: '1px solid #334155',
-    color: '#e2e8f0',
+    backgroundColor: 'var(--bg-elevated)',
+    border: '1px solid var(--border-strong)',
+    color: 'var(--text-1)',
   },
   '.cm-tooltip-lint': {
-    fontSize: '12px',
+    fontSize: 'var(--fs-xs)',
+  },
+  /* 覆盖 @codemirror/view 库内置的 .cm-placeholder 硬编码 #757575（3.7:1）→ token */
+  '.cm-placeholder': {
+    color: 'var(--code-placeholder)',
   },
   '.cm-foldPlaceholder': {
-    backgroundColor: 'rgba(148, 163, 184, 0.15)',
-    color: '#94a3b8',
+    backgroundColor: 'var(--bg-hover)',
+    color: 'var(--text-3)',
     border: 'none',
   },
   '.cm-searchMatch': {
-    backgroundColor: 'rgba(251, 191, 36, 0.25)',
+    backgroundColor: 'color-mix(in srgb, var(--warning) 22%, transparent)',
   },
   '.cm-searchMatchActive': {
-    backgroundColor: 'rgba(251, 146, 60, 0.55)',
-    outline: '1px solid rgba(251, 146, 60, 0.9)',
-  },
-})
-
-const lightTheme = EditorView.theme({
-  '&': {
-    height: '100%',
-    fontSize: '12px',
-    color: '#1f2329',
-    // 显式浅底（slate-50）：不依赖容器透传，任何包裹处都不会退回深色残留
-    backgroundColor: '#f8fafc',
-  },
-  '.cm-scroller': {
-    fontFamily: 'var(--font-mono)',
-    lineHeight: '1.6',
-  },
-  '.cm-content': {
-    padding: '8px 0',
-    caretColor: '#7c3aed',
-  },
-  '.cm-line': {
-    padding: '0 8px',
-  },
-  '.cm-gutters': {
-    backgroundColor: 'transparent',
-    borderRight: '1px solid rgba(107, 114, 128, 0.2)',
-    color: '#94a3b8',
-  },
-  '.cm-foldGutter .cm-gutterElement': {
-    cursor: 'pointer',
-  },
-  '&.cm-focused': {
-    outline: 'none',
-  },
-  '.cm-cursor': {
-    borderLeftColor: '#7c3aed',
-  },
-  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, ::selection':
-    {
-      backgroundColor: 'rgba(124, 58, 237, 0.2) !important',
-    },
-  '.cm-activeLine': {
-    backgroundColor: 'rgba(107, 114, 128, 0.08)',
-  },
-  '.cm-activeLineGutter': {
-    backgroundColor: 'rgba(107, 114, 128, 0.08)',
-  },
-  '.cm-tooltip': {
-    backgroundColor: '#ffffff',
-    border: '1px solid #d0d5dd',
-    color: '#1f2329',
-  },
-  '.cm-tooltip-lint': {
-    fontSize: '12px',
-  },
-  '.cm-foldPlaceholder': {
-    backgroundColor: 'rgba(107, 114, 128, 0.12)',
-    color: '#6b7280',
-    border: 'none',
-  },
-  '.cm-searchMatch': {
-    backgroundColor: 'rgba(217, 119, 6, 0.2)',
-  },
-  '.cm-searchMatchActive': {
-    backgroundColor: 'rgba(249, 115, 22, 0.35)',
-    outline: '1px solid rgba(249, 115, 22, 0.8)',
+    backgroundColor: 'color-mix(in srgb, var(--orange) 45%, transparent)',
+    outline: '1px solid color-mix(in srgb, var(--orange) 80%, transparent)',
   },
 })
 
@@ -240,10 +178,8 @@ function clearSearchDecorations(): void {
     effects: searchCompartment.reconfigure(EditorView.decorations.of(Decoration.none)),
   })
 }
-/** 当前生效主题对应的扩展集（主题样式 + 语法高亮；高亮本身走 --tok-* 随主题联动）。 */
-function currentThemeExtension() {
-  return [theme.value === 'dark' ? darkTheme : lightTheme, syntaxHighlighting(syntaxHighlight)]
-}
+/** 编辑器扩展集（表面主题 + 语法高亮；两者均为 CSS 变量驱动，随主题即时联动）。 */
+const cmThemeExtension = [cmTheme, syntaxHighlighting(syntaxHighlight)]
 
 /**
  * 大文档降级：超 200k 字符时跳过实时 JSON lint（每次变更全量 parse），
@@ -252,7 +188,6 @@ function currentThemeExtension() {
 const LARGE_DOC_CHARS = 200_000
 
 onMounted(() => {
-  window.addEventListener(THEME_EVENT, onThemeEvent)
   if (!host.value) return
   const largeDoc = props.modelValue.length > LARGE_DOC_CHARS
   view = new EditorView({
@@ -273,7 +208,7 @@ onMounted(() => {
       props.language === 'javascript' ? javascript() : json(),
       // JSON 上下文补全（键=同文已出现键，值=true/false/null）；JS 模式不启用
       ...(props.language === 'json' ? [autocompletion({ override: [jsonCompletionSource] })] : []),
-      themeCompartment.of(currentThemeExtension()),
+      cmThemeExtension,
       // 大文档跳过实时 lint（见 LARGE_DOC_CHARS 说明）；JS 无 JSON lint。
       ...(props.language === 'javascript' || largeDoc ? [] : [linter(jsonParseLinter())]),
       readOnlyCompartment.of(EditorState.readOnly.of(props.readonly)),
@@ -292,14 +227,6 @@ onMounted(() => {
   })
   if (props.autofocus) view.focus()
 })
-
-watch(
-  theme,
-  () => {
-    if (!view) return
-    view.dispatch({ effects: themeCompartment.reconfigure(currentThemeExtension()) })
-  },
-)
 
 watch(
   () => props.modelValue,
@@ -399,7 +326,6 @@ function selectMatch(query: string, index: number): void {
 defineExpose({ requestMeasure, selectMatch, focus: () => view?.focus() })
 
 onBeforeUnmount(() => {
-  window.removeEventListener(THEME_EVENT, onThemeEvent)
   flushEmit()
   view?.destroy()
   view = null

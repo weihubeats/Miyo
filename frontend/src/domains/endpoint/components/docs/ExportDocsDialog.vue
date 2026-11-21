@@ -404,6 +404,6 @@ async function startExport(): Promise<void> {
 }
 .variant-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 </style>

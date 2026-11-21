@@ -567,14 +567,14 @@ defineExpose({ expandAll, collapseAll, matchCount })
 
 /* 查找高亮：普通匹配低对比，当前匹配高亮并描边。 */
 :deep(.jt-mark) {
-  background: var(--accent-tint, rgba(99, 102, 241, 0.25));
+  background: var(--accent-tint);
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
 }
 :deep(.jt-mark.active) {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-on-accent);
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }

@@ -3079,7 +3079,7 @@ function stepTimeoutOf(s: EditorStep): number | null {
 
 .wf-step-issue.err {
   background: var(--danger);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 /* ---- 运行前校验面板 ---- */
@@ -3127,7 +3127,7 @@ function stepTimeoutOf(s: EditorStep): number | null {
 
 .wf-validate-tag.error {
   background: var(--danger);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .wf-validate-tag.warn {

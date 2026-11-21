@@ -241,7 +241,7 @@ const emit = defineEmits<{
   border: 1px solid rgba(255, 255, 255, 0.12);
   /* 内高光 + 投影：玻璃方块质感，替代纯平色块 */
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
     0 2px 8px rgba(0, 0, 0, 0.3);
   font-size: var(--fs-xs);
   font-weight: 700;
@@ -282,14 +282,12 @@ const emit = defineEmits<{
   height: 7px;
   border-radius: 50%;
   background: var(--danger);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--danger) 55%, transparent);
 }
 .proj-status .status-dot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 4px currentColor;
 }
 
 /* ---- 第 2 行：描述（固定两行高，齐卡片高度） ---- */

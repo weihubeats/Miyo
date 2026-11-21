@@ -58,10 +58,10 @@ const t = useLocaleStore().t
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--text-on-accent);
   border-radius: var(--radius-md);
   background: var(--accent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  box-shadow: none;
 }
 
 .brand-text {
