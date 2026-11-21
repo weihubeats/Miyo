@@ -5,6 +5,57 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Miyo</title>
     <link rel="icon" type="image/png" href="/favicon.png" />
+    <script>
+      // 首帧主题预置（防 FOUC）：style.css 的 :root 是深色基线，而主题应用在
+      // 延迟执行的 module 脚本里——不在此同步写属性，浅色/跟随系统浅色的用户
+      // 每次启动都会先渲染一帧默认深色再翻转（跟随系统 bug 的实证根因）。
+      // 此处镜像 stores/theme.ts 的解析逻辑（含旧版三态键迁移）：
+      // version 校验失败/存储不可用/JSON 损坏 → 保持深色基线（与 store 回退一致）。
+      (function () {
+        try {
+          var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var root = document.documentElement;
+          var LIGHT = { light: 1, 'ocean-light': 1, forest: 1, sand: 1, lavender: 1 };
+          var BUILTIN = ['light', 'dark', 'ocean', 'ocean-light', 'forest-dark', 'forest', 'sand', 'lavender'];
+          var id = dark ? 'dark' : 'light';
+          var custom = null;
+          var raw = localStorage.getItem('miyo.theme.config');
+          var c = raw ? JSON.parse(raw) : null;
+          if (c && c.version === 1) {
+            // 记忆对无效时与 store 的 pickId 回退一致：深侧回 dark、浅侧回 light
+            var pickPair = function (v, fb) { return BUILTIN.indexOf(v) !== -1 || v === 'custom' ? v : fb; };
+            var sys = c.mode === 'system'
+              ? (dark ? pickPair(c.lastDark, 'dark') : pickPair(c.lastLight, 'light'))
+              : (BUILTIN.indexOf(c.current) !== -1 || c.current === 'custom' ? c.current : 'dark');
+            if (sys === 'custom' && c.custom && typeof c.custom === 'object') {
+              id = 'custom';
+              custom = c.custom;
+            } else if (BUILTIN.indexOf(sys) !== -1) {
+              id = sys;
+            } else {
+              id = 'dark';
+            }
+          } else {
+            // 旧版三态键（system|dark|light）：main.ts 的迁移读它，这里首帧同样尊重它
+            var legacy = localStorage.getItem('miyo.theme.mode');
+            if (legacy === 'light') id = 'light';
+            else if (legacy === 'system') id = dark ? 'dark' : 'light';
+            else if (legacy === 'dark') id = 'dark';
+          }
+          var base =
+            id === 'custom' && custom
+              ? custom.base === 'light' ? 'light' : 'dark'
+              : LIGHT[id] ? 'light' : 'dark';
+          root.setAttribute('data-theme', base);
+          root.setAttribute('data-theme-id', id);
+          root.setAttribute('data-style', c && (c.style === 'minimal' || c.style === 'soft') ? c.style : 'studio');
+          root.classList.toggle('dark', base === 'dark');
+          root.classList.toggle('light', base === 'light');
+        } catch (e) {
+          // 存储不可用（隐私模式等）/JSON 损坏：保持 :root 深色基线，与 store 回退一致
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

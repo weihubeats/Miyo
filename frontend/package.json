@@ -17,6 +17,7 @@
     "preview": "vite preview",
     "tauri": "bash ../scripts/ensure-mcp-bin.sh && tauri",
     "test": "vitest run",
+    "detect:ui": "impeccable detect src/ && impeccable detect http://localhost:5199/projects",
     "test:watch": "vitest",
     "lint": "eslint ."
   },
