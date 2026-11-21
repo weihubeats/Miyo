@@ -38,6 +38,7 @@ import SearchInput from '@/components/ui/SearchInput.vue'
 import type { SelectOption } from '@/components/ui/CustomSelect.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import ProjectCreateModal from '@/domains/workspace/components/projectlist/projectlist/ProjectCreateModal.vue'
+import { lazyComponent } from '@/composables/lazyComponent'
 import TeamManageModal from '@/domains/workspace/components/projectlist/projectlist/TeamManageModal.vue'
 import SyncImportDialog from '@/domains/workspace/components/projectlist/projectlist/SyncImportDialog.vue'
 import ProjectRenameModal from '@/domains/workspace/components/projectlist/projectlist/ProjectRenameModal.vue'
@@ -599,11 +600,25 @@ function openCreateForTeam(teamId: string): void {
   showCreate.value = true
 }
 
-// ---------- 从远端导入（团队组头部「同步」入口） ----------
+// ---------- 从远端导入 / 同步配置（团队组头部「同步」「配置」入口） ----------
+const SyncDialog = lazyComponent(() => import('@/domains/workspace/components/SyncDialog.vue'))
 const importTeam = ref<{ id: string; name: string } | null>(null)
+const syncImportRef = ref<InstanceType<typeof SyncImportDialog> | null>(null)
+/** 团队同步配置（远端绑定管理）：projectId=null → SyncDialog 仅管理绑定，推/拉禁用。 */
+const syncConfigTeam = ref<{ id: string; name: string } | null>(null)
 
 function openImportForTeam(team: { id: string; name: string }): void {
   importTeam.value = team
+}
+
+function openSyncConfigFor(team: { id: string; name: string } | null): void {
+  syncConfigTeam.value = team
+}
+
+/** 同步配置关闭后：导入弹窗若开着，重新拉取远端清单（配置刚建好即可见）。 */
+function onSyncConfigClosed(): void {
+  syncConfigTeam.value = null
+  if (importTeam.value) syncImportRef.value?.reload()
 }
 
 /** 团队管理弹窗变更后：刷新团队分组 + 项目（改名/删除影响归属展示）。 */
@@ -1113,6 +1128,13 @@ useWindowDrag(topBarEl)
                   >
                     <Icon name="refresh" :size="12" /> {{ t('projectlist.teamSync') }}
                   </button>
+                  <IconButton
+                    name="settings"
+                    :size="13"
+                    :title="t('projectlist.teamSyncConfig')"
+                    :label="t('projectlist.teamSyncConfig')"
+                    @click="openSyncConfigFor(g.team)"
+                  />
                   <button
                     class="team-add miyo-btn miyo-btn-sm miyo-btn-ghost"
                     type="button"
@@ -1238,11 +1260,22 @@ useWindowDrag(topBarEl)
     <TeamManageModal v-model:open="showTeamMgr" @changed="onTeamsChanged" />
     <SyncImportDialog
       v-if="importTeam"
+      ref="syncImportRef"
       :open="!!importTeam"
       :team-id="importTeam.id"
       :team-name="importTeam.name"
       @update:open="importTeam = null"
       @imported="load"
+      @configure="openSyncConfigFor(importTeam)"
+    />
+
+    <SyncDialog
+      v-if="syncConfigTeam"
+      :open="!!syncConfigTeam"
+      :project-id="null"
+      :project-name="syncConfigTeam.name"
+      :team-id="syncConfigTeam.id"
+      @update:open="onSyncConfigClosed"
     />
 
     <ProjectRenameModal :project="renaming" @close="renaming = null" @saved="onRenamed" />

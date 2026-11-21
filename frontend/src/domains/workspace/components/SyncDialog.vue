@@ -78,7 +78,7 @@ const activeRemote = computed(() => remotes.value[0] ?? null)
 async function loadRemotes(): Promise<void> {
   loading.value = true
   try {
-    remotes.value = await api.syncRemoteList(effectiveTeamId.value)
+    remotes.value = (await api.syncRemoteList(effectiveTeamId.value)) ?? []
     // 快照目录按团队约定预填（仓库内按项目分文件存放）。
     if (!formPath.value) {
       formPath.value = 'projects'
@@ -224,9 +224,10 @@ function shortRev(rev?: string | null): string {
     dialog-class="sync-dialog"
     @update:open="emit('update:open', $event)"
   >
-    <p v-if="!projectId" class="sync-empty">{{ t('sync.noProject') }}</p>
-    <template v-else>
-      <p class="sync-sub">{{ t('sync.subtitle', { project: projectName }) }}</p>
+    <!-- 远端绑定管理（团队维度）任何上下文都可用；仅推送/拉取需要项目（见 footer 门控）。
+        仪表板「同步配置」入口以此复用本弹窗（projectId=null）。 -->
+    <p v-if="!projectId" class="sync-hint">{{ t('sync.noProject') }}</p>
+    <p v-else class="sync-sub">{{ t('sync.subtitle', { project: projectName }) }}</p>
 
     <!-- 远端列表 -->
     <div v-if="loading" class="sync-empty">{{ t('sync.loading') }}</div>
@@ -354,16 +355,9 @@ function shortRev(rev?: string | null): string {
       </div>
       <!-- 启发式脱敏非绝对安全：常驻提示 + 需人工审查项（脚本类）随日志展示 -->
       <p v-if="projectId" class="sync-hint warn">{{ t('sync.redactDisclaimer') }}</p>
-    </template>
 
     <template #footer>
-      <div v-if="!projectId" class="sync-actions">
-        <div class="sync-spacer" />
-        <button class="miyo-btn" type="button" @click="emit('update:open', false)">
-          {{ t('common.close') }}
-        </button>
-      </div>
-      <div v-else class="sync-actions">
+      <div class="sync-actions">
         <button class="miyo-btn miyo-btn-ghost" type="button" :disabled="busy" @click="showForm = !showForm">
           <Icon name="plus" :size="14" /> {{ t('sync.addRemote') }}
         </button>
@@ -371,20 +365,26 @@ function shortRev(rev?: string | null): string {
           {{ t('common.save') }}
         </button>
         <div class="sync-spacer" />
-        <button class="miyo-btn" type="button" :disabled="busy || !activeRemote" @click="loadPreview">
-          <Icon name="download" :size="14" /> {{ t('sync.pull') }}
-        </button>
-        <button
-          v-if="preview"
-          class="miyo-btn miyo-btn-primary"
-          type="button"
-          :disabled="busy"
-          @click="applyPull"
-        >
-          {{ t('sync.applyPull') }}
-        </button>
-        <button class="miyo-btn miyo-btn-primary" type="button" :disabled="busy || !activeRemote" @click="push">
-          <Icon name="upload" :size="14" /> {{ t('sync.push') }}
+        <!-- 推 / 拉以项目为操作对象：仪表板等无项目上下文仅管理绑定 -->
+        <template v-if="projectId">
+          <button class="miyo-btn" type="button" :disabled="busy || !activeRemote" @click="loadPreview">
+            <Icon name="download" :size="14" /> {{ t('sync.pull') }}
+          </button>
+          <button
+            v-if="preview"
+            class="miyo-btn miyo-btn-primary"
+            type="button"
+            :disabled="busy"
+            @click="applyPull"
+          >
+            {{ t('sync.applyPull') }}
+          </button>
+          <button class="miyo-btn miyo-btn-primary" type="button" :disabled="busy || !activeRemote" @click="push">
+            <Icon name="upload" :size="14" /> {{ t('sync.push') }}
+          </button>
+        </template>
+        <button class="miyo-btn" type="button" @click="emit('update:open', false)">
+          {{ t('common.close') }}
         </button>
       </div>
     </template>

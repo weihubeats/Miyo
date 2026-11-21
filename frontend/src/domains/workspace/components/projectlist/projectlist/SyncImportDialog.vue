@@ -26,6 +26,8 @@ const emit = defineEmits<{
   'update:open': [open: boolean]
   /** 有项目导入成功（父层刷新列表）。 */
   imported: []
+  /** 无远端绑定 → 请求父层打开团队同步配置（配置关闭后父层调 reload()）。 */
+  configure: []
 }>()
 
 const t = useLocaleStore().t
@@ -52,11 +54,11 @@ async function load(): Promise<void> {
   remotesOk.value = false
   entries.value = []
   try {
-    const remotes = await api.syncRemoteList(props.teamId)
-    const remote = remotes[0]
+    const remotes = (await api.syncRemoteList(props.teamId)) ?? []
+    const remote = Array.isArray(remotes) ? remotes[0] : null
     if (!remote) return
     remotesOk.value = true
-    entries.value = await api.syncRemoteListProjects(remote.id)
+    entries.value = (await api.syncRemoteListProjects(remote.id)) ?? []
   } catch (err) {
     toast.error(t('simport.loadFail'), {
       message: errorText(err),
@@ -69,8 +71,8 @@ async function load(): Promise<void> {
 async function importProject(entry: RemoteProjectEntry): Promise<void> {
   busyId.value = entry.project_id
   try {
-    const remotes = await api.syncRemoteList(props.teamId)
-    const remote = remotes[0]
+    const remotes = (await api.syncRemoteList(props.teamId)) ?? []
+    const remote = Array.isArray(remotes) ? remotes[0] : null
     if (!remote) return
     const result = await api.syncImportProject(remote.id, entry.project_id)
     toast.success(t('simport.importOk', { name: result.name }), {
@@ -86,6 +88,8 @@ async function importProject(entry: RemoteProjectEntry): Promise<void> {
     busyId.value = null
   }
 }
+
+defineExpose({ reload: load })
 
 function shortTime(iso: string): string {
   const d = new Date(iso)
@@ -107,8 +111,14 @@ function shortTime(iso: string): string {
     <p v-if="loading" class="simport-hint">{{ t('common.loading') }}</p>
 
     <template v-else>
-      <!-- 无远端 -->
-      <p v-if="!remotesOk" class="simport-hint">{{ t('simport.noRemote') }}</p>
+      <!-- 无远端：提示 + 配置 CTA（闭环——原死胡同提示不给入口，用户实测） -->
+      <div v-if="!remotesOk" class="simport-empty">
+        <p class="simport-hint">{{ t('simport.noRemote') }}</p>
+        <button class="miyo-btn miyo-btn-sm" type="button" @click="emit('configure')">
+          <Icon name="settings" :size="12" />
+          {{ t('simport.configCta') }}
+        </button>
+      </div>
 
       <!-- 有远端但无快照 -->
       <p v-else-if="!entries.length" class="simport-hint">{{ t('simport.empty') }}</p>
@@ -146,6 +156,12 @@ function shortTime(iso: string): string {
   color: var(--text-2);
   font-size: var(--fs-xs);
   line-height: 1.6;
+}
+.simport-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
 }
 .simport-hint {
   margin: 0;
