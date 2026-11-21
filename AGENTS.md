@@ -19,6 +19,16 @@ Miyo：Tauri 2 + Vue 3 的跨平台 API 调试工具（Rust 工作区 + 前端�
   miyo-tauri check/test、前端 lint/test/build）→ 主题化提交 → 推送 → 监控 CI 直到绿。
   触发词：「推送 / push / 提交推送」。
 
+## 开发环境磁盘卫生（target/ 治理）
+
+- **三个 workspace 共享仓库根 `target/`**（`.cargo/config.toml` target-dir），依赖只编一份；
+- **dev profile 已瘦身**：三处 `[profile.dev] debug = "line-tables-only"`（行号表级调试信息，
+  产物体积约降 60%）——需要 lldb 完整变量调试时临时改回 `debug = true` 并重编；
+- **定期清理**（cargo 永不回收旧产物）：`npm run clean:cache`（清增量缓存 + 21 天前产物，
+  最安全）或 `npm run clean`（清空整个 target，三 workspace 全量重编）；
+  实测增量缓存一轮可释放 13G+；
+- 修改 `[profile.dev]` 会触发全量重编（本地），CI 无影响。
+
 ## 后端规范（实证踩坑）
 
 - **`crates/miyo-storage/migrations/*.sql` 已应用的迁移文件一律不可修改**（含注释）：

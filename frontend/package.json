@@ -18,6 +18,8 @@
     "tauri": "bash ../scripts/ensure-mcp-bin.sh && tauri",
     "test": "vitest run",
     "detect:ui": "impeccable detect src/ && impeccable detect http://localhost:5199/projects",
+    "clean:cache": "node ../scripts/clean-target.mjs incremental && node ../scripts/clean-target.mjs stale",
+    "clean": "node ../scripts/clean-target.mjs full",
     "test:watch": "vitest",
     "lint": "eslint ."
   },

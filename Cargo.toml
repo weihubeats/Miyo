@@ -146,6 +146,12 @@ ts-rs = { version = "12", default-features = false, features = [
     "serde-json-impl",
 ] }
 
+# dev 构建瘦身：行号表级调试信息（backtrace 仍带行号；lldb 变量检查降级）。
+# 依赖与测试二进制体积约降 60%——target/ 的最大增长源（deps 15G 实测）。
+# 需要完整变量调试时临时改回 debug = true 并重编。
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
