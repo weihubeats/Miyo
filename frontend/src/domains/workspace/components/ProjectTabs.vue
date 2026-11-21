@@ -286,7 +286,6 @@ function onTabsWheel(event: WheelEvent): void {
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 4px var(--accent);
 }
 
 .pt-name {

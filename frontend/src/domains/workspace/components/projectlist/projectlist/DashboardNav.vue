@@ -161,14 +161,11 @@ function iconOf(item: NavEntry): IconName {
 .nav-item:active {
   background: var(--bg-active);
 }
-/* 选中态：Obsidian 全宽主题 pill（渐变 + 光晕 + 白字，跟随主题 accent） */
+/* 选中态：tint 底 + accent 字（impeccable side-tab 规则：不用边缘竖条） */
 .nav-item.active {
-  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-  color: #fff;
+  background: var(--accent-tint);
+  color: var(--accent);
   font-weight: 600;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 4px 14px var(--accent-tint);
 }
 
 .nav-label {
@@ -190,7 +187,8 @@ function iconOf(item: NavEntry): IconName {
 /* 「测试中」标记：未选中 amber 描边，选中（紫底）提亮为半透明白底保证可读 */
 .nav-beta {
   flex: none;
-  font-size: var(--fs-2xxs);
+  /* 功能状态标签：11px 可读性地板（impeccable undersized-ui-text） */
+  font-size: var(--fs-xxs);
   line-height: 1.5;
   padding: 0 5px;
   border-radius: var(--radius-pill);
@@ -201,8 +199,8 @@ function iconOf(item: NavEntry): IconName {
 }
 
 .nav-item.active .nav-beta {
-  border-color: rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: transparent;
+  color: var(--accent);
 }
 </style>

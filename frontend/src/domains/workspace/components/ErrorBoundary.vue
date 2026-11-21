@@ -138,9 +138,8 @@ async function onRetry(): Promise<void> {
   margin: 24px;
   padding: 20px;
   border-radius: 10px;
-  background: var(--miyo-bg-panel-2);
-  border: 1px solid var(--miyo-border);
-  border-left: 3px solid var(--miyo-danger);
+  background: var(--miyo-danger-tint);
+  border: 1px solid var(--miyo-danger-border);
 }
 
 .miyo-boundary-glyph {

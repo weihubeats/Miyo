@@ -1063,7 +1063,6 @@ onBeforeUnmount(() => {
   height: 6px;
   border-radius: 50%;
   background: var(--warning);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--warning) 60%, transparent);
 }
 
 /* 主保存按钮：视觉收敛到全局 miyo-btn-primary（类名保留供 spec 定位） */

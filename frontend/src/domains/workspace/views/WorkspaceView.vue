@@ -1177,7 +1177,6 @@ onBeforeUnmount(() => {
   border-color: color-mix(in srgb, var(--accent) 85%, transparent);
   background: color-mix(in srgb, var(--accent) 26%, transparent);
   color: var(--accent-hover);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .tool-add:active {
   transform: translateY(1px);

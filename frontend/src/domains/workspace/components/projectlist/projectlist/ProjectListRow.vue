@@ -188,7 +188,6 @@ const emit = defineEmits<{
   height: 7px;
   border-radius: 50%;
   background: var(--danger);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--danger) 55%, transparent);
 }
 
 /* 指标列：等宽字体 + 右对齐，跨行纵向对齐 */

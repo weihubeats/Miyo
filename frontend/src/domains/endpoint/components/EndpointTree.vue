@@ -1077,43 +1077,40 @@ function onBatchMenuSelect(item: MenuItem): void {
   background: var(--warning-tint);
   color: var(--warning);
 }
-/* 激活行（紫 pill）上的星标保持白色可读 */
-.tree-row.active .tree-star-slot :deep(.ib) {
-  color: rgba(255, 255, 255, 0.85);
-}
 .tree-row:hover {
   background: var(--bg-hover);
 }
-/* 选中态：Obsidian 全宽紫 pill（渐变 + 光晕 + 白字），渐变走 --grad-primary 系令牌（浅色降刺眼） */
+/* 选中态：tint 底 + accent 文字（impeccable side-tab 规则：不用边缘竖条，
+   背景 tint 已承载状态语义——方法徽章保持语义色，tint 底上均可读） */
 .tree-row.active {
-  background: var(--grad-primary);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 4px 14px var(--primary-glow);
+  background: var(--accent-tint);
 }
 .tree-row.active::before {
   content: none;
 }
 .tree-row.active .tree-name,
 .tree-row.active .tree-name-text {
-  color: #fff;
+  color: var(--accent);
+  font-weight: 600;
 }
 .tree-row.active .tree-chevron,
 .tree-row.active .tree-folder-icon {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--accent);
+}
+.tree-row.active .tree-star-slot :deep(.ib) {
+  color: var(--accent);
 }
 .tree-row.active .tree-actions :deep(.ib) {
-  color: rgba(255, 255, 255, 0.75);
+  color: var(--accent);
 }
 .tree-row.active .tree-actions :deep(.ib:hover) {
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
+  background: var(--bg-active);
+  color: var(--accent);
 }
 .tree-row.active .tree-method {
-  /* 徽章在紫底上提亮底色保证可读 */
-  background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.25);
-  color: #fff;
+  /* 方法徽章保持语义色；tint 底（12~16% accent）上语义色对比充足 */
+  background: transparent;
+  border-color: transparent;
 }
 /* 多选态：淡蓝底（与激活态可叠加，激活优先显示） */
 .tree-row.selected {

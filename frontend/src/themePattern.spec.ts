@@ -41,6 +41,10 @@ const BANNED = [
   /bg-purple-600(?![\d/])/, // 硬编码亮紫填充（走 --primary；淡色 tint（/20 等）放行）
   /hover:bg-purple-500(?![\d/])/, // 硬编码亮紫 hover（同上，tint 放行）
   /shadow-purple-950/, // 深紫脏影（走 --primary-glow）
+  /rgba\(168, ?85, ?247/, // 硬编码旧 accent 紫（走 --accent / --accent-tint / --focus-ring）
+  /rgba\(9, ?12, ?22/, // 硬编码阴影色（走 --shadow-* 主题自适应阴影）
+  /color: ?#fff\b/, // 白色文字字面量（彩色底走 --text-on-accent；WindowControls 平台例外在 spec 底部白名单）
+  /background: ?#fff\b/, // 白色填充（开关旋钮等彩色底元素走 --text-on-accent）
 ]
 
 describe('主题写法', () => {
@@ -55,7 +59,10 @@ describe('主题写法', () => {
 
   it('不存在写死的恒深底 token / 深代码井 / 亮紫填充字面量（浅色突兀实证）', () => {
     const offenders: { file: string; pattern: string }[] = []
+    /** 平台语义例外：Windows 原生关闭钮红色 + 白字（非主题范畴）。 */
+    const WHITELIST_FILES = ['WindowControls.vue']
     for (const file of vueFiles(join(process.cwd(), 'src'))) {
+      if (WHITELIST_FILES.some((w) => file.endsWith(w))) continue
       // 先全文剥离注释（块注释可跨行、HTML 注释同理），再逐行扫黑名单
       const text = readFileSync(file, 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')

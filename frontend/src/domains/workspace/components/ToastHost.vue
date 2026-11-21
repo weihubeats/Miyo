@@ -111,25 +111,12 @@ function onAction(item: ToastItem): void {
   align-items: flex-start;
   gap: 10px;
   width: 100%;
-  padding: 10px 12px 10px 14px;
+  padding: 10px 12px;
   border-radius: var(--radius);
   background: var(--bg-elevated);
+  /* 类型语义由前导彩色图标承载（impeccable side-tab 规则：不用左缘色条） */
   border: 1px solid var(--border-strong);
-  border-left-width: 3px;
   box-shadow: var(--shadow-lg);
-}
-
-.miyo-toast-success {
-  border-left-color: var(--miyo-success);
-}
-.miyo-toast-info {
-  border-left-color: var(--miyo-info);
-}
-.miyo-toast-warning {
-  border-left-color: var(--miyo-warning);
-}
-.miyo-toast-error {
-  border-left-color: var(--miyo-danger);
 }
 
 .miyo-toast-icon {

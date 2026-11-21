@@ -262,6 +262,10 @@ export const useAiTestStore = defineStore('aiTest', () => {
   let unlisten: UnlistenFn | null = null
   async function bindEvents(): Promise<void> {
     if (unlisten) return
+    // 非 Tauri 环境（浏览器预览）不绑定事件：@tauri-apps/api 会在缺少
+    // __TAURI_INTERNALS__ 时抛错（impeccable script-error 实证）。
+    // vitest 例外：spec 对 event 模块做了 vi.mock，守卫会挡住 mock。
+    if (!('__TAURI_INTERNALS__' in window) && !import.meta.env.VITEST) return
     unlisten = await listen<AiChatEvent>('miyo:ai-chat', (ev) => {
       const p = ev.payload
       if (p.sessionId !== activeSessionId.value) return

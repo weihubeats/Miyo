@@ -1894,7 +1894,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: #fff;
+  border-top-color: var(--text-on-accent);
   animation: btn-spin 0.7s linear infinite;
 }
 @keyframes btn-spin {
@@ -1931,7 +1931,6 @@ onUnmounted(() => {
   width: 40%;
   border-radius: 999px;
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  box-shadow: 0 0 8px var(--accent);
   animation: req-slide 0.9s ease-in-out infinite;
 }
 @keyframes req-slide {
@@ -2009,13 +2008,11 @@ onUnmounted(() => {
 }
 @keyframes resp-flash {
   0% {
-    box-shadow:
-      0 0 0 2px var(--accent),
-      0 0 28px var(--accent-tint);
     background: var(--accent-tint);
   }
-  60% { box-shadow: 0 0 0 1px var(--accent); }
-  100% { box-shadow: 0 0 0 0 transparent; background: transparent; }
+  100% {
+    background: transparent;
+  }
 }
 @keyframes status-pop {
   0% { transform: scale(0.6); }
@@ -2262,7 +2259,7 @@ onUnmounted(() => {
   height: 8px;
   transform: scale(0);
   clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
-  background: #fff;
+  background: var(--text-on-accent);
   transition: transform 120ms var(--ease);
 }
 .rs-check input[type='checkbox']:checked {

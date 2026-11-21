@@ -40,7 +40,6 @@ const t = locale.t
   height: 100%;
   border-radius: 0 2px 2px 0;
   background: linear-gradient(90deg, var(--miyo-accent-weak), var(--miyo-accent) 60%, var(--miyo-info));
-  box-shadow: 0 0 8px color-mix(in srgb, var(--info) 70%, transparent);
   transition: width 0.2s ease;
 }
 

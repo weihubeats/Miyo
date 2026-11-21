@@ -92,13 +92,14 @@ const goBack = useGoBack()
   -webkit-app-region: no-drag;
 }
 
-/* 「测试中」标记：amber 描边 + 呼吸小圆点，常驻不可关闭（主题差异走变量） */
+/* 「测试中」标记：amber 描边 + 静态圆点，常驻不可关闭（主题差异走变量）；
+   功能状态文字 11px 地板 + 静态指示（impeccable undersized-ui-text / pulsing-dot） */
 .ai-beta-badge {
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: var(--fs-xxs);
   line-height: 1.6;
   padding: 0 7px;
   border-radius: 999px;
@@ -114,22 +115,6 @@ const goBack = useGoBack()
   height: 5px;
   border-radius: 50%;
   background: currentColor;
-  animation: ai-beta-pulse 2s ease-in-out infinite;
-}
-@keyframes ai-beta-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-/* 全局 prefers-reduced-motion 兜底会一刀切，此处让圆点静止即可 */
-@media (prefers-reduced-motion: reduce) {
-  .ai-beta-dot {
-    animation: none;
-  }
 }
 
 .ai-body-empty {

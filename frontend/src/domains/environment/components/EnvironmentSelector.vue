@@ -331,7 +331,6 @@ defineExpose({ openManager })
   flex-shrink: 0;
   background: currentColor;
   color: var(--text-3);
-  box-shadow: 0 0 6px color-mix(in srgb, currentColor 45%, transparent);
 }
 
 .env-display-name {
@@ -405,7 +404,6 @@ defineExpose({ openManager })
   flex-shrink: 0;
   background: currentColor;
   color: var(--text-3);
-  box-shadow: 0 0 6px color-mix(in srgb, currentColor 45%, transparent);
 }
 .env-opt-text {
   display: flex;
