@@ -251,12 +251,12 @@ function openScenes(): void {
   gap: 4px;
 }
 .jsc-label {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
 }
 .jsc-hint {
-  font-size: 11px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
   line-height: 1.5;
 }
 .jsc-actions {

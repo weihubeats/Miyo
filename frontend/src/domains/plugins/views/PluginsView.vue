@@ -9,7 +9,7 @@
  *
  * UI 与 Miyo 设计体系同源：CSS 变量 + miyo-* 通用类；文案全部走 i18n。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
@@ -20,6 +20,7 @@ import SearchInput from '@/components/ui/SearchInput.vue'
 import Modal from '@/components/ui/Modal.vue'
 import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import Switch from '@/components/ui/Switch.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { useLocaleStore } from '@/stores/locale'
@@ -42,7 +43,21 @@ const IPC_PREFIX = 'plugin:miyo|'
 
 // ---------- 页签 ----------
 type CenterTab = 'installed' | 'market'
-const tab = ref<CenterTab>('installed')
+/** 页签持久化：刷新后回到上次视图（非法值回已安装）。 */
+const tab = ref<CenterTab>((() => {
+  try {
+    return localStorage.getItem('miyo.plugins-tab') === 'market' ? 'market' : 'installed'
+  } catch {
+    return 'installed'
+  }
+})())
+watch(tab, (v) => {
+  try {
+    localStorage.setItem('miyo.plugins-tab', v)
+  } catch {
+    // 写失败静默
+  }
+})
 const tabItems = computed(() => [
   { value: 'installed', label: t('plugins.tabInstalled') },
   { value: 'market', label: t('plugins.tabMarket') },
@@ -74,6 +89,14 @@ async function loadCatalog(): Promise<void> {
 
 // ---------- 官方市场索引（静态；与内置目录合并展示） ----------
 
+/** 市场索引视图（Rust MarketIndexView 镜像：plugins + 签名信任级）。 */
+interface MarketIndexView {
+  schemaVersion: number
+  updatedAt: string
+  trust: 'official' | 'unsigned'
+  plugins: MarketEntryView[]
+}
+
 interface MarketEntryView {
   id: string
   name: string
@@ -89,6 +112,8 @@ interface MarketEntryView {
 }
 
 const marketEntries = ref<MarketEntryView[]>([])
+/** 市场索引信任级：official（官方签名）/ unsigned（随应用静态分发）。 */
+const marketTrust = ref<'official' | 'unsigned'>('unsigned')
 const marketQuery = ref('')
 const marketCategory = ref('all')
 const categories = computed(() => {
@@ -99,9 +124,12 @@ const categories = computed(() => {
 
 async function loadMarketIndex(): Promise<void> {
   try {
-    marketEntries.value = await invoke<MarketEntryView[]>(`${IPC_PREFIX}plugin_market_index`)
+    const view = await invoke<MarketIndexView>(`${IPC_PREFIX}plugin_market_index`)
+    marketEntries.value = view.plugins
+    marketTrust.value = view.trust === 'official' ? 'official' : 'unsigned'
   } catch {
     marketEntries.value = [] // 索引缺失不阻塞市场页（内置目录仍可用）
+    marketTrust.value = 'unsigned'
   }
 }
 
@@ -175,14 +203,17 @@ async function onUpdate(entry: PluginCatalogView): Promise<void> {
 
 /** 待卸载插件（确认弹窗）。 */
 const uninstallTarget = ref<PluginView | null>(null)
+/** 「保留插件数据」勾选（默认保留：沿用既有口径；取消勾选 = 深度清理）。 */
+const uninstallKeepData = ref(true)
 function askUninstall(view: PluginView): void {
+  uninstallKeepData.value = true
   uninstallTarget.value = view
 }
 async function confirmUninstall(): Promise<void> {
   const target = uninstallTarget.value
   if (!target) return
   try {
-    await manager.uninstall(target.id)
+    await manager.uninstall(target.id, uninstallKeepData.value)
     toast.success(t('plugins.uninstalledToast', { name: displayNameOf(target.manifest) }))
     await loadCatalog()
   } catch (e) {
@@ -478,16 +509,13 @@ function closeDetail(): void {
             >
               {{ t('plugins.updateFromPath') }}
             </button>
-            <label class="pg-switch" :title="t(e.view.enabled ? 'plugins.disableAction' : 'plugins.enableAction')">
-              <input
-                type="checkbox"
-                role="switch"
-                :checked="e.view.enabled"
-                :disabled="toggling === e.view.id"
-                @change="onToggle(e.view, ($event.target as HTMLInputElement).checked)"
-              />
-              <span class="pg-switch-track" aria-hidden="true"></span>
-            </label>
+            <Switch
+              :model-value="e.view.enabled"
+              size="sm"
+              :disabled="toggling === e.view.id"
+              :label="t(e.view.enabled ? 'plugins.disableAction' : 'plugins.enableAction')"
+              @change="onToggle(e.view, $event)"
+            />
             <IconButton
               v-if="e.view.source !== 'builtin'"
               name="history"
@@ -509,6 +537,14 @@ function closeDetail(): void {
             class="pg-market-search"
             :placeholder="t('plugins.marketSearch')"
           />
+          <!-- 索引信任徽章：官方签名 / 随应用静态分发 -->
+          <span
+            class="pg-market-trust"
+            :class="{ official: marketTrust === 'official' }"
+            :title="marketTrust === 'official' ? t('plugins.marketTrustOfficialHint') : t('plugins.marketTrustUnsignedHint')"
+          >
+            {{ marketTrust === 'official' ? t('plugins.marketTrustOfficial') : t('plugins.marketTrustUnsigned') }}
+          </span>
           <div class="pg-market-cats">
             <button
               v-for="c in categories"
@@ -627,6 +663,13 @@ function closeDetail(): void {
         {{ t('plugins.uninstallConfirm', { name: uninstallTarget ? displayNameOf(uninstallTarget.manifest) : '' }) }}
       </p>
       <p class="pg-confirm-hint">{{ t('plugins.uninstallHint') }}</p>
+      <label class="pg-keep-data">
+        <Switch v-model="uninstallKeepData" size="sm" :label="t('plugins.keepData')" />
+        <span class="pg-keep-data-text">
+          {{ t('plugins.keepData') }}
+          <span class="pg-keep-data-hint">{{ t('plugins.keepDataHint') }}</span>
+        </span>
+      </label>
       <template #footer>
         <button class="miyo-btn miyo-btn-sm" type="button" @click="uninstallTarget = null">
           {{ t('common.cancel') }}
@@ -773,7 +816,7 @@ function closeDetail(): void {
   color: var(--text-2);
   border-radius: var(--radius-md);
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
 }
 .pg-cat-chip.active {
@@ -782,7 +825,7 @@ function closeDetail(): void {
   color: var(--text-on-accent, #fff);
 }
 .pg-market-guide {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   text-align: center;
   padding: 8px 0 16px;
@@ -854,7 +897,7 @@ function closeDetail(): void {
   font-weight: 600;
 }
 .pg-ver {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--text-3);
   font-family: var(--font-mono);
 }
@@ -882,7 +925,7 @@ function closeDetail(): void {
   align-items: center;
   gap: 6px;
   margin-top: 6px;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -899,49 +942,43 @@ function closeDetail(): void {
   gap: 10px;
 }
 
-/* 启停开关（极简轨道式） */
-.pg-switch {
-  position: relative;
-  display: inline-flex;
-  cursor: pointer;
-}
-.pg-switch input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-.pg-switch-track {
-  width: 34px;
-  height: 20px;
+/* 市场索引信任徽章 */
+.pg-market-trust {
+  flex-shrink: 0;
+  padding: 3px 10px;
   border-radius: var(--radius-pill);
-  background: var(--bg-active);
   border: 1px solid var(--border);
-  position: relative;
-  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  font-size: var(--fs-2xxs);
+  color: var(--text-3);
+  cursor: help;
 }
-.pg-switch-track::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--text-3);
-  transition: transform var(--dur) var(--ease), background var(--dur) var(--ease);
+.pg-market-trust.official {
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  color: var(--success);
+  background: var(--success-tint);
 }
-.pg-switch input:checked + .pg-switch-track {
-  background: var(--accent);
-  border-color: var(--accent);
+
+/* 卸载「保留插件数据」勾选行 */
+.pg-keep-data {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
 }
-.pg-switch input:checked + .pg-switch-track::after {
-  transform: translateX(14px);
-  background: var(--text-on-accent);
+.pg-keep-data-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-1);
 }
-.pg-switch input:focus-visible + .pg-switch-track {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.pg-keep-data-hint {
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
 }
 
 /* 权限 chip（风险着色） */
@@ -991,7 +1028,7 @@ function closeDetail(): void {
 }
 .pg-inspect-section {
   margin: 14px 0 6px;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1010,7 +1047,7 @@ function closeDetail(): void {
   gap: 10px;
 }
 .pg-perm-id {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--text-3);
   font-family: var(--font-mono);
 }
@@ -1029,7 +1066,7 @@ function closeDetail(): void {
 }
 .pg-integrity {
   margin: 10px 0 0;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--text-3);
   font-family: var(--font-mono);
   overflow: hidden;

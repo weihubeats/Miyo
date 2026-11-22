@@ -8,6 +8,7 @@
  */
 import { computed } from 'vue'
 import { useLocaleStore } from '@/stores/locale'
+import Switch from '@/components/ui/Switch.vue'
 import type { PluginConfigSchema } from '@/types/generated/PluginConfigSchema'
 
 const props = defineProps<{
@@ -63,13 +64,11 @@ function numberModel(key: string): number | null {
 
       <!-- boolean：开关 -->
       <span v-if="f.field.type === 'boolean'" class="pcf-control">
-        <input
-          type="checkbox"
-          role="switch"
-          class="pcf-switch"
-          :checked="valueOf(f.key, f.field.default) === true"
+        <Switch
+          :model-value="valueOf(f.key, f.field.default) === true"
+          size="sm"
           :disabled="disabled"
-          @change="setField(f.key, ($event.target as HTMLInputElement).checked)"
+          @change="setField(f.key, $event)"
         />
         <span v-if="f.field.description" class="pcf-hint">{{ f.field.description }}</span>
       </span>
@@ -168,15 +167,8 @@ function numberModel(key: string): number | null {
   border-color: var(--accent);
 }
 
-.pcf-switch {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
 .pcf-hint {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 

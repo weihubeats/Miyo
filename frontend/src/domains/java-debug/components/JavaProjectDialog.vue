@@ -292,8 +292,8 @@ async function testConnection(): Promise<void> {
   min-width: 0;
 }
 .jp-label {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
 }
 .jp-row {
   display: grid;
@@ -304,8 +304,8 @@ async function testConnection(): Promise<void> {
   min-width: 0;
 }
 .jp-hint {
-  font-size: 11px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
 }
 .jp-hint-err {
   color: var(--danger, #ef4444);
@@ -324,7 +324,7 @@ async function testConnection(): Promise<void> {
 }
 .jp-token-clear {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   padding: 4px 9px;
 }
 .jp-actions {

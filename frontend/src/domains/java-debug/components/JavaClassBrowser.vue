@@ -158,7 +158,7 @@ const visibleClasses = computed(() => {
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text);
+  color: var(--text-1);
   text-align: left;
   cursor: pointer;
 }
@@ -176,15 +176,15 @@ const visibleClasses = computed(() => {
   gap: 1px;
 }
 .jcb-name {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .jcb-meta {
-  font-size: 11px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -193,7 +193,7 @@ const visibleClasses = computed(() => {
   display: inline-flex;
   padding: 3px;
   border-radius: var(--radius-sm);
-  color: var(--text-tertiary, var(--text-secondary));
+  color: var(--text-3);
 }
 .jcb-star:hover {
   color: var(--primary);
@@ -207,9 +207,9 @@ const visibleClasses = computed(() => {
 }
 .jcb-recent-title {
   margin: 0 6px 6px;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
-  color: var(--text-tertiary, var(--text-secondary));
+  color: var(--text-3);
 }
 .jcb-recent-list {
   list-style: none;
@@ -225,8 +225,8 @@ const visibleClasses = computed(() => {
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-secondary);
-  font-size: 11.5px;
+  color: var(--text-2);
+  font-size: var(--fs-xxs);
   font-family: var(--font-mono, monospace);
   text-align: left;
   cursor: pointer;
@@ -236,6 +236,6 @@ const visibleClasses = computed(() => {
 }
 .jcb-recent-item:hover {
   background: var(--bg-hover);
-  color: var(--text);
+  color: var(--text-1);
 }
 </style>

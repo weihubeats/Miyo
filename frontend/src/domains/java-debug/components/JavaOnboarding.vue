@@ -228,12 +228,12 @@ const steps = (): string[] => [
   margin: 0;
   font-size: 19px;
   font-weight: 650;
-  color: var(--text);
+  color: var(--text-1);
 }
 .job-subtitle {
   margin: 0;
-  font-size: 12.5px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
   max-width: 560px;
 }
 .job-entries {
@@ -255,7 +255,7 @@ const steps = (): string[] => [
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-elevated);
-  color: var(--text);
+  color: var(--text-1);
   text-align: left;
   cursor: pointer;
 }
@@ -268,12 +268,12 @@ const steps = (): string[] => [
   display: inline-flex;
 }
 .job-entry-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 .job-entry-desc {
-  font-size: 11.5px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
   line-height: 1.5;
 }
 .job-scan {
@@ -290,9 +290,9 @@ const steps = (): string[] => [
 }
 .job-section-title {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
-  color: var(--text-tertiary, var(--text-secondary));
+  color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -314,17 +314,17 @@ const steps = (): string[] => [
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .job-cand-dot {
   width: 7px;
   height: 7px;
-  border-radius: 999px;
-  background: var(--ok, #22c55e);
+  border-radius: var(--radius-pill);
+  background: var(--success);
   flex-shrink: 0;
 }
 .job-cand-dot-stale {
-  background: var(--text-tertiary, var(--text-secondary));
+  background: var(--text-3);
 }
 .job-cand-stale {
   opacity: 0.75;
@@ -334,19 +334,19 @@ const steps = (): string[] => [
   font-weight: 600;
 }
 .job-cand-meta {
-  color: var(--text-secondary);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-xxs);
 }
 .job-cand-badge {
   padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xxs);
   background: var(--bg-hover);
-  color: var(--text-secondary);
+  color: var(--text-2);
 }
 .job-cand-src {
-  color: var(--text-tertiary, var(--text-secondary));
-  font-size: 11px;
+  color: var(--text-3);
+  font-size: var(--fs-xxs);
   margin-left: auto;
 }
 .job-cand-use {
@@ -354,8 +354,8 @@ const steps = (): string[] => [
 }
 .job-no-cand {
   margin: 10px 0 0;
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
   line-height: 1.6;
 }
 .job-cols {
@@ -381,8 +381,8 @@ const steps = (): string[] => [
   display: flex;
   flex-direction: column;
   gap: 7px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
   line-height: 1.55;
 }
 .job-list li {
@@ -396,7 +396,7 @@ const steps = (): string[] => [
   top: 7px;
   width: 5px;
   height: 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--primary);
 }
 .job-steps {
@@ -406,8 +406,8 @@ const steps = (): string[] => [
   display: flex;
   flex-direction: column;
   gap: 7px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
   line-height: 1.55;
 }
 .job-step {
@@ -418,10 +418,10 @@ const steps = (): string[] => [
 .job-step-no {
   width: 18px;
   height: 18px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-xxs);
   display: inline-grid;
   place-items: center;
   flex-shrink: 0;
@@ -440,15 +440,15 @@ const steps = (): string[] => [
   border-top: none;
 }
 .job-faq-q {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--text);
+  color: var(--text-1);
   cursor: pointer;
 }
 .job-faq-a {
   margin: 6px 0 0;
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
   line-height: 1.65;
 }
 </style>

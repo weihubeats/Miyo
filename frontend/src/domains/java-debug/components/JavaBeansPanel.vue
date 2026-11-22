@@ -114,20 +114,20 @@ const supportLabel = computed(() => {
   flex-wrap: wrap;
 }
 .jbp-ver {
-  font-size: 11px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
 }
 .jbp-note {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
-  color: var(--text-secondary);
+  color: var(--text-2);
   line-height: 1.5;
 }
 .jbp-search {
   height: 26px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   flex-shrink: 0;
 }
 .jbp-list {
@@ -139,8 +139,8 @@ const supportLabel = computed(() => {
   gap: 6px;
 }
 .jbp-empty {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
   padding: 16px 8px;
   text-align: center;
 }
@@ -153,14 +153,14 @@ const supportLabel = computed(() => {
   border-radius: var(--radius-md);
   cursor: pointer;
   text-align: left;
-  color: var(--text);
+  color: var(--text-1);
   background: transparent;
 }
 .jbp-item:hover {
   background: var(--bg-hover);
 }
 .jbp-item.active {
-  border-color: var(--primary, #6366f1);
+  border-color: var(--accent);
 }
 .jbp-item-top {
   display: flex;
@@ -169,26 +169,26 @@ const supportLabel = computed(() => {
   gap: 6px;
 }
 .jbp-name {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .jbp-tag {
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
-  color: var(--text-secondary);
+  color: var(--text-2);
   white-space: nowrap;
 }
 .jbp-tag.ok {
-  color: var(--ok, #22c55e);
+  color: var(--success);
 }
 .jbp-type {
-  font-size: 10.5px;
-  color: var(--text-secondary);
+  font-size: var(--fs-2xxs);
+  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -199,15 +199,15 @@ const supportLabel = computed(() => {
   flex-wrap: wrap;
 }
 .jbp-chip {
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
-  color: var(--text-secondary);
+  color: var(--text-2);
 }
 .jbp-footer {
-  font-size: 11px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
   flex-shrink: 0;
 }
 </style>

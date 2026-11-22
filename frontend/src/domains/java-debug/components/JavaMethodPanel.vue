@@ -556,9 +556,9 @@ function onRunClick(): void {
 }
 .jmp-section-title {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
-  color: var(--text-tertiary, var(--text-secondary));
+  color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -579,7 +579,7 @@ function onRunClick(): void {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text);
+  color: var(--text-1);
   text-align: left;
   cursor: pointer;
 }
@@ -595,19 +595,19 @@ function onRunClick(): void {
   gap: 6px;
 }
 .jmp-method-name {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   font-family: var(--font-mono, monospace);
 }
 .jmp-method-ret {
   margin-left: auto;
-  font-size: 11px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
   font-family: var(--font-mono, monospace);
 }
 .jmp-method-sig {
-  font-size: 11px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
   font-family: var(--font-mono, monospace);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -615,10 +615,10 @@ function onRunClick(): void {
 }
 .jmp-badge {
   padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-2xxs);
   background: var(--bg-hover);
-  color: var(--text-secondary);
+  color: var(--text-2);
 }
 .jmp-badge-static {
   font-family: var(--font-mono, monospace);
@@ -638,8 +638,8 @@ function onRunClick(): void {
   gap: 8px;
 }
 .jmp-sig {
-  font-size: 11px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
   font-family: var(--font-mono, monospace);
   background: var(--bg-elevated);
   border-radius: var(--radius-sm);
@@ -653,8 +653,8 @@ function onRunClick(): void {
   gap: 8px;
 }
 .jmp-noargs {
-  font-size: 12px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xs);
+  color: var(--text-3);
   padding: 8px;
   border: 1px dashed var(--border);
   border-radius: var(--radius-md);
@@ -675,7 +675,7 @@ function onRunClick(): void {
   gap: 6px;
 }
 .jmp-mini-btn {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   padding: 3px 8px;
 }
 .jmp-param-complex {
@@ -691,8 +691,8 @@ function onRunClick(): void {
   flex: 1;
   min-width: 0;
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -705,7 +705,7 @@ function onRunClick(): void {
 }
 .jmp-danger-text {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--danger, #ef4444);
   line-height: 1.55;
   word-break: break-all;
@@ -733,16 +733,16 @@ function onRunClick(): void {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
   font-family: var(--font-mono, monospace);
 }
 .jmp-param-type {
-  color: var(--text-tertiary, var(--text-secondary));
-  font-size: 11px;
+  color: var(--text-3);
+  font-size: var(--fs-xxs);
 }
 .jmp-param-req {
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   color: var(--primary);
 }
 .jmp-json {
@@ -750,7 +750,7 @@ function onRunClick(): void {
 }
 .jmp-error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--danger, #ef4444);
 }
 .jmp-run-row {
@@ -762,8 +762,8 @@ function onRunClick(): void {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
 }
 .jmp-timeout .miyo-input {
   width: 110px;

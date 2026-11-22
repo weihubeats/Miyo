@@ -201,22 +201,22 @@ function kindLabel(p: JavaProcessInfo): string {
   flex: 1;
   min-width: 0;
   height: 26px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .jpp-autorefresh {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
   cursor: pointer;
 }
 .jpp-hint {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
-  color: var(--text-secondary);
+  color: var(--text-2);
   line-height: 1.5;
 }
 .jpp-hint.danger {
@@ -231,8 +231,8 @@ function kindLabel(p: JavaProcessInfo): string {
   gap: 6px;
 }
 .jpp-empty {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
   padding: 16px 8px;
   text-align: center;
 }
@@ -246,13 +246,13 @@ function kindLabel(p: JavaProcessInfo): string {
   background: var(--bg-elevated, transparent);
   cursor: pointer;
   text-align: left;
-  color: var(--text);
+  color: var(--text-1);
 }
 .jpp-item:hover {
   background: var(--bg-hover);
 }
 .jpp-item.active {
-  border-color: var(--primary, #6366f1);
+  border-color: var(--accent);
 }
 .jpp-item-top {
   display: flex;
@@ -261,7 +261,7 @@ function kindLabel(p: JavaProcessInfo): string {
   gap: 6px;
 }
 .jpp-name {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -273,16 +273,16 @@ function kindLabel(p: JavaProcessInfo): string {
   gap: 4px;
 }
 .jpp-chip {
-  font-size: 10.5px;
+  font-size: var(--fs-2xxs);
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
-  color: var(--text-secondary);
+  color: var(--text-2);
   white-space: nowrap;
 }
 .jpp-block-reason {
-  font-size: 10.5px;
-  color: var(--text-secondary);
+  font-size: var(--fs-2xxs);
+  color: var(--text-2);
   line-height: 1.4;
 }
 .jpp-item-actions {
@@ -305,10 +305,10 @@ function kindLabel(p: JavaProcessInfo): string {
   flex: 1;
   min-width: 0;
   height: 26px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .jpp-manual-error {
-  font-size: 10.5px;
+  font-size: var(--fs-2xxs);
   color: var(--danger, #ef4444);
   white-space: nowrap;
 }

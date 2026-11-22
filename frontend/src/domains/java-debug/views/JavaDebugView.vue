@@ -50,6 +50,55 @@ const runtimeStore = useJavaDebugStore()
 // ---------- 模式切换（attach 默认；runtime 兼容 v1 项目） ----------
 const viewMode = ref<ViewMode>(loadMode())
 
+// ---------- 分栏宽度：按模式持久化（miyo.java-split.<mode>，刷新恢复） ----------
+const splitState = ref<Record<string, number>>(loadSplits())
+
+const attachOuter = computed({
+  get: () => splitFor('attachOuter', 300),
+  set: (v) => setSplit('attachOuter', v),
+})
+const attachInner = computed({
+  get: () => splitFor('attachInner', 260),
+  set: (v) => setSplit('attachInner', v),
+})
+const runtimeOuter = computed({
+  get: () => splitFor('runtimeOuter', 280),
+  set: (v) => setSplit('runtimeOuter', v),
+})
+const runtimeInner = computed({
+  get: () => splitFor('runtimeInner', 460),
+  set: (v) => setSplit('runtimeInner', v),
+})
+
+function loadSplits(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem('miyo.java-split')
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const out: Record<string, number> = {}
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === 'number' && Number.isFinite(v)) out[k] = v
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function splitFor(key: string, fallback: number): number {
+  const v = splitState.value[key]
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+}
+
+function setSplit(key: string, v: number): void {
+  splitState.value = { ...splitState.value, [key]: v }
+  try {
+    localStorage.setItem('miyo.java-split', JSON.stringify(splitState.value))
+  } catch {
+    // 写失败静默
+  }
+}
+
 function loadMode(): ViewMode {
   try {
     const raw = localStorage.getItem(MODE_KEY)
@@ -526,7 +575,12 @@ const modeOptions = computed(() => [
 
     <!-- attach 工作台：进程/Bean | 类浏览器 | 方法+参数 | 结果 -->
     <div v-else-if="viewMode === 'attach'" class="jdv-body" data-testid="java-attach-workbench">
-      <SplitPanes :width="300" :min="240" :max="440">
+      <SplitPanes
+        v-model:width="attachOuter"
+        :min="240"
+        :max="440"
+        :stack-below="720"
+      >
         <template #first>
           <div class="jdv-left">
             <div class="jdv-left-tabs">
@@ -582,7 +636,11 @@ const modeOptions = computed(() => [
           </div>
         </template>
         <template #second>
-          <SplitPanes :width="260" :min="200" :max="400">
+          <SplitPanes
+            v-model:width="attachInner"
+            :min="200"
+            :max="400"
+          >
             <template #first>
               <JavaClassBrowser
                 :classes="attachStore.classes"
@@ -627,7 +685,12 @@ const modeOptions = computed(() => [
 
     <!-- runtime 工作台（v1 原样） -->
     <div v-else class="jdv-body">
-      <SplitPanes :width="280" :min="200" :max="420">
+      <SplitPanes
+        v-model:width="runtimeOuter"
+        :min="200"
+        :max="420"
+        :stack-below="720"
+      >
         <template #first>
           <JavaClassBrowser
               :classes="runtimeStore.classes"
@@ -644,7 +707,12 @@ const modeOptions = computed(() => [
             />
         </template>
         <template #second>
-          <SplitPanes :width="460" :min="320" :max="720" width-on="second">
+          <SplitPanes
+            v-model:width="runtimeInner"
+            :min="320"
+            :max="720"
+            width-on="second"
+          >
             <template #first>
               <JavaMethodPanel
                 :class-name="runtimeStore.activeClassName"
@@ -741,16 +809,16 @@ const modeOptions = computed(() => [
   overflow: hidden;
 }
 .jdv-mode-btn {
-  font-size: 11.5px;
+  font-size: var(--fs-xxs);
   padding: 3px 10px;
-  color: var(--text-secondary);
+  color: var(--text-2);
   background: transparent;
   border: none;
   cursor: pointer;
 }
 .jdv-mode-btn.active {
   background: var(--bg-hover);
-  color: var(--text);
+  color: var(--text-1);
   font-weight: 600;
 }
 .jdv-top-center {
@@ -764,26 +832,26 @@ const modeOptions = computed(() => [
   overflow: hidden;
 }
 .jdv-env {
-  font-size: 11.5px;
+  font-size: var(--fs-xxs);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
-  color: var(--text-secondary);
+  color: var(--text-2);
   white-space: nowrap;
 }
 .jdv-chip {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
-  color: var(--text-secondary);
+  color: var(--text-2);
   white-space: nowrap;
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .jdv-conn-error {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   color: var(--danger, #ef4444);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -808,17 +876,17 @@ const modeOptions = computed(() => [
   flex-shrink: 0;
 }
 .jdv-left-tab {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 4px 12px;
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
-  color: var(--text-secondary);
+  color: var(--text-2);
   background: transparent;
   cursor: pointer;
 }
 .jdv-left-tab.active {
-  color: var(--text);
+  color: var(--text-1);
   font-weight: 600;
   border-color: var(--border);
   background: var(--bg-hover);

@@ -296,15 +296,15 @@ const infoRows = computed(() => {
   min-height: 24px;
 }
 .jrp-idle {
-  font-size: 12px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xs);
+  color: var(--text-3);
 }
 .jrp-truncated {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
-  color: var(--warn, #d97706);
+  font-size: var(--fs-xxs);
+  color: var(--warning);
 }
 .jrp-head-actions {
   margin-left: auto;
@@ -319,8 +319,8 @@ const infoRows = computed(() => {
 .jrp-empty {
   padding: 24px 12px;
   text-align: center;
-  font-size: 12px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xs);
+  color: var(--text-3);
 }
 .jrp-result {
   min-height: 0;
@@ -331,11 +331,11 @@ const infoRows = computed(() => {
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   font-family: var(--font-mono, monospace);
-  font-size: 11.5px;
+  font-size: var(--fs-xxs);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--text);
+  color: var(--text-1);
 }
 .jrp-exception {
   display: flex;
@@ -348,9 +348,9 @@ const infoRows = computed(() => {
   gap: 6px;
   padding: 7px 9px;
   border-radius: var(--radius-md);
-  background: var(--danger-bg, rgba(239, 68, 68, 0.12));
+  background: var(--danger-tint);
   color: var(--danger, #ef4444);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .jrp-exc-type {
@@ -362,8 +362,8 @@ const infoRows = computed(() => {
 }
 .jrp-exc-message {
   margin: 0;
-  font-size: 12px;
-  color: var(--text);
+  font-size: var(--fs-xs);
+  color: var(--text-1);
   padding: 0 2px;
 }
 .jrp-exc-stack {
@@ -372,25 +372,25 @@ const infoRows = computed(() => {
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--text-secondary);
+  color: var(--text-2);
 }
 .jrp-info {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 6px 12px;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .jrp-info dt {
-  color: var(--text-tertiary, var(--text-secondary));
+  color: var(--text-3);
 }
 .jrp-info dd {
   margin: 0;
-  color: var(--text);
+  color: var(--text-1);
   font-family: var(--font-mono, monospace);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -411,26 +411,26 @@ const infoRows = computed(() => {
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  font-size: 11.5px;
+  font-size: var(--fs-xxs);
 }
 .jrp-history-sig {
   flex: 1;
   min-width: 0;
   font-family: var(--font-mono, monospace);
-  color: var(--text);
+  color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .jrp-history-duration,
 .jrp-history-time {
-  color: var(--text-tertiary, var(--text-secondary));
-  font-size: 10.5px;
+  color: var(--text-3);
+  font-size: var(--fs-2xxs);
   flex-shrink: 0;
 }
 .jrp-history-rerun {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   padding: 2px 8px;
 }
 </style>

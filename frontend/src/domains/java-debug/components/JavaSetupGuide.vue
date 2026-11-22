@@ -183,8 +183,8 @@ async function copySnippet(text: string): Promise<void> {
 }
 .jsg-intro {
   margin: 0;
-  font-size: 12.5px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
 }
 .jsg-block {
   border: 1px solid var(--border);
@@ -201,22 +201,22 @@ async function copySnippet(text: string): Promise<void> {
 }
 .jsg-sub {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
-  color: var(--text);
+  color: var(--text-1);
 }
 .jsg-copy {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   padding: 3px 8px;
 }
 .jsg-label {
   margin: 0 0 6px;
-  font-size: 11.5px;
-  color: var(--text-secondary);
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
 }
 .jsg-code {
   margin: 0;
@@ -225,16 +225,16 @@ async function copySnippet(text: string): Promise<void> {
   background: var(--bg-hover);
   border: 1px solid var(--border);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   line-height: 1.6;
   overflow-x: auto;
   white-space: pre;
-  color: var(--text);
+  color: var(--text-1);
 }
 .jsg-note {
   margin: 0;
-  font-size: 11.5px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
   line-height: 1.6;
 }
 </style>

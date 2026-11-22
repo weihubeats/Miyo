@@ -565,7 +565,7 @@ function navRouteOf(item: PluginNavItem): string {
   color: var(--text-3);
 }
 .pd-runtime {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .pd-desc {
@@ -606,7 +606,7 @@ function navRouteOf(item: PluginNavItem): string {
 
 .pd-sub {
   margin-top: 6px;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -629,11 +629,11 @@ function navRouteOf(item: PluginNavItem): string {
 }
 .pd-nav-route {
   color: var(--text-3);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
 }
 .pd-dep-desc {
   color: var(--text-3);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
 }
 
 .pd-err {
@@ -667,7 +667,7 @@ function navRouteOf(item: PluginNavItem): string {
   cursor: pointer;
 }
 .pd-perm-id {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -727,16 +727,16 @@ function navRouteOf(item: PluginNavItem): string {
 .pd-log-time {
   flex: none;
   color: var(--text-3);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
 }
 
 .pd-verified-at {
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   color: var(--text-3);
   margin-left: 6px;
 }
 .pd-sidecar-off {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   padding: 4px 0;
 }

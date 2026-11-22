@@ -221,8 +221,8 @@ function fmtTime(record: JavaInvocationRecord): string {
   padding: 0 0 10px;
 }
 .jhd-count {
-  font-size: 12px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xs);
+  color: var(--text-3);
 }
 .jhd-filters {
   display: flex;
@@ -266,24 +266,24 @@ function fmtTime(record: JavaInvocationRecord): string {
 .jhd-method {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: var(--font-mono, monospace);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
+  color: var(--text-1);
 }
 .jhd-duration {
-  font-size: 11px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
   font-family: var(--font-mono, monospace);
 }
 .jhd-meta {
   justify-content: space-between;
 }
 .jhd-time {
-  font-size: 11px;
-  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
 }
 .jhd-actions {
   display: inline-flex;
@@ -302,20 +302,20 @@ function fmtTime(record: JavaInvocationRecord): string {
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: var(--fs-xxs);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 220px;
   overflow: auto;
-  color: var(--text-secondary);
+  color: var(--text-2);
 }
 .jhd-json-exc {
   color: var(--danger, #ef4444);
 }
 .jhd-exc-type {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--danger, #ef4444);
   font-family: var(--font-mono, monospace);
 }
