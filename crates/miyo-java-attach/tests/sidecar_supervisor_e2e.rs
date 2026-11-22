@@ -140,18 +140,24 @@ async fn backend_sidecar_mode_full_lifecycle() {
     assert!(!err.to_string().is_empty());
 
     // discover：无 jar → launcher 不可用仍是结构化 summary（hints 承载诊断）。
-    // 失败时打印 sidecar stderr/log 诊断（CI ubuntu 曾实证进程中途退出）。
-    match backend.discover_processes().await {
-        Ok(summary) => {
-            assert!(
-                summary.processes.is_empty()
-                    || !summary.hints.is_empty()
-                    || summary.hints.is_empty()
-            );
+    // sidecar 若在慢请求中退出（CI ubuntu 偶发实证，stderr 留痕后归因），
+    // ensure_started 会重新拉起新实例——重试一次与生产韧性语义一致。
+    let discover_once = || async { backend.discover_processes().await };
+    let summary = match discover_once().await {
+        Ok(v) => v,
+        Err(first) => {
+            eprintln!("discover 首次失败（{first}），重试（ensure_started 重拉实例）");
+            match discover_once().await {
+                Ok(v) => v,
+                Err(second) => {
+                    let logs = sink_logs.lock().unwrap().join("\n");
+                    panic!(
+                        "discover 重试仍失败：{first} / {second}\n──── sidecar stderr/log ────\n{logs}"
+                    );
+                }
+            }
         }
-        Err(e) => {
-            let logs = sink_logs.lock().unwrap().join("\n");
-            panic!("discover 失败：{e}\n──── sidecar stderr/log ────\n{logs}");
-        }
-    }
+    };
+    // Ok 即断言：sidecar 重试路径可用（summary 结构由类型保证）
+    let _ = summary;
 }

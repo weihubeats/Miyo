@@ -65,9 +65,13 @@ async fn run() {
     // 0. stdin 上的 hello 握手：method = plugin_id，params = { token, protocol }；
     //    ack 回显 token + protocol + sidecar_version（supervisor 校验三件套）。
     let mut stdin = tokio::io::stdin();
-    let hello = read_frame(&mut stdin)
-        .await
-        .expect("sidecar 首帧必须是 hello");
+    let hello = match read_frame(&mut stdin).await {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[java-debug-sidecar] 首帧读取失败：{e}，退出");
+            return;
+        }
+    };
     if hello.kind != "hello" {
         eprintln!(
             "[java-debug-sidecar] 首帧不是 hello（kind={}），退出",
@@ -92,9 +96,10 @@ async fn run() {
         ..miyo_sidecar::protocol::host_frame("hello_ack")
     };
     let mut writer = tokio::io::stdout();
-    write_frame(&mut writer, &ack)
-        .await
-        .expect("hello_ack 写出失败");
+    if let Err(e) = write_frame(&mut writer, &ack).await {
+        eprintln!("[java-debug-sidecar] hello_ack 写出失败：{e}，退出");
+        return;
+    }
 
     // 1. AttachManager 装配（jar 候选与 infoFile 目录来自环境变量）。
     let manager = Arc::new(AttachManager::new(jar_dirs(), agent_dir()));
@@ -106,7 +111,10 @@ async fn run() {
     loop {
         let frame = match read_frame(&mut stdin).await {
             Ok(f) => f,
-            Err(_) => {
+            Err(e) => {
+                // EOF = 宿主关闭（正常）；其他读取失败也如实留痕——
+                // 此前进程静默消失无从诊断（CI ubuntu 实证）。
+                eprintln!("[java-debug-sidecar] stdin 读取结束：{e:?}，shutdown_all 后退出");
                 manager.shutdown_all().await;
                 return;
             }
@@ -117,7 +125,8 @@ async fn run() {
                     id: frame.id,
                     ..miyo_sidecar::protocol::host_frame("pong")
                 };
-                if write_frame(&mut writer, &pong).await.is_err() {
+                if let Err(e) = write_frame(&mut writer, &pong).await {
+                    eprintln!("[java-debug-sidecar] pong 写出失败：{e}，退出");
                     manager.shutdown_all().await;
                     return;
                 }
@@ -140,7 +149,8 @@ async fn run() {
                         ..miyo_sidecar::protocol::host_frame("res")
                     },
                 };
-                if write_frame(&mut writer, &out).await.is_err() {
+                if let Err(e) = write_frame(&mut writer, &out).await {
+                    eprintln!("[java-debug-sidecar] res 写出失败：{e}，退出");
                     manager.shutdown_all().await;
                     return;
                 }
