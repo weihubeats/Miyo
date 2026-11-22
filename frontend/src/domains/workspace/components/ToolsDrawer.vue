@@ -57,7 +57,7 @@ const t = locale.t
 
 .tool-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }

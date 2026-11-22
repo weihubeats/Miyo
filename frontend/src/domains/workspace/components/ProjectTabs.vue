@@ -50,10 +50,13 @@ async function openMore(): Promise<void> {
   } catch {
     toast.error(t('projectTabs.loadFail'))
   }
-  // 第一组：切换到未打开的项目（无则整组省略）；第二组固定组前分隔
+  // 第一组：切换到未打开的项目（无则整组省略）；第二组固定组前分隔。
+  // 「项目列表」在首页自指（已在 /projects）时不再入菜单——自指导航入口收口。
   items.push(
     { key: 'new-project', label: t('projectTabs.newProject'), icon: 'plus', iconAccent: true, dividerBefore: items.length > 0 },
-    { key: 'go-projects', label: t('projectTabs.projectList'), icon: 'layout-grid' },
+    ...(route.path === '/projects'
+      ? []
+      : [{ key: 'go-projects', label: t('projectTabs.projectList'), icon: 'layout-grid' as const }]),
   )
   // 第三组（工作区模式）：当前项目管理——短标签重命名 + 红色删除（二次确认）
   if (props.projectActions && store.project) {
@@ -256,7 +259,7 @@ function onTabsWheel(event: WheelEvent): void {
   padding: 3px 8px 3px 12px;
   border: 1px solid transparent;
   border-radius: var(--radius);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
   user-select: none;
@@ -303,7 +306,7 @@ function onTabsWheel(event: WheelEvent): void {
   height: 16px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-3);
   cursor: pointer;

@@ -15,8 +15,10 @@ withDefaults(
     /** 无障碍名（只喂 aria-label，不渲染原生 title）：外层已有 <Tooltip> 时用它，避免双重气泡。 */
     label?: string
     disabled?: boolean
+    /** 切换态（如查找开关）：accent tint 常亮，区别于 hover 瞬态 */
+    active?: boolean
   }>(),
-  { size: 14, tone: 'default' },
+  { size: 14, tone: 'default', active: false },
 )
 
 const emit = defineEmits<{ click: [event: MouseEvent] }>()
@@ -26,9 +28,10 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
   <button
     type="button"
     class="ib"
-    :class="`tone-${tone}`"
+    :class="[`tone-${tone}`, { 'is-active': active }]"
     :title="title"
     :aria-label="label ?? title ?? name"
+    :aria-pressed="active || undefined"
     :disabled="disabled"
     @click="emit('click', $event)"
   >
@@ -67,7 +70,7 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
   outline-offset: 1px;
 }
 .ib:disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 .tone-danger:hover:not(:disabled) {
@@ -75,6 +78,10 @@ const emit = defineEmits<{ click: [event: MouseEvent] }>()
   color: var(--danger);
 }
 .tone-accent:hover:not(:disabled) {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.ib.is-active {
   background: var(--accent-tint);
   color: var(--accent);
 }

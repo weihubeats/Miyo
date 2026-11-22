@@ -510,11 +510,11 @@ describe('ProjectList：仪表板第六轮精修', () => {
     wrapper.unmount()
   })
 
-  it('空列表：只渲染空态，不叠加 Dropzone', async () => {
+  it('空列表：只渲染空态（EmptyState），不叠加 Dropzone', async () => {
     backend.projects.length = 0
     const wrapper = mountList()
     await flushPromises()
-    expect(wrapper.find('.dash-empty').exists()).toBe(true)
+    expect(wrapper.find('.es').exists()).toBe(true)
     expect(wrapper.find('.add-card').exists()).toBe(false)
     wrapper.unmount()
   })

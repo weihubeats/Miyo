@@ -55,7 +55,7 @@ async function confirmDelete(): Promise<void> {
 <style scoped>
 .confirm-hint {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   line-height: 1.6;
   word-break: break-all;

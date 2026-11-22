@@ -71,7 +71,7 @@ function onQuickManage(): void {
   align-items: center;
   height: 32px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
   overflow: hidden;
   transition:

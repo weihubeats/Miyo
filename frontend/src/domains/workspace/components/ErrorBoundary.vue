@@ -137,7 +137,7 @@ async function onRetry(): Promise<void> {
   gap: 14px;
   margin: 24px;
   padding: 20px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--miyo-danger-tint);
   border: 1px solid var(--miyo-danger-border);
 }
@@ -154,14 +154,14 @@ async function onRetry(): Promise<void> {
 }
 
 .miyo-boundary-title {
-  font-size: 14px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--miyo-text);
 }
 
 .miyo-boundary-message {
   margin-top: 4px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--miyo-text-secondary);
   word-break: break-all;
 }
@@ -175,7 +175,7 @@ async function onRetry(): Promise<void> {
 .miyo-boundary-detail {
   margin-top: 12px;
   padding: 10px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--miyo-input-bg);
   border: 1px solid var(--miyo-border);
   font-size: var(--fs-xs);

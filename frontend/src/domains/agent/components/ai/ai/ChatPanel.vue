@@ -8,6 +8,7 @@ import { useLocaleStore } from '@/stores/locale'
 import { useAiTestStore } from '@/domains/agent/stores/aiTest'
 import { renderMarkdownLite } from '@/utils/markdownLite'
 import Icon from '@/components/ui/Icon.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 import type { AiMessageView } from '@/types/miyoApi.d'
 
 const t = useLocaleStore().t
@@ -93,9 +94,12 @@ const sessionTitle = computed(
 
     <!-- 消息流 -->
     <div ref="scrollEl" class="chat-scroll">
-      <div v-if="ai.messages.length === 0 && !ai.streaming" class="chat-empty">
-        <Icon name="zap" :size="28" class="empty-icon" />
-        <p class="empty-text">{{ t('ai.empty') }}</p>
+      <EmptyState
+        v-if="ai.messages.length === 0 && !ai.streaming"
+        class="chat-empty"
+        icon="zap"
+        :title="t('ai.empty')"
+      >
         <div class="empty-quick">
           <button
             v-for="key in QUICK_PROMPTS"
@@ -107,7 +111,7 @@ const sessionTitle = computed(
             {{ t(key) }}
           </button>
         </div>
-      </div>
+      </EmptyState>
 
       <template v-for="msg in ai.messages" :key="msg.id">
         <!-- 用户 -->
@@ -283,23 +287,10 @@ const sessionTitle = computed(
   flex-direction: column;
   gap: var(--sp-3);
 }
+/* EmptyState 根类：消息流空态居中（其余排版由组件自带） */
 .chat-empty {
   margin: auto;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--sp-3);
   max-width: 420px;
-}
-.empty-icon {
-  color: var(--accent);
-}
-.empty-text {
-  margin: 0;
-  color: var(--text-3);
-  font-size: var(--fs-sm);
-  line-height: 1.6;
 }
 .empty-quick {
   display: flex;
@@ -332,7 +323,7 @@ const sessionTitle = computed(
   max-width: 85%;
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--radius-lg);
-  background: var(--primary-tint);
+  background: var(--accent-tint);
   color: var(--text-1);
   font-size: var(--fs-sm);
   white-space: pre-wrap;

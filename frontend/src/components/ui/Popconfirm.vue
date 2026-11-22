@@ -221,7 +221,7 @@ onBeforeUnmount(() => {
 
 .pc-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   line-height: 1.5;
   color: var(--text-1);
@@ -231,7 +231,7 @@ onBeforeUnmount(() => {
 /* 补充说明：与标题文字对齐（28px 徽章 + 10px 间距） */
 .pc-desc {
   margin: 6px 0 0 38px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-2);
 }

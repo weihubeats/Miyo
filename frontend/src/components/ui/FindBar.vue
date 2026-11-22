@@ -221,9 +221,9 @@ function onReplaceKeydown(e: KeyboardEvent): void {
   padding: 4px 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--bg-input);
+  background: var(--bg-code);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   outline: none;
 }
@@ -252,7 +252,7 @@ function onReplaceKeydown(e: KeyboardEvent): void {
   height: 24px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: none;
   color: var(--text-2);
   cursor: pointer;
@@ -262,7 +262,7 @@ function onReplaceKeydown(e: KeyboardEvent): void {
   color: var(--text-1);
 }
 .findbar-btn:disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
@@ -283,7 +283,7 @@ function onReplaceKeydown(e: KeyboardEvent): void {
   padding: 4px 10px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--bg-input);
+  background: var(--bg-code);
   color: var(--text-1);
   font-size: var(--fs-xxs);
   cursor: pointer;
@@ -296,7 +296,7 @@ function onReplaceKeydown(e: KeyboardEvent): void {
   color: var(--accent);
 }
 .findbar-replace-btn:disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 </style>

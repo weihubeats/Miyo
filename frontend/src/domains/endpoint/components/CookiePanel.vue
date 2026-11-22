@@ -212,7 +212,7 @@ function displayValue(v: string): string {
   color: var(--text-2);
   cursor: pointer;
   padding: 4px;
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 .cp-reload:hover {
   background: var(--bg-hover);
@@ -227,7 +227,7 @@ function displayValue(v: string): string {
 }
 .cp-hint {
   padding: 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .cp-list {
@@ -250,7 +250,7 @@ function displayValue(v: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-1);
 }
@@ -294,10 +294,10 @@ function displayValue(v: string): string {
   align-items: center;
 }
 .cp-flag {
-  font-size: 9.5px;
+  font-size: var(--fs-2xxs);
   font-weight: 700;
   padding: 0 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--info-tint, var(--bg-hover));
   color: var(--info);
 }

@@ -622,7 +622,8 @@ const compareResults = computed(() => {
         <div class="drw-title-row">
           <Icon name="beaker" :size="15" class="drw-title-icon" />
           <input v-model="name" class="drw-name" type="text" :placeholder="t('cases.colName')" spellcheck="false" />
-          <EnvironmentSelector variant="solo" :manage="false" />
+          <!-- 抽屉内弹窗经 manager-layer 提层（--z-modal-drawer），管理入口恢复可用 -->
+          <EnvironmentSelector variant="solo" manager-layer="drawer" />
         </div>
         <div class="drw-meta-row">
           <CustomSelect

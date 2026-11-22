@@ -260,7 +260,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .qv {
   position: fixed;
-  z-index: var(--z-overlay);
+  z-index: var(--z-popover);
   width: 400px;
   max-width: calc(100vw - 16px);
   background: var(--bg-elevated);
@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
 }
 
 .qv-env-name {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-1);
   overflow: hidden;
@@ -329,7 +329,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius);
   padding: 2px 8px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   outline: none;
   transition:
@@ -380,7 +380,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius);
   padding: 2px 8px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   outline: none;
   transition:
@@ -406,7 +406,7 @@ onBeforeUnmount(() => {
 .qv-empty {
   margin: 0;
   padding: 18px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   text-align: center;
 }

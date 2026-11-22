@@ -161,7 +161,7 @@ onBeforeUnmount(() => {
   z-index: var(--z-popover);
   max-width: 320px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--overflow-tip-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);

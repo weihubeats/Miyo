@@ -65,7 +65,7 @@ const effectiveTitle = computed(() => props.title || t('empty.title'))
 .es.compact .es-icon {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
 }
 
 .es-title {
@@ -77,7 +77,7 @@ const effectiveTitle = computed(() => props.title || t('empty.title'))
 
 .es-desc {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   max-width: 320px;
 }

@@ -9,7 +9,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import ToastHost from '@/domains/workspace/components/ToastHost.vue'
+import ToastHost from '@/components/ui/ToastHost.vue'
 import ProgressBar from '@/domains/workspace/components/ProgressBar.vue'
 import AppBackground from '@/components/AppBackground.vue'
 import Brand from '@/domains/workspace/components/Brand.vue'

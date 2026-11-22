@@ -156,7 +156,7 @@ function toggle(key: string, expandable: boolean): void {
 .stt-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 
 .stt-table th {
@@ -242,7 +242,7 @@ function toggle(key: string, expandable: boolean): void {
 
 .field-name {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -256,7 +256,7 @@ function toggle(key: string, expandable: boolean): void {
 .type-badge {
   display: inline-block;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: var(--fs-xxs);
   line-height: 1.6;
@@ -296,7 +296,7 @@ function toggle(key: string, expandable: boolean): void {
 .req-yes {
   display: inline-block;
   padding: 0 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: var(--fs-xxs);
   color: var(--warning);
   background: var(--warning-tint);

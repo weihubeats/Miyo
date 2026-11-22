@@ -13,7 +13,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import PageHeader from '@/components/navigation/PageHeader.vue'
 import { useGoBack } from '@/composables/useGoBack'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
-import Icon from '@/components/ui/Icon.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 import ContextPanel from '@/domains/agent/components/ai/ai/ContextPanel.vue'
 import ChatPanel from '@/domains/agent/components/ai/ai/ChatPanel.vue'
 import ArtifactPanel from '@/domains/agent/components/ai/ai/ArtifactPanel.vue'
@@ -62,8 +62,7 @@ const goBack = useGoBack()
     </PageHeader>
 
     <main v-if="!ai.projectId" class="ai-body-empty">
-      <Icon name="zap" :size="32" class="empty-zap" />
-      <p>{{ t('ai.noProject') }}</p>
+      <EmptyState icon="zap" :title="t('ai.noProject')" />
     </main>
 
     <main v-else class="ai-body">
@@ -102,7 +101,7 @@ const goBack = useGoBack()
   font-size: var(--fs-xxs);
   line-height: 1.6;
   padding: 0 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
   background: var(--warning-tint);
   color: var(--warning);
@@ -123,11 +122,6 @@ const goBack = useGoBack()
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--sp-3);
-  color: var(--text-3);
-}
-.empty-zap {
-  color: var(--accent);
 }
 
 .ai-body {

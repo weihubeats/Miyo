@@ -535,7 +535,7 @@ function setAuthType(type: string): void {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
   user-select: none;
@@ -554,7 +554,7 @@ function setAuthType(type: string): void {
 }
 
 .oauth-status {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -592,11 +592,11 @@ function setAuthType(type: string): void {
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 
 .sig-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -608,14 +608,14 @@ function setAuthType(type: string): void {
 .sig-template {
   width: 100%;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   min-height: 40px;
   resize: vertical;
 }
 
 .sig-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-3);
 }

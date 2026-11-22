@@ -424,7 +424,7 @@ defineExpose({ openAt, close })
   margin-left: 8px;
   padding: 1px 5px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-hover);
   font-family: var(--font-mono);
   font-size: var(--fs-xxs);
@@ -456,7 +456,7 @@ defineExpose({ openAt, close })
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
   color: var(--text-2);
 }
@@ -467,7 +467,7 @@ defineExpose({ openAt, close })
 
 .miyo-menu-confirm-title {
   margin: 2px 0 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   line-height: 1.45;
   color: var(--text-1);

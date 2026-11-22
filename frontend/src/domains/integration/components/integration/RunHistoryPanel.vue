@@ -419,9 +419,9 @@ function openRun(r: ScenarioRunSummary): void {
 
 .hist-env {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   color: var(--text-2);
   font-family: var(--font-mono);

@@ -115,10 +115,13 @@ function cssVar(name: string, fallback: string): string {
 // 订阅 miyo:theme 在换肤后重取（Chart.js dataset 颜色是响应式的）。
 const okColor = ref(cssVar('--success', '#22c55e'))
 const errColor = ref(cssVar('--danger', '#ef4444'))
+// 网格线走编辑器 hairline token（深色半透白 / 浅色半透黑，主题自适应）
+const gridColor = ref(cssVar('--border-editor', 'rgba(128, 128, 128, 0.12)'))
 
 function refreshChartColors(): void {
   okColor.value = cssVar('--success', '#22c55e')
   errColor.value = cssVar('--danger', '#ef4444')
+  gridColor.value = cssVar('--border-editor', 'rgba(128, 128, 128, 0.12)')
 }
 onMounted(() => window.addEventListener(THEME_EVENT, refreshChartColors))
 onBeforeUnmount(() => window.removeEventListener(THEME_EVENT, refreshChartColors))
@@ -159,13 +162,13 @@ const chartOptions = computed<ChartOptions<'line'>>(() => ({
       type: 'linear',
       title: { display: true, text: t('loadtest.axisTime'), font: { size: 11 } },
       ticks: { precision: 0 },
-      grid: { color: 'rgba(128,128,128,0.12)' },
+      grid: { color: gridColor.value },
     },
     y: {
       beginAtZero: true,
       title: { display: true, text: t('loadtest.axisDone'), font: { size: 11 } },
       ticks: { precision: 0 },
-      grid: { color: 'rgba(128,128,128,0.12)' },
+      grid: { color: gridColor.value },
     },
   },
   plugins: {

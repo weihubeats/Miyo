@@ -19,7 +19,7 @@ export const TEST_CASE_CATEGORIES: TestCaseCategory[] = [
 
 /** 分组主题色（暗色主题下可读）。 */
 export const CATEGORY_TONE: Record<TestCaseCategory, string> = {
-  正向: 'var(--ok)',
+  正向: 'var(--success)',
   负向: 'var(--danger)',
   边界值: 'var(--warning)',
   安全性: 'var(--accent)',

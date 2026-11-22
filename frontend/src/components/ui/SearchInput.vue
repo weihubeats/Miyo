@@ -124,7 +124,7 @@ defineExpose({ focus, select })
   box-shadow: 0 0 0 2px var(--accent-tint);
 }
 .si-disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-disabled);
 }
 .si-md {
   height: var(--h-md);

@@ -1194,3 +1194,114 @@ describe('页签拖拽排序回写（reorderTabs）', () => {
     expect(store.openTabs).toEqual(['ep-3', 'ep-1', 'ep-2'])
   })
 })
+
+
+describe('workspace store 页签固定与最近关闭', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    useLocaleStore().setMode('zh')
+    backend.projects.length = 0
+    backend.endpointsByProject.clear()
+    backend.envsByProject.clear()
+    backend.setActive(null)
+    backend.projects.push(makeProject('p-a', '项目A'))
+    backend.endpointsByProject.set('p-a', [
+      makeEndpoint('ep-1', 'p-a', 'users'),
+      makeEndpoint('ep-2', 'p-a', 'orders'),
+      makeEndpoint('ep-3', 'p-a', 'billing'),
+    ])
+    backend.envsByProject.set('p-a', [])
+  })
+
+  it('固定：挪到前缀末尾，取消固定：放回非固定区首位（前缀不变量）', async () => {
+    const store = useWorkspaceStore()
+    backend.setActive('p-a')
+    await store.init()
+    store.openEndpoint(store.endpoints[0]!)
+    store.openEndpoint(store.endpoints[1]!)
+    store.openEndpoint(store.endpoints[2]!)
+    expect(store.openTabs).toEqual(['ep-1', 'ep-2', 'ep-3'])
+
+    store.pinTab('ep-2')
+    expect(store.isTabPinned('ep-2')).toBe(true)
+    expect(store.openTabs).toEqual(['ep-2', 'ep-1', 'ep-3'])
+
+    store.pinTab('ep-3')
+    expect(store.openTabs).toEqual(['ep-2', 'ep-3', 'ep-1'])
+
+    store.unpinTab('ep-2')
+    expect(store.isTabPinned('ep-2')).toBe(false)
+    expect(store.openTabs).toEqual(['ep-3', 'ep-2', 'ep-1'])
+  })
+
+  it('固定页签：closeTab 拒绝；关闭其他/右侧/全部均保留固定页签', async () => {
+    const store = useWorkspaceStore()
+    backend.setActive('p-a')
+    await store.init()
+    for (const ep of store.endpoints) store.openEndpoint(ep)
+    store.pinTab('ep-1')
+
+    // 单关固定页签：no-op
+    store.closeTab('ep-1')
+    expect(store.openTabs).toContain('ep-1')
+
+    // 关闭其他：固定页签保留，非固定全关
+    store.closeOtherTabs('ep-2')
+    expect(store.openTabs).toEqual(['ep-1', 'ep-2'])
+
+    // 关闭右侧：固定页签在右侧也不受影响
+    store.pinTab('ep-2')
+    expect(store.openTabs).toEqual(['ep-1', 'ep-2']) // pinned 前缀不变量
+    store.closeAllTabs()
+    expect(store.openTabs).toEqual(['ep-1', 'ep-2'])
+    expect(store.isTabPinned('ep-1')).toBe(true)
+    expect(store.isTabPinned('ep-2')).toBe(true)
+  })
+
+  it('最近关闭：closeTab 入栈，reopen 恢复草稿并激活（create 伪页签同样可重开）', async () => {
+    const store = useWorkspaceStore()
+    backend.setActive('p-a')
+    await store.init()
+    store.openEndpoint(store.endpoints[0]!)
+    store.openCreateTab()
+    const createId = store.activeTabId!
+    expect(store.isCreateTab(createId)).toBe(true)
+
+    store.closeTab(createId)
+    store.closeTab('ep-1')
+    expect(store.recentlyClosed.length).toBe(2)
+
+    // 重开最近关闭的（LIFO：先 ep-1）
+    expect(store.reopenRecentlyClosed()).toBe(true)
+    expect(store.activeTabId).toBe('ep-1')
+    // 重开 create 伪页签
+    expect(store.reopenRecentlyClosed()).toBe(true)
+    expect(store.isCreateTab(store.activeTabId ?? ''))
+    // 栈空后返回 false
+    expect(store.reopenRecentlyClosed()).toBe(false)
+  })
+
+  it('持久化往返：固定页签随 miyo.open-tabs.<pid> 落盘，冷启动恢复', async () => {
+    let store = useWorkspaceStore()
+    backend.setActive('p-a')
+    await store.init()
+    for (const ep of store.endpoints) store.openEndpoint(ep)
+    store.pinTab('ep-3')
+
+    await nextTick()
+    await nextTick()
+    const raw = localStorage.getItem('miyo.open-tabs.p-a')
+    expect(raw).toBeTruthy()
+    expect(JSON.parse(raw!).pinned).toEqual(['ep-3'])
+
+    // 冷启动：新 pinia 实例 + 同一 localStorage → restoreTabsState 命中
+    setActivePinia(createPinia())
+    store = useWorkspaceStore()
+    backend.setActive('p-a')
+    await store.init()
+    expect(store.openTabs).toEqual(['ep-3', 'ep-1', 'ep-2'])
+    expect(store.pinnedTabs).toEqual(['ep-3'])
+    expect(store.isTabPinned('ep-3')).toBe(true)
+  })
+})

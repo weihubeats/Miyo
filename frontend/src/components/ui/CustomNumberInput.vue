@@ -146,11 +146,11 @@ function onBlur(): void {
 }
 .cni.size-md .cni-input {
   height: var(--h-md);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .cni.size-sm .cni-input {
   height: var(--h-sm);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .cni-input {
@@ -161,7 +161,7 @@ function onBlur(): void {
   border-radius: var(--radius);
   padding: 0 26px 0 10px;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   outline: none;
   transition:
@@ -179,7 +179,7 @@ function onBlur(): void {
   box-shadow: 0 0 0 2px var(--accent-tint);
 }
 .cni.disabled .cni-input {
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
@@ -234,7 +234,7 @@ function onBlur(): void {
   color: var(--accent);
 }
 .cni-step:disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 </style>

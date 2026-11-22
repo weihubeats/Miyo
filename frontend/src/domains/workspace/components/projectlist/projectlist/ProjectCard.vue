@@ -254,7 +254,7 @@ const emit = defineEmits<{
 .proj-title {
   flex: 1;
   min-width: 0;
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   color: var(--text-1);
   overflow: hidden;

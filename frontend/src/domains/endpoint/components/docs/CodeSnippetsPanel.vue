@@ -152,7 +152,7 @@ watch(
   margin: 0;
   padding: 12px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-1);
   white-space: pre-wrap;

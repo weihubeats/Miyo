@@ -10,9 +10,10 @@
  * - variant：
  *   · 'group'：融进父级 Pill 组控（无自绘边框 / 底色 / 圆角，几何与焦点环由组控提供）；
  *   · 'solo' ：独立控件（自绘边框 + 内凹底 + radius-md，深浅主题同源变量）；
- * - manage=false：隐藏「编辑环境」「+ 新建环境」「管理环境…」入口与所在弹窗——
- *   用例抽屉遮罩 z-index 120 高于 Modal 的 100，管理弹窗会被盖住；顺带不拉取
- *   EnvironmentManager 大 chunk（按需渲染 + 异步组件）。
+ * - manage=false：隐藏「编辑环境」「+ 新建环境」「管理环境…」入口与所在弹窗
+ *   （按需渲染 + 异步组件，避免小场景拉取 EnvironmentManager 大 chunk）。
+ *   抽屉等更高遮罩层内的宿主保持 manage 并传 manager-layer="drawer"
+ *   （Modal layer='drawer' → --z-modal-drawer 130，高于抽屉遮罩 120）。
  */
 import { computed, nextTick, ref } from 'vue'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -30,12 +31,14 @@ withDefaults(
   defineProps<{
     /** 触发器外观：group = 父级 Pill 组控内（顶栏）；solo = 独立控件（抽屉等）。 */
     variant?: 'group' | 'solo'
-    /** 环境管理入口（hover 编辑 / 底部新建·管理）：被更高层级遮罩盖住的场景关掉。 */
+    /** 环境管理入口（hover 编辑 / 底部新建·管理）：无弹窗需求的紧凑场景关掉。 */
     manage?: boolean
+    /** 管理弹窗层级：宿主在 Drawer 内时传 'drawer'（防被抽屉遮罩盖住）。 */
+    managerLayer?: 'modal' | 'drawer'
     /** 浮层最小宽度（触发器较窄时保证选项与 URL 可读）。 */
     popMinWidth?: number
   }>(),
-  { variant: 'solo', manage: true, popMinWidth: 320 },
+  { variant: 'solo', manage: true, managerLayer: 'modal', popMinWidth: 320 },
 )
 
 // 环境管理大弹窗（1400+ 行）随选择器首次渲染才拉取；manage=false 时连渲染都不发生。
@@ -254,6 +257,7 @@ defineExpose({ openManager })
       :open="showManager"
       :initial-env-id="managerEnvId"
       :create-new="managerCreate"
+      :layer="managerLayer"
       @update:open="onManagerOpenChange"
     />
   </div>

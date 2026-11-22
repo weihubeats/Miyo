@@ -16,7 +16,11 @@ const apiMock = vi.hoisted(() => ({
   sseDisconnect: vi.fn(async () => true),
 }))
 
-vi.mock('vue-router', () => ({ useRouter: () => routerMock }))
+vi.mock('vue-router', () => ({
+  useRouter: () => routerMock,
+  // Brand（PageHeader 内）自指守卫需要当前路径
+  useRoute: () => ({ path: '/realtime' }),
+}))
 vi.mock('@/composables/useMiyoApi', () => ({ useMiyoApi: () => apiMock }))
 
 import RealtimeView from '@/domains/endpoint/views/RealtimeView.vue'

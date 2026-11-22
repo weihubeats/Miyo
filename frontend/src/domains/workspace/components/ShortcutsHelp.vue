@@ -69,7 +69,7 @@ const contextual = [
   justify-content: space-between;
   gap: 12px;
   padding: 4px 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 .sc-desc {
   color: var(--text-1);
@@ -81,13 +81,13 @@ const contextual = [
   padding: 2px 8px;
   border: 1px solid var(--border);
   border-bottom-width: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg-hover);
   color: var(--text-2);
   white-space: nowrap;
 }
 .sc-empty {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

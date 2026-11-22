@@ -14,6 +14,7 @@ import type { McpPermissionStatus, McpToolStatus } from '@/types/miyoApi.d'
 import CustomNumberInput from '@/components/ui/CustomNumberInput.vue'
 import Modal from '@/components/ui/Modal.vue'
 import Icon from '@/components/ui/Icon.vue'
+import Switch from '@/components/ui/Switch.vue'
 import { errorText } from '@/utils/errorText'
 
 const api = useMiyoApi()
@@ -269,39 +270,31 @@ onMounted(() => {
 
 <template>
 <header>
-  <h2 class="text-base font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.mcp') }}</h2>
-  <p class="mt-1 mb-5 text-xs text-zinc-600 dark:text-zinc-500">{{ t('settings.mcpDesc') }}</p>
+  <h2 class="text-base font-medium text-ink1">{{ t('settings.mcp') }}</h2>
+  <p class="mt-1 mb-5 text-xs text-ink2">{{ t('settings.mcpDesc') }}</p>
 </header>
 
-<div class="rounded-xl border border-zinc-200/70 bg-zinc-50/80 p-5 dark:border-white/[0.06] dark:bg-zinc-900/40">
+<div class="miyo-card p-5">
   <div class="flex items-center justify-between gap-4">
       <div class="max-w-md">
-        <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.mcpEnable') }}</div>
-        <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+        <div class="text-sm font-medium text-ink1">{{ t('settings.mcpEnable') }}</div>
+        <p class="mt-0.5 text-xs text-ink2">
           {{ t('settings.mcpEnableDesc') }}
         </p>
       </div>
-      <button
-        type="button"
-        role="switch"
-        :aria-checked="mcpEnabled"
+      <Switch
+        :model-value="mcpEnabled"
         :disabled="mcpBusy"
-        class="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
-        :class="mcpEnabled ? 'bg-purple-500' : 'border border-zinc-300 bg-zinc-200 dark:border-white/10 dark:bg-white/10'"
-        @click="toggleMcp"
-      >
-        <span
-          class="absolute top-1/2 h-[16px] w-[16px] -translate-y-1/2 rounded-full bg-white shadow transition-all duration-150"
-          :class="mcpEnabled ? 'left-[21px]' : 'left-[2px]'"
-        />
-      </button>
+        :label="t('settings.mcpEnable')"
+        @change="toggleMcp"
+      />
   </div>
 
-  <div class="mt-5 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
+  <div class="mt-5 border-t border-line pt-5">
       <div class="flex items-center justify-between gap-4">
         <div class="max-w-md">
-          <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.mcpPort') }}</div>
-          <p class="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+          <div class="text-sm font-medium text-ink1">{{ t('settings.mcpPort') }}</div>
+          <p class="mt-0.5 text-xs text-ink2">
             {{ t('settings.mcpPortDesc') }}
           </p>
         </div>
@@ -319,56 +312,45 @@ onMounted(() => {
       </div>
 
       <!-- 权限等级：read/write/execute 默认启用；高风险（真实网络请求 / 删除）需明确确认 -->
-      <div class="mt-5 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
-        <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.mcpPermTitle') }}</div>
-        <p class="mt-0.5 mb-4 text-xs text-zinc-600 dark:text-zinc-400">
+      <div class="mt-5 border-t border-line pt-5">
+        <div class="text-sm font-medium text-ink1">{{ t('settings.mcpPermTitle') }}</div>
+        <p class="mt-0.5 mb-4 text-xs text-ink2">
           {{ t('settings.mcpPermDesc') }}
         </p>
         <div class="flex flex-col gap-2">
           <div
             v-for="perm in mcpPerms"
             :key="perm.level"
-            class="flex items-center justify-between gap-4 rounded-lg border px-3.5 py-2.5"
-            :class="perm.highRisk && perm.enabled
-              ? 'border-amber-300 bg-amber-50/60 dark:border-amber-500/30 dark:bg-amber-500/[0.06]'
-              : 'border-zinc-200/70 dark:border-white/[0.06]'"
+            class="mcp-perm-row"
+            :class="{ 'mcp-perm-row-hr': perm.highRisk && perm.enabled }"
           >
             <div class="min-w-0">
               <div class="flex items-center gap-2">
-                <span class="text-xs font-medium text-zinc-900 dark:text-zinc-100">{{ permDesc(perm.level) }}</span>
-                <code class="font-mono text-xxs text-zinc-500 dark:text-zinc-400">{{ perm.level }}</code>
+                <span class="text-xs font-medium text-ink1">{{ permDesc(perm.level) }}</span>
+                <code class="font-mono text-xxs text-ink3">{{ perm.level }}</code>
                 <span
                   v-if="perm.highRisk"
-                  class="rounded px-1.5 py-0.5 text-xxs font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
+                  class="mcp-risk-chip"
                 >{{ t('settings.mcpPermHighRisk') }}</span>
               </div>
-              <p class="mt-0.5 text-xxs text-zinc-600 dark:text-zinc-400">
+              <p class="mt-0.5 text-xxs text-ink3">
                 {{ t('settings.mcpPermToolCount', { n: perm.toolCount }) }}
               </p>
             </div>
-            <button
-              type="button"
-              role="switch"
-              :aria-checked="perm.enabled"
-              :aria-label="permDesc(perm.level)"
+            <Switch
+              :model-value="perm.enabled"
               :disabled="mcpPermBusy"
-              class="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
-              :class="perm.enabled ? 'bg-purple-500' : 'border border-zinc-300 bg-zinc-200 dark:border-white/10 dark:bg-white/10'"
-              @click="toggleMcpPerm(perm)"
-            >
-              <span
-                class="absolute top-1/2 h-[16px] w-[16px] -translate-y-1/2 rounded-full bg-white shadow transition-all duration-150"
-                :class="perm.enabled ? 'left-[21px]' : 'left-[2px]'"
-              />
-            </button>
+              :label="permDesc(perm.level)"
+              @change="toggleMcpPerm(perm)"
+            />
           </div>
         </div>
       </div>
 
       <!-- 自定义敏感字段规则：脱敏单源的自定义词根（MCP 返回 / 导出全生效） -->
-      <div class="mt-5 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
-        <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.patternTitle') }}</div>
-        <p class="mt-0.5 mb-3 text-xs text-zinc-600 dark:text-zinc-400">{{ t('settings.patternDesc') }}</p>
+      <div class="mt-5 border-t border-line pt-5">
+        <div class="text-sm font-medium text-ink1">{{ t('settings.patternTitle') }}</div>
+        <p class="mt-0.5 mb-3 text-xs text-ink2">{{ t('settings.patternDesc') }}</p>
         <div class="flex items-center gap-2">
           <input
             v-model="newPattern"
@@ -392,12 +374,12 @@ onMounted(() => {
           <span
             v-for="p in sensitivePatterns"
             :key="p"
-            class="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 font-mono text-xxs text-zinc-700 dark:bg-white/[0.06] dark:text-zinc-300"
+            class="mcp-chip"
           >
             {{ p }}
             <button
               type="button"
-              class="text-zinc-400 hover:text-red-500"
+              class="mcp-chip-x"
               :aria-label="t('common.delete')"
               :disabled="patternsBusy"
               @click="removePattern(p)"
@@ -406,13 +388,13 @@ onMounted(() => {
             </button>
           </span>
         </div>
-        <p v-else class="mt-3 text-xxs text-zinc-500 dark:text-zinc-400">{{ t('settings.patternEmpty') }}</p>
+        <p v-else class="mt-3 text-xxs text-ink3">{{ t('settings.patternEmpty') }}</p>
       </div>
 
       <!-- 工具权限：逐个停用 MCP 工具，停用后 AI 不可见且控制面拒绝调用 -->
-      <div class="mt-5 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
-        <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.mcpToolsTitle') }}</div>
-        <p class="mt-0.5 mb-4 text-xs text-zinc-600 dark:text-zinc-400">
+      <div class="mt-5 border-t border-line pt-5">
+        <div class="text-sm font-medium text-ink1">{{ t('settings.mcpToolsTitle') }}</div>
+        <p class="mt-0.5 mb-4 text-xs text-ink2">
           {{ t('settings.mcpToolsDesc') }}
         </p>
         <div
@@ -423,50 +405,41 @@ onMounted(() => {
           :key="group.key"
           class="mb-4 last:mb-0"
         >
-          <div class="mb-2 text-xxs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <div class="mb-2 text-xxs font-medium uppercase tracking-wide text-ink3">
             {{ group.label }}
           </div>
           <div class="flex flex-col gap-2">
             <div
               v-for="tool in group.tools"
               :key="tool.name"
-              class="flex items-center justify-between gap-4 rounded-lg border border-zinc-200/70 px-3.5 py-2.5 dark:border-white/[0.06]"
+              class="mcp-perm-row"
             >
               <div class="min-w-0">
-                <div class="text-xs font-medium text-zinc-900 dark:text-zinc-100">
+                <div class="text-xs font-medium text-ink1">
                   {{ t(`settings.mcpTool.${tool.name}`) }}
                 </div>
-                <code class="font-mono text-xxs text-zinc-500 dark:text-zinc-400">{{ tool.name }}</code>
+                <code class="font-mono text-xxs text-ink3">{{ tool.name }}</code>
               </div>
-              <button
-                type="button"
-                role="switch"
-                :aria-checked="tool.enabled"
-                :aria-label="t(`settings.mcpTool.${tool.name}`)"
+              <Switch
+                :model-value="tool.enabled"
                 :disabled="mcpToolBusy === tool.name"
-                class="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
-                :class="tool.enabled ? 'bg-purple-500' : 'border border-zinc-300 bg-zinc-200 dark:border-white/10 dark:bg-white/10'"
-                @click="toggleMcpTool(tool)"
-              >
-                <span
-                  class="absolute top-1/2 h-[16px] w-[16px] -translate-y-1/2 rounded-full bg-white shadow transition-all duration-150"
-                  :class="tool.enabled ? 'left-[21px]' : 'left-[2px]'"
-                />
-              </button>
+                :label="t(`settings.mcpTool.${tool.name}`)"
+                @change="toggleMcpTool(tool)"
+              />
             </div>
           </div>
         </div>
       </div>
   </div>
 
-  <div class="mt-5 border-t border-zinc-200/70 pt-5 dark:border-white/[0.06]">
+  <div class="mt-5 border-t border-line pt-5">
       <div class="flex items-center justify-between gap-4">
         <div class="min-w-0 max-w-md">
-          <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{{ t('settings.mcpStatus') }}</div>
-          <p class="mt-0.5 truncate text-xs text-zinc-600 dark:text-zinc-400">
+          <div class="text-sm font-medium text-ink1">{{ t('settings.mcpStatus') }}</div>
+          <p class="mt-0.5 truncate text-xs text-ink2">
             <span
               class="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
-              :class="mcpRunning ? 'bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-500'"
+              :class="mcpRunning ? 'bg-success' : 'bg-ink3'"
               aria-hidden="true"
             ></span>
             {{ mcpRunning ? t('settings.mcpRunning') : t('settings.mcpStopped') }}
@@ -482,18 +455,18 @@ onMounted(() => {
 
 <!-- 首次启用：权限说明（确认后才真正开启 MCP） -->
 <Modal v-model:open="permExplainOpen" :title="t('settings.mcpPermFirstTitle')" width="480px">
-  <div class="flex flex-col gap-3 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+  <div class="flex flex-col gap-3 text-xs leading-relaxed text-ink2">
     <p>{{ t('settings.mcpPermFirstBody') }}</p>
-    <ul class="flex flex-col gap-1.5 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900/60">
+    <ul class="flex flex-col gap-1.5 rounded-lg bg-code p-3">
       <li v-for="perm in mcpPerms" :key="perm.level" class="flex items-start gap-1.5">
         <Icon
           name="dot"
           class="mt-1 h-3 w-3 shrink-0"
-          :class="perm.highRisk ? 'text-amber-500' : 'text-purple-500'"
+          :class="perm.highRisk ? 'text-warning' : 'text-accent'"
         />
         <span>
           <span class="font-medium">{{ permDesc(perm.level) }}</span>
-          <span class="text-zinc-500 dark:text-zinc-400">
+          <span class="text-ink3">
             — {{ perm.highRisk ? t('settings.mcpPermFirstHighRisk') : t('settings.mcpPermFirstDefault') }}
           </span>
         </span>
@@ -516,9 +489,9 @@ onMounted(() => {
 
 <!-- 高风险等级启用确认 -->
 <Modal v-model:open="pendingHighRiskConfirm" :title="t('settings.mcpPermRiskTitle')" width="440px">
-  <div class="flex flex-col gap-3 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+  <div class="flex flex-col gap-3 text-xs leading-relaxed text-ink2">
     <p>{{ t('settings.mcpPermRiskBody', { level: pendingHighRiskLabel }) }}</p>
-    <p class="rounded-lg bg-amber-50 p-3 text-amber-700 dark:bg-amber-500/[0.08] dark:text-amber-400">
+    <p class="mcp-warn-callout">
       {{ t('settings.mcpPermRiskWarn') }}
     </p>
   </div>
@@ -530,9 +503,86 @@ onMounted(() => {
     >{{ t('common.cancel') }}</button>
     <button
       type="button"
-      class="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600"
+      class="mcp-btn-warn"
       @click="confirmHighRisk"
     >{{ t('settings.mcpPermRiskConfirm') }}</button>
   </template>
 </Modal>
 </template>
+
+<style scoped>
+/* 权限/工具行：hairline 行卡（跟随主题 border/panel token，禁止调色板字面量） */
+.mcp-perm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+/* 已启用的高风险行：warning 描边 + 淡 tint 底（深浅成对 token） */
+.mcp-perm-row-hr {
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: var(--warning-tint);
+}
+/* 高风险徽章 */
+.mcp-risk-chip {
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-size: var(--fs-xxs);
+  font-weight: 500;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+}
+/* 敏感词根 chip */
+.mcp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xxs);
+  color: var(--text-2);
+  background: var(--bg-hover);
+}
+.mcp-chip-x {
+  border: 0;
+  padding: 0 2px;
+  font-size: var(--fs-sm);
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--dur) var(--ease);
+}
+.mcp-chip-x:hover:not(:disabled) {
+  color: var(--danger);
+}
+.mcp-chip-x:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: default;
+}
+/* 高风险确认警示框 */
+.mcp-warn-callout {
+  margin: 0;
+  border-radius: var(--radius-md);
+  padding: 12px;
+  color: var(--warning);
+  background: var(--warning-tint);
+}
+/* 高风险确认主按钮：warning 实底（对应 --danger-solid 的琥珀语义档） */
+.mcp-btn-warn {
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text-on-accent);
+  background: var(--warning);
+  transition: background var(--dur) var(--ease);
+}
+.mcp-btn-warn:hover {
+  background: color-mix(in srgb, var(--warning) 85%, black);
+}
+</style>

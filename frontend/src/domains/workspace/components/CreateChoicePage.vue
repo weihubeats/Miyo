@@ -105,7 +105,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onDocKeydown))
   justify-content: center;
   width: 76px;
   height: 76px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
 }
 .tone-blue {
   color: var(--info);

@@ -136,7 +136,7 @@ watch(codeLang, () => {
   border-radius: var(--radius);
   background: var(--bg-code);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   color: var(--text-1);
   white-space: pre-wrap;
@@ -150,7 +150,7 @@ watch(codeLang, () => {
   padding: 14px 16px;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

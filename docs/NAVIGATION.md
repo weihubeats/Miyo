@@ -29,7 +29,11 @@ goBack('/plugins')  // 指定兜底目标
    `router.back()` 原路返回来源页；
 2. 深链直开 / 刷新后无来源 → `push(fallback)`（默认 `/projects`）；
 3. 永远不会 `back()` 出应用：Tauri 单窗口历史栈只由本应用写入，
-   `state.back` 为 null 的一律走 fallback（外部站点 → 应用、地址栏直开均如此）。
+   `state.back` 为 null 的一律走 fallback（外部站点 → 应用、地址栏直开均如此）；
+4. **300ms 导航锁**：双击返回钮 / 快捷键连按只生效一次——防 back 两步跳过
+   来源页与 back↔push 死循环；
+5. 模块深层页面的 fallback 应传**所属模块首页**（插件宿主 `/plugins` 范式），
+   不允许新增硬编码返回路径绕过 useGoBack。
 
 场景对照：
 
@@ -52,7 +56,8 @@ goBack('/plugins')  // 指定兜底目标
 - 整行拖拽窗口（`.miyo-topbar` 全局类，style.css 单点定义），交互子元素豁免；
   macOS 交通灯落 Brand 区上方（JavaDebugView 曾因无 Brand 顶栏被交通灯压住返回钮）；
 - 高 44px（对齐 WorkspaceView top-bar 现状；AiTestView 36px 异构高度已收口）；
-- props：`title`（Brand 标题）/ `hideBack`（根页面）/ `hideBrand`（Tauri 弹出子窗）/
+- props：`title`（Brand 标题）/ `description`（页面级描述，返回钮右侧次级文字，
+  1080 以下隐藏）/ `hideBack`（根页面）/ `hideBrand`（Tauri 弹出子窗）/
   `backLabel`（未传 = 「返回」；传空串 = 纯图标）/ `backTitle` / `backFallback`；
 - **`@back` 监听即完全接管**（默认返回策略不再执行）——分层返回、脏确认由此实现。
 
@@ -73,6 +78,44 @@ goBack('/plugins')  // 指定兜底目标
 
 不用页面级返回钮：右上角关闭 + Esc（escStack 仲裁）+ 遮罩关闭；
 未保存内容由业务组件二次确认（Popconfirm / Modal）。
+
+### 入口去重（自指收口）
+
+- 已在目标页时入口隐藏或退化为纯展示：Brand 在 `/projects` 自动进入
+  `brand-home` 纯展示态（无 tooltip、点击无效）；ProjectTabs ⋯ 菜单
+  「项目列表」项在首页隐藏。
+- 多入口属产品便利的场景（DashboardNav + 工作区工具组跨页直达、
+  新建项目三入口）有意保留。
+
+### Tab Navigation（页签管理）
+
+- 持久化：`miyo.open-tabs.<projectId>` = `{ tabs, drafts, activeTabId, pinned }`；
+  草稿 600ms 防抖落盘，2MB 上限；`scenario:` 伪页签恢复时丢弃；
+- 固定页签（pin）：置左区、图钉标识、不受「关闭其他/右侧/全部」影响、
+  关闭需先取消固定（Popconfirm 提示）；
+- 最近关闭：会话内栈（上限 10），⋯ 菜单「重新打开关闭的页签」恢复草稿并激活；
+- 排序：拖拽为用户显式意图，不按最近访问自动重排；最近访问由 QuickSearch
+  「最近」分组承担（`miyo.recent-endpoints`）。
+
+### 弹层层级语义
+
+`--z-*` 阶梯（style.css 单源）：modal 100 → drawer 120 → modal-drawer 130 → popconfirm 200 →
+popover 300 → tip 400 → overlay 900（全屏遮罩/命令面板）→ dropzone 999 →
+toast 1000 → progress 1100。
+
+- Modal 默认 `--z-modal`；在 Drawer 内打开的弹窗必须 `layer="drawer"`
+  （`--z-modal-drawer` 130，高于抽屉遮罩 120）；
+- 400px 级浮层（快捷预览等）用 `--z-popover`，不用 `--z-overlay`（后者只给
+  全屏接管/命令面板）；
+- 全屏接管（useOverlayFullscreen）的 Esc 一律走 escStack 压栈——禁止组件
+  自挂 `window.addEventListener('keydown')` 处理 Esc（双轨已收口）。
+
+### 响应式断点档位
+
+统一档位（新增断点就近归档，不发明新值）：**720 / 900 / 1080 / 1280 / 1560px**。
+1180 为唯一 JS matchMedia 档（WorkspaceView 顶栏直达工具 ↔ 溢出菜单互斥）。
+SplitPanes 窄容器堆叠走 `stack-below`（Realtime 880 / TestCaseDrawer 720 /
+RunReport 720 范式）。
 
 ## 4. 视觉 Token
 

@@ -114,11 +114,17 @@ const tabs = computed(() =>
   store.openTabs.map((id) => ({
     id,
     create: store.isCreateTab(id),
+    pinned: store.isTabPinned(id),
     method: store.draftOf(id)?.method ?? 'GET',
     title: store.titleOf(id),
     dirty: store.isDirty(id),
   })),
 )
+
+/** 该页签是否是其所在固定组的最后一个（渲染分组线）。 */
+function isLastPinned(id: string, index: number): boolean {
+  return store.isTabPinned(id) && store.openTabs[index + 1] !== undefined && !store.isTabPinned(store.openTabs[index + 1])
+}
 
 // ---------- 标签管理菜单：关闭当前 / 其他 / 右侧 / 全部（有未保存时行内二次确认） ----------
 // 菜单在触发器右侧展开（left 对齐），贴着 ⋯ 按钮往右下开，避免盖住左侧标签。
@@ -138,14 +144,20 @@ function dirtyCount(ids: string[]): number {
 function tabMenuItemsFor(targetId: string | null): MenuItem[] {
   const ids = store.openTabs
   const idx = targetId ? ids.indexOf(targetId) : -1
-  const others = ids.filter((id) => id !== targetId)
-  const rightIds = targetId && idx !== -1 ? ids.slice(idx + 1) : []
+  const others = ids.filter((id) => id !== targetId && !store.isTabPinned(id))
+  const rightIds = targetId && idx !== -1 ? ids.slice(idx + 1).filter((id) => !store.isTabPinned(id)) : []
+  const pinned = !!targetId && store.isTabPinned(targetId)
   return [
+    {
+      key: 'toggle-pin',
+      label: pinned ? t('tabbar.unpin') : t('tabbar.pin'),
+      disabled: !targetId,
+    },
     {
       key: 'close-current',
       label: t('tabbar.closeCurrent'),
-      disabled: !targetId,
-      ...(targetId && store.isDirty(targetId) ? { confirm: t('tabbar.closeConfirm'), confirmDanger: true } : {}),
+      disabled: !targetId || pinned,
+      ...(targetId && !pinned && store.isDirty(targetId) ? { confirm: t('tabbar.closeConfirm'), confirmDanger: true } : {}),
     },
     {
       key: 'close-others',
@@ -167,6 +179,11 @@ function tabMenuItemsFor(targetId: string | null): MenuItem[] {
       disabled: ids.length === 0,
       ...(dirtyCount(ids) > 0 ? { confirm: unsavedConfirm(dirtyCount(ids)), confirmDanger: true } : {}),
     },
+    {
+      key: 'reopen-closed',
+      label: t('tabbar.reopenClosed'),
+      disabled: store.recentlyClosed.length === 0,
+    },
   ]
 }
 
@@ -186,7 +203,12 @@ function onTabContextMenu(event: MouseEvent, id: string): void {
 
 function runMenuAction(item: MenuItem): void {
   const target = contextTabId.value ?? store.activeTabId
-  if (item.key === 'close-current' && target) {
+  if (item.key === 'toggle-pin' && target) {
+    if (store.isTabPinned(target)) store.unpinTab(target)
+    else store.pinTab(target)
+  } else if (item.key === 'reopen-closed') {
+    store.reopenRecentlyClosed()
+  } else if (item.key === 'close-current' && target) {
     store.closeTab(target)
   } else if (item.key === 'close-others' && target) {
     store.closeOtherTabs(target)
@@ -289,15 +311,29 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
         <span v-if="tab.create" class="tab-spark" aria-hidden="true"><Icon name="zap" :size="12" /></span>
         <span v-else class="method-tag" :class="methodTone(tab.method)">{{ tab.method }}</span>
         <span class="tab-title" v-tooltip-overflow="tab.title">{{ tab.title }}</span>
+        <span v-if="tab.pinned" class="tab-pin" :title="t('tabbar.pinned')"><Icon name="pin" :size="11" /></span>
         <span v-if="tab.dirty" class="tab-dirty" :title="t('tabbar.unsaved')"><Icon name="dot" :size="8" /></span>
         <Popconfirm
-          v-if="tab.dirty"
+          v-if="tab.dirty && !tab.pinned"
           :title="t('tabbar.closeConfirm')"
           @confirm="close(tab.id)"
         >
           <IconButton class="tab-close" name="x" :size="12" :title="t('common.close')" />
         </Popconfirm>
-        <IconButton v-else class="tab-close" name="x" :size="12" :title="t('common.close')" @click.stop="close(tab.id)" />
+        <IconButton
+          v-else-if="!tab.dirty && !tab.pinned"
+          class="tab-close"
+          name="x"
+          :size="12"
+          :title="t('common.close')"
+          @click.stop="close(tab.id)"
+        />
+        <!-- 固定页签：关闭钮提示先取消固定，确认即取消固定（不直接关） -->
+        <Popconfirm v-else :title="t('tabbar.pinnedCloseHint')" @confirm="store.unpinTab(tab.id)">
+          <IconButton class="tab-close" name="x" :size="12" :title="t('tabbar.pinnedCloseHint')" />
+        </Popconfirm>
+        <!-- 固定组分组线：最后一个固定页签的右缘（页签元素内，随页签宽度） -->
+        <div v-if="isLastPinned(tab.id, store.openTabs.indexOf(tab.id))" class="tab-pin-sep" aria-hidden="true"></div>
       </div>
       <Tooltip :content="t('tabbar.newRequestHint')">
         <button
@@ -382,7 +418,7 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
   margin-bottom: 2px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg-panel);
   color: var(--accent);
   cursor: pointer;
@@ -466,7 +502,7 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
   font-weight: 700;
   line-height: 1.2;
   padding: 3px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 /* 「新建」伪页签的闪电：主题色小图标 */
@@ -494,6 +530,23 @@ function onTabActivateKey(event: KeyboardEvent, id: string): void {
 }
 .tab:hover .tab-dirty {
   opacity: 0;
+}
+
+/* 固定页签图钉：accent 弱化色（区别于脏点的 warning），不随 hover 隐藏 */
+.tab-pin {
+  display: inline-flex;
+  color: var(--accent);
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+/* 固定组分组线：最后一个固定页签之后的竖分隔（页签条内的 hairline） */
+.tab-pin-sep {
+  flex-shrink: 0;
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border-strong);
 }
 
 /* 拖拽排序反馈（Sortable ghost/chosen） */

@@ -357,7 +357,7 @@ function clearFilter(): void {
   background: var(--bg-card);
 }
 .kvt.disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-disabled);
   pointer-events: none;
 }
 
@@ -515,7 +515,7 @@ function clearFilter(): void {
   border: none;
   background: transparent;
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   outline: none;
   padding: 0 8px;
   min-width: 0;

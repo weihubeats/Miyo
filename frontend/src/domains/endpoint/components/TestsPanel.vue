@@ -131,7 +131,7 @@ function onCodeKeydown(e: KeyboardEvent): void {
 }
 
 .tp-title {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -144,7 +144,7 @@ function onCodeKeydown(e: KeyboardEvent): void {
 .tp-input {
   width: 100%;
   min-height: 110px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   resize: vertical;
 }
 
@@ -156,7 +156,7 @@ function onCodeKeydown(e: KeyboardEvent): void {
 
 .tp-badge {
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: var(--fs-xxs);
   font-weight: 600;
   font-family: var(--font-mono);
@@ -186,7 +186,7 @@ function onCodeKeydown(e: KeyboardEvent): void {
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .tp-outcome.ok {
   border-color: var(--success-tint);
@@ -221,7 +221,7 @@ function onCodeKeydown(e: KeyboardEvent): void {
 
 .tp-hint-empty {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 </style>

@@ -878,7 +878,7 @@ function cancelRunAll(): void {
 }
 
 const STATUS_TONE: Record<TestCase['last_run_status'], string> = {
-  Success: 'var(--ok)',
+  Success: 'var(--success)',
   Failed: 'var(--danger)',
   Untested: 'var(--text-3)',
 }

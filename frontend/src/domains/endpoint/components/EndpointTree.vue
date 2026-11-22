@@ -1061,7 +1061,7 @@ function onBatchMenuSelect(item: MenuItem): void {
 .tree-star-slot :deep(.ib) {
   width: 20px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--text-3);
 }
@@ -1112,9 +1112,9 @@ function onBatchMenuSelect(item: MenuItem): void {
   background: transparent;
   border-color: transparent;
 }
-/* 多选态：淡蓝底（与激活态可叠加，激活优先显示） */
+/* 多选态：中性选中底（与激活态可叠加，激活优先显示）——走主题成对 token */
 .tree-row.selected {
-  background: rgba(56, 139, 248, 0.16);
+  background: var(--bg-selected);
 }
 /* 批量操作条（根实例，多选时出现） */
 .tree-batch {
@@ -1126,7 +1126,7 @@ function onBatchMenuSelect(item: MenuItem): void {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-panel);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .tree-batch-count {
   flex: 1;
@@ -1222,7 +1222,7 @@ function onBatchMenuSelect(item: MenuItem): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   cursor: pointer;
 }
@@ -1259,7 +1259,7 @@ function onBatchMenuSelect(item: MenuItem): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--radius);
   border-width: 1px;
   border-style: solid;
   font-family: var(--font-mono);
@@ -1286,7 +1286,7 @@ function onBatchMenuSelect(item: MenuItem): void {
 .tree-actions :deep(.ib) {
   width: 20px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--text-3);
 }

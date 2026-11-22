@@ -397,9 +397,9 @@ function syncOverrides(): void {
 
 .sre-ref-tag {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
   color: var(--text-3);
 }

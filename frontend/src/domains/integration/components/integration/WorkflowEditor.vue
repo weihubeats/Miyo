@@ -2775,7 +2775,7 @@ function stepTimeoutOf(s: EditorStep): number | null {
   border: none;
   outline: none;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
   overflow: hidden;
@@ -3070,7 +3070,7 @@ function stepTimeoutOf(s: EditorStep): number | null {
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-hover);
   color: var(--text-3);
   font-size: var(--fs-xxs);
@@ -3133,7 +3133,8 @@ function stepTimeoutOf(s: EditorStep): number | null {
 
 .wf-validate-tag.warn {
   background: var(--warning);
-  color: #1a1a1a;
+  /* warning 实底上的文字走成对 token（深色近黑 / 浅色白字） */
+  color: var(--warning-fg);
 }
 
 .wf-validate-spacer {
@@ -3430,7 +3431,7 @@ function stepTimeoutOf(s: EditorStep): number | null {
 }
 
 .wf-step.disabled {
-  opacity: 0.55;
+  opacity: var(--opacity-disabled);
 }
 
 .wf-ghost {

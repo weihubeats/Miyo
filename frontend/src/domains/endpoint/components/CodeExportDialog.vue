@@ -45,7 +45,7 @@ const t = locale.t
 <style scoped>
 .modal-hint {
   margin: 0 0 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 </style>

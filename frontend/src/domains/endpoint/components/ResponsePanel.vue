@@ -8,7 +8,8 @@
  * - 查找：顶部弹出搜索框，高亮匹配 + 上一个/下一个导航（Enter / Shift+Enter / Esc）；
  * - 主体：JSON → 可折叠树形查看器（行号 + VS Code 深色语法着色）；文本 → 行号代码视图；HTML → 沙箱预览。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
+import { pushEscHandler } from '@/utils/escStack'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { useToast } from '@/composables/useToast'
 import { countOccurrences, useFindInText } from '@/composables/useFindInText'
@@ -554,13 +555,8 @@ async function copyLine(text: string): Promise<void> {
   else toast.error(t('response.copyFail'))
 }
 
-/** ⌘F / Ctrl+F 打开查找（输入框内不拦截）；Esc 退出全屏。 */
+/** ⌘F / Ctrl+F 打开查找（输入框内不拦截）；Esc 退出全屏走 escStack（见下）。 */
 function onWindowKeydown(e: KeyboardEvent): void {
-  if (fullscreen.value && e.key === 'Escape') {
-    e.preventDefault()
-    fullscreen.value = false
-    return
-  }
   if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'f') return
   if (activeTab.value !== 'body' || !hasBody.value) return
   const target = e.target as HTMLElement | null
@@ -625,6 +621,21 @@ const wrapToggleVisible = computed(
 
 // ---------- 全屏（响应面板 fixed 覆盖编辑器；祖先链无 transform，fixed 可靠） ----------
 const fullscreen = ref(false)
+
+/**
+ * 全屏 Esc 接 escStack：抽屉/弹层内开全屏时，Esc 先退全屏不关宿主弹层
+ * （原先 window 直听会双轨穿透——规范见 docs/NAVIGATION.md 弹层层级语义）。
+ */
+let offFullscreenEsc: (() => void) | null = null
+watch(fullscreen, (on) => {
+  offFullscreenEsc?.()
+  offFullscreenEsc = on
+    ? pushEscHandler(() => {
+      fullscreen.value = false
+    })
+    : null
+})
+onBeforeUnmount(() => offFullscreenEsc?.())
 
 function toggleFullscreen(): void {
   fullscreen.value = !fullscreen.value

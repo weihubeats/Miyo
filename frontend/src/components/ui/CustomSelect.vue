@@ -336,7 +336,7 @@ defineExpose({ close })
   background: var(--bg-card);
   color: var(--text-1);
   border-radius: var(--radius);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: var(--font-mono);
   padding: 0 8px 0 10px;
   cursor: pointer;
@@ -351,7 +351,7 @@ defineExpose({ close })
 }
 .cs.size-sm .cs-trigger {
   height: var(--h-sm);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .cs-trigger:hover:not(:disabled) {
   background: var(--bg-elevated);
@@ -449,7 +449,7 @@ defineExpose({ close })
   height: 30px;
   padding: 0 12px;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-family: var(--font-mono);
   white-space: nowrap;
   overflow: hidden;

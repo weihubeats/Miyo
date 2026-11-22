@@ -105,12 +105,12 @@ function onKeydown(event: KeyboardEvent): void {
 .seg.size-md .seg-item {
   height: 26px;
   padding: 0 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
 }
 .seg.size-sm .seg-item {
   height: 22px;
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .seg-item {
@@ -155,7 +155,7 @@ function onKeydown(event: KeyboardEvent): void {
   background: var(--bg-elevated);
 }
 .seg.disabled .seg-item {
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 </style>

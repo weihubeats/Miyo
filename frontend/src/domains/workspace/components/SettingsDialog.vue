@@ -45,6 +45,7 @@ import Icon, { type IconName } from '@/components/ui/Icon.vue'
 import Popconfirm from '@/components/ui/Popconfirm.vue'
 import CustomNumberInput from '@/components/ui/CustomNumberInput.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import Switch from '@/components/ui/Switch.vue'
 import ThemeAppearance from '@/domains/workspace/components/settings/ThemeAppearance.vue'
 import SettingsMcpTab from '@/domains/agent/components/settings/SettingsMcpTab.vue'
 import SettingsAiTab from '@/domains/agent/components/settings/SettingsAiTab.vue'
@@ -1120,19 +1121,11 @@ const projectSummary = computed(() => {
                       {{ t('settings.proxyEnableDesc') }}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    :aria-checked="proxyEnabled"
-                    class="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
-                    :class="proxyEnabled ? 'bg-accent' : 'border border-line-strong bg-hover'"
-                    @click="toggleProxy"
-                  >
-                    <span
-                      class="absolute top-1/2 h-[16px] w-[16px] -translate-y-1/2 rounded-full bg-white shadow transition-all duration-150"
-                      :class="proxyEnabled ? 'left-[21px]' : 'left-[2px]'"
-                    />
-                  </button>
+                  <Switch
+                    :model-value="proxyEnabled"
+                    :label="t('settings.proxyEnable')"
+                    @change="toggleProxy"
+                  />
                 </div>
 
                 <div v-if="proxyEnabled" class="mt-5 border-t border-line">
@@ -1199,20 +1192,12 @@ const projectSummary = computed(() => {
                       {{ t('settings.tlsInsecureDesc') }}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    :aria-checked="tlsAcceptInvalid"
+                  <Switch
+                    :model-value="tlsAcceptInvalid"
                     :disabled="tlsBusy"
-                    class="relative h-[22px] w-[40px] shrink-0 rounded-full transition-colors duration-150"
-                    :class="tlsAcceptInvalid ? 'bg-accent' : 'border border-line-strong bg-hover'"
-                    @click="toggleTlsInsecure"
-                  >
-                    <span
-                      class="absolute top-1/2 h-[16px] w-[16px] -translate-y-1/2 rounded-full bg-white shadow transition-all duration-150"
-                      :class="tlsAcceptInvalid ? 'left-[21px]' : 'left-[2px]'"
-                    />
-                  </button>
+                    :label="t('settings.tlsInsecure')"
+                    @change="toggleTlsInsecure"
+                  />
                 </div>
               </div>
             </section>
@@ -1666,7 +1651,7 @@ const projectSummary = computed(() => {
   outline-offset: 1px;
 }
 .datadir-copy-btn:disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 .datadir-copy-btn.copied {

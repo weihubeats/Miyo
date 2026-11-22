@@ -199,7 +199,7 @@ async function pickLang(lang: CodeLang): Promise<void> {
   animation: ce-check 220ms var(--ease);
 }
 .ce-trigger:disabled {
-  opacity: 0.55;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
@@ -223,7 +223,7 @@ async function pickLang(lang: CodeLang): Promise<void> {
   min-width: 200px;
   padding: 4px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-panel);
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
   animation: ce-pop 130ms var(--ease);
@@ -252,7 +252,7 @@ async function pickLang(lang: CodeLang): Promise<void> {
   border-radius: var(--radius);
   background: transparent;
   color: var(--text-1);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   text-align: left;
   cursor: pointer;
   transition: background var(--dur) var(--ease);
@@ -261,7 +261,7 @@ async function pickLang(lang: CodeLang): Promise<void> {
   background: var(--bg-hover);
 }
 .ce-item:disabled {
-  opacity: 0.55;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 

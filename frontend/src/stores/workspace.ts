@@ -155,6 +155,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const openTabs = ref<string[]>([])
   const activeTabId = ref<string | null>(null)
   const drafts = ref<Map<string, Endpoint>>(new Map())
+  /** 固定页签（有序）：不变量为 openTabs 的前缀，TabBar 据此渲染图钉与分组线。 */
+  const pinnedTabs = ref<string[]>([])
+  /** 最近关闭栈上限（会话内，不入持久化）。 */
+  const RECENT_CLOSED_MAX = 10
+  /** 最近关闭（会话内栈，上限 10）：⋯ 菜单「重新打开关闭的页签」的数据源。 */
+  const recentlyClosed = ref<{ kind: 'endpoint' | 'create'; id: string }[]>([])
 
   /** 环境：当前项目的列表 + 当前选中（execute_request 的 environment_id 来源）。 */
   const environments = ref<Environment[]>([])
@@ -468,6 +474,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     activeEnvId: string | null
     sessionBaseUrl: string
     openTabs: string[]
+    pinned: string[]
     drafts: Map<string, Endpoint>
     activeTabId: string | null
     activeView: 'debug' | 'design' | 'docs' | 'cases' | 'mock'
@@ -504,6 +511,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       sessionBaseUrl: sessionBaseUrl.value,
       // 「新建」伪页签是临时 UI 态，不入快照（切项目回来不复活）
       openTabs: openTabs.value.filter((id) => !isCreateTab(id)),
+      pinned: pinnedTabs.value.filter((id) => !isCreateTab(id)),
       drafts: drafts.value,
       activeTabId:
         activeTabId.value && !isCreateTab(activeTabId.value) ? activeTabId.value : null,
@@ -558,6 +566,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       sessionBaseUrl.value = snap.sessionBaseUrl
       // 兜底过滤：旧快照若混入「新建」伪页签，恢复时剥掉
       openTabs.value = snap.openTabs.filter((id) => !isCreateTab(id))
+      pinnedTabs.value = snap.pinned.filter((id) => !isCreateTab(id) && snap.openTabs.includes(id))
       drafts.value = snap.drafts
       activeTabId.value =
         snap.activeTabId && !isCreateTab(snap.activeTabId) ? snap.activeTabId : null
@@ -573,6 +582,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       // 快照未命中（冷启动 / LRU 淘汰）：尝试从 localStorage 恢复页签现场。
       if (!restoreTabsState(p.id)) {
         openTabs.value = []
+        pinnedTabs.value = []
         drafts.value = new Map()
         activeTabId.value = null
       }
@@ -692,6 +702,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         tabs: openTabs.value,
         drafts: draftsObj,
         activeTabId: activeTabId.value,
+        pinned: pinnedTabs.value,
       })
       if (payload.length > TABS_STATE_MAX_BYTES) return
       localStorage.setItem(TABS_STATE_PREFIX + pid, payload)
@@ -715,6 +726,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         tabs?: unknown
         drafts?: Record<string, Endpoint>
         activeTabId?: unknown
+        pinned?: unknown
       }
       if (!Array.isArray(parsed.tabs)) return false
       const tabs: string[] = []
@@ -737,6 +749,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if (!tabs.length) return false
       openTabs.value = tabs
       drafts.value = draftsMap
+      // 固定页签恢复：与 tabs 求交集 + 剔除伪页签（旧配置缺 pinned 字段 → 空数组）
+      pinnedTabs.value = Array.isArray(parsed.pinned)
+        ? parsed.pinned.filter(
+            (id): id is string =>
+              typeof id === 'string' && tabs.includes(id) && !isCreateTab(id),
+          )
+        : []
       const active =
         typeof parsed.activeTabId === 'string' && tabs.includes(parsed.activeTabId)
           ? parsed.activeTabId
@@ -749,7 +768,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   // 页签结构 / 激活态变化即落盘（覆盖打开 / 关闭 / 切换 / 场景页签等所有路径）。
-  watch([openTabs, activeTabId], () => persistTabsState())
+  watch([openTabs, activeTabId, pinnedTabs], () => persistTabsState())
   // 草稿编辑：防抖合并（与上方 dirtyTick watch 同源触发，各自节流互不影响）。
   watch(
     drafts,
@@ -1467,6 +1486,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function closeTab(id: string): void {
     const idx = openTabs.value.indexOf(id)
     if (idx === -1) return
+    // 固定页签不允许直接关闭（TabBar 的关闭钮会提示先取消固定）
+    if (isTabPinned(id)) return
+    // 最近关闭入栈（会话内；重开走 reopenRecentlyClosed，丢弃的脏编辑不复活）
+    recentlyClosed.value.push({ kind: isCreateTab(id) ? 'create' : 'endpoint', id })
+    if (recentlyClosed.value.length > RECENT_CLOSED_MAX) recentlyClosed.value.shift()
     openTabs.value.splice(idx, 1)
     drafts.value.delete(id)
     pristineBaselines.delete(id)
@@ -1481,27 +1505,65 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
-  /** 关闭除 keepId 外的全部标签（返回关闭数；脏标签由调用方先确认）。 */
+  /** 关闭除 keepId 外的全部标签（固定页签除外；返回关闭数；脏标签由调用方先确认）。 */
   function closeOtherTabs(keepId: string): number {
-    const targets = openTabs.value.filter((id) => id !== keepId)
+    const targets = openTabs.value.filter((id) => id !== keepId && !isTabPinned(id))
     targets.forEach((id) => closeTab(id))
     return targets.length
   }
 
-  /** 关闭全部标签（返回关闭数；脏标签由调用方先确认）。 */
+  /** 关闭全部标签（固定页签除外；返回关闭数；脏标签由调用方先确认）。 */
   function closeAllTabs(): number {
-    const targets = [...openTabs.value]
+    const targets = openTabs.value.filter((id) => !isTabPinned(id))
     targets.forEach((id) => closeTab(id))
     return targets.length
   }
 
-  /** 关闭 keepId 右侧的全部标签（返回关闭数；脏标签由调用方先确认）。 */
+  /** 关闭 keepId 右侧的全部标签（固定页签除外；返回关闭数；脏标签由调用方先确认）。 */
   function closeTabsToRight(keepId: string): number {
     const idx = openTabs.value.indexOf(keepId)
     if (idx === -1) return 0
-    const targets = openTabs.value.slice(idx + 1)
+    const targets = openTabs.value.slice(idx + 1).filter((id) => !isTabPinned(id))
     targets.forEach((id) => closeTab(id))
     return targets.length
+  }
+
+  /** 是否固定页签。 */
+  function isTabPinned(id: string): boolean {
+    return pinnedTabs.value.includes(id)
+  }
+
+  /** 固定页签：挪到固定前缀末尾（保持 pinned = openTabs 前缀的不变量）。 */
+  function pinTab(id: string): void {
+    if (!openTabs.value.includes(id) || isTabPinned(id)) return
+    pinnedTabs.value.push(id)
+    const ids = openTabs.value.filter((x) => x !== id)
+    ids.splice(pinnedTabs.value.length - 1, 0, id)
+    openTabs.value = ids
+  }
+
+  /** 取消固定：放回非固定区首位（原固定前缀之后）。 */
+  function unpinTab(id: string): void {
+    const i = pinnedTabs.value.indexOf(id)
+    if (i === -1) return
+    pinnedTabs.value.splice(i, 1)
+    const ids = openTabs.value.filter((x) => x !== id)
+    ids.splice(pinnedTabs.value.length, 0, id)
+    openTabs.value = ids
+  }
+
+  /** 重新打开最近关闭的页签（接口已删除 / 栈空时返回 false）。 */
+  function reopenRecentlyClosed(): boolean {
+    const item = recentlyClosed.value.pop()
+    if (!item) return false
+    if (item.kind === 'create') {
+      openCreateTab()
+      return true
+    }
+    const ep = endpoints.value.find((e) => e.id === item.id)
+    if (!ep) return false
+    openEndpoint(ep)
+    return true
   }
 
   /** 保存当前草稿：新建（列表无此 id）走创建，否则走更新。 */
@@ -2604,6 +2666,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     closeOtherTabs,
     closeAllTabs,
     closeTabsToRight,
+    pinnedTabs,
+    recentlyClosed,
+    isTabPinned,
+    pinTab,
+    unpinTab,
+    reopenRecentlyClosed,
     saveActiveDraft,
     deleteEndpoint,
     undoDelete,

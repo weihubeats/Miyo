@@ -23,6 +23,8 @@ const props = defineProps<{
   /** 独立管理模式：管理指定项目（非当前工作区项目）的环境——设置页跨项目进入。 */
   projectId?: string | null
   projectName?: string | null
+  /** Modal 层级（drawer = 在 Drawer 内打开时提层，见 Modal.layer）。 */
+  layer?: 'modal' | 'drawer'
 }>()
 
 const emit = defineEmits<{ 'update:open': [open: boolean] }>()
@@ -55,6 +57,7 @@ function onGuardClose(): boolean {
     :title="dialogTitle"
     width="min(1120px, 94vw)"
     :guard-close="onGuardClose"
+    :layer="layer"
     @update:open="emit('update:open', $event)"
   >
     <EnvWorkspace

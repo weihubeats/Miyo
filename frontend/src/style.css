@@ -12,6 +12,10 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
+/* 守卫 spec（themePattern / i18nPattern）的黑名单字面量不是 UI 代码：
+   不排除的话 Tailwind 会把 bg-purple-600 等禁用类真实生成进构建产物。 */
+@source not "./**/*.spec.ts";
+
 /* dark: 变体跟随主题 Store 的 <html data-theme="dark|light">，
    而非系统 prefers-color-scheme（否则手动切浅色但系统是深色时会错位）。 */
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
@@ -54,6 +58,7 @@
   /* ---- 浮层层级阶梯（全仓 z-index 单源；纯等值映射不改变先后） ---- */
   --z-modal: 100;        /* Modal / Drawer 基线 */
   --z-drawer: 120;       /* 自绘大抽屉（TestCaseDrawer） */
+  --z-modal-drawer: 130; /* 抽屉内弹窗（Modal layer='drawer'）：高于抽屉遮罩，低于 popconfirm */
   --z-popconfirm: 200;   /* 确认气泡（压过 Modal 内容） */
   --z-popover: 300;      /* 右键菜单 / Tooltip */
   --z-tip: 400;          /* 溢出 Tooltip 气泡（指令注入） */
@@ -70,6 +75,8 @@
   --bg-code: #1a1a23;
   --bg-hover: rgba(255, 255, 255, 0.06);
   --bg-active: rgba(255, 255, 255, 0.1);
+  /* 多选/批量选中态底色：hover 与 active 之间的中性档（各主题块成对带色相） */
+  --bg-selected: rgba(255, 255, 255, 0.09);
   --border: #34343f;
   --border-strong: #474755;
   /* 编辑器/代码块专用边框（暗色半透白；浅色为半透黑保持可见性） */
@@ -97,6 +104,8 @@
   /* 未勾选复选框井底 / 危险态文字（暗底提亮保可读） */
   --check-bg: color-mix(in srgb, black 26%, transparent);
   --danger-fg: color-mix(in srgb, var(--danger) 72%, #fff);
+  /* warning 实底上的文字：深色主题亮琥珀配近黑字，浅色主题深琥珀配白字 */
+  --warning-fg: color-mix(in srgb, black 80%, var(--warning));
   /* 项目卡表面（深色微光半透底 + 1px 光描边） */
   --projcard-bg: linear-gradient(
     180deg,
@@ -203,6 +212,11 @@
   --focus-ring: rgba(154, 151, 246, 0.55);
   --ease: ease-out;
   --dur: 140ms;
+  /* 快/慢档：微交互（按压/勾选）用 fast，弹层进出（Modal/Drawer/Menu）用 slow */
+  --dur-fast: 120ms;
+  --dur-slow: 200ms;
+  /* 统一禁用态透明度（此前 0.35~0.55 各组件自定） */
+  --opacity-disabled: 0.4;
 
   /* ---- 文本选中高亮（深邃蓝 + 纯白，对比度 ≈ 5.2:1，WCAG AA；亮/暗主题通用） ---- */
   --selection-bg: #2563eb;
@@ -279,20 +293,6 @@
   --miyo-radius: var(--radius);
   --miyo-radius-sm: var(--radius-sm);
 
-  /* ---- 遗留命名别名（Java 调试域等历史写法引用的旧 token 名）----
-     此前这些名字从未定义：var() 解析失败 → 颜色静默降级为继承值，
-     次级/三级文本层级与语义色（浅色主题）全部丢失。现映射到现行 token。 */
-  --text-secondary: var(--text-2);
-  --text-tertiary: var(--text-3);
-  --ok: var(--success);
-  --warn: var(--warning);
-  --danger-bg: var(--danger-tint);
-  --primary-tint: var(--accent-tint);
-  --bg: var(--bg-panel);
-  --bg-input: var(--bg-code);
-  --muted: var(--text-3);
-  --text: var(--text-1);
-  --fs-2xs: var(--fs-xs);
   --text-on-accent: #ffffff;
 
   /* ---- 组件级语义 token（视觉风格三态的驱动面）----
@@ -339,6 +339,7 @@
   --bg-code: #f6f7fb;
   --bg-hover: rgba(0, 0, 0, 0.045);
   --bg-active: rgba(0, 0, 0, 0.085);
+  --bg-selected: rgba(0, 0, 0, 0.07);
   --border: #e2e4ee;
   --border-strong: #cbd0de;
   --border-editor: rgba(0, 0, 0, 0.1);
@@ -396,6 +397,7 @@
   --update-card-bg: linear-gradient(to right, rgba(109, 92, 230, 0.12), rgba(250, 250, 251, 0.9));
   --check-bg: color-mix(in srgb, black 5%, transparent);
   --danger-fg: var(--danger);
+  --warning-fg: var(--text-on-accent);
   --projcard-bg: var(--bg-panel);
   --projcard-border: var(--border);
   --projcard-shadow: var(--shadow);
@@ -451,6 +453,7 @@
   --bg-code: #111a29;
   --bg-hover: rgba(148, 178, 255, 0.07);
   --bg-active: rgba(148, 178, 255, 0.11);
+  --bg-selected: rgba(148, 178, 255, 0.09);
   --border: #263349;
   --border-strong: #354463;
   --border-editor: rgba(148, 178, 255, 0.12);
@@ -536,6 +539,7 @@
   --bg-code: #f2f7fc;
   --bg-hover: rgba(38, 68, 110, 0.05);
   --bg-active: rgba(38, 68, 110, 0.09);
+  --bg-selected: rgba(38, 68, 110, 0.07);
   --border: #d5e1ef;
   --border-strong: #bccbdb;
   --border-editor: rgba(38, 68, 110, 0.12);
@@ -584,6 +588,7 @@
   --update-card-bg: linear-gradient(to right, rgba(46, 109, 168, 0.12), rgba(250, 251, 253, 0.9));
   --check-bg: color-mix(in srgb, black 5%, transparent);
   --danger-fg: var(--danger);
+  --warning-fg: var(--text-on-accent);
   --projcard-bg: var(--bg-panel);
   --projcard-border: var(--border);
   --projcard-shadow: var(--shadow);
@@ -624,6 +629,7 @@
   --bg-code: #0e1a12;
   --bg-hover: rgba(148, 210, 170, 0.07);
   --bg-active: rgba(148, 210, 170, 0.11);
+  --bg-selected: rgba(148, 210, 170, 0.09);
   --border: #24352a;
   --border-strong: #354839;
   --border-editor: rgba(148, 210, 170, 0.12);
@@ -708,6 +714,7 @@
   --bg-code: #f0f5ec;
   --bg-hover: rgba(28, 48, 32, 0.05);
   --bg-active: rgba(28, 48, 32, 0.09);
+  --bg-selected: rgba(28, 48, 32, 0.07);
   --border: #d3decf;
   --border-strong: #bccbb8;
   --border-editor: rgba(28, 48, 32, 0.12);
@@ -756,6 +763,7 @@
   --update-card-bg: linear-gradient(to right, rgba(62, 125, 84, 0.12), rgba(250, 251, 249, 0.9));
   --check-bg: color-mix(in srgb, black 5%, transparent);
   --danger-fg: var(--danger);
+  --warning-fg: var(--text-on-accent);
   --projcard-bg: var(--bg-panel);
   --projcard-border: var(--border);
   --projcard-shadow: var(--shadow);
@@ -795,6 +803,7 @@
   --bg-code: #f8f2e4;
   --bg-hover: rgba(64, 48, 28, 0.05);
   --bg-active: rgba(64, 48, 28, 0.09);
+  --bg-selected: rgba(64, 48, 28, 0.07);
   --border: #e3d7c3;
   --border-strong: #cbbb9f;
   --border-editor: rgba(64, 48, 28, 0.12);
@@ -843,6 +852,7 @@
   --update-card-bg: linear-gradient(to right, rgba(160, 107, 61, 0.14), rgba(253, 250, 244, 0.9));
   --check-bg: color-mix(in srgb, black 5%, transparent);
   --danger-fg: var(--danger);
+  --warning-fg: var(--text-on-accent);
   --projcard-bg: var(--bg-panel);
   --projcard-border: var(--border);
   --projcard-shadow: var(--shadow);
@@ -882,6 +892,7 @@
   --bg-code: #f3f0fc;
   --bg-hover: rgba(70, 58, 120, 0.05);
   --bg-active: rgba(70, 58, 120, 0.09);
+  --bg-selected: rgba(70, 58, 120, 0.07);
   --border: #ded7f2;
   --border-strong: #c2b8e6;
   --border-editor: rgba(70, 58, 120, 0.12);
@@ -930,6 +941,7 @@
   --update-card-bg: linear-gradient(to right, rgba(138, 118, 216, 0.14), rgba(251, 250, 254, 0.9));
   --check-bg: color-mix(in srgb, black 5%, transparent);
   --danger-fg: var(--danger);
+  --warning-fg: var(--text-on-accent);
   --projcard-bg: var(--bg-panel);
   --projcard-border: var(--border);
   --projcard-shadow: var(--shadow);
@@ -1210,6 +1222,26 @@ kbd,
   flex: 0 1 auto;
   min-width: 0;
   max-width: 280px;
+}
+/* 页面描述（PageHeader description）：返回钮右侧的次级说明，窄宽截断，
+   1080 以下随中段自适应直接隐藏（描述属增强信息，不挤工作台上下文）。 */
+.miyo-topbar-desc {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xxs);
+  color: var(--text-3);
+  border-left: 1px solid var(--border);
+  padding-left: var(--sp-2);
+  align-self: center;
+}
+@media (max-width: 1080px) {
+  .miyo-topbar-desc {
+    display: none;
+  }
 }
 
 /* ---- 按钮（miyo- 兼容类） ---- */

@@ -653,8 +653,8 @@ async function copyCode() {
   --s-2: 8px;
   --s-3: 12px;
   --s-4: 16px;
-  color: var(--text);
-  background: var(--bg);
+  color: var(--text-1);
+  background: var(--bg-panel);
   font-size: var(--fs-md);
 }
 
@@ -679,7 +679,7 @@ async function copyCode() {
 
 .miyo-btn-ghost:hover:not(:disabled) {
   background: var(--panel-2);
-  color: var(--text);
+  color: var(--text-1);
   border-color: var(--border-2);
 }
 
@@ -701,7 +701,7 @@ async function copyCode() {
 }
 
 .miyo-tab:hover {
-  color: var(--text);
+  color: var(--text-1);
 }
 
 .miyo-tab.active {
@@ -751,7 +751,7 @@ async function copyCode() {
 }
 
 .hint-inline {
-  color: var(--muted);
+  color: var(--text-3);
   font-size: var(--fs-xs);
 }
 
@@ -789,7 +789,7 @@ async function copyCode() {
 .hl-pre {
   position: absolute;
   inset: 0;
-  color: var(--text);
+  color: var(--text-1);
   pointer-events: none;
   overflow: auto;
 }
@@ -813,7 +813,7 @@ async function copyCode() {
 }
 
 :deep(.hl-c) {
-  color: var(--muted);
+  color: var(--text-3);
   font-style: italic;
 }
 
@@ -936,7 +936,7 @@ async function copyCode() {
 }
 
 .hint {
-  color: var(--muted);
+  color: var(--text-3);
   font-size: var(--fs-xs);
   text-align: center;
   margin-top: var(--s-2);

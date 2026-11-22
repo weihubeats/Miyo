@@ -149,7 +149,21 @@ watch(splitWidth, (w) => {
 })
 
 type MainTab = 'ws' | 'sse'
-const mainTab = ref<MainTab>('ws')
+/** 主页签持久化：刷新后回到上次模式（非法值回 ws）。 */
+const mainTab = ref<MainTab>((() => {
+  try {
+    return localStorage.getItem('miyo.realtime-tab') === 'sse' ? 'sse' : 'ws'
+  } catch {
+    return 'ws'
+  }
+})())
+watch(mainTab, (v) => {
+  try {
+    localStorage.setItem('miyo.realtime-tab', v)
+  } catch {
+    // 写失败静默
+  }
+})
 const MAIN_TABS = computed<SegmentOption[]>(() => [
   { value: 'ws', label: t('realtime.tabWs') },
   { value: 'sse', label: t('realtime.tabSse') },
@@ -1291,7 +1305,7 @@ defineExpose({
   background: var(--accent);
 }
 .rt-switch input:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 

@@ -29,6 +29,8 @@ const props = withDefaults(
     title: string
     /** Brand 副标题（一般不用）。 */
     subtitle?: string
+    /** 页面描述（返回钮右侧的次级说明文字，窄宽截断；缺省不渲染）。 */
+    description?: string
     /** 隐藏返回钮（根页面）。 */
     hideBack?: boolean
     /** 隐藏 Brand（Tauri 弹出子窗等无 Brand 语境）。 */
@@ -40,7 +42,14 @@ const props = withDefaults(
     /** 深链直开时的兜底返回目标（默认 /projects）。 */
     backFallback?: string
   }>(),
-  { subtitle: '', hideBack: false, hideBrand: false, backTitle: '', backFallback: NAV_HOME },
+  {
+    subtitle: '',
+    description: '',
+    hideBack: false,
+    hideBrand: false,
+    backTitle: '',
+    backFallback: NAV_HOME,
+  },
 )
 
 const emit = defineEmits<{
@@ -81,6 +90,8 @@ function forwardBack(): boolean {
       :fallback="backFallback"
       :on-back="hasBackListener ? forwardBack : undefined"
     />
+    <!-- 页面描述：次级说明文字（与 Brand subtitle 不同，属于页面而非品牌区） -->
+    <span v-if="description" class="miyo-topbar-desc" v-tooltip-overflow>{{ description }}</span>
     <!-- 中部上下文：工作台模式切换 / 面包屑 / 页面级输入等 -->
     <slot></slot>
     <div class="miyo-topbar-spacer" aria-hidden="true"></div>

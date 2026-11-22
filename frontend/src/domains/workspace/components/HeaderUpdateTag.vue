@@ -146,7 +146,7 @@ onBeforeUnmount(() => {
   <button
     v-if="hasPendingUpdate"
     ref="triggerEl"
-    class="miyo-update-tag flex cursor-pointer items-center gap-1.5 rounded-full border border-purple-500/40 bg-purple-500/20 px-3 py-1 font-mono text-xs font-medium text-purple-700 transition-all hover:bg-purple-500/30 dark:text-purple-300"
+    class="miyo-update-tag flex cursor-pointer items-center gap-1.5 rounded-full border border-accent/40 bg-accent/15 px-3 py-1 font-mono text-xs font-medium text-accent transition-all hover:bg-accent/25"
     type="button"
     :aria-label="t('app.updateFound', { v: pendingUpdateVersion() ?? '' })"
     @click="onClick"
@@ -177,7 +177,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* 投影走 primary 光晕（原 shadow-purple-950/50 浅色下糊成暗紫脏影） */
+/* 投影走 primary 光晕（原深紫阴影字面量在浅色下糊成暗紫脏影） */
 .miyo-update-tag {
   box-shadow: 0 1px 3px var(--primary-glow);
 }
@@ -225,7 +225,7 @@ onBeforeUnmount(() => {
 }
 
 .miyo-update-card-icon {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1;
 }
 

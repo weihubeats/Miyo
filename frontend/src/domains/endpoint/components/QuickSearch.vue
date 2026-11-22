@@ -15,6 +15,7 @@ import { useIntegrationStore } from '@/domains/integration/stores/integration'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useRouter } from 'vue-router'
 import { useThemeStore } from '@/stores/theme'
+import { usePluginManager } from '@/plugins/manager'
 import { fuzzyScore } from '@/utils/fuzzyMatch'
 import { methodTextTone } from '@/utils/methodTone'
 import Icon from '@/components/ui/Icon.vue'
@@ -30,6 +31,7 @@ const emit = defineEmits<{
 
 const store = useWorkspaceStore()
 const theme = useThemeStore()
+const pluginManager = usePluginManager()
 const t = useLocaleStore().t
 
 const query = ref('')
@@ -39,7 +41,14 @@ const activeIdx = ref(0)
 
 interface Item {
   key: string
-  group: 'recent' | 'endpoints' | 'scenarios' | 'environments' | 'history' | 'actions'
+  group:
+    | 'recent'
+    | 'endpoints'
+    | 'scenarios'
+    | 'environments'
+    | 'history'
+    | 'actions'
+    | 'commands'
   title: string
   subtitle: string
   icon: IconName
@@ -226,6 +235,21 @@ const ACTIONS = computed<Item[]>(() => [
   },
 ])
 
+/** 插件注册命令（active 中插件的 ui.registerCommand；⌘K 直达插件能力）。 */
+const pluginCommands = computed<Item[]>(() =>
+  pluginManager.activeCommandItems.map((c) => ({
+    key: `pcmd:${c.pluginId}:${c.id}`,
+    group: 'commands' as const,
+    title: c.label,
+    subtitle: '',
+    icon: (c.icon as IconName | undefined) ?? 'zap',
+    score: 0,
+    run: () => {
+      pluginManager.executePluginCommand(c.pluginId, c.id)
+    },
+  })),
+)
+
 const matchedActions = computed<Item[]>(() => {
   const q = query.value.trim()
   if (!q) return ACTIONS.value
@@ -243,6 +267,7 @@ const results = computed<Item[]>(() => [
   ...matchedScenarios.value,
   ...matchedEnvs.value,
   ...matchedHistory.value,
+  ...pluginCommands.value,
   ...matchedActions.value,
 ])
 
@@ -252,6 +277,7 @@ const GROUP_LABELS = computed<Record<Item['group'], string>>(() => ({
   scenarios: t('quicksearch.groupScenarios'),
   environments: t('quicksearch.groupEnvironments'),
   history: t('quicksearch.groupHistory'),
+  commands: t('quicksearch.groupCommands'),
   actions: t('quicksearch.groupActions'),
 }))
 

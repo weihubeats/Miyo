@@ -749,9 +749,41 @@ const SUB_NAV = computed<{ key: 'debug' | 'design' | 'docs' | 'cases' | 'mock'; 
  */
 const lastViewByEndpoint = new Map<string, 'debug' | 'design' | 'docs' | 'cases' | 'mock'>()
 
+/** 二级页记忆落盘（LRU 200 条，与分割态分桶同范式）：刷新后仍能回到上次停留页。 */
+const LAST_VIEW_KEY = 'miyo.endpoint-last-view'
+const LAST_VIEW_MAX = 200
+
+function persistLastViews(): void {
+  try {
+    let entries = [...lastViewByEndpoint.entries()]
+    if (entries.length > LAST_VIEW_MAX) entries = entries.slice(-LAST_VIEW_MAX)
+    localStorage.setItem(LAST_VIEW_KEY, JSON.stringify(Object.fromEntries(entries)))
+  } catch {
+    // 写失败静默：恢复缺失只是回调试页
+  }
+}
+
+function restoreLastViews(): void {
+  try {
+    const raw = localStorage.getItem(LAST_VIEW_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const VALID = new Set(['debug', 'design', 'docs', 'cases', 'mock'])
+    for (const [id, view] of Object.entries(parsed)) {
+      if (typeof view === 'string' && VALID.has(view)) {
+        lastViewByEndpoint.set(id, view as 'debug' | 'design' | 'docs' | 'cases' | 'mock')
+      }
+    }
+  } catch {
+    // 解析失败静默
+  }
+}
+restoreLastViews()
+
 function rememberView(endpointId: string | null | undefined, view: string): void {
   if (!endpointId) return
   lastViewByEndpoint.set(endpointId, view as 'debug' | 'design' | 'docs' | 'cases' | 'mock')
+  persistLastViews()
 }
 
 /** 打开接口：恢复该接口上次停留的二级页（从未切过 → 调试页）。 */
@@ -1929,7 +1961,7 @@ onUnmounted(() => {
   top: 0;
   bottom: 0;
   width: 40%;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
   animation: req-slide 0.9s ease-in-out infinite;
 }
@@ -2245,7 +2277,7 @@ onUnmounted(() => {
   display: inline-grid;
   place-content: center;
   border: 1px solid var(--border-editor);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   /* 井底走 --check-bg（深 26% 黑 / 浅 5% 黑） */
   background: var(--check-bg);
   cursor: pointer;
@@ -2424,7 +2456,7 @@ onUnmounted(() => {
   width: 26px;
   height: 4px;
   transform: translate(-50%, -50%);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--text-3);
   opacity: 0.32;
   transition: opacity 0.15s ease;

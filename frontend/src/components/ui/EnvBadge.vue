@@ -43,7 +43,7 @@ const colorClass = computed(() => (env.value ? envColorClass(env.value.name) : '
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 18px;
 }
 .env-badge-dot {

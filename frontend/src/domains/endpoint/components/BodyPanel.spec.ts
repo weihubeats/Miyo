@@ -120,7 +120,7 @@ describe('BodyPanel：raw JSON 编辑与格式化', () => {
     const wrapper = mountPanel(draft)
 
     // 点击搜索图标按钮打开 FindBar
-    const searchBtn = wrapper.find('.bp-icon-btn')
+    const searchBtn = wrapper.find('.ib')
     expect(searchBtn.exists()).toBe(true)
     await searchBtn.trigger('click')
 
@@ -155,7 +155,7 @@ describe('BodyPanel：raw JSON 编辑与格式化', () => {
     const draft = jsonDraft('{"user":"miyo","name":"miyo"}')
     const wrapper = mountPanel(draft)
 
-    await wrapper.find('.bp-icon-btn').trigger('click')
+    await wrapper.find('.ib').trigger('click')
     await wrapper.find('.findbar-expander').trigger('click')
     const inputs = wrapper.findAll('.findbar-input')
     await inputs[0]!.setValue('miyo')
@@ -175,7 +175,7 @@ describe('BodyPanel：raw JSON 编辑与格式化', () => {
     const draft = reactive(d)
     const wrapper = mountPanel(draft)
 
-    await wrapper.find('.bp-icon-btn').trigger('click')
+    await wrapper.find('.ib').trigger('click')
     await wrapper.find('.findbar-expander').trigger('click')
     const inputs = wrapper.findAll('.findbar-input')
     await inputs[0]!.setValue('1')
@@ -188,7 +188,7 @@ describe('BodyPanel：raw JSON 编辑与格式化', () => {
   it('替换内容为空 = 删除全部匹配；查找词为空时不动作', async () => {
     const draft = jsonDraft('{"a":"x","b":"x"}')
     const wrapper = mountPanel(draft)
-    await wrapper.find('.bp-icon-btn').trigger('click')
+    await wrapper.find('.ib').trigger('click')
     await wrapper.find('.findbar-expander').trigger('click')
     const inputs = wrapper.findAll('.findbar-input')
     await inputs[0]!.setValue('x')
@@ -207,7 +207,7 @@ describe('BodyPanel：raw JSON 编辑与格式化', () => {
     const draft = jsonDraft('{"user":"miyo","name":"miyo"}')
     const wrapper = mountPanel(draft)
 
-    await wrapper.find('.bp-icon-btn').trigger('click')
+    await wrapper.find('.ib').trigger('click')
     await wrapper.find('.findbar-expander').trigger('click')
     const inputs = wrapper.findAll('.findbar-input')
     await inputs[0]!.setValue('miyo')
@@ -230,7 +230,7 @@ describe('BodyPanel：raw JSON 编辑与格式化', () => {
     const draft = reactive(d)
     const wrapper = mountPanel(draft)
 
-    await wrapper.find('.bp-icon-btn').trigger('click')
+    await wrapper.find('.ib').trigger('click')
     await wrapper.find('.findbar-expander').trigger('click')
     const inputs = wrapper.findAll('.findbar-input')
     await inputs[0]!.setValue('1')

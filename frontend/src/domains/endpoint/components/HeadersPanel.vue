@@ -65,7 +65,7 @@ function applyHeaders(rows: KVRow[]): void {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
   user-select: none;

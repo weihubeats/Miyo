@@ -422,7 +422,7 @@ defineExpose({ expandAll, collapseAll, matchCount })
 <style scoped>
 .jt {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
 }
 
@@ -478,7 +478,7 @@ defineExpose({ expandAll, collapseAll, matchCount })
   margin: 0;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-2);
   cursor: pointer;
@@ -523,7 +523,7 @@ defineExpose({ expandAll, collapseAll, matchCount })
   height: 20px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-3);
   cursor: pointer;

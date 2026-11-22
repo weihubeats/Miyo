@@ -612,7 +612,7 @@ async function onImport(): Promise<void> {
           />
           <span
             v-if="matrixProgress && runningMatrixScenarioId === s.id"
-            class="num text-xxs font-medium text-purple-600 dark:text-purple-400"
+            class="num text-xxs font-medium text-accent"
             :title="t('integration.matrixRunning', { done: matrixProgress.done, total: matrixProgress.total, label: matrixProgress.label })"
           >
             {{ matrixProgress.done }}/{{ matrixProgress.total }}
@@ -673,7 +673,7 @@ async function onImport(): Promise<void> {
     <div
       v-for="(row, i) in matrixResult?.rows ?? []"
       :key="row.key"
-      class="flex items-center justify-between gap-3 rounded-lg border border-zinc-200/70 px-3 py-2 dark:border-white/[0.06]"
+      class="mx-row"
     >
       <button
         type="button"
@@ -682,24 +682,47 @@ async function onImport(): Promise<void> {
       >
         <div class="flex items-center gap-2">
           <span
-            class="inline-block h-2 w-2 rounded-full"
-            :class="row.ok ? 'bg-emerald-500' : 'bg-red-500'"
+            class="mx-dot"
+            :class="row.ok ? 'mx-dot-ok' : 'mx-dot-fail'"
             aria-hidden="true"
           ></span>
-          <span class="text-xs font-medium text-zinc-900 dark:text-zinc-100">{{ row.label }}</span>
+          <span class="text-xs font-medium text-ink1">{{ row.label }}</span>
         </div>
-        <p class="mt-0.5 text-xxs text-zinc-500 dark:text-zinc-400">
+        <p class="mt-0.5 text-xxs text-ink3">
           {{ t('scenario.assertPassed', { n: row.okCount, m: row.okCount + row.failCount + row.skippedCount }) }}
           <template v-if="row.durationMs != null"> · {{ Math.round(row.durationMs) }}ms</template>
         </p>
       </button>
-      <code class="font-mono text-xxs text-zinc-400">{{ row.runId.slice(0, 8) }}</code>
+      <code class="font-mono text-xxs text-ink3">{{ row.runId.slice(0, 8) }}</code>
     </div>
   </div>
 </Modal>
 </template>
 
 <style scoped>
+/* 矩阵结果行卡（跟随主题 hairline token，禁止调色板字面量） */
+.mx-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+}
+.mx-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.mx-dot-ok {
+  background: var(--success);
+}
+.mx-dot-fail {
+  background: var(--danger);
+}
+
 .lib-root {
   flex: 1;
   min-height: 0;
@@ -735,7 +758,7 @@ async function onImport(): Promise<void> {
   height: 24px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text-2);
   font-size: var(--fs-xxs);
@@ -833,9 +856,9 @@ async function onImport(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-tint);
   color: var(--accent);
 }
@@ -884,9 +907,9 @@ async function onImport(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   color: var(--text-2);
   font-family: var(--font-mono);

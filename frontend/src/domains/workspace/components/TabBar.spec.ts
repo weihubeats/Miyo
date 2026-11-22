@@ -30,6 +30,18 @@ function makeStore() {
     closeOtherTabs: vi.fn(),
     closeAllTabs: vi.fn(),
     closeTabsToRight: vi.fn(),
+    pinnedTabs: [] as string[],
+    recentlyClosed: [] as { kind: 'endpoint' | 'create'; id: string }[],
+    isTabPinned: (id: string) => (mocked.pinnedTabs as string[]).includes(id),
+    pinTab: vi.fn((id: string) => {
+      (mocked.pinnedTabs as string[]).push(id)
+    }),
+    unpinTab: vi.fn((id: string) => {
+      const list = mocked.pinnedTabs as string[]
+      const i = list.indexOf(id)
+      if (i !== -1) list.splice(i, 1)
+    }),
+    reopenRecentlyClosed: vi.fn(() => false),
     openNewEndpoint: vi.fn(),
     saveFolder: vi.fn(),
   })
@@ -191,13 +203,15 @@ describe('TabBar：新建按钮紧跟末尾且不被滚丢', () => {
     item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   }
 
-  it('下拉为标签管理四项（当前/其他/右侧/全部）：无新建/导入重复项', async () => {
+  it('下拉为标签管理六项（固定/当前/其他/右侧/全部/重开）：无新建/导入重复项', async () => {
     const wrapper = mountBar()
     expect(await openMenuLabels()).toEqual([
+      '固定标签页',
       '关闭当前标签页',
       '关闭其他标签页',
       '关闭右侧标签页',
       '关闭全部标签页',
+      '重新打开关闭的标签页',
     ])
     wrapper.unmount()
   })
@@ -284,7 +298,8 @@ describe('TabBar：新建按钮紧跟末尾且不被滚丢', () => {
     const disabled = Array.from(
       document.querySelectorAll<HTMLButtonElement>('.miyo-menu-item[disabled]'),
     ).map((m) => m.textContent?.trim())
-    expect(disabled).toEqual(['关闭其他标签页', '关闭右侧标签页'])
+    // 固定/重开在空栈/单页签场景同样禁用（重开栈空；固定项可用的页签存在但此例单页签仍可用——只断言关闭两项）
+    expect(disabled).toEqual(['关闭其他标签页', '关闭右侧标签页', '重新打开关闭的标签页'])
     wrapper.unmount()
   })
 })

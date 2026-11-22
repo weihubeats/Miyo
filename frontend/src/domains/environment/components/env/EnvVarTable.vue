@@ -384,7 +384,7 @@ function applyBatch(): void {
 }
 
 .evt-c-local.disabled .evt-local-input {
-  opacity: 0.55;
+  opacity: var(--opacity-disabled);
 }
 
 .evt-ov-check {

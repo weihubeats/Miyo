@@ -25,6 +25,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 import SettingsDialog from '@/domains/workspace/components/SettingsDialog.vue'
 import HeaderUpdateTag from '@/domains/workspace/components/HeaderUpdateTag.vue'
 import DashboardNav from '@/domains/workspace/components/projectlist/projectlist/DashboardNav.vue'
@@ -1242,16 +1243,16 @@ useWindowDrag(topBarEl)
             </button>
           </div>
 
-          <div v-if="!filtered.length && !loading" class="dash-empty">
-            <span class="empty-icon"><Icon name="folder" :size="30" /></span>
-            <p class="empty-title">{{ search ? t('projectlist.noMatchTitle') : t('projectlist.emptyTitle') }}</p>
-            <p class="empty-hint">
-              {{ search ? t('projectlist.noMatchHint') : t('projectlist.emptyHint') }}
-            </p>
+          <EmptyState
+            v-if="!filtered.length && !loading"
+            icon="folder"
+            :title="search ? t('projectlist.noMatchTitle') : t('projectlist.emptyTitle')"
+            :description="search ? t('projectlist.noMatchHint') : t('projectlist.emptyHint')"
+          >
             <button class="miyo-btn miyo-btn-primary" type="button" @click="showCreate = true">
               <Icon name="plus" :size="14" /> {{ t('projectlist.newProject') }}
             </button>
-          </div>
+          </EmptyState>
         </template>
       </main>
     </div>
@@ -2140,34 +2141,9 @@ useWindowDrag(topBarEl)
   transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
 }
 
-/* ---------- 空状态 ---------- */
-.dash-empty {
+/* ---------- 空状态（EmptyState 组件撑满主区） ---------- */
+.dash-main > :deep(.es),
+.dash-main .es {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 48px 0;
-  text-align: center;
-}
-
-.empty-icon {
-  color: var(--text-3);
-  margin-bottom: 6px;
-}
-
-.empty-title {
-  margin: 0;
-  font-size: var(--fs-md);
-  font-weight: 600;
-  color: var(--text-1);
-}
-
-.empty-hint {
-  margin: 0 0 10px;
-  font-size: var(--fs-xs);
-  color: var(--text-3);
-  max-width: 380px;
 }
 </style>

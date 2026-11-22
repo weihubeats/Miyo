@@ -136,7 +136,23 @@ const {
 // ---------- 侧栏页签：接口目录 / 请求历史 ----------
 // 集成测试已收敛到顶级「集成测试」入口（/integration），工作区不再提供场景页签。
 type SidebarTab = 'collections' | 'history' | 'cookies'
-const sidebarTab = ref<SidebarTab>('collections')
+/** 侧栏页签持久化：刷新后回到上次停留的页签（非法值/缺省回 collections）。 */
+const SIDEBAR_TAB_KEY = 'miyo.sidebar-tab'
+const sidebarTab = ref<SidebarTab>((() => {
+  try {
+    const v = localStorage.getItem(SIDEBAR_TAB_KEY)
+    return v === 'history' || v === 'cookies' || v === 'collections' ? v : 'collections'
+  } catch {
+    return 'collections'
+  }
+})())
+watch(sidebarTab, (v) => {
+  try {
+    localStorage.setItem(SIDEBAR_TAB_KEY, v)
+  } catch {
+    // 写失败静默
+  }
+})
 const sidebarTabs = computed<TabItem[]>(() => [
   { key: 'collections', label: t('workspace.collections') },
   { key: 'history', label: t('workspace.history'), count: store.histories.length || undefined },

@@ -9,7 +9,8 @@
  *   规则见 utils/jsonPaste（只排版 JSON 值、已有内容不重排、已美化则放行原生粘贴）。
  * - 深色底色 #121318，聚焦时 1px 紫色光晕（原 3px 重描边移除）。
  */
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, onBeforeUnmount} from 'vue'
+import { pushEscHandler } from '@/utils/escStack'
 import { useToast } from '@/composables/useToast'
 import { useLocaleStore } from '@/stores/locale'
 import { copyText } from '@/utils/clipboard'
@@ -104,7 +105,6 @@ watch(
 )
 onUnmounted(() => {
   if (shownTimer) clearTimeout(shownTimer)
-  window.removeEventListener('keydown', onFsKeydown)
   wrapRef.value?.removeEventListener('scroll', clampWrapScroll)
   availObserver?.disconnect()
   availObserver = null
@@ -218,17 +218,20 @@ function toggleFullscreen(): void {
   fullscreen.value = !fullscreen.value
 }
 
-function onFsKeydown(e: KeyboardEvent): void {
-  if (fullscreen.value && e.key === 'Escape') {
-    e.preventDefault()
-    fullscreen.value = false
-  }
-}
-
+/**
+ * 全屏 Esc 接 escStack：抽屉/弹层内开全屏时，Esc 先退全屏不关宿主弹层
+ * （原先 window 直听与 escStack 双轨并存，会穿透关掉抽屉——已统一）。
+ */
+let offFullscreenEsc: (() => void) | null = null
 watch(fullscreen, (on) => {
-  if (on) window.addEventListener('keydown', onFsKeydown)
-  else window.removeEventListener('keydown', onFsKeydown)
+  offFullscreenEsc?.()
+  offFullscreenEsc = on
+    ? pushEscHandler(() => {
+      fullscreen.value = false
+    })
+    : null
 })
+onBeforeUnmount(() => offFullscreenEsc?.())
 
 /* 行号槽宽度走全局 --code-gutter-w（固定 54px，与响应树/行视图共用，
  * 不随位数伸缩——保证与响应区代码左缘绝对对齐），见 style.css。 */
@@ -793,7 +796,7 @@ async function copyJson(): Promise<void> {
   border-color: var(--accent);
 }
 .je-btn:disabled {
-  opacity: 0.35;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 </style>

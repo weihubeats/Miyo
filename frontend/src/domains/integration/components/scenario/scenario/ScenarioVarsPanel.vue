@@ -298,7 +298,7 @@ function varBrief(v: VarChainEntry): string {
   font-size: var(--fs-xxs);
   color: var(--text-3);
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
 }
 
@@ -377,11 +377,11 @@ function varBrief(v: VarChainEntry): string {
 }
 
 .se-filter-badge {
-  font-size: 10px;
+  font-size: var(--fs-2xxs);
   padding: 0 4px;
   min-width: 14px;
   text-align: center;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-hover);
   color: var(--text-3);
 }
@@ -428,7 +428,7 @@ function varBrief(v: VarChainEntry): string {
   flex: none;
   font-size: var(--fs-xxs);
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   color: var(--text-3);
 }

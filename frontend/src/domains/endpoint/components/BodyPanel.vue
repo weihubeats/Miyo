@@ -595,17 +595,14 @@ defineExpose({
           <span v-else-if="jsonStatus === 'large'" class="bp-json-dot" aria-hidden="true"></span>
           <template v-if="jsonStatusText">{{ jsonStatusText }}</template>
         </span>
-        <button
+        <IconButton
           v-if="activeTab === 'raw' || activeTab === 'graphql'"
-          class="bp-icon-btn"
-          :class="{ active: findOpen }"
-          type="button"
+          name="search"
+          :size="13"
           :title="t('body.findHint')"
-          :aria-label="t('body.findHint')"
+          :active="findOpen"
           @click="toggleFind"
-        >
-          <Icon name="search" :size="13" />
-        </button>
+        />
       </div>
     </div>
 
@@ -822,31 +819,6 @@ defineExpose({
   background: currentColor;
 }
 
-.bp-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 6px);
-  background: var(--bg-card);
-  color: var(--text-2);
-  cursor: pointer;
-  transition: all var(--dur) var(--ease);
-}
-.bp-icon-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-1);
-  border-color: var(--border-strong);
-}
-.bp-icon-btn.active {
-  background: var(--accent-tint);
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
 .mode-tabs {
   flex: 0 1 auto;
   min-width: 0;
@@ -862,7 +834,7 @@ defineExpose({
   min-height: 120px;
   flex: 1;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   resize: vertical;
   /* 与 JsonEditor 代码块同圆角档（rounded-md） */
   border-radius: var(--radius);
@@ -967,7 +939,7 @@ defineExpose({
   border: none;
   background: transparent;
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   outline: none;
   padding: 0 8px;
   min-width: 0;
@@ -991,7 +963,7 @@ defineExpose({
   border-top: 1px dashed var(--border);
   background: transparent;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   cursor: pointer;
   transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
@@ -1013,7 +985,7 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
@@ -1035,7 +1007,7 @@ defineExpose({
 
 .body-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

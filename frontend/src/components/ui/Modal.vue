@@ -24,6 +24,12 @@ const props = withDefaults(
     maskClass?: string
     /** 关闭前守卫：返回 false 拦截 Esc / 遮罩 / ✕ 触发的关闭（用于脏数据确认）。 */
     guardClose?: () => boolean
+    /**
+     * 浮层层级：modal = --z-modal 基线；drawer = --z-modal-drawer(130)——
+     * 在 Drawer（--z-drawer 120）内部打开的弹窗必须用 drawer 层，
+     * 否则被抽屉盖住（EnvironmentSelector 用例抽屉内管理弹窗被盖的历史坑）。
+     */
+    layer?: 'modal' | 'drawer'
   }>(),
   {
     title: '',
@@ -33,6 +39,7 @@ const props = withDefaults(
     dialogClass: '',
     maskClass: '',
     guardClose: undefined,
+    layer: 'modal',
   },
 )
 
@@ -138,7 +145,13 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <Transition name="m">
-      <div v-if="open" class="m-mask" :class="maskClass" @mousedown.self="closable && requestClose()">
+      <div
+        v-if="open"
+        class="m-mask"
+        :class="maskClass"
+        :style="{ zIndex: layer === 'drawer' ? 'var(--z-modal-drawer)' : 'var(--z-modal)' }"
+        @mousedown.self="closable && requestClose()"
+      >
         <div
           ref="dialogEl"
           class="m-dialog"
@@ -210,7 +223,7 @@ onBeforeUnmount(() => {
   padding: 12px 16px 16px;
   overflow-y: auto;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .m-foot {
@@ -222,20 +235,20 @@ onBeforeUnmount(() => {
   padding: 12px 16px 14px;
 }
 
-/* 进 200ms / 出 160ms（动画规范：弹窗进 180~220ms、出 150~180ms）；transform 仅轻微位移 */
+/* 进 var(--dur-slow)=200ms / 出 80%×200=160ms（动画规范：弹窗进 180~220ms、出 150~180ms）；transform 仅轻微位移 */
 .m-enter-active,
 .m-leave-active {
-  transition: opacity 200ms var(--ease);
+  transition: opacity var(--dur-slow) var(--ease);
 }
 .m-leave-active {
-  transition-duration: 160ms;
+  transition-duration: calc(var(--dur-slow) * 0.8);
 }
 .m-enter-active .m-dialog,
 .m-leave-active .m-dialog {
-  transition: transform 200ms var(--ease);
+  transition: transform var(--dur-slow) var(--ease);
 }
 .m-leave-active .m-dialog {
-  transition-duration: 160ms;
+  transition-duration: calc(var(--dur-slow) * 0.8);
 }
 .m-enter-from,
 .m-leave-to {

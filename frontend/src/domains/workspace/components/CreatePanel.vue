@@ -250,7 +250,7 @@ defineExpose({ openAt, close })
   border-radius: var(--radius-md);
   background: var(--bg-hover);
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   transition:
     background var(--dur) var(--ease),
@@ -292,7 +292,7 @@ defineExpose({ openAt, close })
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-1);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   transition: background var(--dur) var(--ease);
 }
@@ -322,12 +322,12 @@ defineExpose({ openAt, close })
   flex-shrink: 0;
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 .cp-badge.sm {
   width: 24px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 .cp-badge.tone-blue {
   color: var(--info);

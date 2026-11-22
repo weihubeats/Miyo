@@ -90,4 +90,28 @@ describe('useGoBack：统一返回策略', () => {
     window.history.replaceState({}, '')
     expect(hasInAppHistory()).toBe(false)
   })
+
+  it('300ms 导航锁：锁窗内重复调用只生效一次（防双击双退）', async () => {
+    vi.useFakeTimers()
+    try {
+      const router = makeRouter()
+      await router.push('/deep-page')
+      await router.isReady()
+      window.history.replaceState({ ...window.history.state, back: '/from' }, '')
+
+      const backSpy = vi.spyOn(router, 'back').mockImplementation(() => {})
+      const goBack = mountHost(router)
+
+      goBack()
+      goBack()
+      goBack()
+      expect(backSpy).toHaveBeenCalledTimes(1)
+
+      vi.advanceTimersByTime(301)
+      goBack()
+      expect(backSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

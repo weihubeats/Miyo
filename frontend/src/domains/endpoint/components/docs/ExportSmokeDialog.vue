@@ -208,7 +208,7 @@ async function startExport(): Promise<void> {
   gap: 3px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-panel);
   color: inherit;
   text-align: left;
@@ -225,12 +225,12 @@ async function startExport(): Promise<void> {
   background: var(--accent-tint);
 }
 .scope-card.disabled {
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
 .scope-title {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -249,7 +249,7 @@ async function startExport(): Promise<void> {
   gap: 10px;
   padding: 9px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-panel);
 }
 .fmt-icon {
@@ -264,7 +264,7 @@ async function startExport(): Promise<void> {
   gap: 1px;
 }
 .fmt-title {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -280,7 +280,7 @@ async function startExport(): Promise<void> {
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--bg-panel);
   cursor: pointer;
   transition: border-color var(--dur) var(--ease);
@@ -309,7 +309,7 @@ async function startExport(): Promise<void> {
   gap: 1px;
 }
 .opt-title {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-1);
 }

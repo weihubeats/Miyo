@@ -96,7 +96,7 @@ watch(
   background: none;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   text-align: left;
   cursor: pointer;

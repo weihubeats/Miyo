@@ -278,7 +278,7 @@ function metaRows(metadata: [string, string][]): Array<{ key: string; value: str
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   font-family: var(--font-mono);
   color: var(--danger);
