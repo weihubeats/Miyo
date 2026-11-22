@@ -3007,6 +3007,7 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "miyo-core",
+ "miyo-sidecar",
  "rand 0.10.3",
  "serde",
  "serde_json",

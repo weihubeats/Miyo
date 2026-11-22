@@ -210,6 +210,25 @@ pub async fn touch_java_project_connected(
     Ok(())
 }
 
+/// 删除全部 Java 调试项目（插件卸载「不保留数据」路径专用；v1 Runtime
+/// 项目 + 加密凭据一并消失）。返回删除行数。
+pub async fn delete_all_java_projects(db: &SqlitePool) -> Result<u64> {
+    let res = sqlx::query("DELETE FROM java_projects")
+        .execute(db)
+        .await
+        .map_err(db_err)?;
+    Ok(res.rows_affected())
+}
+
+/// 删除全部调用历史（同上口径）。返回删除行数。
+pub async fn delete_all_java_invocations(db: &SqlitePool) -> Result<u64> {
+    let res = sqlx::query("DELETE FROM java_invocations")
+        .execute(db)
+        .await
+        .map_err(db_err)?;
+    Ok(res.rows_affected())
+}
+
 pub async fn delete_java_project(db: &SqlitePool, id: Uuid) -> Result<()> {
     let result = sqlx::query("DELETE FROM java_projects WHERE id = ?")
         .bind(id.to_string())

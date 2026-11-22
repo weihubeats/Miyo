@@ -196,6 +196,7 @@ permissions = [
 "allow-plugin-clear-logs",
 "allow-plugin-record-log",
 "allow-plugin-data-get",
+    "allow-plugin-dir-get",
 "allow-plugin-data-set",
 "allow-plugin-data-delete",
 "allow-plugin-data-keys",

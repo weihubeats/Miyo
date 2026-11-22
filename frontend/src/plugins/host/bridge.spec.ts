@@ -30,6 +30,8 @@ const hostBridge: PluginHostBridge = {
   unregisterNav: vi.fn(),
   registerRoute: vi.fn(),
   unregisterRoute: vi.fn(),
+  registerCommand: vi.fn(),
+  unregisterCommand: vi.fn(),
 }
 
 describe('RPC 协议帧校验', () => {
@@ -331,5 +333,31 @@ describe('HostRpcBridge 分发', () => {
     }
     expect(frame.error.code).toBe(RPC_ERRORS.RATE_LIMITED)
     expect(invokeMock.mock.calls.length).toBe(before) // 熔断期不经 IPC
+  })
+
+  it('取消：cancel 后真实结果到达不回执；未知 id 静默忽略', async () => {
+    // 挂起直到手动放行：保证请求处于在途态
+    let release: (v: string[]) => void = () => {}
+    const gate = new Promise<string[]>((resolve) => {
+      release = resolve
+    })
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'plugin:miyo|plugin_session_create') return Promise.resolve('tok-bridge')
+      if (cmd.endsWith('plugin_data_keys')) return gate
+      return Promise.resolve([])
+    })
+    const { bridge, outFrames } = makeRealBridge()
+    bridge.handleMessage({ v: RPC_VERSION, type: 'req', id: 'c1', method: 'storage.keys' })
+    await vi.waitFor(() => expect(invokeMock.mock.calls.length).toBeGreaterThan(0))
+
+    // 发 cancel → 真实结果稍后到达 → 不回执
+    bridge.handleMessage({ v: RPC_VERSION, type: 'cancel', id: 'c1' })
+    release(['x'])
+    await new Promise((r) => setTimeout(r, 10))
+    expect(outFrames.some((f) => (f as { id: string }).id === 'c1')).toBe(false)
+
+    // 未知 id 的 cancel：静默忽略（不崩、无副作用）
+    bridge.handleMessage({ v: RPC_VERSION, type: 'cancel', id: 'unknown-id' })
+    expect(bridge.handleMessage({ v: RPC_VERSION, type: 'cancel', id: 'unknown-id' })).toBeUndefined()
   })
 })

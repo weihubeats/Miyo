@@ -92,6 +92,12 @@ signature?: string | null,
  */
 files?: Array<PluginFileEntry> | null, 
 /**
+ * 卸载清理声明：插件自管的 localStorage 键前缀（键名随插件卸载清除）。
+ * 值格式 `[A-Za-z0-9._-]`，≤32 项、单项 ≤128 字符。宿主在卸载成功后
+ * 逐前缀清除（前缀匹配，如 `miyo.java.` 清 `miyo.java.favorites`）。
+ */
+storage_keys?: Array<string>, 
+/**
  * Sidecar 配置（kind = ui-sidecar 时必填；ui 插件声明即拒绝）。
  */
 sidecar?: PluginSidecarConfig | null, 

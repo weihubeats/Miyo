@@ -30,6 +30,11 @@ const IPC_PREFIX = 'plugin:miyo|'
 export interface PluginHostBridge {
   registerNav(pluginId: string, item: PluginNavItem): void
   unregisterNav(pluginId: string, navItemId: string): void
+  registerCommand(
+    pluginId: string,
+    cmd: { id: string; label: string; icon?: string },
+  ): void
+  unregisterCommand(pluginId: string, cmdId: string): void
   registerRoute(
     pluginId: string,
     route: { path: string; name?: string; load: () => Promise<unknown> },
@@ -249,6 +254,25 @@ export function createPluginSession(view: PluginView, host: PluginHostBridge): P
         host.unregisterRoute(pluginId, path)
       },
     },
+    registerCommand(cmd: { id: string; label: string; icon?: string }): void {
+      if (!cmd.id || cmd.id.length > 48) {
+        throw new Error(`PLUGIN_BAD_REQUEST: ${tFallback('plugins.err.badCommandId')}`)
+      }
+      host.registerCommand(pluginId, cmd)
+    },
+    unregisterCommand(cmdId: string): void {
+      host.unregisterCommand(pluginId, cmdId)
+    },
+  }
+
+  // ---- per-plugin 文件数据目录（Rust 懒创建；卸载「不保留数据」时删除） ----
+  const paths = {
+    async data() {
+      return invoke<{ root: string; data: string; cache: string; tmp: string }>(
+        'plugin_dir_get',
+        { id: view.manifest.id },
+      )
+    },
   }
 
   const context: PluginContext = {
@@ -262,6 +286,7 @@ export function createPluginSession(view: PluginView, host: PluginHostBridge): P
     config,
     clipboard,
     ui,
+    paths,
   }
 
   return {

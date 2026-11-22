@@ -26,8 +26,10 @@ miyo-agent = { path = "../miyo-agent" }
 miyo-backup = { path = "../miyo-backup" }
 miyo-sync = { path = "../miyo-sync" }
 miyo-grpc = { path = "../miyo-grpc" }
-miyo-java = { path = "../miyo-java" }
-miyo-java-attach = { path = "../miyo-java-attach" }
+# Java 调试能力（feature「java」，默认开）：核心裁剪构建用
+# --no-default-features（或 default = []）剔除 Attach 编排与 30 条命令。
+miyo-java = { path = "../miyo-java", optional = true }
+miyo-java-attach = { path = "../miyo-java-attach", optional = true }
 miyo-sidecar = { path = "../miyo-sidecar" }
 miyo-tasks = { path = "../miyo-tasks" }
 miyo-openapi = { path = "../miyo-openapi" }
@@ -80,6 +82,11 @@ ts-rs = { version = "12", optional = true, default-features = false, features = 
 ] }
 
 [features]
+default = ["java"]
+# Java Debug 全能力（v1 Runtime 客户端 + v2 Attach 编排 + 30 条 IPC 命令 +
+# 组件自动下载）。关闭后 java_* 命令仍注册但一律返回 FEATURE_UNAVAILABLE
+# （stub 见 commands/java_gate.rs）——前端诊断 UI 可读，列表不报未知命令。
+java = ["dep:miyo-java", "dep:miyo-java-attach"]
 ts = ["dep:ts-rs", "miyo-core/ts", "miyo-http/ts", "miyo-plugin/ts"]
 
 [dev-dependencies]

@@ -117,7 +117,10 @@ pub async fn java_component_download(
         if find_component(&candidates, name).is_some() {
             continue;
         }
-        fetch_and_store_component(&base, name, &component_url(name)).await?;
+        // 传组件基址（不含文件名）：fetch_and_store_component 内部拼
+        // `{base}/{name}` 与 `/{name}.sha256`——此前误传 component_url(name)
+        //（已含文件名），拼出 `xxx.jar/xxx.jar` 404，自动下载恒失败。
+        fetch_and_store_component(&base, name, COMPONENT_BASE_URL).await?;
         if let Err(e) = repo::insert_plugin_log(
             &state.db,
             crate::commands::java_gate::JAVA_PLUGIN_ID,
@@ -219,6 +222,81 @@ mod tests {
         assert!(parse_sha256_file(b"abcd").is_none());
         assert!(parse_sha256_file(&b"zz".repeat(32)).is_none());
         assert!(parse_sha256_file(b"").is_none());
+    }
+
+    /// URL 拼接回归：调用方必须传「组件基址」，fetch 内部拼 `{base}/{name}`
+    /// 与 `{base}/{name}.sha256`。曾误传已含文件名的 URL（component_url(name)），
+    /// 拼出 `xxx.jar/xxx.jar` → 404 → 自动下载恒失败（线上实证）。
+    #[tokio::test]
+    async fn fetch_requests_exact_base_plus_name_paths() {
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::sync::Mutex;
+
+        let jar: &'static [u8] = Box::leak(b"JAR".to_vec().into_boxed_slice());
+        let digest: &'static str = Box::leak(hex::encode(Sha256::digest(jar)).into_boxed_str());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen_cl = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Ok((mut sock, _)) = listener.accept().await {
+                    let mut buf = vec![0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    // 请求首行：GET <path> HTTP/1.1
+                    let head = String::from_utf8_lossy(&buf).to_string();
+                    let path = head
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or_default()
+                        .to_string();
+                    seen_cl.lock().await.push(path.clone());
+                    let (ctype, body): (&'static str, &'static [u8]) = if path.ends_with(".sha256")
+                    {
+                        (
+                            "text/plain",
+                            Box::leak(
+                                format!("{digest}  {AGENT_JAR_NAME}\n")
+                                    .into_bytes()
+                                    .into_boxed_slice(),
+                            ),
+                        )
+                    } else {
+                        ("application/java-archive", jar)
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: {ctype}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.write_all(body).await;
+                    let _ = sock.shutdown().await;
+                }
+            }
+        });
+
+        let tmp = tempfile::tempdir().unwrap();
+        let base = format!("http://{addr}");
+        fetch_and_store_component(tmp.path(), AGENT_JAR_NAME, &base)
+            .await
+            .unwrap();
+
+        let got = seen.lock().await.clone();
+        assert!(
+            got.contains(&format!("/{AGENT_JAR_NAME}")),
+            "实际请求路径：{got:?}"
+        );
+        assert!(
+            got.contains(&format!("/{AGENT_JAR_NAME}.sha256")),
+            "实际请求路径：{got:?}"
+        );
+        assert!(
+            !got.iter().any(|p| p.contains(".jar/")),
+            "不得出现重复文件名拼接（xxx.jar/xxx.jar）：{got:?}"
+        );
+        assert!(tmp.path().join(AGENT_JAR_NAME).is_file());
     }
 
     /// 真实下载链路：mock HTTP（jar + sha256 sidecar）→ fetch_and_store_component

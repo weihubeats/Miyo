@@ -18,6 +18,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
+import { pluginEventBus } from '@/plugins/events'
 import { tFallback, useLocaleStore } from '@/stores/locale'
 import router from '@/router'
 import { version as APP_VERSION } from '../../package.json'
@@ -74,6 +75,8 @@ export const usePluginManager = defineStore('pluginManager', () => {
   const navRegistry = ref(new Map<PluginId, Map<string, PluginNavItem>>())
   /** 插件注册的路由（pluginId → path → routeName），宿主桥写入。 */
   const routeRegistry = ref(new Map<PluginId, Map<string, string>>())
+  /** 插件注册命令（⌘K 命令面板暴露）：pluginId → cmdId → { label, icon }。 */
+  const commandRegistry = ref(new Map<PluginId, Map<string, { label: string; icon?: string }>>())
 
   // ---------- 展示名 / 排序 ----------
 
@@ -159,6 +162,23 @@ export const usePluginManager = defineStore('pluginManager', () => {
       if (router.hasRoute(name)) router.removeRoute(name)
       routeRegistry.value.get(pluginId)?.delete(path)
       if (routeRegistry.value.get(pluginId)?.size === 0) routeRegistry.value.delete(pluginId)
+    },
+    registerCommand(
+      pluginId,
+      cmd: { id: string; label: string; icon?: string },
+    ) {
+      let cmds = commandRegistry.value.get(pluginId)
+      if (!cmds) {
+        cmds = new Map()
+        commandRegistry.value.set(pluginId, cmds)
+      }
+      cmds.set(cmd.id, { label: cmd.label, icon: cmd.icon })
+    },
+    unregisterCommand(pluginId, cmdId) {
+      commandRegistry.value.get(pluginId)?.delete(cmdId)
+      if (commandRegistry.value.get(pluginId)?.size === 0) {
+        commandRegistry.value.delete(pluginId)
+      }
     },
   }
 
@@ -258,8 +278,39 @@ export const usePluginManager = defineStore('pluginManager', () => {
     active.session.dispose()
   }
 
+  /** 激活中插件注册的命令（命令面板数据源；停用/卸载自动消失）。 */
+  const activeCommandItems = computed<
+    { pluginId: PluginId; id: string; label: string; icon?: string }[]
+  >(() => {
+    const out: { pluginId: PluginId; id: string; label: string; icon?: string }[] = []
+    for (const [pid, cmds] of commandRegistry.value) {
+      const entry = entries.value.get(pid)
+      if (!entry || entry.runtime !== 'active') continue
+      for (const [cid, meta] of cmds) {
+        out.push({ pluginId: pid, id: cid, label: meta.label, icon: meta.icon })
+      }
+    }
+    return out
+  })
+
+  /**
+   * 执行插件命令：builtin → 实例 handleCommand?.(id)；iframe → 事件总线
+   * `${pluginId}:__command`（宿主→插件方向，payload = { id }）。
+   */
+  function executePluginCommand(pluginId: PluginId, cmdId: string): void {
+    const active = activeSessions.get(pluginId)
+    if (!active) return
+    const inst = active.instance as { handleCommand?: (cmdId: string) => void } | null
+    if (inst && typeof inst.handleCommand === 'function') {
+      inst.handleCommand(cmdId)
+      return
+    }
+    pluginEventBus.emit(`${pluginId}:__command`, { id: cmdId })
+  }
+
   /** 注销某插件全部导航 / 路由（激活失败回收与停用共用）。 */
   function unregisterAllUi(id: PluginId): void {
+    commandRegistry.value.delete(id)
     const paths = routeRegistry.value.get(id)
     if (paths) {
       for (const path of [...paths.keys()]) hostBridge.unregisterRoute(id, path)
@@ -373,11 +424,36 @@ export const usePluginManager = defineStore('pluginManager', () => {
     upsertEntry(view)
   }
 
-  /** 卸载：回收运行时 + 清注册表，后端级联清理存储。 */
-  async function uninstall(id: PluginId): Promise<void> {
+  /**
+   * 卸载：回收运行时 + 清注册表，后端级联清理存储。
+   * keepData=false（「不保留数据」勾选）→ 后端深度清理（per-plugin 目录 /
+   * java 项目历史 / 组件 jar），前端按 manifest.storage_keys 声明清除
+   * 插件自管的 localStorage 键前缀。
+   */
+  async function uninstall(id: PluginId, keepData = true): Promise<void> {
+    const entry = entries.value.get(id)
     await deactivate(id)
-    await callIpc('plugin_uninstall', { id })
+    await callIpc('plugin_uninstall', { id, keepData })
+    if (!keepData && entry) {
+      for (const prefix of entry.view.manifest.storage_keys ?? []) {
+        clearLocalStoragePrefix(prefix)
+      }
+    }
     dropEntry(id)
+  }
+
+  /** 按前缀清除 localStorage（storage_keys 声明式卸载清理；失败静默）。 */
+  function clearLocalStoragePrefix(prefix: string): void {
+    try {
+      const doomed: string[] = []
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i)
+        if (key && key.startsWith(prefix)) doomed.push(key)
+      }
+      for (const key of doomed) localStorage.removeItem(key)
+    } catch {
+      // 存储不可用（隐私模式等）：清理失败不影响卸载
+    }
   }
 
   /** 更新内置插件到随应用打包的新版本。 */
@@ -434,6 +510,8 @@ export const usePluginManager = defineStore('pluginManager', () => {
     booted,
     activatingCount,
     activeNavItems,
+    activeCommandItems,
+    executePluginCommand,
     installedList,
     hostBridge,
     boot,

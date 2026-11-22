@@ -202,6 +202,11 @@ pub struct PluginManifest {
     /// 逐文件验 sha256，包内出现清单外文件即拒绝）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<PluginFileEntry>>,
+    /// 卸载清理声明：插件自管的 localStorage 键前缀（键名随插件卸载清除）。
+    /// 值格式 `[A-Za-z0-9._-]`，≤32 项、单项 ≤128 字符。宿主在卸载成功后
+    /// 逐前缀清除（前缀匹配，如 `miyo.java.` 清 `miyo.java.favorites`）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub storage_keys: Vec<String>,
     /// Sidecar 配置（kind = ui-sidecar 时必填；ui 插件声明即拒绝）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidecar: Option<PluginSidecarConfig>,
@@ -345,6 +350,20 @@ impl PluginManifest {
                 if id == &self.id {
                     return Err(AppError::Validation("plugin_deps 不能依赖自身".into()));
                 }
+            }
+        }
+        if self.storage_keys.len() > 32 {
+            return Err(AppError::Validation("storage_keys 项数超过 32".into()));
+        }
+        for key in &self.storage_keys {
+            validate_bounded(key, 1, 128, "storage_keys key")?;
+            if !key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+            {
+                return Err(AppError::Validation(format!(
+                    "storage_keys 键只允许字母 / 数字 / 点 / 下划线 / 连字符：{key}"
+                )));
             }
         }
         if let Some(schema) = &self.config_schema {

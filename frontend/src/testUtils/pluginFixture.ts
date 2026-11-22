@@ -22,6 +22,7 @@ export function javaManifest(overrides?: Partial<PluginManifest>): PluginManifes
     nav: [
       { id: 'main', label_key: 'pnav.javaDebug', icon: 'package', route: '/java-debug', order: 40 },
     ],
+    storage_keys: ['miyo.java.favorites', 'miyo.java.argsTemplates', 'miyo.javaAttach.favorites'],
     permissions: [
       'std.storage',
       'std.env.read',

@@ -883,13 +883,18 @@ fn cleanup_stale_staging_with_age(root: &std::path::Path, max_age: std::time::Du
     }
 }
 
+///
+/// `keep_data`：true（缺省）= 保留插件用户数据（plugin-data 目录 / java 项目
+/// 与历史 / 组件 jar）；false = 连同用户数据一并清除（确认弹窗勾选控制）。
 /// 卸载插件（级联清理私有存储；本地包目录一并删除；会话吊销）。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn plugin_uninstall(
     state: State<'_, AppState>,
     app: AppHandle,
     id: String,
+    keep_data: Option<bool>,
 ) -> CommandResult<()> {
+    let keep_data = keep_data.unwrap_or(true);
     let row = repo::require_plugin(&state.db, &id).await?;
     // 卸载即停 sidecar（进程与安装目录一起清理——目录删掉后崩溃重启连
     // 二进制都找不到，先停是唯一正确时序）。
@@ -912,8 +917,79 @@ pub async fn plugin_uninstall(
     // 数据清理：版本历史（审计与插件日志按既有口径保留）+ 全部在途会话
     let _ = repo::delete_plugin_versions(&state.db, &id).await;
     state.plugin_sessions.revoke_plugin(&id);
+    // 深度清理（keep_data=false）：per-plugin 文件目录 + 插件声明的用户数据
+    if !keep_data {
+        cleanup_plugin_data(&state, &id).await;
+    }
     let _ = app; // 预留：卸载后 emit 事件
     Ok(())
+}
+
+/// per-plugin 文件数据根：`{data_dir}/plugin-data/<id>/{data,cache,tmp}`。
+/// 隔离约定见 docs/plugin/LIFECYCLE.md「数据隔离」节。
+fn plugin_data_root() -> std::path::PathBuf {
+    miyo_storage::db::data_dir().join("plugin-data")
+}
+
+/// 深度清理（卸载「不保留数据」）：per-plugin 文件目录整目录删除 +
+/// 插件专项用户数据。keep_data=true 时全部保留（仅移除安装目录与 DB 行）。
+async fn cleanup_plugin_data(state: &AppState, id: &str) {
+    // 1. per-plugin 文件目录（data/cache/tmp 一并消失）
+    let dir = plugin_data_root().join(id);
+    if dir.exists() {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    // 2. Java 调试专项：v1 项目 / 调用历史（行删除不依赖 java crate）、
+    //    attach 会话与 infoFile（仅 java feature 构建）、组件 jar（含
+    //    无 java 构建的历史残留）。
+    // 直接引用 miyo-plugin 常量（无 java 构建的历史残留同样清理）。
+    if id == miyo_plugin::JAVA_DEBUG_PLUGIN_ID {
+        let _ = repo::delete_all_java_projects(&state.db).await;
+        let _ = repo::delete_all_java_invocations(&state.db).await;
+        #[cfg(feature = "java")]
+        state.java_attach.shutdown_all().await;
+        let jars = miyo_storage::db::data_dir().join("java");
+        if jars.exists() {
+            let _ = std::fs::remove_dir_all(&jars);
+        }
+    }
+}
+
+/// per-plugin 文件目录视图（懒创建 data/cache/tmp 三子目录）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PluginDirView {
+    /// 目录根（`{data_dir}/plugin-data/<id>`）。
+    pub root: String,
+    /// 插件持久数据目录（配置 / 用户数据；卸载「不保留数据」时删除）。
+    pub data: String,
+    /// 缓存目录（可随时清空，卸载恒删）。
+    pub cache: String,
+    /// 临时目录（卸载恒删）。
+    pub tmp: String,
+}
+
+/// 获取（并懒创建）插件的独立文件数据目录。
+/// 路径按插件 id 隔离；id 合法性复用 manifest 的 reverse-DNS 校验（防穿越）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn plugin_dir_get(id: String) -> CommandResult<PluginDirView> {
+    miyo_plugin::manifest::PluginManifest::validate_id(&id)
+        .map_err(|e| CommandError::with_code(CommandErrorCode::Validation, e.to_string()))?;
+    let root = plugin_data_root().join(&id);
+    let data = root.join("data");
+    let cache = root.join("cache");
+    let tmp = root.join("tmp");
+    for dir in [&data, &cache, &tmp] {
+        std::fs::create_dir_all(dir).map_err(|e| {
+            CommandError::with_code(CommandErrorCode::Io, format!("插件数据目录创建失败：{e}"))
+        })?;
+    }
+    Ok(PluginDirView {
+        root: root.display().to_string(),
+        data: data.display().to_string(),
+        cache: cache.display().to_string(),
+        tmp: tmp.display().to_string(),
+    })
 }
 
 /// 启用 / 停用。
@@ -1072,17 +1148,58 @@ pub struct MarketEntryView {
 
 #[derive(Debug, Deserialize)]
 struct MarketIndexFile {
+    #[serde(default)]
+    version: Option<u32>,
+    #[serde(default)]
+    updated_at: Option<String>,
     plugins: Vec<MarketEntryView>,
 }
 
+/// 市场索引视图（含签名信任级；前端据此展示「官方签名」徽章）。
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct MarketIndexView {
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: u32,
+    pub updated_at: String,
+    /// unsigned / official（signed-but-foreign 在命令层硬失败，不会到达前端）。
+    pub trust: String,
+    pub plugins: Vec<MarketEntryView>,
+}
+
 /// 官方市场索引（静态；与已安装状态合并由前端完成）。
+///
+/// 签名口径（ROADMAP §4）：签名存在但未命中 keyring → 硬失败（索引被篡改）；
+/// 未签名 → trust=unsigned 放行（与未签名插件包需显式信任同构——索引由
+/// 随应用分发的静态 JSON 承载，篡改面等于改二进制）。
 #[tauri::command(rename_all = "camelCase")]
-pub async fn plugin_market_index() -> CommandResult<Vec<MarketEntryView>> {
+pub async fn plugin_market_index() -> CommandResult<MarketIndexView> {
     const INDEX_JSON: &str = include_str!("../../../../docs/market/index.json");
+    let verification = miyo_plugin::market::verify_market_index(
+        INDEX_JSON.as_bytes(),
+        miyo_plugin::OFFICIAL_SIGNING_PUBKEYS,
+    )
+    .map_err(|e| CommandError::with_code(CommandErrorCode::Internal, e.to_string()))?;
+    if verification.signed && !verification.verified {
+        return Err(CommandError::with_code(
+            CommandErrorCode::Internal,
+            "市场索引签名验证失败（可能被篡改），已拒绝展示",
+        ));
+    }
     let index: MarketIndexFile = serde_json::from_str(INDEX_JSON).map_err(|e| {
         CommandError::with_code(CommandErrorCode::Internal, format!("市场索引损坏：{e}"))
     })?;
-    Ok(index.plugins)
+    Ok(MarketIndexView {
+        schema_version: index.version.unwrap_or(1),
+        updated_at: index.updated_at.unwrap_or_else(|| "1970-01-01".to_string()),
+        trust: if verification.verified {
+            "official"
+        } else {
+            "unsigned"
+        }
+        .to_string(),
+        plugins: index.plugins,
+    })
 }
 
 /// 插件版本历史条目（回滚选择列表；不含 manifest 原文）。

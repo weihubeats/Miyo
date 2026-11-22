@@ -262,9 +262,25 @@ function cmdSelftest() {
   console.log('  golden payload sha256 =', sha256Hex(payload))
 }
 
+/** sign-index：给市场索引（docs/market/index.json）追加 Ed25519 签名。
+ *  payload = 去除 signature 键后的规范化 JSON（与 Rust market::verify_market_index 同口径）。 */
+function cmdSignIndex(indexPath) {
+  if (!fs.existsSync(indexPath)) fail(`索引文件不存在：${indexPath}`)
+  const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'))
+  const { MIYO_PLUGIN_SIGNING_SEED } = process.env
+  if (!MIYO_PLUGIN_SIGNING_SEED) fail('需要环境变量 MIYO_PLUGIN_SIGNING_SEED（64 位 hex）')
+  const payload = Buffer.from(canonicalize({ ...index, signature: undefined }), 'utf8')
+  const signature = crypto.sign(null, payload, seedToPrivateKey(MIYO_PLUGIN_SIGNING_SEED))
+  index.signature = signature.toString('hex')
+  fs.writeFileSync(indexPath, Buffer.from(canonicalize(index), 'utf8') + '\n')
+  console.log('[sign_plugin] 市场索引已签名：', indexPath)
+  console.log('  payload sha256 =', sha256Hex(payload))
+}
+
 const [cmd, arg] = process.argv.slice(2)
 if (cmd === 'keygen') cmdKeygen()
 else if (cmd === 'sign') arg ? cmdSign(arg) : fail('用法：sign <plugin_dir>')
 else if (cmd === 'verify') arg ? cmdVerify(arg) : fail('用法：verify <plugin_dir>')
+else if (cmd === 'sign-index') arg ? cmdSignIndex(arg) : fail('用法：sign-index <market_index.json>')
 else if (cmd === 'selftest') cmdSelftest()
-else fail('用法：sign_plugin.mjs <keygen|sign|verify|selftest> [arg]')
+else fail('用法：sign_plugin.mjs <keygen|sign|verify|sign-index|selftest> [arg]')

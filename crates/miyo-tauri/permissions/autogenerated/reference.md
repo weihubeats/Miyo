@@ -194,6 +194,7 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-plugin-clear-logs`
 - `allow-plugin-record-log`
 - `allow-plugin-data-get`
+- `allow-plugin-dir-get`
 - `allow-plugin-data-set`
 - `allow-plugin-data-delete`
 - `allow-plugin-data-keys`
@@ -4171,6 +4172,32 @@ Enables the plugin_data_set command without any pre-configured scope.
 <td>
 
 Denies the plugin_data_set command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-plugin-dir-get`
+
+</td>
+<td>
+
+Enables the plugin_dir_get command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-plugin-dir-get`
+
+</td>
+<td>
+
+Denies the plugin_dir_get command without any pre-configured scope.
 
 </td>
 </tr>

@@ -38,12 +38,20 @@ impl std::fmt::Debug for PlatformGuard {
 
 impl PlatformGuard {
     /// spawn 前配置：最小环境 + 进程组 + rlimit（unix）。
-    pub fn configure(cmd: &mut tokio::process::Command, max_memory_mb: Option<u32>) {
+    pub fn configure(
+        cmd: &mut tokio::process::Command,
+        max_memory_mb: Option<u32>,
+        extra_env: &[(String, String)],
+    ) {
         cmd.env_clear();
         for key in BASE_ENV_KEYS {
             if let Ok(value) = std::env::var(key) {
                 cmd.env(key, value);
             }
+        }
+        // spec 级透传（构造方注入的插件能力路径，如 MIYO_JAVA_JAR_DIRS）。
+        for (key, value) in extra_env {
+            cmd.env(key, value);
         }
         configure_unix(cmd, max_memory_mb);
     }

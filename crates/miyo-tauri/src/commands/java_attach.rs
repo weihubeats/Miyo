@@ -21,6 +21,7 @@ use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 use crate::commands::java_gate::ensure_java_permission;
+use miyo_java_attach::backend::AgentOp;
 
 /// 高危动作审计（attach / unload / invoke）。
 async fn audit(db: &sqlx::SqlitePool, message: &str) {
@@ -62,7 +63,7 @@ pub async fn java_discover_processes(
     state: State<'_, AppState>,
 ) -> CommandResult<ProcessListSummary> {
     ensure_java_permission(&state.db, "java.process.discover").await?;
-    Ok(state.java_attach.discover_processes().await)
+    Ok(state.java_backend.discover_processes().await?)
 }
 
 /// 手动输入 pid 探测（手动 attach 前的可达性确认；探测同样 spawn launcher）。
@@ -73,7 +74,7 @@ pub async fn java_probe_pid(
 ) -> CommandResult<JavaProcessInfo> {
     ensure_java_permission(&state.db, "java.process.discover").await?;
     state
-        .java_attach
+        .java_backend
         .probe_pid(pid)
         .await
         .map_err(CommandError::from)
@@ -96,7 +97,7 @@ pub async fn java_attach_process(
     ensure_java_permission(&state.db, "java.runtime.attach").await?;
     let options = AttachOptions::default();
     let snapshot = state
-        .java_attach
+        .java_backend
         .attach(pid, &options)
         .await
         .map_err(CommandError::from)?;
@@ -124,7 +125,7 @@ pub async fn java_attach_process(
 pub async fn java_detach_process(state: State<'_, AppState>, pid: i64) -> CommandResult<()> {
     ensure_java_permission(&state.db, "java.runtime.attach").await?;
     state
-        .java_attach
+        .java_backend
         .detach(pid)
         .await
         .map_err(CommandError::from)
@@ -135,7 +136,7 @@ pub async fn java_detach_process(state: State<'_, AppState>, pid: i64) -> Comman
 pub async fn java_unload_agent(state: State<'_, AppState>, pid: i64) -> CommandResult<()> {
     ensure_java_permission(&state.db, "java.runtime.attach").await?;
     state
-        .java_attach
+        .java_backend
         .unload_agent(pid)
         .await
         .map_err(CommandError::from)?;
@@ -149,7 +150,7 @@ pub async fn java_attach_sessions(
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<AttachSessionSnapshot>> {
     ensure_java_permission(&state.db, "java.runtime.attach").await?;
-    Ok(state.java_attach.all_snapshots().await)
+    Ok(state.java_backend.all_snapshots().await?)
 }
 
 // ---------------------------------------------------------------------------
@@ -163,15 +164,10 @@ pub async fn java_agent_status(
     pid: i64,
 ) -> CommandResult<serde_json::Value> {
     ensure_java_permission(&state.db, "java.runtime.attach").await?;
-    let client = state
-        .java_attach
-        .client(pid)
+    state
+        .java_backend
+        .agent_call(pid, AgentOp::Status)
         .await
-        .map_err(CommandError::from)?;
-    client
-        .status()
-        .await
-        .map_err(|e| e.to_app_error())
         .map_err(CommandError::from)
 }
 
@@ -182,15 +178,10 @@ pub async fn java_agent_spring_status(
     pid: i64,
 ) -> CommandResult<serde_json::Value> {
     ensure_java_permission(&state.db, "java.runtime.attach").await?;
-    let client = state
-        .java_attach
-        .client(pid)
+    state
+        .java_backend
+        .agent_call(pid, AgentOp::SpringStatus)
         .await
-        .map_err(CommandError::from)?;
-    client
-        .spring_status()
-        .await
-        .map_err(|e| e.to_app_error())
         .map_err(CommandError::from)
 }
 
@@ -205,22 +196,20 @@ pub async fn java_agent_classes(
     offset: Option<u32>,
 ) -> CommandResult<serde_json::Value> {
     ensure_java_permission(&state.db, "java.class.inspect").await?;
-    let client = state
-        .java_attach
-        .client(pid)
-        .await
-        .map_err(CommandError::from)?;
-    client
-        .classes(
-            search.as_deref(),
-            None,
-            None,
-            include_jdk.unwrap_or(false),
-            limit.unwrap_or(200),
-            offset.unwrap_or(0),
+    state
+        .java_backend
+        .agent_call(
+            pid,
+            AgentOp::Classes {
+                search,
+                include: None,
+                exclude: None,
+                include_jdk: include_jdk.unwrap_or(false),
+                limit: limit.unwrap_or(200),
+                offset: offset.unwrap_or(0),
+            },
         )
         .await
-        .map_err(|e| e.to_app_error())
         .map_err(CommandError::from)
 }
 
@@ -232,15 +221,10 @@ pub async fn java_agent_class_detail(
     class: String,
 ) -> CommandResult<serde_json::Value> {
     ensure_java_permission(&state.db, "java.class.inspect").await?;
-    let client = state
-        .java_attach
-        .client(pid)
+    state
+        .java_backend
+        .agent_call(pid, AgentOp::ClassDetail { class })
         .await
-        .map_err(CommandError::from)?;
-    client
-        .class_detail(&class)
-        .await
-        .map_err(|e| e.to_app_error())
         .map_err(CommandError::from)
 }
 
@@ -252,15 +236,10 @@ pub async fn java_agent_methods(
     class: String,
 ) -> CommandResult<serde_json::Value> {
     ensure_java_permission(&state.db, "java.class.inspect").await?;
-    let client = state
-        .java_attach
-        .client(pid)
+    state
+        .java_backend
+        .agent_call(pid, AgentOp::Methods { class })
         .await
-        .map_err(CommandError::from)?;
-    client
-        .methods(&class)
-        .await
-        .map_err(|e| e.to_app_error())
         .map_err(CommandError::from)
 }
 
@@ -274,19 +253,17 @@ pub async fn java_agent_beans(
     limit: Option<u32>,
 ) -> CommandResult<serde_json::Value> {
     ensure_java_permission(&state.db, "java.class.inspect").await?;
-    let client = state
-        .java_attach
-        .client(pid)
-        .await
-        .map_err(CommandError::from)?;
-    client
-        .beans(
-            search.as_deref().unwrap_or(""),
-            context_id.as_deref().unwrap_or(""),
-            limit.unwrap_or(500),
+    state
+        .java_backend
+        .agent_call(
+            pid,
+            AgentOp::Beans {
+                search: search.unwrap_or_default(),
+                context_id: context_id.unwrap_or_default(),
+                limit: limit.unwrap_or(500),
+            },
         )
         .await
-        .map_err(|e| e.to_app_error())
         .map_err(CommandError::from)
 }
 
@@ -350,11 +327,6 @@ pub async fn java_agent_invoke(
     args: JavaAgentInvokeArgs,
 ) -> CommandResult<serde_json::Value> {
     ensure_java_permission(&state.db, "java.method.invoke").await?;
-    let client = state
-        .java_attach
-        .client(pid)
-        .await
-        .map_err(CommandError::from)?;
     let invocation_id = Uuid::new_v4();
     let arguments = normalize_arguments(args.arguments.clone());
 
@@ -384,10 +356,10 @@ pub async fn java_agent_invoke(
         .unwrap_or(150_000)
         .min(miyo_java::SecurityPolicy::default().max_timeout_ms);
 
-    let response = client
-        .invoke(params, timeout_ms)
+    let response = state
+        .java_backend
+        .agent_call(pid, AgentOp::Invoke { params, timeout_ms })
         .await
-        .map_err(|e| e.to_app_error())
         .map_err(CommandError::from)?;
     let status = response
         .get("status")
@@ -452,15 +424,10 @@ pub async fn java_agent_cancel(
     invocation_id: String,
 ) -> CommandResult<serde_json::Value> {
     ensure_java_permission(&state.db, "java.runtime.attach").await?;
-    let client = state
-        .java_attach
-        .client(pid)
+    state
+        .java_backend
+        .agent_call(pid, AgentOp::Cancel { invocation_id })
         .await
-        .map_err(CommandError::from)?;
-    client
-        .cancel(&invocation_id)
-        .await
-        .map_err(|e| e.to_app_error())
         .map_err(CommandError::from)
 }
 

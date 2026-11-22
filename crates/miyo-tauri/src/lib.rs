@@ -85,8 +85,10 @@ fn init_tracing() {
 }
 
 /// Java Attach 工具 jar 候选目录（按序取第一个就绪的）：
+/// 仅 java feature 构建编译（无 feature 时 AttachManager 不存在）。
 /// 1. Tauri 资源目录（打包后：resources/java/，tauri.conf.json bundle.resources）；
 /// 2. 开发回退：仓库 java/dist/（scripts/build_java_debug.sh 产物）。
+#[cfg(feature = "java")]
 fn java_attach_jar_candidates(app: &tauri::AppHandle) -> Vec<std::path::PathBuf> {
     let mut candidates = Vec::new();
     // 0. 组件自动下载落地目录（市场远程获取的 jar 优先于随包资源——
@@ -216,12 +218,20 @@ pub mod plugin {
                     // 按保留天数清理过期日志（失败仅记日志）
                     commands::log::cleanup_logs_on_startup(&db);
                     // 恢复持久化的激活项目 / 环境（settings 表，含归属校验）
-                    let state = AppState::new(db, java_attach_jar_candidates(app));
+                    let state = AppState::new(
+                        db,
+                        #[cfg(feature = "java")]
+                        java_attach_jar_candidates(app),
+                        #[cfg(not(feature = "java"))]
+                        Vec::new(),
+                    );
                     // Java Attach 会话心跳常驻（失联会话移除 + infoFile 过期
                     // 清扫；首个 tick 立即触发，兼作启动清扫）。
                     // setup 回调不在 tokio 上下文内——必须经 tauri 的运行时驱动。
                     // 句柄注册进 TaskManager（原句柄丢弃——退出时随 runtime 结束，
                     // 现在有明确的取消与可见性）。
+                    // 仅 java feature 构建：核心裁剪构建无 AttachManager、零后台任务。
+                    #[cfg(feature = "java")]
                     tauri::async_runtime::block_on(async {
                         let heartbeat = state
                             .java_attach
@@ -366,6 +376,7 @@ pub mod plugin {
                 commands::plugin_update_from_path,
                 commands::plugin_rollback,
                 commands::plugin_market_index,
+                commands::plugin_dir_get,
                 commands::plugin_versions,
                 commands::plugin_inspect_from_url,
                 commands::plugin_install_from_cached,

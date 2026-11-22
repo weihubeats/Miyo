@@ -81,6 +81,12 @@ describe('PluginManager 生命周期', () => {
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd.endsWith('plugin_list_installed')) return [javaView()]
       if (cmd.endsWith('plugin_uninstall')) return null
+      // 深度清理用例：重新安装 / 启用 builtin（视图原样返回即可）
+      if (cmd.endsWith('plugin_install_builtin')) return javaView()
+      if (cmd.endsWith('plugin_set_enabled')) {
+        const v = javaView()
+        return { ...v, enabled: (v as { enabled: boolean }).enabled }
+      }
       throw new Error(`unexpected ${cmd}`)
     })
 
@@ -92,7 +98,17 @@ describe('PluginManager 生命周期', () => {
     expect(manager.entries.has(JAVA_DEBUG_PLUGIN_ID)).toBe(false)
     expect(manager.activeNavItems).toHaveLength(0)
     expect(router.hasRoute('plugin-java-debug-main')).toBe(false)
-    expect(invokeMock).toHaveBeenCalledWith('plugin:miyo|plugin_uninstall', { id: JAVA_DEBUG_PLUGIN_ID })
+    expect(invokeMock).toHaveBeenCalledWith('plugin:miyo|plugin_uninstall', {
+      id: JAVA_DEBUG_PLUGIN_ID,
+      keepData: true,
+    })
+
+    // 不保留数据：前端按 manifest.storage_keys 声明清除 localStorage 前缀
+    localStorage.setItem('miyo.java.favorites', '[]')
+    await manager.installBuiltin(JAVA_DEBUG_PLUGIN_ID)
+    await manager.enable(JAVA_DEBUG_PLUGIN_ID)
+    await manager.uninstall(JAVA_DEBUG_PLUGIN_ID, false)
+    expect(localStorage.getItem('miyo.java.favorites')).toBeNull()
   })
 
   it('激活失败：状态转 error 并上报后端（恢复入口可见）', async () => {
@@ -160,5 +176,37 @@ describe('PluginManager 生命周期', () => {
     expect(() =>
       manager.hostBridge.registerRoute('com.b.two', { path: '/p/a', load: async () => ({}) }),
     ).toThrow('PLUGIN_ROUTE_CONFLICT')
+  })
+
+  it('registerCommand：激活中插件命令进面板注册表；停用/卸载自动注销', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd.endsWith('plugin_list_installed')) return [javaView()]
+      if (cmd.endsWith('plugin_uninstall')) return null
+      if (cmd.endsWith('plugin_set_enabled')) {
+        const v = javaView()
+        return { ...v, enabled: false }
+      }
+      throw new Error(`unexpected ${cmd}`)
+    })
+
+    const manager = usePluginManager()
+    await manager.boot()
+    await vi.waitFor(() => expect(manager.isActive(JAVA_DEBUG_PLUGIN_ID)).toBe(true))
+
+    // 注册两条命令 → activeCommandItems 可见
+    manager.hostBridge.registerCommand(JAVA_DEBUG_PLUGIN_ID, {
+      id: 'clear-cache',
+      label: '清理组件缓存',
+    })
+    manager.hostBridge.registerCommand(JAVA_DEBUG_PLUGIN_ID, {
+      id: 'scan-now',
+      label: '立即扫描进程',
+      icon: 'zap',
+    })
+    expect(manager.activeCommandItems.map((c) => c.id)).toEqual(['clear-cache', 'scan-now'])
+
+    // 停用 → 命令随激活态消失
+    await manager.disable(JAVA_DEBUG_PLUGIN_ID)
+    expect(manager.activeCommandItems).toHaveLength(0)
   })
 })

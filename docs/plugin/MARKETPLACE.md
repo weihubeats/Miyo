@@ -42,6 +42,8 @@
 {
   "version": 1,
   "updated_at": "2026-11-19",
+  // 可选：Ed25519 签名（官方 keyring 验证；存在但验证失败 = 索引被篡改，宿主硬失败）
+  "signature": "<128 hex>",
   "plugins": [
     {
       "id": "com.example.hello-world",
@@ -59,6 +61,12 @@
   ]
 }
 ```
+
+**签名流程**：`MIYO_PLUGIN_SIGNING_SEED=<seed> node scripts/sign_plugin.mjs sign-index docs/market/index.json`
+（payload = 去除 `signature` 键后的规范化 JSON，键名字典序递归排序；与 Rust
+`miyo_plugin::market::verify_market_index` 同口径）。信任级：unsigned（随应用
+静态分发，现状）/ official（签名命中 keyring，市场页展示「官方签名索引」徽章）；
+signed-but-foreign（验证失败）一律硬失败拒绝展示。
 
 新增官方插件：改 `docs/market/index.json` +（如随应用内置）在
 `crates/miyo-plugin/builtins/` 加目录 + 前端 `builtinModules.ts` 注册 loader。

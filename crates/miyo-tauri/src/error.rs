@@ -73,6 +73,8 @@ pub enum CommandErrorCode {
     PluginDisabled,
     /// 插件与当前 Miyo 版本 / SDK 协议不兼容。
     PluginIncompatible,
+    /// 宿主构建未包含该能力（如 java feature 关闭的核心构建）。
+    FeatureUnavailable,
 }
 
 impl CommandErrorCode {
@@ -112,6 +114,7 @@ impl CommandErrorCode {
             CommandErrorCode::MockNotRunning => "MOCK_NOT_RUNNING",
             CommandErrorCode::Clipboard => "CLIPBOARD",
             CommandErrorCode::PluginNotInstalled => "PLUGIN_NOT_INSTALLED",
+            CommandErrorCode::FeatureUnavailable => "FEATURE_UNAVAILABLE",
             CommandErrorCode::PluginDisabled => "PLUGIN_DISABLED",
             CommandErrorCode::PluginIncompatible => "PLUGIN_INCOMPATIBLE",
         }
@@ -247,6 +250,7 @@ mod tests {
             (CommandErrorCode::MockNotRunning, "MOCK_NOT_RUNNING"),
             (CommandErrorCode::Clipboard, "CLIPBOARD"),
             (CommandErrorCode::PluginNotInstalled, "PLUGIN_NOT_INSTALLED"),
+            (CommandErrorCode::FeatureUnavailable, "FEATURE_UNAVAILABLE"),
             (CommandErrorCode::PluginDisabled, "PLUGIN_DISABLED"),
             (CommandErrorCode::PluginIncompatible, "PLUGIN_INCOMPATIBLE"),
         ];

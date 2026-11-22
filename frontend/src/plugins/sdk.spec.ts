@@ -27,6 +27,8 @@ const hostBridge: PluginHostBridge = {
   unregisterNav: vi.fn(),
   registerRoute: vi.fn(),
   unregisterRoute: vi.fn(),
+  registerCommand: vi.fn(),
+  unregisterCommand: vi.fn(),
 }
 
 beforeEach(() => {

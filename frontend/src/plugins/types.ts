@@ -106,6 +106,13 @@ export interface PluginUiRegistry {
     register(route: { path: string; name?: string; load: () => Promise<unknown> }): void
     unregister(path: string): void
   }
+  /**
+   * 注册插件命令：宿主命令面板（⌘K QuickSearch）暴露，执行时经事件
+   * 总线分发回插件（evt `${pluginId}:__command`，payload = { id }）。
+   * 插件停用 / 卸载自动注销。id 在插件内唯一，≤48 字符。
+   */
+  registerCommand(cmd: { id: string; label: string; icon?: string }): void
+  unregisterCommand(cmdId: string): void
 }
 
 /** 剪贴板写入（std.clipboard.write 权限）。 */
@@ -113,10 +120,18 @@ export interface PluginClipboard {
   writeText(text: string): Promise<void>
 }
 
+/** per-plugin 文件数据目录（Rust plugin_dir_get；懒创建）。 */
+export interface PluginPaths {
+  /** 独立数据目录视图：data（持久）/ cache（可清）/ tmp（临时）。 */
+  data(): Promise<{ root: string; data: string; cache: string; tmp: string }>
+}
+
 /** 插件激活上下文（SDK 根对象）。activate 返回的实例用于 deactivate 回收。 */
 export interface PluginContext {
   readonly manifest: PluginManifest
   readonly storage: PluginStorage
+  /** per-plugin 文件数据目录（七·数据隔离）。 */
+  readonly paths: PluginPaths
   readonly logger: PluginLogger
   readonly notify: PluginNotify
   readonly events: PluginEvents

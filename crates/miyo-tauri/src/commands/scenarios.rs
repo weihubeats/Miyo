@@ -29,6 +29,13 @@ async fn java_hook_for(
     let enabled = repo::is_plugin_enabled(&state.db, miyo_plugin::JAVA_DEBUG_PLUGIN_ID)
         .await
         .unwrap_or(false);
+    // 核心裁剪构建（无 java feature）：hook 不存在，None → runner 对
+    // Java 步骤统一报「Java 调试插件未启用」级失败，其余步骤照常。
+    #[cfg(not(feature = "java"))]
+    let _ = enabled;
+    #[cfg(not(feature = "java"))]
+    return None;
+    #[cfg(feature = "java")]
     if enabled {
         Some(crate::commands::java_debug::java_invoke_hook(
             state.db.clone(),

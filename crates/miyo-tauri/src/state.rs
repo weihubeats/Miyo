@@ -96,7 +96,15 @@ pub struct AppState {
     pub ai_chats: std::sync::Arc<Mutex<crate::commands::ai::AiChatRegistry>>,
     /// Java Debug 2.0 Attach 管理器（进程发现 / launcher sidecar / Agent 会话）。
     /// jar 候选目录由 lib.rs setup 以 AppHandle 解析后传入。
+    /// 核心裁剪构建（无 java feature）不含此字段——零运行成本。
+    #[cfg(feature = "java")]
     pub java_attach: Arc<miyo_java_attach::AttachManager>,
+    /// java 命令双路分发（Local = 进程内编排【默认】；Sidecar = 经 Supervisor
+    /// 转发到 java-debug-sidecar，env MIYO_JAVA_SIDECAR_BIN 启用）。会话态单源：
+    /// 全部 attach 会话操作走同一 backend。宿主侧资源管理（心跳 / 退出清理 /
+    /// 卸载 shutdown_all）恒走 java_attach。
+    #[cfg(feature = "java")]
+    pub java_backend: miyo_java_attach::backend::JavaBackend,
     /// 插件会话凭证表（std 族命令的后端强制凭据；内存态）。
     pub plugin_sessions: crate::sessions::PluginSessions,
     /// 常驻型插件 sidecar 监督器（握手 / 心跳 / 崩溃恢复 / 进程组清理）。
@@ -185,8 +193,24 @@ impl AppState {
     /// `jar_candidates`：Java Attach 工具 jar 候选目录（resource dir / dev 回退，
     /// 由 lib.rs setup 以 AppHandle 解析后传入）。
     pub fn new(db: SqlitePool, jar_candidates: Vec<std::path::PathBuf>) -> Self {
+        // 无 java feature 构建：候选目录无消费者（AttachManager 不编译）。
+        #[cfg(not(feature = "java"))]
+        let _ = jar_candidates;
+        // java 双路分发：Local（进程内编排，默认）/ Sidecar（env 启用转发）。
+        #[cfg(feature = "java")]
+        let java_attach = Arc::new(miyo_java_attach::AttachManager::new(
+            jar_candidates,
+            miyo_storage::db::data_dir().join("java-agent"),
+        ));
+        let sidecar = crate::commands::sidecar::build_supervisor(db.clone());
+        #[cfg(feature = "java")]
+        let java_backend = miyo_java_attach::backend::JavaBackend::resolve(
+            java_attach.clone(),
+            sidecar.clone(),
+            miyo_storage::db::data_dir(),
+        );
         AppState {
-            sidecar: crate::commands::sidecar::build_supervisor(db.clone()),
+            sidecar,
             db,
             active: AsyncRwLock::new(ActiveContext::default()),
             mock: AsyncRwLock::new(None),
@@ -200,10 +224,9 @@ impl AppState {
             ai_chats: std::sync::Arc::new(Mutex::new(
                 crate::commands::ai::AiChatRegistry::default(),
             )),
-            java_attach: Arc::new(miyo_java_attach::AttachManager::new(
-                jar_candidates,
-                miyo_storage::db::data_dir().join("java-agent"),
-            )),
+            java_backend: java_backend,
+            #[cfg(feature = "java")]
+            java_attach: java_attach,
             plugin_sessions: crate::sessions::PluginSessions::new(),
             tasks: miyo_tasks::TaskSupervisor::new(),
             market_downloads: std::sync::Mutex::new(Vec::new()),

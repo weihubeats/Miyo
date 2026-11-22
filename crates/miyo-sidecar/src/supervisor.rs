@@ -98,6 +98,10 @@ pub struct SidecarSpec {
     /// 内存上限 MB（None = 平台默认不设限）。
     pub max_memory_mb: Option<u32>,
     pub restart_policy: RestartPolicy,
+    /// 额外注入的环境变量（env_clear 白名单之上追加）。
+    /// 用于插件声明的能力路径（如 Java 的 jar/infoFile 目录）——
+    /// 值由宿主构造时决定，不经插件输入。
+    pub extra_env: Vec<(String, String)>,
 }
 
 /// 日志 / 事件上送（tauri 层接 plugin_logs 与事件总线）。
@@ -358,7 +362,7 @@ impl Supervisor {
         if let Some(dir) = &spec.working_dir {
             cmd.current_dir(dir);
         }
-        PlatformGuard::configure(&mut cmd, spec.max_memory_mb);
+        PlatformGuard::configure(&mut cmd, spec.max_memory_mb, &spec.extra_env);
 
         let mut child = cmd.spawn().map_err(|e| {
             AppError::Io(std::io::Error::other(format!(

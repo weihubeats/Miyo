@@ -191,6 +191,7 @@ const COMMANDS: &[&str] = &[
     "plugin_logs",
     "plugin_clear_logs",
     "plugin_record_log",
+    "plugin_dir_get",
     "plugin_data_get",
     "plugin_data_set",
     "plugin_data_delete",

@@ -19,6 +19,7 @@ import {
   isRpcRequestFrame,
   validateMethod,
   type RpcOutboundFrame,
+  isRpcCancelFrame,
 } from './protocol'
 import type { PluginSession } from '@/plugins/sdk'
 
@@ -56,6 +57,10 @@ export class HostRpcBridge {
   // ---- RPC 安全状态（限额见 protocol.ts RPC_LIMITS） ----
   /** 已处理请求 ID（重放防护：同一 id 二次到达直接丢弃）。 */
   private seenIds = new Set<string>()
+  /** 已取消的在途请求 id（回执丢弃标记；上限随 MAX_SEEN_IDS 口径）。 */
+  private cancelledIds = new Set<string>()
+  /** 在途请求 id（cancel 命中判定）。 */
+  private inflightIds = new Set<string>()
   /** 当前在途请求数（并发上限）。 */
   private inflight = 0
   /** 熔断：窗口内错误时间戳 + 打开截止时刻。 */
@@ -78,6 +83,10 @@ export class HostRpcBridge {
   /** 处理一条来自 iframe 的 message 事件（PluginIframeHost 转发）。 */
   handleMessage(data: unknown): void {
     if (this.disposed) return
+    if (isRpcCancelFrame(data)) {
+      this.handleCancel(data.id, (data as { n?: unknown }).n)
+      return
+    }
     if (!isRpcRequestFrame(data)) return // 未知帧静默丢弃
     const { id, method, params } = data
     // nonce（可选回传）：携带即必须匹配；不携带（v1 插件）跳过此项校验。
@@ -114,19 +123,44 @@ export class HostRpcBridge {
     // 超时兜底：SDK 调用挂起时不让插件侧永久等待。
     const timer = setTimeout(() => this.fail(id, RPC_ERRORS.TIMEOUT, 'host request timeout'), this.timeoutMs)
     this.inflight += 1
+    this.inflightIds.add(id)
     void this.dispatch(method, params)
       .then((result) => {
         clearTimeout(timer)
-        this.post({ v: RPC_VERSION, type: 'res', id, ok: true, result })
+        this.postResult(id, { v: RPC_VERSION, type: 'res', id, ok: true, result })
       })
       .catch((err: unknown) => {
         clearTimeout(timer)
         const code = err instanceof Error && err.message.startsWith('PLUGIN_') ? RPC_ERRORS.PERMISSION_DENIED : RPC_ERRORS.INTERNAL
+        // 走 fail：熔断计数 + 取消守卫（fail 内部已挡已取消请求的回执）
         this.fail(id, code, err instanceof Error ? err.message : String(err))
       })
       .finally(() => {
         this.inflight -= 1
+        this.inflightIds.delete(id)
       })
+  }
+
+  /**
+   * 取消在途请求：登记取消标记后**不回执**（插件侧发送 cancel 即本地
+   * resolve CANCELLED）；真实结果到达时由 postResult 丢弃。取消未知 /
+   * 已完成请求静默忽略（无信息泄露）。上限随 MAX_SEEN_IDS 口径。
+   */
+  private handleCancel(id: string, frameNonce: unknown): void {
+    if (this.disposed) return
+    if (this.nonce !== undefined && frameNonce !== undefined && frameNonce !== this.nonce) return
+    if (!this.inflightIds.has(id)) return
+    if (this.cancelledIds.size >= RPC_LIMITS.MAX_SEEN_IDS) this.cancelledIds.clear()
+    this.cancelledIds.add(id)
+  }
+
+  /** 回执统一出口：已取消的请求丢弃响应（取消语义）。 */
+  private postResult(
+    id: string,
+    frame: { v: number; type: 'res'; id: string; ok: boolean; result?: unknown; error?: { code: string; message: string } },
+  ): void {
+    if (this.cancelledIds.delete(id)) return
+    this.post(frame)
   }
 
   /** 订阅总线事件（宿主监听 → 插件收 evt 帧；超过订阅上限直接拒绝）。 */
@@ -152,6 +186,7 @@ export class HostRpcBridge {
   }
 
   private fail(id: string, code: string, message: string): void {
+    if (this.cancelledIds.has(id)) return
     // 熔断统计：仅业务错误（INTERNAL / TIMEOUT / PERMISSION_DENIED）计入窗口
     if (code === RPC_ERRORS.INTERNAL || code === RPC_ERRORS.TIMEOUT || code === RPC_ERRORS.PERMISSION_DENIED) {
       const now = Date.now()

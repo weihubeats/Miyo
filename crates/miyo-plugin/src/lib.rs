@@ -30,6 +30,7 @@ pub mod package;
 pub mod permission;
 
 pub use builtin::{builtin_manifest, builtin_manifests, JAVA_DEBUG_PLUGIN_ID};
+pub mod market;
 pub use compat::{ensure_compatible, ensure_sdk_supported, is_compatible};
 pub use manifest::{
     PluginConfigField, PluginConfigFieldType, PluginConfigSchema, PluginKind, PluginManifest,

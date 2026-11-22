@@ -5,7 +5,9 @@
   "description": "自动发现本机 Java 进程，用户确认后注入调试 Agent（零源码修改），浏览类 / Bean / 方法并受控调用；兼容 Runtime (SDK) 模式。",
   "description_key": "plugins.javaDebugDesc",
   "version": "0.1.0",
-  "authors": ["Miyo"],
+  "authors": [
+    "Miyo"
+  ],
   "icon": "package",
   "kind": "ui",
   "min_app_version": "0.0.60",
@@ -47,5 +49,10 @@
       }
     },
     "required": []
-  }
+  },
+  "storage_keys": [
+    "miyo.java.favorites",
+    "miyo.java.argsTemplates",
+    "miyo.javaAttach.favorites"
+  ]
 }

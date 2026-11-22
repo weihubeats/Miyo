@@ -105,6 +105,7 @@ fn build_spec(row: &repo::PluginRow) -> CommandResult<SidecarSpec> {
         args: vec![],
         working_dir: Some(std::path::PathBuf::from(install_path)),
         max_memory_mb: sidecar.max_memory_mb,
+        extra_env: Vec::new(),
         restart_policy: RestartPolicy::parse(sidecar.restart_policy.as_deref().unwrap_or("off")),
     })
 }

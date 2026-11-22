@@ -26,4 +26,6 @@ fn export_bindings() {
     miyo_tauri::commands::plugins::PluginView::export_all(&cfg).unwrap();
     miyo_tauri::commands::plugins::PluginCatalogView::export_all(&cfg).unwrap();
     miyo_tauri::commands::plugins::PackageInspectionView::export_all(&cfg).unwrap();
+    miyo_tauri::commands::plugins::PluginDirView::export_all(&cfg).unwrap();
+    miyo_tauri::commands::plugins::MarketIndexView::export_all(&cfg).unwrap();
 }

@@ -38,6 +38,24 @@ export interface RpcResponseFrame {
   error?: { code: string; message: string }
 }
 
+/**
+ * 取消帧（插件 → 宿主，v1 增量：新增帧类型不破坏既有插件）。
+ *
+ * 语义（诚实边界）：宿主 IPC 命令本身不可中断——cancel 只表示插件放弃等待，
+ * 宿主在真实结果到达后不再回发响应帧（插件侧收到 cancel 回执即 resolve
+ * `{code:'CANCELLED'}`）；对 plugin_sidecar_request 这类可中止通道，宿主
+ * 在分发层另行透传 abort。
+ */
+export interface RpcCancelFrame {
+  v: number
+  type: 'cancel'
+  /** 要取消的请求 id（必须仍在途；未知 / 已完成的 id 静默忽略）。 */
+  id: string
+}
+
+/** 取消后统一回执的错误码（插件侧约定）。 */
+export const RPC_ERROR_CANCELLED = 'CANCELLED'
+
 /** 事件帧（宿主 → 插件，总线广播转发）。 */
 export interface RpcEventFrame {
   v: number
@@ -46,7 +64,7 @@ export interface RpcEventFrame {
   payload?: unknown
 }
 
-export type RpcInboundFrame = RpcRequestFrame
+export type RpcInboundFrame = RpcRequestFrame | RpcCancelFrame
 export type RpcOutboundFrame = RpcResponseFrame | RpcEventFrame
 
 /** 帧判别（严格形状校验，任何不符即丢弃）。 */
@@ -62,6 +80,13 @@ export function isRpcRequestFrame(data: unknown): data is RpcRequestFrame {
     typeof f.method === 'string' &&
     (f.params === undefined || isPlainObject(f.params))
   )
+}
+
+/** 取消帧判别（严格形状校验；不符合静默丢弃）。 */
+export function isRpcCancelFrame(data: unknown): data is RpcCancelFrame {
+  if (typeof data !== 'object' || data === null) return false
+  const f = data as Record<string, unknown>
+  return f.v === RPC_VERSION && f.type === 'cancel' && typeof f.id === 'string' && f.id.length > 0 && f.id.length <= 64
 }
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {

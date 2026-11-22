@@ -41,6 +41,7 @@ fn spec(plugin_id: &str, policy: RestartPolicy) -> SidecarSpec {
         working_dir: None,
         max_memory_mb: Some(256),
         restart_policy: policy,
+        extra_env: vec![],
     }
 }
 
