@@ -99,3 +99,6 @@ curl -s "https://api.github.com/repos/weihubeats/Miyo/actions/runs?branch=main&p
    （序列化契约测试因此而生）；
 4. 递归组件的 provide/inject 键写在 `<script setup>` 体内 → 每实例各一份 Symbol
    永不匹配（键必须放模块级 `<script>`）。
+5. 本地 `cargo clippy --all-targets` 不带 `-D warnings` → 测试代码里的未用变量
+   只产生本地 warning，CI `-D warnings` 直接编译拒绝（root Test 步骤 ubuntu
+   实证）；本地门禁必须照抄 CI 的 `-D warnings` 尾巴。
