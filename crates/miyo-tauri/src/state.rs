@@ -224,9 +224,9 @@ impl AppState {
             ai_chats: std::sync::Arc::new(Mutex::new(
                 crate::commands::ai::AiChatRegistry::default(),
             )),
-            java_backend: java_backend,
+            java_backend,
             #[cfg(feature = "java")]
-            java_attach: java_attach,
+            java_attach,
             plugin_sessions: crate::sessions::PluginSessions::new(),
             tasks: miyo_tasks::TaskSupervisor::new(),
             market_downloads: std::sync::Mutex::new(Vec::new()),
