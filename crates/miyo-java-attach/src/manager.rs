@@ -29,7 +29,8 @@ pub const MAX_ATTACH_SESSIONS: usize = 8;
 const INFO_FILE_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// attach 选项（安全 / 策略上限）。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct AttachOptions {
     /// 并发调用上限（传给 Agent，取 min(Agent 侧)）。
     pub max_concurrent: u32,

@@ -38,12 +38,16 @@
 //! 超时 / 取消语义与协议 v1 一致：协作式中断（`terminated` 恒为 false），
 //! UI 必须区分「已请求取消」与「实际终止」。
 
+pub mod backend;
 pub mod client;
 pub mod jdk;
 pub mod launcher;
 pub mod manager;
 pub mod model;
 pub mod process;
+
+/// sidecar 分发模式下 Supervisor 会话的插件 id（与内置插件 id 一致）。
+pub const JAVA_DEBUG_SIDECAR_PLUGIN_ID: &str = "com.miyo.java-debug";
 
 pub use client::{AgentClient, AgentClientError};
 pub use jdk::{JdkToolchain, ToolchainRegistry};

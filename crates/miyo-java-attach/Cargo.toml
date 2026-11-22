@@ -9,14 +9,19 @@ description = "Miyo Java Debug 2.0 — 本地 JVM 进程发现 / Attach Launcher
 
 [dependencies]
 miyo-core = { path = "../miyo-core" }
+# java-debug-sidecar 二进制（ROADMAP §1）+ JavaBackend Sidecar 分发
+# （宿主命令层经 Supervisor::request 转发的远端路径）。
+miyo-sidecar = { path = "../miyo-sidecar" }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["process", "rt-multi-thread", "macros", "io-std", "io-util", "sync", "time"] }
 rand.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+# sidecar e2e：宿主视角驱动 bin（hello/ping/req 帧）
+miyo-sidecar = { path = "../miyo-sidecar" }
