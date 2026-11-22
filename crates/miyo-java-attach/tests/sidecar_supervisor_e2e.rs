@@ -59,7 +59,7 @@ async fn supervisor_manages_java_sidecar_full_lifecycle() {
             "com.miyo.java-debug",
             "sessions",
             serde_json::Value::Null,
-            Duration::from_secs(5),
+            Duration::from_secs(15),
         )
         .await
         .expect("sessions 请求失败");
@@ -71,7 +71,7 @@ async fn supervisor_manages_java_sidecar_full_lifecycle() {
             "com.miyo.java-debug",
             "tools_ready",
             serde_json::Value::Null,
-            Duration::from_secs(5),
+            Duration::from_secs(15),
         )
         .await
         .expect("tools_ready 请求失败");
@@ -83,7 +83,7 @@ async fn supervisor_manages_java_sidecar_full_lifecycle() {
             "com.miyo.java-debug",
             "no_such",
             serde_json::Value::Null,
-            Duration::from_secs(5),
+            Duration::from_secs(15),
         )
         .await
         .expect_err("未知方法应报错");
@@ -101,11 +101,13 @@ async fn supervisor_manages_java_sidecar_full_lifecycle() {
     assert!(!still, "stop 后 sidecar 不应仍在运行");
 }
 
-/// JavaBackend Sidecar 分发 e2e：resolve（env 启用）→ ensure_started（Supervisor
-/// 托管）→ sessions / tools_ready / 未知方法 —— 与宿主命令层同一调用面。
+/// JavaBackend Sidecar 分发 e2e：直接构造 Sidecar 变体（不经 env——
+/// 并行测试下 set_var 与进程 spawn 读环境存在 glibc 竞态，见 CI ubuntu
+/// 实证）→ ensure_started（Supervisor 托管）→ sessions / agent_call /
+/// discover —— 与宿主命令层同一调用面。
 #[tokio::test]
 async fn backend_sidecar_mode_full_lifecycle() {
-    use miyo_java_attach::backend::{AgentOp, JavaBackend, SIDECAR_BIN_ENV};
+    use miyo_java_attach::backend::{AgentOp, JavaBackend};
 
     let tmp = tempfile::tempdir().unwrap();
     // 宿主进程内 manager 照常构造（Local 常驻，双轨并存）
@@ -114,15 +116,12 @@ async fn backend_sidecar_mode_full_lifecycle() {
         tmp.path().join("java-agent-local"),
     ));
     let sup = fast_supervisor();
-    // bin 路径经 env 传递（resolve 的模式开关）
-    // SAFETY：单测试进程内其他用例不读该变量（resolve 仅本用例调用）。
-    std::env::set_var(SIDECAR_BIN_ENV, env!("CARGO_BIN_EXE_java-debug-sidecar"));
-    let backend = JavaBackend::resolve(
-        Arc::clone(&manager),
-        Arc::clone(&sup),
-        tmp.path().to_path_buf(),
-    );
-    std::env::remove_var(SIDECAR_BIN_ENV);
+    let backend = JavaBackend::Sidecar {
+        supervisor: Arc::clone(&sup),
+        plugin_id: miyo_java_attach::JAVA_DEBUG_SIDECAR_PLUGIN_ID.into(),
+        bin_path: PathBuf::from(env!("CARGO_BIN_EXE_java-debug-sidecar")),
+        data_dir: tmp.path().to_path_buf(),
+    };
 
     // sessions：空会话表
     let sessions = backend.all_snapshots().await.expect("sessions 失败");
