@@ -110,11 +110,6 @@ async fn backend_sidecar_mode_full_lifecycle() {
     use miyo_java_attach::backend::{AgentOp, JavaBackend};
 
     let tmp = tempfile::tempdir().unwrap();
-    // 宿主进程内 manager 照常构造（Local 常驻，双轨并存）
-    let manager = Arc::new(miyo_java_attach::AttachManager::new(
-        vec![],
-        tmp.path().join("java-agent-local"),
-    ));
     let sup = fast_supervisor();
     let backend = JavaBackend::Sidecar {
         supervisor: Arc::clone(&sup),
