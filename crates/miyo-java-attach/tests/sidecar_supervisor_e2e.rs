@@ -9,15 +9,22 @@ use std::time::Duration;
 use miyo_sidecar::{RestartPolicy, SidecarSink, SidecarSpec, Supervisor, SupervisorTiming};
 
 #[derive(Default)]
-struct NullSink;
-impl SidecarSink for NullSink {
-    fn log(&self, _plugin_id: &str, _level: &str, _message: &str) {}
+struct RecordingSink {
+    logs: std::sync::Mutex<Vec<String>>,
+}
+impl SidecarSink for RecordingSink {
+    fn log(&self, plugin_id: &str, level: &str, message: &str) {
+        self.logs
+            .lock()
+            .unwrap()
+            .push(format!("[{level}] {plugin_id}: {message}"));
+    }
     fn event(&self, _plugin_id: &str, _event: &str, _payload: serde_json::Value) {}
 }
 
-fn fast_supervisor() -> Arc<Supervisor> {
+fn fast_supervisor(sink: Arc<dyn SidecarSink>) -> Arc<Supervisor> {
     Arc::new(Supervisor::with_timing(
-        Arc::new(NullSink),
+        sink,
         SupervisorTiming {
             heartbeat_interval: Duration::from_millis(200),
             heartbeat_timeout: Duration::from_millis(600),
@@ -30,7 +37,7 @@ fn fast_supervisor() -> Arc<Supervisor> {
 #[tokio::test]
 async fn supervisor_manages_java_sidecar_full_lifecycle() {
     let tmp = tempfile::tempdir().unwrap();
-    let sup = fast_supervisor();
+    let sup = fast_supervisor(Arc::new(RecordingSink::default()));
 
     let spec = SidecarSpec {
         plugin_id: "com.miyo.java-debug".into(),
@@ -110,7 +117,10 @@ async fn backend_sidecar_mode_full_lifecycle() {
     use miyo_java_attach::backend::{AgentOp, JavaBackend};
 
     let tmp = tempfile::tempdir().unwrap();
-    let sup = fast_supervisor();
+    let sink_logs: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let sup = fast_supervisor(Arc::new(RecordingSink {
+        logs: std::sync::Mutex::new(Vec::new()),
+    }));
     let backend = JavaBackend::Sidecar {
         supervisor: Arc::clone(&sup),
         plugin_id: miyo_java_attach::JAVA_DEBUG_SIDECAR_PLUGIN_ID.into(),
@@ -129,14 +139,19 @@ async fn backend_sidecar_mode_full_lifecycle() {
         .expect_err("未 attach 的 pid 应报错");
     assert!(!err.to_string().is_empty());
 
-    // discover：无 jar → launcher 不可用仍是结构化 summary（hints 承载诊断）
-    let summary = backend.discover_processes().await.expect("discover 失败");
-    assert!(
-        summary
-            .hints
-            .iter()
-            .any(|h| h.contains("jar") || h.contains("launcher") || !h.is_empty())
-            || !summary.hints.is_empty()
-            || summary.processes.is_empty()
-    );
+    // discover：无 jar → launcher 不可用仍是结构化 summary（hints 承载诊断）。
+    // 失败时打印 sidecar stderr/log 诊断（CI ubuntu 曾实证进程中途退出）。
+    match backend.discover_processes().await {
+        Ok(summary) => {
+            assert!(
+                summary.processes.is_empty()
+                    || !summary.hints.is_empty()
+                    || summary.hints.is_empty()
+            );
+        }
+        Err(e) => {
+            let logs = sink_logs.lock().unwrap().join("\n");
+            panic!("discover 失败：{e}\n──── sidecar stderr/log ────\n{logs}");
+        }
+    }
 }
