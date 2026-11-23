@@ -86,7 +86,10 @@ fn init_tracing() {
 
 /// Java Attach 工具 jar 候选目录（按序取第一个就绪的）：
 /// 仅 java feature 构建编译（无 feature 时 AttachManager 不存在）。
-/// 1. Tauri 资源目录（打包后：resources/java/，tauri.conf.json bundle.resources）；
+/// 1. Tauri 资源目录（打包后：`Contents/Resources/resources/java/`，
+///    对应 `tauri.conf.json` `bundle.resources: ["resources/java/*"]`——
+///    路径保留 `resources/` 前缀，须 `resolve("resources/java")`；
+///    曾误写 `resolve("java")` → 随包 jar 永远找不到，正式版只能靠下载）；
 /// 2. 开发回退：仓库 java/dist/（scripts/build_java_debug.sh 产物）。
 #[cfg(feature = "java")]
 fn java_attach_jar_candidates(app: &tauri::AppHandle) -> Vec<std::path::PathBuf> {
@@ -94,6 +97,15 @@ fn java_attach_jar_candidates(app: &tauri::AppHandle) -> Vec<std::path::PathBuf>
     // 0. 组件自动下载落地目录（市场远程获取的 jar 优先于随包资源——
     //    远程版本可能比安装包携带的更新）
     candidates.push(miyo_storage::db::data_dir().join("java"));
+    // bundle.resources 条目是 `resources/java/*`，Resource 根下完整相对路径
+    // 为 `resources/java`（macOS 安装包实证：Contents/Resources/resources/java/）。
+    if let Ok(res_dir) = app
+        .path()
+        .resolve("resources/java", tauri::path::BaseDirectory::Resource)
+    {
+        candidates.push(res_dir);
+    }
+    // 兼容旧解析 / 偶发扁平布局（resources 直接落到 Resource/java）
     if let Ok(res_dir) = app
         .path()
         .resolve("java", tauri::path::BaseDirectory::Resource)
