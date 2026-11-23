@@ -299,6 +299,45 @@ async fn heartbeat_detects_muted_sidecar() {
 }
 
 #[tokio::test]
+async fn heartbeat_spares_busy_sidecar_with_inflight_request() {
+    let sink = Arc::new(RecordingSink::default());
+    let sup = fast_supervisor(Arc::clone(&sink));
+    sup.start(spec("com.test.busy", RestartPolicy::Off))
+        .await
+        .unwrap();
+
+    // sleep 1200ms > heartbeat_timeout(600ms)：处理期间 sidecar 单线程不回 pong；
+    // 在途请求未回执不得判死（此前被 kill → 请求半途「流已结束（进程退出）」，
+    // CI ubuntu 慢 runner 上 miyo-java-attach e2e 实证）。
+    let out = sup
+        .request(
+            "com.test.busy",
+            "sleep",
+            serde_json::json!({ "ms": 1200 }),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("在途请求期间 sidecar 不应被判死");
+    assert_eq!(out, serde_json::json!({ "slept": 1200 }));
+
+    // 请求回执后会话仍在（未被杀）
+    assert!(sup
+        .status()
+        .await
+        .iter()
+        .any(|s| s.plugin_id == "com.test.busy"));
+    // 判死路径未触发
+    assert!(!sink
+        .logs
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(p, _, m)| p == "com.test.busy" && m.contains("心跳判死")));
+
+    sup.shutdown_all().await;
+}
+
+#[tokio::test]
 async fn stop_kills_process_group_without_zombie() {
     let sink = Arc::new(RecordingSink::default());
     let sup = fast_supervisor(Arc::clone(&sink));

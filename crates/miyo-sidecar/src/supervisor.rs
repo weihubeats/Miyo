@@ -458,6 +458,7 @@ impl Supervisor {
         let heartbeat = spawn_heartbeat_task(
             Arc::clone(&stdin),
             Arc::clone(&last_pong),
+            Arc::clone(&pending),
             pid,
             spec.plugin_id.clone(),
             exit_tx.clone(),
@@ -683,10 +684,17 @@ fn spawn_stderr_task(
 }
 
 /// 心跳任务：周期 ping；pong 超时判死 → 上报崩溃 + 进程组 kill。
+///
+/// 判死前提是**无在途请求**：sidecar 主循环是单线程（处理 req 期间不读 stdin、
+/// 不回 pong），长耗时请求（discover 冷启动子进程、attach 加载 agent）会被
+/// 误判为挂死并 kill——请求半途「流已结束（进程退出）」（CI ubuntu 实证：
+/// 心跳 600ms 的 e2e 在慢 runner 上稳定复现）。请求自身有超时兜底，超时后
+/// 挂起表清空，真挂死仍会被后续心跳判死。
 #[allow(clippy::too_many_arguments)]
 fn spawn_heartbeat_task(
     stdin: Arc<Mutex<tokio::process::ChildStdin>>,
     last_pong: Arc<Mutex<Instant>>,
+    pending: PendingMap,
     pid: u32,
     plugin_id: String,
     exit_tx: mpsc::UnboundedSender<ExitInfo>,
@@ -698,9 +706,13 @@ fn spawn_heartbeat_task(
             // 判死：距最后一次 pong 超过心跳超时
             let stale = { last_pong.lock().await.elapsed() > timing.heartbeat_timeout };
             if stale {
-                sink_dead(&plugin_id, &exit_tx);
-                kill_process_group(pid);
-                break;
+                if pending.lock().await.is_empty() {
+                    sink_dead(&plugin_id, &exit_tx);
+                    kill_process_group(pid);
+                    break;
+                }
+                // 在途请求宽限：对端在忙（忙 = 活），重置计时继续观察
+                *last_pong.lock().await = Instant::now();
             }
             let ping = SidecarFrame {
                 id: Some(uuid::Uuid::new_v4().simple().to_string()),
