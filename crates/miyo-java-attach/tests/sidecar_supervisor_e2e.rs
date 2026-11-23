@@ -10,7 +10,7 @@ use miyo_sidecar::{RestartPolicy, SidecarSink, SidecarSpec, Supervisor, Supervis
 
 #[derive(Default)]
 struct RecordingSink {
-    logs: std::sync::Mutex<Vec<String>>,
+    logs: Arc<std::sync::Mutex<Vec<String>>>,
 }
 impl SidecarSink for RecordingSink {
     fn log(&self, plugin_id: &str, level: &str, message: &str) {
@@ -20,6 +20,19 @@ impl SidecarSink for RecordingSink {
             .push(format!("[{level}] {plugin_id}: {message}"));
     }
     fn event(&self, _plugin_id: &str, _event: &str, _payload: serde_json::Value) {}
+}
+
+/// 共享日志 sink：sidecar 的 sink.log 与断言处读的缓冲是**同一份** Vec
+/// （此前 sink 内部自持 Mutex、panic 处另持一个空 Vec，失败时打印的
+/// sidecar 日志恒为空——死因无从归因，CI ubuntu 两轮实证）。
+fn shared_sink() -> (Arc<RecordingSink>, Arc<std::sync::Mutex<Vec<String>>>) {
+    let logs: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    (
+        Arc::new(RecordingSink {
+            logs: Arc::clone(&logs),
+        }),
+        logs,
+    )
 }
 
 fn fast_supervisor(sink: Arc<dyn SidecarSink>) -> Arc<Supervisor> {
@@ -37,7 +50,8 @@ fn fast_supervisor(sink: Arc<dyn SidecarSink>) -> Arc<Supervisor> {
 #[tokio::test]
 async fn supervisor_manages_java_sidecar_full_lifecycle() {
     let tmp = tempfile::tempdir().unwrap();
-    let sup = fast_supervisor(Arc::new(RecordingSink::default()));
+    let (sink, _logs) = shared_sink();
+    let sup = fast_supervisor(sink);
 
     let spec = SidecarSpec {
         plugin_id: "com.miyo.java-debug".into(),
@@ -117,10 +131,8 @@ async fn backend_sidecar_mode_full_lifecycle() {
     use miyo_java_attach::backend::{AgentOp, JavaBackend};
 
     let tmp = tempfile::tempdir().unwrap();
-    let sink_logs: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
-    let sup = fast_supervisor(Arc::new(RecordingSink {
-        logs: std::sync::Mutex::new(Vec::new()),
-    }));
+    let (sink, sink_logs) = shared_sink();
+    let sup = fast_supervisor(sink);
     let backend = JavaBackend::Sidecar {
         supervisor: Arc::clone(&sup),
         plugin_id: miyo_java_attach::JAVA_DEBUG_SIDECAR_PLUGIN_ID.into(),
