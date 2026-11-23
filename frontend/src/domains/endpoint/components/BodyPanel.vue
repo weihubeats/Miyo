@@ -314,7 +314,7 @@ function getMatchOffsets(text: string, q: string, targetIdx: number): [number, n
 }
 
 watch(
-  () => [searchQuery.value, activeMatch.value],
+  [() => searchQuery.value, () => activeMatch.value],
   ([q, matchIdx]) => {
     if (!q || matchIdx === undefined) return
     if (activeTab.value === 'raw' && rawSubtype.value === 'json') return

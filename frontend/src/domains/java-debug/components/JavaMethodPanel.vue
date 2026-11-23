@@ -98,7 +98,7 @@ const formValues = ref<unknown[]>([])
 
 /** argsJson → 表单值（JSON 模式切回表单时同步）。 */
 watch(
-  () => [props.argsJson, props.editMode] as const,
+  [() => props.argsJson, () => props.editMode],
   ([json, mode]) => {
     if (mode !== 'form') return
     try {

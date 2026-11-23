@@ -59,7 +59,7 @@ const form = reactive({
 })
 
 watch(
-  () => [props.open, props.editing, props.preset] as const,
+  [() => props.open, () => props.editing, () => props.preset],
   ([open, editing, preset]) => {
     if (!open) return
     // 关联项目下拉的数据源：dashboard 缓存为空（未走过 /projects）时兜底拉取。

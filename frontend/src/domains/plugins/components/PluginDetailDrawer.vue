@@ -306,7 +306,7 @@ function logTone(level: string): StatusTone {
 // ---------- 打开时加载 ----------
 
 watch(
-  () => [props.open, props.pluginId] as const,
+  [() => props.open, () => props.pluginId],
   ([open]) => {
     if (open) {
       void loadConfig()

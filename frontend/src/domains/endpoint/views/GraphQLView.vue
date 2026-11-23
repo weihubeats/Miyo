@@ -144,7 +144,7 @@ const gqlUrl = ref(resolveInitialUrl())
 
 /** 项目数据异步到位（端点列表 / 域名刚加载）且地址仍为空时再解析一次。 */
 watch(
-  () => [store.endpoints.length, store.urlDomain, store.activeEndpoint?.id] as const,
+  [() => store.endpoints.length, () => store.urlDomain, () => store.activeEndpoint?.id],
   () => {
     if (!gqlUrl.value.trim()) gqlUrl.value = resolveInitialUrl()
   },
@@ -152,7 +152,7 @@ watch(
 
 /** 携带新上下文进入（/graphql?url=… &endpointId=…）时刷新地址。 */
 watch(
-  () => [route.query.url, route.query.endpointId] as const,
+  [() => route.query.url, () => route.query.endpointId],
   () => {
     const next = resolveInitialUrl()
     if (next && next !== gqlUrl.value) gqlUrl.value = next
@@ -198,7 +198,7 @@ const shownQuery = ref(gql.value.query)
 const shownVariables = ref(gql.value.variables)
 let gqlHlTimer: ReturnType<typeof setTimeout> | undefined
 watch(
-  () => [gql.value.query, gql.value.variables],
+  [() => gql.value.query, () => gql.value.variables],
   ([q, v]) => {
     if (gqlHlTimer) clearTimeout(gqlHlTimer)
     gqlHlTimer = setTimeout(() => {

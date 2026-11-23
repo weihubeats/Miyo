@@ -101,7 +101,7 @@ onMounted(() => {
 })
 
 watch(
-  () => [lang.value, props.draft.id, props.url, props.draft.request.body] as const,
+  [() => lang.value, () => props.draft.id, () => props.url, () => props.draft.request.body],
   () => {
     if (!disposed) void generate()
   },

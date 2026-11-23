@@ -709,7 +709,7 @@ function fmtElapsed(since: number | null): string {
 const wsElapsed = computed(() => fmtElapsed(wsOpenedAt.value))
 const sseElapsed = computed(() => fmtElapsed(sseOpenedAt.value))
 watch(
-  () => [wsState.value === 'open', sseStatus.value === 'open'],
+  [() => wsState.value === 'open', () => sseStatus.value === 'open'],
   ([wsOpen, sseOpen]) => {
     const need = wsOpen || sseOpen
     if (need && elapsedTimer === null) {

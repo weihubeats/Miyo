@@ -125,7 +125,7 @@ function onIframeLoad(): void {
 }
 
 watch(
-  () => [pluginId.value, entry.value?.runtime] as const,
+  [() => pluginId.value, () => entry.value?.runtime],
   () => {
     if (route.path !== pluginRoutePath.value) return
     void loadPlugin()

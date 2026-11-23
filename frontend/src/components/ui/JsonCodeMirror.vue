@@ -243,7 +243,7 @@ watch(
 
 /** 查找词/当前匹配变化 → 实时刷新高亮（输入即标，无需回车）。 */
 watch(
-  () => [props.query, props.activeMatch] as const,
+  [() => props.query, () => props.activeMatch],
   ([q]) => {
     if (!view) return
     if (q) refreshSearchDecorations()

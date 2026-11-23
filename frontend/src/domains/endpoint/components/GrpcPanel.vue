@@ -99,7 +99,7 @@ async function loadCatalog(forceReload = false): Promise<void> {
 
 /** 切端点 / 切 proto 引用后目录过期。 */
 watch(
-  () => [props.draft.id, spec.value.proto_ids.join(','), spec.value.use_tls] as const,
+  [() => props.draft.id, () => spec.value.proto_ids.join(','), () => spec.value.use_tls],
   () => {
     if (catalogEndpointId.value !== props.draft.id) {
       catalog.value = null

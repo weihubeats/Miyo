@@ -547,7 +547,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   // 重命名当前项目时同步标签栏名称
   watch(
-    () => [project.value?.id, project.value?.name] as const,
+    [() => project.value?.id, () => project.value?.name],
     ([id, name]) => {
       if (id && name) upsertOpenTab(id, name)
     },

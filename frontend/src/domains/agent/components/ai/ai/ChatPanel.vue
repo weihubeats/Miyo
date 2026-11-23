@@ -33,7 +33,7 @@ function send(): void {
 
 /** 消息流末尾跟随滚动。 */
 watch(
-  () => [ai.messages.length, ai.streamContent, ai.toolCards.length] as const,
+  [() => ai.messages.length, () => ai.streamContent, () => ai.toolCards.length],
   () => {
     void nextTick(() => {
       const el = scrollEl.value

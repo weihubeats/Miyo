@@ -164,7 +164,7 @@ const {
  * watch 源带上 draft id：restore 同步打开标签页后，draft 已指向恢复的接口；
  * immediate 兜底「restore 时编辑器尚未挂载」的时序（如切项目后直接重放）。 */
 watch(
-  () => [store.autoSendEndpointId, draft.value?.id] as const,
+  [() => store.autoSendEndpointId, () => draft.value?.id],
   ([pendingId, currentId]) => {
     if (!pendingId || pendingId !== currentId) return
     store.autoSendEndpointId = null

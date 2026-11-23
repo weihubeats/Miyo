@@ -162,7 +162,7 @@ function getMatchOffsets(text: string, q: string, targetIdx: number): [number, n
 }
 
 watch(
-  () => [props.query, props.activeMatch],
+  [() => props.query, () => props.activeMatch],
   ([q, matchIdx]) => {
     if (!q || !taRef.value || matchIdx === undefined) return
     const offsets = getMatchOffsets(props.modelValue, String(q), Number(matchIdx))
