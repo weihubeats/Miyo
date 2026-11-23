@@ -358,10 +358,17 @@ watch(
 
 /**
  * 手动切换 Method：POST 系 → Body（空体初始化 `{}` + application/json，有体则保持）；其余 → Params。
- * 仅在【同一接口内】method 变化时应用：打开 / 切换接口时 draft 从 null → 有值
+ * 仅在【同一接口内】method 真变化时应用：打开 / 切换接口时 draft 从 null → 有值
  * 或 id 变化，method 必然「变」一次——那是一次载入而非用户编辑，回写
  * applyMethodDefaults 的副作用（body 初始化 / Content-Type / active_tab）
  * 会让刚打开的接口立刻被判定为「有改动」（isDirty 误报）。
+ *
+ * 源必须用「两个 getter 的数组」而不是返回数组的单个 getter：后者每次求值都新建
+ * 数组，Vue 的 hasChanged 按引用比较 → **草稿对象被替换**（保存成功时 store 把
+ * draft 换成后端回执、打开接口）也会触发回调，同 id 落到 applyMethodDefaults 上，
+ * 刚保存的接口立刻又亮小圆点、POST 空体还会被塞进 JSON body（用户实测：
+ * 「导入 curl 后保存了，左边还有未保存的小点」）。数组源逐元素比较，只有
+ * id / method 真变化才回调；下面再加一道 method 未变的兜底。
  *
  * 往返还原：首次切换时记录切换前的 request 快照；切回记录的原方法时
  * 整体还原快照——否则 applyMethodDefaults 的副作用不可逆，用户
@@ -370,13 +377,15 @@ watch(
 let methodRevert: { from: string; snapshot: RequestSpec } | null = null
 
 watch(
-  () => [draft.value?.id, draft.value?.method] as const,
+  [() => draft.value?.id, () => draft.value?.method],
   ([id, m], prev) => {
     if (!m || !draft.value) return
     if (id !== prev?.[0]) {
       methodRevert = null
       return
     }
+    // 同 id 但 method 未变：草稿对象被替换（保存 / 刷新回写），不是用户改方法
+    if (prev && m === prev[1]) return
     const d = draft.value
     if (methodRevert && m === methodRevert.from) {
       // 切回上次的方法：整体还原切换前的 request（撤销默认初始化副作用）
