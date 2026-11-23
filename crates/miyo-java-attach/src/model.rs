@@ -1,4 +1,9 @@
-//! 数据模型（前端 IPC 形状，camelCase serde）。
+//! 数据模型（前端 IPC 形状，**snake_case** serde——与 `miyoApi.d.ts` /
+//! 其余 Miyo IPC 契约一致）。
+//!
+//! 曾误标 `camelCase`：前端读 `launcher_ready` / `display_name`，线上却收到
+//! `launcherReady` / `displayName` → 诊断横幅恒亮、下载成功也像「没反应」
+//! （2026-11 实证）。
 //!
 //! `JavaProcessInfo` 是发现层输出；`AttachSessionSnapshot` 是会话管理层
 //! 回传前端的快照（token 永不出 Miyo 进程——快照不含 token）。
@@ -7,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// 本机 Java 进程（发现层输出）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "snake_case", default)]
 pub struct JavaProcessInfo {
     pub pid: i64,
     /// 主类或 -jar 入口（如 `com.example.PlainApp` / `app.jar`；解析不出为空串）。
@@ -66,7 +71,7 @@ impl Default for JavaProcessInfo {
 
 /// 发现汇总（含工具链可用性，前端据此提示诊断）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "snake_case", default)]
 pub struct ProcessListSummary {
     pub processes: Vec<JavaProcessInfo>,
     /// 本机 JDK 工具链数量（0 = 无可运行 launcher 的 JDK，前端引导安装）。
@@ -117,7 +122,7 @@ impl Default for AgentHandshakeInfo {
 
 /// attach 成功后的会话快照（回传前端；不含 token）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "snake_case", default)]
 pub struct AttachSessionSnapshot {
     pub pid: i64,
     pub vm_start_ms: i64,
@@ -217,5 +222,57 @@ mod tests {
     fn redact_keeps_normal_args() {
         let cmd = "java -Xmx512m -cp build com.example.PlainApp --mode=dev";
         assert_eq!(redact_command_line(cmd), cmd);
+    }
+
+    /// IPC 线格式锁：前端 `miyoApi.d.ts` / ProcessPanel 读 snake_case
+    /// （`launcher_ready`）。曾误用 camelCase 导致诊断横幅恒亮。
+    #[test]
+    fn process_list_summary_wire_is_snake_case() {
+        let summary = ProcessListSummary {
+            processes: vec![JavaProcessInfo {
+                pid: 42,
+                display_name: "com.example.App".into(),
+                attachable: true,
+                ..Default::default()
+            }],
+            toolchain_count: 1,
+            launcher_ready: true,
+            agent_ready: true,
+            scan_ms: 3,
+            hints: vec![],
+        };
+        let v = serde_json::to_value(&summary).unwrap();
+        assert!(v.get("launcher_ready").is_some(), "got keys: {v}");
+        assert!(v.get("launcherReady").is_none(), "不得再发 camelCase: {v}");
+        assert!(v.get("toolchain_count").is_some(), "got keys: {v}");
+        let proc = &v["processes"][0];
+        assert!(proc.get("display_name").is_some(), "got proc: {proc}");
+        assert!(
+            proc.get("displayName").is_none(),
+            "不得再发 camelCase: {proc}"
+        );
+        assert!(
+            proc.get("attachBlockReason").is_none(),
+            "不得再发 camelCase: {proc}"
+        );
+    }
+
+    #[test]
+    fn attach_session_snapshot_wire_is_snake_case() {
+        let snap = AttachSessionSnapshot {
+            pid: 7,
+            vm_start_ms: 100,
+            agent_version: "2.0.0".into(),
+            protocol: 2,
+            launcher_java_home: "/jdk".into(),
+            attached_at: "2026-01-01T00:00:00Z".into(),
+            reattached: false,
+            ..Default::default()
+        };
+        let v = serde_json::to_value(&snap).unwrap();
+        assert!(v.get("vm_start_ms").is_some(), "got keys: {v}");
+        assert!(v.get("vmStartMs").is_none(), "不得再发 camelCase: {v}");
+        assert!(v.get("agent_version").is_some());
+        assert!(v.get("launcher_java_home").is_some());
     }
 }
