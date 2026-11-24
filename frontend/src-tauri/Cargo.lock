@@ -3099,7 +3099,7 @@ dependencies = [
 
 [[package]]
 name = "miyo"
-version = "0.0.61"
+version = "0.0.62"
 dependencies = [
  "miyo-tauri",
  "serde",
@@ -3111,6 +3111,9 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "tracing",
+ "windows-sys 0.59.0",
+ "windows-version",
 ]
 
 [[package]]

@@ -12,6 +12,7 @@
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:window:allow-is-maximized",
+    "core:window:allow-is-decorated",
     "core:webview:allow-create-webview-window",
     "miyo:default",
     "window-state:default",

@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 let resizeCb: (() => void) | null = null
 const unlisten = vi.fn()
 const winMock = {
+  isDecorated: vi.fn(async () => false),
   isMaximized: vi.fn(async () => false),
   onResized: vi.fn(async (cb: () => void) => {
     resizeCb = cb
@@ -46,6 +47,8 @@ beforeEach(() => {
   mocks.visible = true
   resizeCb = null
   vi.clearAllMocks()
+  winMock.isDecorated.mockResolvedValue(false)
+  winMock.isMaximized.mockResolvedValue(false)
 })
 
 afterEach(() => {
@@ -78,6 +81,16 @@ describe('WindowControls：Windows 自绘窗口控制钮', () => {
     expect(winMock.minimize).toHaveBeenCalledTimes(1)
     expect(winMock.toggleMaximize).toHaveBeenCalledTimes(1)
     expect(winMock.close).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+  })
+
+  it('原生标题栏保留时（isDecorated = true）自动隐藏自绘控制钮', async () => {
+    winMock.isDecorated.mockResolvedValue(true)
+    const wrapper = mountControls()
+    await vi.waitFor(() => expect(winMock.isDecorated).toHaveBeenCalled())
+    await vi.waitFor(() => expect(wrapper.find('.win-controls').exists()).toBe(false))
+    expect(winMock.onResized).not.toHaveBeenCalled()
 
     wrapper.unmount()
   })

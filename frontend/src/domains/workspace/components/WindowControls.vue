@@ -12,7 +12,7 @@ import { useLocaleStore } from '@/stores/locale'
 import { showWindowControls } from '@/utils/platform'
 
 const t = useLocaleStore().t
-const visible = showWindowControls()
+const visible = ref(showWindowControls())
 const maximized = ref(false)
 let unlisten: (() => void) | null = null
 
@@ -26,7 +26,19 @@ async function syncMaximized(): Promise<void> {
 }
 
 onMounted(async () => {
-  if (!visible) return
+  if (!visible.value) return
+  try {
+    const win = getCurrentWindow() as ReturnType<typeof getCurrentWindow> & {
+      isDecorated?: () => Promise<boolean>
+    }
+    if (typeof win.isDecorated === 'function' && (await win.isDecorated())) {
+      // 若环境变量等强制保留了原生标题栏，自动隐藏自绘控制钮避免重复
+      visible.value = false
+      return
+    }
+  } catch {
+    // 权限或非 Tauri 环境不可查时按默认无边框继续
+  }
   void syncMaximized()
   try {
     unlisten = await getCurrentWindow().onResized(() => {
