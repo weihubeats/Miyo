@@ -16,6 +16,8 @@
 //!   请求用例 + 开发 / 测试双环境，每个项目打开都有完整内容可看；
 //! - 「小奏技术 · 开放演示」含集成测试场景：文章详情 → 提取 userId →
 //!   用户文章 / 用户详情（真实公网 API，激活场景页签即可直接运行链路）；
+//! - 项目 1 另有「脚本演示」文件夹：Pre-request 造变量（issue #193 复现）、
+//!   pm.variables 局部作用域、直接改写 pm.request.url 三个可发送示例；
 //! - 「小奏技术 · 边界场景」：大数据量 / 极端输入的 UI 压测素材——大 JSON Body
 //!   （约 200 行）、超大 Body（>200KB 触发前端大文档降级）、长 urlencoded 表单、
 //!   大响应示例、长请求头 / Query 列表；
@@ -31,7 +33,8 @@ use uuid::Uuid;
 use miyo_core::model::{
     BodySpec, Endpoint, EndpointStatus, Environment, EnvironmentVariable, Folder, GlobalParam,
     GlobalParamLocation, GraphQLSpec, GrpcSpec, HttpMethod, KeyValue, MockMatchItem, MockRule,
-    Project, RequestExample, RequestSpec, Scenario, ScenarioStep, TestCase, TestCaseStatus,
+    Project, RequestExample, RequestSpec, Scenario, ScenarioStep, ScriptsSpec, TestCase,
+    TestCaseStatus,
 };
 use miyo_core::Result;
 
@@ -866,6 +869,179 @@ pub async fn seed_dev_data(db: &SqlitePool) -> Result<()> {
             0,
             vec![],
             0,
+            0,
+        ),
+    ] {
+        repo::save_mock_rule(db, &rule).await?;
+    }
+
+    // ---- 脚本生命周期演示（issue #193）：Pre-request 造变量 → 本次请求立即生效 ----
+    // 启动 Mock 服务、切到本项目「开发环境」后即可直接发送；三组接口分别覆盖
+    // pm.environment.set（URL / Query / Header / Body 全链路）、pm.variables（仅本次
+    // 运行）与直接改写 pm.request.url。Mock 响应把收到的请求回显出来，便于对照。
+    let script_folder = folder(&users, None, "脚本演示");
+    repo::save_folder(db, &script_folder).await?;
+    let script_demo = endpoint(
+        &users,
+        Some(&script_folder),
+        "Pre-request 造变量（#193 复现）",
+        HttpMethod::GET,
+        "/script-demo?time_stamp={{timestamp}}",
+        "复现 issue #193：Pre-request 脚本用 pm.environment.set 写入 timestamp，\
+         本次请求的 URL / Query（query）、请求头（X-Stamp）与请求体都会立刻用上脚本值。\
+         发送后看 Mock 回显的 query / headers / body 是否都是毫秒时间戳。",
+        EndpointStatus::Released,
+        0,
+        RequestSpec {
+            params: vec![
+                kvd("time_stamp", "{{timestamp}}", "脚本写入的毫秒时间戳"),
+                kvd("env", "{{env_name}}", "环境变量，证明原有变量照常生效"),
+            ],
+            headers: vec![
+                kvd("X-Stamp", "{{timestamp}}", "请求头同样吃脚本值"),
+                kvd("Content-Type", "application/json", "JSON 提交"),
+            ],
+            body: BodySpec::Json {
+                raw: r#"{"ts": "{{timestamp}}", "env": "{{env_name}}"}"#.into(),
+            },
+            scripts: Some(ScriptsSpec {
+                pre_request: r#"// ① 生成毫秒时间戳（每次发送重新生成），② 写回环境变量作用域。
+// 前置脚本先于变量渲染执行，所以下面的 {{timestamp}} 会拿到这里的值。
+var ts = String(Date.now());
+pm.environment.set('timestamp', ts);
+console.log('timestamp =', ts);
+
+// 也可以直接读回：
+console.log('re-read =', pm.environment.get('timestamp'));"#
+                    .to_string(),
+                post_response: r#"// 后置脚本：断言 Mock 回显里确实出现了脚本值。
+var body = pm.response.json();
+pm.test('Mock 回显到脚本时间戳', () => {
+  pm.expect(String(body.args.time_stamp)).to.equal(pm.environment.get('timestamp'));
+});
+pm.test('响应头 X-Stamp 已渲染', () => {
+  pm.expect(String(body.headers['X-Stamp'])).to.equal(pm.environment.get('timestamp'));
+});"#
+                    .to_string(),
+            }),
+            ..RequestSpec::default()
+        },
+    );
+    let vars_demo = endpoint(
+        &users,
+        Some(&script_folder),
+        "pm.variables 局部变量（仅本次运行）",
+        HttpMethod::POST,
+        "/script-vars?sign={{sign}}",
+        "演示 pm.variables：requestId 每次发送随机生成，只在本轮（前置 + 后置脚本、\
+         本次请求渲染）可见，不写库；后置脚本也能读到同一个值。",
+        EndpointStatus::Released,
+        1,
+        RequestSpec {
+            params: vec![kvd("sign", "{{sign}}", "pre-request 用 pm.variables 写入")],
+            headers: vec![kvd("X-Request-Id", "{{requestId}}", "本轮请求 ID")],
+            body: BodySpec::Json {
+                raw: r#"{"requestId": "{{requestId}}"}"#.into(),
+            },
+            scripts: Some(ScriptsSpec {
+                pre_request: r#"// pm.variables 是运行期局部作用域：不落库，只在本轮可见。
+var rid = 'req-' + Date.now();
+pm.variables.set('requestId', rid);
+pm.variables.set('sign', 'sig-' + rid);
+console.log('requestId =', pm.variables.get('requestId'));
+// get 会回落环境变量表（环境变量照常可读）
+console.log('env_name =', pm.variables.get('env_name'));"#
+                    .to_string(),
+                post_response: r#"// 后置脚本仍能读到前置写入的局部变量（不写库）。
+var body = pm.response.json();
+pm.test('后置脚本读到同一 requestId', () => {
+  pm.expect(String(body.args.sign)).to.equal(pm.variables.get('sign'));
+});"#
+                    .to_string(),
+            }),
+            ..RequestSpec::default()
+        },
+    );
+    let rewrite_demo = endpoint(
+        &users,
+        Some(&script_folder),
+        "脚本直接改写 URL",
+        HttpMethod::GET,
+        "/script-rewrite",
+        "演示 Postman 习惯：脚本里直接给 pm.request.url 赋值（追加 query），\
+         改写后的地址就是真正发出的地址。",
+        EndpointStatus::Developing,
+        2,
+        RequestSpec {
+            scripts: Some(ScriptsSpec {
+                pre_request: r#"// 直接改写出网地址（脚本看到的是模板原文，可自行拼接）。
+pm.request.url = pm.request.url + (pm.request.url.indexOf('?') === -1 ? '?' : '&') + 'injected=1';
+console.log('final url =', pm.request.url);"#
+                    .to_string(),
+                post_response: r#"var body = pm.response.json();
+pm.test('Mock 收到了注入参数', () => {
+  pm.expect(String(body.args.injected)).to.equal('1');
+});"#
+                    .to_string(),
+            }),
+            ..RequestSpec::default()
+        },
+    );
+    for e in [&script_demo, &vars_demo, &rewrite_demo] {
+        repo::save_endpoint(db, e).await?;
+    }
+    for example in [
+        response_example(
+            &script_demo,
+            "200 成功",
+            200,
+            r#"{"args": {"time_stamp": "1731052800000", "env": "development"}, "headers": {"X-Stamp": "1731052800000"}, "body": "{\"ts\": \"1731052800000\"}", "company": "小奏技术"}"#,
+        ),
+        response_example(
+            &vars_demo,
+            "200 成功",
+            200,
+            r#"{"args": {"sign": "sig-req-1731052800000"}, "headers": {"X-Request-Id": "req-1731052800000"}, "body": "{\"requestId\": \"req-1731052800000\"}", "company": "小奏技术"}"#,
+        ),
+        response_example(
+            &rewrite_demo,
+            "200 成功",
+            200,
+            r#"{"args": {"injected": "1"}, "company": "小奏技术"}"#,
+        ),
+    ] {
+        repo::save_response_example(db, &example).await?;
+    }
+    // Mock 规则：回显脚本渲染后的实际出网内容（含脚本写入的变量值）
+    for rule in [
+        mock_rule(
+            &users,
+            Some(&script_demo),
+            "脚本演示-回显时间戳",
+            HttpMethod::GET,
+            "/script-demo",
+            200,
+            r#"{"args": {"time_stamp": "{{query.time_stamp}}", "env": "{{query.env}}"}, "headers": {"X-Stamp": "{{headers.X-Stamp}}"}, "body": "{\"ts\": \"{{query.time_stamp}}\"}", "company": "小奏技术"}"#,
+            0,
+        ),
+        mock_rule(
+            &users,
+            Some(&vars_demo),
+            "脚本演示-回显局部变量",
+            HttpMethod::POST,
+            "/script-vars",
+            200,
+            r#"{"args": {"sign": "{{query.sign}}"}, "headers": {"X-Request-Id": "{{headers.X-Request-Id}}"}, "body": "{\"requestId\": \"{{headers.X-Request-Id}}\"}", "company": "小奏技术"}"#,
+            0,
+        ),
+        mock_rule(
+            &users,
+            Some(&rewrite_demo),
+            "脚本演示-回显改写结果",
+            HttpMethod::GET,
+            "/script-rewrite",
+            200,
+            r#"{"args": {"injected": "{{query.injected}}"}, "company": "小奏技术"}"#,
             0,
         ),
     ] {

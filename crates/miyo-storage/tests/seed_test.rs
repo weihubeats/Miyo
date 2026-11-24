@@ -56,16 +56,51 @@ async fn seeds_full_fixture_set() {
         .find(|p| p.name == "小奏技术 · 用户服务")
         .expect("用户服务项目存在");
 
-    // 用户服务：7 个接口（5 账号 + 2 鉴权），2 个文件夹，Mock 规则 5 基础 + 3 高级
+    // 用户服务：10 个接口（5 账号 + 2 鉴权 + 3 脚本演示），3 个文件夹，
+    // Mock 规则 5 基础 + 3 高级 + 3 脚本演示回显
     let endpoints = repo::list_endpoints(&db, users.id).await.unwrap();
-    assert_eq!(endpoints.len(), 7);
+    assert_eq!(endpoints.len(), 10);
     let folders = repo::list_folders(&db, users.id).await.unwrap();
-    assert_eq!(folders.len(), 2);
+    assert_eq!(folders.len(), 3);
     let rules = repo::list_mock_rules(&db, users.id).await.unwrap();
     assert_eq!(
         rules.len(),
-        8,
-        "5 条基础规则 + 3 条高级规则（query 精确匹配/故障注入/当前用户）"
+        11,
+        "5 条基础规则 + 3 条高级规则（query 精确匹配/故障注入/当前用户）+ 3 条脚本演示回显"
+    );
+    // 脚本演示（issue #193 复现）：Pre-request 造出的变量必须能进本次请求渲染
+    let script_demo = endpoints
+        .iter()
+        .find(|e| e.name.contains("Pre-request 造变量"))
+        .expect("脚本演示接口存在");
+    let pre = script_demo
+        .request
+        .scripts
+        .as_ref()
+        .expect("脚本演示带 Pre-request 脚本")
+        .pre_request
+        .clone();
+    assert!(pre.contains("pm.environment.set('timestamp'"), "{pre}");
+    assert!(
+        script_demo.path.contains("time_stamp={{timestamp}}"),
+        "{}",
+        script_demo.path
+    );
+    assert!(
+        script_demo
+            .request
+            .params
+            .iter()
+            .any(|p| p.value == "{{timestamp}}"),
+        "Query 参数也应引用脚本变量"
+    );
+    assert_eq!(
+        endpoints
+            .iter()
+            .filter(|e| e.request.scripts.is_some())
+            .count(),
+        3,
+        "三个脚本演示接口都带脚本"
     );
     assert!(
         rules.iter().any(|r| r.fault_rate_pct > 0),
