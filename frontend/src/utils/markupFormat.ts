@@ -172,7 +172,7 @@ function buildTree(toks: Tok[]): Node[] | null {
   const roots: Node[] = []
   const stack: Array<Extract<Node, { kind: 'el' }>> = []
   const push = (node: Node): void => {
-    const top = stack.at(-1)
+    const top = stack[stack.length - 1]
     if (top) top.children.push(node)
     else roots.push(node)
   }

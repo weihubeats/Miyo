@@ -22,6 +22,10 @@ export default defineConfig({
   clearScreen: false,
   envPrefix: ['VITE_', 'TAURI_ENV_'],
   build: {
+    // 兼容较老 WebView2 / WebKit 运行时（Vite 8 默认基线 chrome111 会输出 ??= / ||= 等 ES2021 语法，
+    // 在旧内核上触发 SyntaxError 导致应用未挂载黑屏）。
+    target: ['es2020', 'chrome87', 'edge88', 'firefox78', 'safari14'],
+    cssTarget: ['chrome90', 'edge90', 'firefox88', 'safari14'],
     rolldownOptions: {
       output: {
         /**
