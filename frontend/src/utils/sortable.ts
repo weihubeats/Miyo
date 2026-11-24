@@ -1,17 +1,18 @@
-import Sortable, { Swap } from 'sortablejs'
+/** 拖动换位动画的统一时长（项目卡与接口树共用，用户要求两处手感一致）。 */
+export const REORDER_ANIMATION_MS = 150
 
-/** 模块标记键：HMR 重灌模块时 top-level 会再次执行，
- *  但 import 进来的 Sortable 对象是同一份实例（不在 HMR 里重建），
- *  所以用它作挂载标记的载体，能跨 HMR 稳定判断。 */
-const MARKER = '__miyo_swap_mounted'
+/** 拖动换位动画的统一缓动曲线（SortableJS easing + CSS 兜底共用）。 */
+export const REORDER_EASING = 'cubic-bezier(0.2, 0, 0, 1)'
 
-type AnySortable = typeof Sortable & { [MARKER]?: boolean }
+/** 拖拽期间给 body 挂的全局类（抓取光标 + 禁选，见 style.css `.dragging-dnd`）。 */
+export const DRAGGING_BODY_CLASS = 'dragging-dnd'
 
-/** Swap 插件幂等挂载：防止 "Cannot mount plugin Swap more than once"。
- *  HMR 重载 + 模块顶执行路径重复时，SortableJS 对同名插件二次 mount 会抛错。 */
-export function ensureSwapMounted(): void {
-  const s = Sortable as AnySortable
-  if (s[MARKER]) return
-  Sortable.mount(new Swap())
-  s[MARKER] = true
+/** 给 body 挂上全局拖拽态（幂等）。 */
+export function beginDragCursor(): void {
+  document.body.classList.add(DRAGGING_BODY_CLASS)
+}
+
+/** 摘掉全局拖拽态（幂等；卸载时兜底调用，防止异常退出留下抓取光标）。 */
+export function endDragCursor(): void {
+  document.body.classList.remove(DRAGGING_BODY_CLASS)
 }

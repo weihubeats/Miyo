@@ -13,7 +13,12 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ensureSwapMounted } from '@/utils/sortable'
+import {
+  beginDragCursor,
+  endDragCursor,
+  REORDER_ANIMATION_MS,
+  REORDER_EASING,
+} from '@/utils/sortable'
 import Sortable from 'sortablejs'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useToast } from '@/composables/useToast'
@@ -408,9 +413,6 @@ const groupsEl = ref<HTMLElement | null>(null)
 const sortables: Sortable[] = []
 const savingOrder = ref(false)
 
-/** 交换式拖拽：A 拖到 B 后面时 B 直接让位到 A 原位，无 ghost 空白占位。 */
-ensureSwapMounted()
-
 /** 拖拽结束后的短暂窗口内抑制卡片 click（防止拖完被带进项目）。 */
 let suppressClickUntil = 0
 
@@ -474,12 +476,12 @@ function initSortables(): void {
       continue
     }
     sortables.push(
+      // 与接口树（EndpointTree）同一套换位手感：插入式让位——拖过邻居时邻居
+      // 实时平滑挪开、原位留半透明落位槽，松手嵌进去；不再用 swap 交换模式
+      // （两卡对调 + 浮层旋转放大会让整片网格一起晃）。
       Sortable.create(grid, {
-        animation: 200,
-        easing: 'cubic-bezier(0.2, 0, 0, 1)',
-        swap: true,
-        swapClass: 'sortable-swap',
-        swapThreshold: 0.75,
+        animation: REORDER_ANIMATION_MS,
+        easing: REORDER_EASING,
         forceFallback: true,
         fallbackClass: 'sortable-drag',
         fallbackOnBody: true,
@@ -492,7 +494,11 @@ function initSortables(): void {
         preventOnFilter: true,
         onMove: (evt) =>
           !evt.related?.closest('button, a, input, select, textarea, [data-no-drag]'),
-        onEnd: () => void onDragEnd(),
+        onStart: () => beginDragCursor(),
+        onEnd: () => {
+          endDragCursor()
+          void onDragEnd()
+        },
       }),
     )
   }
@@ -506,6 +512,8 @@ watch([grouped, dragEnabled], () => nextTick(initSortables))
 onBeforeUnmount(() => {
   for (const s of sortables) s.destroy()
   sortables.length = 0
+  // 拖到一半切视图时 Sortable 不会补发 onEnd，这里兜底摘掉全局抓取光标
+  endDragCursor()
 })
 
 function isActive(p: Project): boolean {
@@ -2094,51 +2102,36 @@ useWindowDrag(topBarEl)
   will-change: transform;
 }
 
-/* swap：交换目标卡片高亮反馈 */
-:global(.sortable-swap) {
-  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent) !important;
-  background: color-mix(in srgb, var(--accent) 8%, transparent) !important;
-  transition: none !important;
-}
-
-/* ghost：原位置镂空占位（ghost 即原卡片元素，内部全部隐藏 + 极淡底色） */
+/* ghost：离开后留在网格里的落位槽（与接口树 .tree-row-ghost 同视觉）——
+   邻居已平滑挪开腾出的空位，提示「松手会插到这里」。 */
 :global(.sortable-ghost) {
-  background-color: color-mix(in srgb, var(--accent) 5%, transparent) !important;
-  border: 2px dashed color-mix(in srgb, var(--accent) 40%, transparent) !important;
+  opacity: 0.55 !important;
+  background: var(--accent-tint) !important;
+  box-shadow: inset 0 0 0 1.5px var(--accent) !important;
+  border: 1px solid transparent !important;
   border-radius: var(--radius-lg) !important;
-  box-shadow: none !important;
-  opacity: 1;
-  cursor: grabbing;
 }
 :global(.sortable-ghost *) {
   opacity: 0 !important;
   visibility: hidden !important;
 }
 
-/* chosen：mousedown 即给原元素反馈（拖起瞬间轻微放大） */
+/* chosen：mousedown 即给原元素反馈（与接口树一致，只换抓取光标，不做缩放） */
 :global(.sortable-chosen) {
-  transform: scale(1.03);
   cursor: grabbing;
 }
 
-/* drag：被拖主体（fallbackClass 克隆挂 body，悬浮感最强） */
+/* drag：跟随指针的浮层副本（fallbackOnBody 挂在 body 上，与接口树同视觉） */
 :global(.sortable-drag) {
   z-index: var(--z-dropzone);
+  opacity: 1 !important;
   border-radius: var(--radius-lg) !important;
-  background: color-mix(in srgb, var(--bg-elevated) 95%, transparent) !important;
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  background: var(--bg-elevated) !important;
   border: 1px solid var(--accent) !important;
   box-shadow:
-    0 20px 50px rgba(0, 0, 0, 0.45),
-    0 0 40px rgba(0, 0, 0, 0.3) !important;
-  transform: scale(1.03) rotate(1.5deg);
+    0 12px 28px rgba(0, 0, 0, 0.55),
+    0 0 0 1px var(--accent) !important;
   cursor: grabbing;
-}
-
-/* flip：其余卡片平滑挤开（animation 200ms 已生效，此为兜底） */
-.card-grid :deep(.flip-list-move) {
-  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* ---------- 空状态（EmptyState 组件撑满主区） ---------- */

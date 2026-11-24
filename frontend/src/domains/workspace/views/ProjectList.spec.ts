@@ -67,9 +67,13 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({ startDragging: vi.fn(), onMove: vi.fn() }),
 }))
 
-// Swap 插件的具名导出在 vitest 的 CJS 互操作下不可靠（CI 实测），且拖拽
-// 排序本身不是本 spec 的断言面——mock 掉 ensureSwapMounted。
-vi.mock('@/utils/sortable.ts', () => ({ ensureSwapMounted: vi.fn() }))
+// 拖拽排序本身不是本 spec 的断言面——mock 掉拖拽工具（全局光标态 + 动画常量）。
+vi.mock('@/utils/sortable.ts', () => ({
+  beginDragCursor: vi.fn(),
+  endDragCursor: vi.fn(),
+  REORDER_ANIMATION_MS: 150,
+  REORDER_EASING: 'cubic-bezier(0.2, 0, 0, 1)',
+}))
 
 import { computed } from 'vue'
 function computedRef<T>(source: { value: T }) {

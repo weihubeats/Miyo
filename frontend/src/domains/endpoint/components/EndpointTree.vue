@@ -94,6 +94,12 @@ import DeleteConfirmModal from '@/domains/endpoint/components/DeleteConfirmModal
 import type { MenuItem } from '@/components/ui/Menu.vue'
 import type { Endpoint, Folder } from '@/types/miyoApi.d'
 import { errorText } from '@/utils/errorText'
+import {
+  beginDragCursor,
+  endDragCursor,
+  REORDER_ANIMATION_MS,
+  REORDER_EASING,
+} from '@/utils/sortable'
 
 const props = withDefaults(
   defineProps<{
@@ -319,8 +325,9 @@ function initListSortable(): void {
   const el = listEl.value
   if (!el || listSortable) return
   listSortable = Sortable.create(el, {
-    animation: 150,
-    easing: 'cubic-bezier(0.2, 0, 0, 1)',
+    // 项目卡拖动复刻的就是这里的手感：两处共用同一组动画常量，避免调参走散
+    animation: REORDER_ANIMATION_MS,
+    easing: REORDER_EASING,
     // WKWebView（Tauri 内核）对 HTML5 DnD 支持不稳：强制走内置的指针 fallback
     forceFallback: true,
     fallbackTolerance: 3,
@@ -332,15 +339,15 @@ function initListSortable(): void {
     filter: 'button, input, select, textarea, a',
     preventOnFilter: false,
     onStart: (evt: Sortable.SortableEvent) => {
-      suppressNativeDrag()
+      // 拖拽期间压制浏览器原生 drag / 文字选中（双保险）
+      beginDragCursor()
       const id = evt.item.dataset.dndId ?? null
       dndState.active = true
       dndState.kind = 'endpoint'
       dndState.id = id ?? ''
-      document.body.classList.add('dragging-dnd')
     },
     onEnd: () => {
-      document.body.classList.remove('dragging-dnd')
+      endDragCursor()
       dndState.active = false
       dndState.kind = ''
       dndState.id = ''
@@ -367,18 +374,13 @@ async function applyListOrder(ordered: string[]): Promise<void> {
   }
 }
 
-/** 拖拽期间压制浏览器原生 drag / 文字选中（SortableJS fallback 已处理大半，双保险）。 */
-function suppressNativeDrag(): void {
-  document.body.classList.add('dragging-dnd')
-}
-
 onMounted(() => {
   void nextTick(initListSortable)
 })
 onBeforeUnmount(() => {
   listSortable?.destroy()
   listSortable = null
-  document.body.classList.remove('dragging-dnd')
+  endDragCursor()
 })
 
 // ---------- 行内动作菜单 ----------
