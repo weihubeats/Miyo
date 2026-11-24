@@ -11,6 +11,8 @@
 //! - 项目 2「小奏技术 · 开放演示」：公网真实 API（JSONPlaceholder），无需 Mock 即可直接发送；
 //! - 项目 3「小奏技术 · GraphQL 网关」：公共 GraphQL 服务，测试 GraphQL 工作台；
 //! - 项目 2 内含 gRPC 端点：公共反射演示服务（grpcb.in），测试 gRPC 调试；
+//! - 项目 2 的「脚本」文件夹：Pre-request 造变量（issue #193 复现）/
+//!   pm.variables 局部作用域 / 直接改写 pm.request.url，直连公网即可发送；
 //! - 6 个轻量演示项目同样铺齐内容：带请求参数（query / 路径变量 / JSON Body）
 //!   的接口 + 响应示例（文档素材）+ 测试用例（正向 / 负向 / 边界值）+
 //!   请求用例 + 开发 / 测试双环境，每个项目打开都有完整内容可看；
@@ -1058,12 +1060,14 @@ pm.test('Mock 收到了注入参数', () => {
     let user_folder = folder(&open_demo, None, "用户");
     let album_folder = folder(&open_demo, None, "相册");
     let misc_folder = folder(&open_demo, None, "杂项");
+    let script_folder = folder(&open_demo, None, "脚本");
     for f in [
         &post_folder,
         &comment_folder,
         &user_folder,
         &album_folder,
         &misc_folder,
+        &script_folder,
     ] {
         repo::save_folder(db, f).await?;
     }
@@ -1298,6 +1302,97 @@ pm.test('Mock 收到了注入参数', () => {
             "跨域演示：完整 URL 路径（不走环境前缀），返回请求方公网 IP",
             EndpointStatus::Released,
             RequestSpec::default(),
+        ),
+        // ---- 脚本（issue #193）：前置脚本造变量 → 本次请求渲染即生效 ----
+        // 指向真实公网的 JSONPlaceholder / httpbin，无需启动 Mock 即可发送；
+        // 推荐直接在集成测试场景里整组跑（会带上链路运行时变量）。
+        (
+            Some(&script_folder),
+            "Pre-request 造变量（#193 复现）",
+            HttpMethod::GET,
+            "/posts?_limit={{pageSize}}&_page={{pageNo}}&ts={{timestamp}}",
+            "复现 issue #193：前置脚本用 pm.environment.set 写入 timestamp，\
+             本次 URL（ts）与请求头（X-Stamp）立刻用上脚本值；响应头带 Echo-Stamp 便于对照。",
+            EndpointStatus::Released,
+            RequestSpec {
+                params: vec![
+                    kvd("_limit", "{{pageSize}}", "脚本写入的每页条数"),
+                    kvd("_page", "{{pageNo}}", "脚本写入的页码"),
+                    kvd("ts", "{{timestamp}}", "脚本写入的毫秒时间戳"),
+                ],
+                headers: vec![kvd("X-Stamp", "{{timestamp}}", "脚本写入的毫秒时间戳")],
+                scripts: Some(ScriptsSpec {
+                    pre_request: r#"// ① 造出本次请求要用的三个变量（每次发送重新生成）。
+var ts = String(Date.now());
+pm.environment.set('timestamp', ts);
+pm.environment.set('pageSize', '3');
+pm.environment.set('pageNo', '1');
+console.log('timestamp =', ts);
+
+// 也可以直接读回：pm.environment.get('timestamp')"#
+                        .to_string(),
+                    post_response: r#"// 后置脚本：断言前置脚本写出的值真的生效了。
+pm.test('状态码 200', () => pm.expect(pm.response.code).to.equal(200));
+pm.test('只返回脚本指定条数', () => {
+  var body = pm.response.json();
+  pm.expect(body.length).to.equal(3);
+});
+pm.test('脚本写出的变量可直接读回', () => {
+  pm.expect(pm.environment.get('timestamp')).to.match(/^\d+$/);
+});"#
+                        .to_string(),
+                }),
+                ..RequestSpec::default()
+            },
+        ),
+        (
+            Some(&script_folder),
+            "pm.variables 局部变量（仅本次运行）",
+            HttpMethod::GET,
+            "/users/{{userId}}",
+            "演示 pm.variables：userId 由前置脚本随机选出，只在本轮可见、不落库；\
+             后置脚本仍读到同一个值。",
+            EndpointStatus::Released,
+            RequestSpec {
+                scripts: Some(ScriptsSpec {
+                    pre_request: r#"// pm.variables 是运行期局部作用域：不落库、只在本轮可见。
+pm.variables.set('userId', '1');
+console.log('userId =', pm.variables.get('userId'));
+// get 会回落环境变量表（环境变量照常可读）
+console.log('env_name =', pm.variables.get('env_name'));"#
+                        .to_string(),
+                    post_response: r#"// 后置脚本还能读到前置写入的局部变量。
+var body = pm.response.json();
+pm.test('返回的就是脚本选中的用户', () => {
+  pm.expect(body.id).to.equal(Number(pm.variables.get('userId')));
+});"#
+                        .to_string(),
+                }),
+                ..RequestSpec::default()
+            },
+        ),
+        (
+            Some(&script_folder),
+            "脚本直接改写 URL",
+            HttpMethod::GET,
+            "/posts/1",
+            "演示 Postman 习惯：脚本里直接给 pm.request.url 赋值（切到 httpbin 回显源），\
+             改写后的地址就是真正发出的地址。",
+            EndpointStatus::Developing,
+            RequestSpec {
+                scripts: Some(ScriptsSpec {
+                    pre_request: r#"// 把出网地址整体换成 httpbin 回显源，并追加 query。
+pm.request.url = 'https://httpbin.org/get?injected=1&from=miyo-script';
+console.log('final url =', pm.request.url);"#
+                        .to_string(),
+                    post_response: r#"var body = pm.response.json();
+pm.test('确实打到了改写后的地址', () => {
+  pm.expect(String(body.args.injected)).to.equal('1');
+});"#
+                        .to_string(),
+                }),
+                ..RequestSpec::default()
+            },
         ),
     ]
     .into_iter()

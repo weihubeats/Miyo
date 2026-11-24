@@ -155,8 +155,9 @@ async fn seeds_full_fixture_set() {
         .find(|p| p.name == "小奏技术 · 开放演示")
         .expect("开放演示项目存在");
     let open_endpoints = repo::list_endpoints(&db, open_demo.id).await.unwrap();
-    // 22 个 HTTP（JSONPlaceholder 六类资源 + 跨域回显 + 链路演示端点）+ 2 个 gRPC（grpcb.in 反射演示）
-    assert_eq!(open_endpoints.len(), 24);
+    // 25 个 HTTP（JSONPlaceholder 六类资源 + 跨域回显 + 链路演示 + 3 个脚本演示）
+    // + 2 个 gRPC（grpcb.in 反射演示）
+    assert_eq!(open_endpoints.len(), 27);
     assert_eq!(
         open_endpoints
             .iter()
@@ -165,16 +166,59 @@ async fn seeds_full_fixture_set() {
         2,
         "gRPC 演示端点（unary + 服务端流）应存在"
     );
-    // 开放演示按业务域分 5 个文件夹（文章 / 评论 / 用户 / 相册 / 杂项）
+    // 开放演示按业务域分 6 个文件夹（文章 / 评论 / 用户 / 相册 / 杂项 / 脚本）
     let open_folders = repo::list_folders(&db, open_demo.id).await.unwrap();
-    assert_eq!(open_folders.len(), 5, "开放演示应有 5 个业务文件夹");
+    assert_eq!(open_folders.len(), 6, "开放演示应有 6 个业务文件夹");
     let folder_names: Vec<&str> = open_folders.iter().map(|f| f.name.as_str()).collect();
-    for expected in ["文章", "评论", "用户", "相册", "杂项"] {
+    for expected in ["文章", "评论", "用户", "相册", "杂项", "脚本"] {
         assert!(
             folder_names.contains(&expected),
             "开放演示缺少文件夹「{expected}」"
         );
     }
+
+    // 脚本演示（issue #193）：前置脚本造出的变量必须能进本次请求渲染
+    let open_scripts: Vec<&miyo_core::model::Endpoint> = open_endpoints
+        .iter()
+        .filter(|e| e.request.scripts.is_some())
+        .collect();
+    assert_eq!(open_scripts.len(), 3, "开放演示应有 3 个脚本演示接口");
+    let open_pre_demo = open_scripts
+        .iter()
+        .find(|e| e.name.contains("Pre-request 造变量"))
+        .expect("Pre-request 造变量演示存在");
+    let open_pre = open_pre_demo
+        .request
+        .scripts
+        .as_ref()
+        .expect("带前置脚本")
+        .pre_request
+        .clone();
+    assert!(
+        open_pre.contains("pm.environment.set('timestamp'"),
+        "{open_pre}"
+    );
+    assert!(
+        open_pre_demo.path.contains("{{timestamp}}"),
+        "URL 模板应引用脚本变量：{}",
+        open_pre_demo.path
+    );
+    assert!(
+        open_scripts.iter().any(|e| e
+            .request
+            .scripts
+            .as_ref()
+            .is_some_and(|s| s.pre_request.contains("pm.variables.set"))),
+        "应有 pm.variables 局部作用域示例"
+    );
+    assert!(
+        open_scripts.iter().any(|e| e
+            .request
+            .scripts
+            .as_ref()
+            .is_some_and(|s| s.pre_request.contains("pm.request.url ="))),
+        "应有直接改写 URL 示例"
+    );
     // 每个业务文件夹都有接口（避免空文件夹）；无文件夹归属的只有链路演示 + gRPC
     for f in &open_folders {
         let count = open_endpoints
