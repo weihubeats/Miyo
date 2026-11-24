@@ -942,7 +942,7 @@ export const zh = {
   'editor.scriptsPostPh':
     '// 例：断言响应\nconst body = pm.response.json();\npm.test(\'状态码 200\', () => pm.expect(pm.response.code).to.equal(200));',
   'editor.scriptsHint':
-    '可用 API：pm.request.headers.add / method / url / body、pm.environment.get / set / unset、pm.response.code / json / headers（仅请求后）、pm.test(name, fn) + pm.expect、console.log；单段脚本最长 2 秒。',
+    '可用 API：pm.request.headers.add / method / url / body、pm.environment.get / set / unset、pm.variables.get / set / unset（仅本次运行）、pm.response.code / json / headers（仅请求后）、pm.test(name, fn) + pm.expect、console.log；单段脚本最长 2 秒。前置脚本先于变量渲染执行，其中 set 的变量可被本次 URL / 参数 / 请求头 / 请求体中的 {{占位}} 使用。',
   // 路径变量页签（Path）：发送前把路径里的 {id} / {{id}} 换成取值
   'editor.pathExtract': '从路径抽取',
   'editor.pathHint': '发送时把路径中的 {id} 或 {{id}} 替换为下方取值，仅启用的行生效；取值本身支持 {{变量}}。',

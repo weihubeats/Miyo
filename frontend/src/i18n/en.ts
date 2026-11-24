@@ -947,7 +947,7 @@ export const en: Record<ZhKey, string> = {
   'editor.scriptsPostPh':
     "// e.g. assert the response\nconst body = pm.response.json();\npm.test('status is 200', () => pm.expect(pm.response.code).to.equal(200));",
   'editor.scriptsHint':
-    'Available: pm.request.headers.add / method / url / body, pm.environment.get / set / unset, pm.response.code / json / headers (post only), pm.test(name, fn) + pm.expect, console.log; each script is capped at 2 seconds.',
+    'Available: pm.request.headers.add / method / url / body, pm.environment.get / set / unset, pm.variables.get / set / unset (this run only), pm.response.code / json / headers (post only), pm.test(name, fn) + pm.expect, console.log; each script is capped at 2 seconds. The pre-request script runs before variable rendering, so values it sets are usable in {{placeholders}} of this request’s URL, params, headers and body.',
   // Path-variables tab: {id} / {{id}} in the path are replaced before sending
   'editor.pathExtract': 'Extract from path',
   'editor.pathHint': 'Replaces {id} or {{id}} in the path when sending; only enabled rows apply. Values may contain {{var}}.',

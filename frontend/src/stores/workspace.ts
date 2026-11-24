@@ -29,6 +29,7 @@ import {
 } from '@/utils/environment'
 import { applyCaseToRequest, restoreBody, snapshotRequest } from '@/utils/testCases'
 import { applyPathVars } from '@/utils/pathVariables'
+import { scriptAssignedVars } from '@/utils/scriptVars'
 import type {
   AuthSpec,
   CurlParsed,
@@ -1947,7 +1948,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const rid = requestId ?? crypto.randomUUID()
     // 未定义变量汇总警示（非阻断）：{{name}} 不在环境/项目/全局与内置变量池中，
     // 后端将按字面量原样发出——「服务端收到 {{token}}」这类问题发送前暴露。
-    const knownVars = new Set([...Object.keys(caseVariableMap()), ...BUILTIN_VARIABLES])
+    // Pre-request 脚本里 pm.environment.set / pm.variables.set 的 key 也算已知：
+    // 后端先跑脚本再渲染，脚本造出的变量对本次请求真实生效。
+    const knownVars = new Set([
+      ...Object.keys(caseVariableMap()),
+      ...BUILTIN_VARIABLES,
+      ...scriptAssignedVars(spec.scripts),
+    ])
     const unknownVars = findUnknownVars(requestTemplateTexts(endpoint, url), knownVars)
     if (unknownVars.length) {
       toast.warning(t('ws.undefinedVars', { names: unknownVars.join(', ') }))

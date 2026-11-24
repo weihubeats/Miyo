@@ -91,71 +91,89 @@ pub(crate) fn cap_ipc_body(full: &str) -> (String, bool) {
     (full[..end].to_string(), true)
 }
 
-/// 执行 HTTP 请求：加载变量 → 渲染 URL/Headers/Body → 参数校验 → 发送。
+/// URL 校验：必须是 http/https（变量渲染前后的模板都会走一遍，早失败早提示）。
+fn assert_http_url(raw: &str) -> CommandResult<()> {
+    let parsed =
+        url::Url::parse(raw).map_err(|e| CommandError::validation(format!("URL 无效：{e}")))?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(()),
+        other => Err(CommandError::validation(format!(
+            "不支持的协议：{other}（仅支持 http/https）"
+        ))),
+    }
+}
+
+/// 执行 HTTP 请求：执行 Pre-request 脚本 → 加载变量并渲染 → 参数校验 → 发送。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn execute_request(
     state: State<'_, AppState>,
     args: ExecuteRequestArgs,
 ) -> CommandResult<ExecuteResponse> {
-    // 1. 加载变量（环境 > 项目 > 全局），渲染 URL 与请求规格；再注入全局参数。
-    //    全局设置（变量/参数/超时）走进程内缓存：命中时零 DB 往返（原来是
-    //    每请求 2~3 次 settings SELECT + 2 次 AES-GCM 解密 + JSON 反序列化）。
+    // 1. 加载变量（环境 > 项目 > 全局）。全局设置（变量/参数/超时）走进程内缓存：
+    //    命中时零 DB 往返（原来是每请求 2~3 次 settings SELECT + 2 次 AES-GCM
+    //    解密 + JSON 反序列化）。
     let (vars, settings, timeout_ms) = tokio::join!(
         state.variables_for(args.environment_id),
         state.global_settings(),
         resolve_timeout_ms(&args.spec, &state),
     );
-    let vars = vars?;
+    let mut runtime_vars: VariableMap = vars?;
     let settings = settings?;
     let timeout_ms = timeout_ms?;
-    let (mut spec, url) =
-        miyo_core::prepare_request(&args.spec, &args.url, &settings.global_params, &vars);
+    // 模板 URL 仅做静态校验（渲染前的形态即可拦截明显错误；最终地址在 2.6 再校验）。
+    if args.url.trim().is_empty() {
+        return Err(CommandError::validation("URL 不能为空"));
+    }
+    assert_http_url(&args.url)?;
 
-    // 1.5 脚本两段代码先取出（后续 spec.headers 会被 pre 脚本结果改写）。
-    let (pre_code, post_code) = match &spec.scripts {
+    // 1.5 脚本两段代码先取出（spec 后续会被渲染结果替换）。
+    let (pre_code, post_code) = match &args.spec.scripts {
         Some(s) => (s.pre_request.clone(), s.post_response.clone()),
         None => (String::new(), String::new()),
     };
 
-    // 2. 参数校验：URL 必填、必须是 http/https。
-    if url.trim().is_empty() {
-        return Err(CommandError::validation("URL 不能为空"));
-    }
-    let parsed =
-        url::Url::parse(&url).map_err(|e| CommandError::validation(format!("URL 无效：{e}")))?;
-    match parsed.scheme() {
-        "http" | "https" => {}
-        other => {
-            return Err(CommandError::validation(format!(
-                "不支持的协议：{other}（仅支持 http/https）"
-            )));
-        }
-    }
-
-    // 2.5 Pre-request 脚本：变量渲染后、发送前执行（放取消令牌注册之前，
-    //     脚本失败早期返回不会泄漏令牌）。脚本可改头（回传完整列表并回规格）、
-    //     读写变量（并入本次运行变量表，供 post-response 延续；不落库）。
-    //     脚本执行出错则中止本次发送（与 Postman 语义一致）。
+    // 2. Pre-request 脚本：**先于变量渲染**执行（Postman 生命周期）。脚本看到的
+    //    是用户配置的模板原文（`{{占位}}` 未解析），可以：
+    //    - `pm.environment.set` / `pm.variables.set` 造出本次要用的变量；
+    //    - 直接改写 `pm.request.url` / `.body`；
+    //    - 增删改请求头（回传完整列表后并回规格）。
+    //    脚本结束后才统一渲染，所以脚本写入的变量对本次 URL / 参数 / 请求头 /
+    //    请求体立刻生效（旧实现先渲染再跑脚本，`{{timestamp}}` 永远取到旧值，
+    //    即 issue #193）。
     let mut script_summaries: Vec<ScriptRunSummary> = Vec::new();
-    let mut runtime_vars = vars;
+    let mut script_locals: VariableMap = std::collections::HashMap::new();
+    // 脚本可改写的请求快照：url / body 会并回模板后再统一渲染。
+    let mut script_request: Option<miyo_http::script_sandbox::ScriptRequestData> = None;
+    // 请求头由脚本直接接管（脚本看到的是完整头列表，已自行改写；
+    // 再叠加一次变量渲染会把脚本写入的字面量当成模板二次替换）。
+    let mut script_owned_headers: Option<Vec<KeyValue>> = None;
+    let mut spec = args.spec.clone();
     if !pre_code.trim().is_empty() {
         let sandbox = state.script_sandbox()?;
-        let snapshot =
-            miyo_http::script_sandbox::ScriptRequestData::from_spec(args.method, &url, &spec);
+        let snapshot = miyo_http::script_sandbox::ScriptRequestData::from_spec(
+            args.method,
+            &args.url,
+            &spec,
+        );
         match sandbox
             .run(miyo_http::script_sandbox::ScriptInput {
                 code: pre_code,
                 environment: std::sync::Arc::new(std::sync::Mutex::new(runtime_vars.clone())),
                 request: snapshot,
                 response: None,
+                locals: std::collections::HashMap::new(),
             })
             .await
         {
             Ok(r) => {
                 apply_script_headers(&mut spec, &r.headers);
+                script_owned_headers = Some(std::mem::take(&mut spec.headers));
                 for (k, v) in r.environment {
                     runtime_vars.insert(k, v);
                 }
+                // pm.variables 局部变量：只在本轮运行可见，供后置脚本继续读。
+                script_locals = r.locals;
+                script_request = Some(r.request);
                 script_summaries.push(ScriptRunSummary {
                     phase: "pre_request",
                     error: None,
@@ -171,6 +189,30 @@ pub async fn execute_request(
             }
         }
     }
+
+    // 2.5 全局参数注入（只追加缺失键）+ 脚本写回的 url / body 并回模板。
+    miyo_core::apply_global_params(&mut spec, &settings.global_params, &runtime_vars);
+    let render_url = match script_request.as_ref() {
+        Some(req) => req.apply_to_spec(&mut spec, &args.url),
+        None => args.url.clone(),
+    };
+
+    // 2.6 渲染：以最终变量表（环境表 + 脚本写入项，脚本改动优先）统一渲染
+    //     URL / 参数 / 认证 / 请求体。
+    let mut render_vars = runtime_vars.clone();
+    for (k, v) in &script_locals {
+        render_vars.insert(k.clone(), v.clone());
+    }
+    let (mut spec, url) = miyo_core::prepare_rendered(&spec, &render_url, &render_vars);
+    if let Some(headers) = script_owned_headers {
+        spec.headers = headers;
+    }
+    if url.trim().is_empty() {
+        return Err(CommandError::validation(
+            "URL 为空（变量渲染后为空，检查脚本 / 变量配置）",
+        ));
+    }
+    assert_http_url(&url)?;
 
     // 3. 注册取消令牌（统一 TaskManager：HTTP 请求仅登记取消令牌，无进度 /
     //    历史改造——保持轻量语义；RAII 句柄 Drop 自动摘除）。
@@ -217,6 +259,7 @@ pub async fn execute_request(
                 &resp,
                 post_code,
                 &runtime_vars,
+                &script_locals,
             )
             .await
             {
@@ -316,6 +359,7 @@ async fn run_post_response_script(
     resp: &HttpResponseData,
     code: String,
     vars: &VariableMap,
+    locals: &VariableMap,
 ) -> CommandResult<(Vec<ScriptTestOutcome>, Vec<String>)> {
     let sandbox = state.script_sandbox()?;
     let snapshot = miyo_http::script_sandbox::ScriptRequestData::from_spec(method, url, spec);
@@ -326,6 +370,7 @@ async fn run_post_response_script(
             environment: std::sync::Arc::new(std::sync::Mutex::new(vars.clone())),
             request: snapshot,
             response: Some(response),
+            locals: locals.clone(),
         })
         .await?;
     Ok((r.tests.into_iter().map(Into::into).collect(), r.logs))

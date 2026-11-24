@@ -438,6 +438,7 @@ pub async fn evaluate_javascript(a: &AssertionSpec, resp: &HttpResponseData) -> 
             body: String::new(),
         },
         response: Some(miyo_http::script_sandbox::ScriptResponseData::from_response(resp)),
+        locals: std::collections::HashMap::new(),
     };
     match sandbox.run(input).await {
         Ok(result) => {

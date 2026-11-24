@@ -396,6 +396,20 @@ pub fn prepare_request(
     (rendered, url)
 }
 
+/// Pre-request 脚本执行后的渲染：全局参数已在模板阶段注入，这里只做变量解析。
+///
+/// 与 [`prepare_request`] 的差别仅在「全局参数注入时机」（脚本需要在注入后、
+/// 渲染前看到用户配置的模板），变量解析口径完全一致。
+pub fn prepare_rendered(
+    spec: &RequestSpec,
+    url_template: &str,
+    vars: &VariableMap,
+) -> (RequestSpec, String) {
+    let rendered = render_spec(spec, vars);
+    let url = crate::variable::resolve_variables(url_template, vars);
+    (rendered, url)
+}
+
 /// `overrides` 为部分覆盖对象（JSON），键与语义：
 /// - `url`：整体替换该步的 URL 模板（由调用方处理——本函数只改 spec）；
 /// - `params` / `headers` / `path_variables`：按 key 合并——同名键替换值与

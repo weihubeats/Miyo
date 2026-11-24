@@ -52,6 +52,38 @@ impl ScriptRequestData {
             body: body_text(spec),
         }
     }
+
+    /// 把脚本写回的请求字段（`pm.request.url` / `pm.request.body`）并回规格。
+    ///
+    /// - `url`：与快照不同才采用（脚本按 Postman 习惯整体改写地址）；
+    ///   缺省端口按 scheme 归一，避免 `str::parse` 往返引入 `:80` / `:443` 噪音；
+    /// - `body`：仅覆盖文本/JSON 体（表单 / multipart / 二进制是结构化规格，
+    ///   脚本只能经请求头等间接影响）；空串视为"脚本没写"，保持原体不变。
+    ///
+    /// 返回可能被改写的 URL；规格的 `params` / `headers` / `auth` 此时仍是
+    /// 未渲染模板，由调用方用新变量表重新渲染。
+    pub fn apply_to_spec(&self, spec: &mut RequestSpec, url: &str) -> String {
+        if let BodySpec::Json { raw } | BodySpec::Text { raw } = &mut spec.body {
+            if !self.body.is_empty() && *raw != self.body {
+                *raw = self.body.clone();
+            }
+        }
+        if self.url == url {
+            return url.to_string();
+        }
+        match url::Url::parse(&self.url) {
+            Ok(mut parsed) => {
+                if let Ok(orig) = url::Url::parse(url) {
+                    // 任一侧是默认端口时两侧一起归一，避免只归一一侧造成误判差异
+                    if orig.port().is_none() || parsed.port().is_none() {
+                        let _ = parsed.set_port(None);
+                    }
+                }
+                parsed.to_string()
+            }
+            Err(_) => self.url.clone(),
+        }
+    }
 }
 
 /// 响应快照：Post-response 脚本可读取的响应信息。
@@ -81,6 +113,21 @@ pub struct ScriptInput {
     pub environment: std::sync::Arc<std::sync::Mutex<HashMap<String, String>>>,
     pub request: ScriptRequestData,
     pub response: Option<ScriptResponseData>,
+    /// 运行期局部变量（`pm.variables`）：每次运行独立、不落库。
+    /// 直接由 `ScriptInput` 构造时缺省为空表（`..Default::default()`）。
+    pub locals: HashMap<String, String>,
+}
+
+impl Default for ScriptInput {
+    fn default() -> Self {
+        ScriptInput {
+            code: String::new(),
+            environment: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+            request: ScriptRequestData::default(),
+            response: None,
+            locals: HashMap::new(),
+        }
+    }
 }
 
 /// 单个 `pm.test` 断言结果。
@@ -91,10 +138,15 @@ pub struct TestResult {
     pub error: Option<String>,
 }
 
-/// 脚本执行结果：环境与请求头的变更会回传给调用方。
+/// 脚本执行结果：环境、运行期局部变量与请求头的变更会回传给调用方。
 #[derive(Debug, Clone)]
 pub struct ScriptResult {
+    /// 脚本结束时的请求快照（`pm.request.url` / `.body` 的改写结果，由调用方
+    /// 经 [`ScriptRequestData::apply_to_spec`] 并回规格）。
+    pub request: ScriptRequestData,
     pub environment: HashMap<String, String>,
+    /// `pm.variables` 的最终快照（仅本次运行可见，调用方不得落库）。
+    pub locals: HashMap<String, String>,
     pub headers: Vec<(String, String)>,
     pub tests: Vec<TestResult>,
     pub logs: Vec<String>,
@@ -297,9 +349,13 @@ fn execute(
     let headers = state_borrow.headers.clone();
     let tests = state_borrow.tests.clone();
     let logs = state_borrow.logs.clone();
+    let locals = state_borrow.locals.clone();
+    let request = state_borrow.request.clone();
     drop(state_borrow);
     Ok(ScriptResult {
+        request,
         environment: final_environment, // 脚本可写回变量：输出保持 owned map
+        locals,
         headers,
         tests,
         logs,
@@ -389,6 +445,8 @@ fn body_text(spec: &RequestSpec) -> String {
 /// 脚本内部状态，由 Rust 桥接闭包读写。
 struct ScriptState {
     environment: std::sync::Arc<std::sync::Mutex<HashMap<String, String>>>,
+    /// 运行期局部变量（`pm.variables`）：独立于环境表，不落库。
+    locals: HashMap<String, String>,
     headers: Vec<(String, String)>,
     request: ScriptRequestData,
     response: Option<ScriptResponseData>,
@@ -401,6 +459,7 @@ impl ScriptState {
     fn new(input: &ScriptInput) -> Self {
         ScriptState {
             environment: std::sync::Arc::clone(&input.environment),
+            locals: input.locals.clone(),
             headers: input.request.headers.clone(),
             request: input.request.clone(),
             response: input.response.clone(),
@@ -539,6 +598,46 @@ fn register_bindings(ctx: &Ctx<'_>, state: &Rc<RefCell<ScriptState>>) -> Result<
 
     let s = Rc::clone(state);
     globals.set(
+        "__loc_set",
+        Function::new(ctx.clone(), move |key: String, value: String| {
+            s.borrow_mut().locals.insert(key, value);
+        })?,
+    )?;
+
+    let s = Rc::clone(state);
+    globals.set(
+        "__loc_get",
+        Function::new(ctx.clone(), move |key: String| -> Option<String> {
+            s.borrow().locals.get(&key).cloned()
+        })?,
+    )?;
+
+    let s = Rc::clone(state);
+    globals.set(
+        "__loc_unset",
+        Function::new(ctx.clone(), move |key: String| {
+            s.borrow_mut().locals.remove(&key);
+        })?,
+    )?;
+
+    let s = Rc::clone(state);
+    globals.set(
+        "__loc_has",
+        Function::new(ctx.clone(), move |key: String| -> bool {
+            s.borrow().locals.contains_key(&key)
+        })?,
+    )?;
+
+    let s = Rc::clone(state);
+    globals.set(
+        "__loc_all",
+        Function::new(ctx.clone(), move || -> HashMap<String, String> {
+            s.borrow().locals.clone()
+        })?,
+    )?;
+
+    let s = Rc::clone(state);
+    globals.set(
         "__req_method",
         Function::new(ctx.clone(), move || s.borrow().request.method.clone())?,
     )?;
@@ -551,8 +650,24 @@ fn register_bindings(ctx: &Ctx<'_>, state: &Rc<RefCell<ScriptState>>) -> Result<
 
     let s = Rc::clone(state);
     globals.set(
+        "__req_url_set",
+        Function::new(ctx.clone(), move |url: String| {
+            s.borrow_mut().request.url = url;
+        })?,
+    )?;
+
+    let s = Rc::clone(state);
+    globals.set(
         "__req_body",
         Function::new(ctx.clone(), move || s.borrow().request.body.clone())?,
+    )?;
+
+    let s = Rc::clone(state);
+    globals.set(
+        "__req_body_set",
+        Function::new(ctx.clone(), move |body: String| {
+            s.borrow_mut().request.body = body;
+        })?,
     )?;
 
     let s = Rc::clone(state);
@@ -741,6 +856,36 @@ function __sx_log_impl(level) {
     __log(level, parts.join(' '));
 }
 
+function __sx_unresolved(value) {
+    // 仅含未解析占位符的字符串算「未解析」；undefined / 缺省由调用方判缺失
+    return typeof value === 'string' && value.indexOf('{{') !== -1;
+}
+
+// pm.variables 作用域：先查运行期局部表，再回落环境/项目/全局合并表。
+function __sx_var_get(key) {
+    var k = __sx_stringify(key);
+    var v = __loc_has(k) ? __loc_get(k) : __env_get(k);
+    return __sx_unresolved(v) ? undefined : v;
+}
+
+function __sx_var_has(key) {
+    var k = __sx_stringify(key);
+    var loc = __loc_has(k);
+    if (loc) return true;
+    var env = __env_get(k);
+    if (env === undefined || env === null) return false;
+    return !__sx_unresolved(env);
+}
+
+function __sx_var_all() {
+    var out = __env_all();
+    var loc = __loc_all();
+    for (var k in loc) {
+        if (Object.prototype.hasOwnProperty.call(loc, k)) out[k] = loc[k];
+    }
+    return out;
+}
+
 var pm = {
     environment: {
         get: function (key) { return __env_get(key); },
@@ -749,10 +894,25 @@ var pm = {
         has: function (key) { return __env_has(key); },
         all: function () { return __env_all(); }
     },
+    // 运行期局部变量：独立作用域，不落库；get/has 回落环境/项目/全局合并表，
+    // 便于脚本用一套 get 读全部可见变量。未解析的 {{占位}} 视作不存在。
+    // 实现拆成独立函数（见 __sx_var_*）：对象字面量里的方法对本串接桥接调用
+    // 表现不稳（实测 has 恒为 true），拆开后每次调用都是干净的一次往返。
+    variables: {
+        get: function (key) { return __sx_var_get(key); },
+        set: function (key, value) { __loc_set(__sx_stringify(key), __sx_stringify(value)); },
+        unset: function (key) { __loc_unset(__sx_stringify(key)); },
+        has: function (key) { return __sx_var_has(key); },
+        all: function () { return __sx_var_all(); },
+        toObject: function () { return __sx_var_all(); }
+    },
     request: {
         method: __req_method(),
-        url: __req_url(),
-        body: __req_body(),
+        // url / body 可写：赋值即改写本次实际发出的地址 / 文本体（Postman 习惯）。
+        get url() { return __req_url(); },
+        set url(v) { __req_url_set(__sx_stringify(v)); },
+        get body() { return __req_body(); },
+        set body(v) { __req_body_set(__sx_stringify(v)); },
         headers: {
             add: function (header) {
                 if (!header || header.key === undefined) {
@@ -816,6 +976,7 @@ mod tests {
                 body: String::new(),
             },
             response: None,
+            locals: HashMap::new(),
         }
     }
 
@@ -976,6 +1137,140 @@ mod tests {
             .unwrap();
         assert_eq!(result.tests.len(), 1);
         assert!(result.tests[0].passed, "全局状态未隔离：{:?}", result.tests);
+    }
+
+    #[tokio::test]
+    async fn pm_variables_scope_is_available_and_isolated_from_environment() {
+        let sandbox = ScriptSandbox::new().unwrap();
+        let input = base_input(
+            r#"
+            // 局部作用域：不落环境表，但能读回
+            pm.variables.set('ts', '123');
+            pm.variables.set('tmp', 'x');
+            pm.variables.unset('tmp');
+            console.log('ts =', pm.variables.get('ts'));
+            // get 回落环境合并表（base_url 来自环境）
+            console.log('base =', pm.variables.get('base_url'));
+            // 未解析占位符视作不存在
+            console.log('unresolved =', pm.variables.get('{{base_url}}'));
+            console.log('hasTmp =', pm.variables.has('tmp'));
+            console.log('hasBase =', pm.variables.has('base_url'));
+            pm.test('局部变量读回', () => pm.expect(pm.variables.get('ts')).to.equal('123'));
+            pm.test('回落环境表', () => pm.expect(pm.variables.get('base_url')).to.equal('http://localhost'));
+            "#,
+        );
+        let result = sandbox.run(input).await.unwrap();
+        assert_eq!(result.locals.get("ts").map(String::as_str), Some("123"));
+        assert!(!result.locals.contains_key("tmp"));
+        assert!(
+            !result.environment.contains_key("ts"),
+            "pm.variables 不应写入环境表"
+        );
+        assert!(result.tests.iter().all(|t| t.passed), "{:?}", result.tests);
+        let logs = result.logs.join("\n");
+        assert!(logs.contains("ts = 123"), "{logs}");
+        assert!(logs.contains("base = http://localhost"), "{logs}");
+        assert!(logs.contains("unresolved = undefined"), "{logs}");
+        assert!(logs.contains("hasTmp = false"), "{logs}");
+        assert!(logs.contains("hasBase = true"), "{logs}");
+    }
+
+    #[tokio::test]
+    async fn pm_request_url_and_body_are_writable() {
+        let sandbox = ScriptSandbox::new().unwrap();
+        let mut input = base_input(
+            r#"
+            console.log('before =', pm.request.url);
+            pm.request.url = 'http://localhost/api/users?time_stamp=999';
+            pm.request.body = '{"ts":999}';
+            console.log('after =', pm.request.url, pm.request.body);
+            "#,
+        );
+        input.request.body = r#"{"ts":"{{ts}}"}"#.to_string();
+        let url = input.request.url.clone();
+        let result = sandbox.run(input).await.unwrap();
+        assert!(result
+            .logs
+            .iter()
+            .any(|l| l.contains("before = http://localhost/api/users")));
+        assert!(result
+            .logs
+            .iter()
+            .any(|l| l.contains("after = http://localhost/api/users?time_stamp=999")));
+
+        // 沙箱回传脚本改写后的请求快照，并回规格后应生效
+        let mut spec = RequestSpec {
+            body: BodySpec::Json {
+                raw: r#"{"ts":"{{ts}}"}"#.to_string(),
+            },
+            ..Default::default()
+        };
+        let new_url = result.request.apply_to_spec(&mut spec, &url);
+        assert_eq!(
+            result.request.url,
+            "http://localhost/api/users?time_stamp=999"
+        );
+        assert_eq!(result.request.body, r#"{"ts":999}"#);
+        assert_eq!(new_url, "http://localhost/api/users?time_stamp=999");
+        assert_eq!(
+            spec.body,
+            BodySpec::Json {
+                raw: r#"{"ts":999}"#.to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn apply_to_spec_replaces_url_and_text_body_only() {
+        let mut spec = RequestSpec {
+            body: BodySpec::Json {
+                raw: r#"{"ts":"{{ts}}"}"#.to_string(),
+            },
+            ..Default::default()
+        };
+        let data = ScriptRequestData {
+            url: "http://localhost/api/users?time_stamp=999".to_string(),
+            body: r#"{"ts":999}"#.to_string(),
+            ..Default::default()
+        };
+        let url = data.apply_to_spec(&mut spec, "http://localhost/api/users");
+        assert_eq!(url, "http://localhost/api/users?time_stamp=999");
+        assert_eq!(
+            spec.body,
+            BodySpec::Json {
+                raw: r#"{"ts":999}"#.to_string()
+            }
+        );
+
+        // 默认端口归一：脚本写 :80 与原始无端口视为同一地址
+        let mut spec2 = RequestSpec::default();
+        let same = ScriptRequestData {
+            url: "http://example.com:80/a".to_string(),
+            ..Default::default()
+        }
+        .apply_to_spec(&mut spec2, "http://example.com/a");
+        assert_eq!(same, "http://example.com/a");
+
+        // 未改写 URL / 空 body：原样保留
+        let untouched = ScriptRequestData {
+            url: "http://example.com/a".to_string(),
+            ..Default::default()
+        }
+        .apply_to_spec(&mut spec2, "http://example.com/a");
+        assert_eq!(untouched, "http://example.com/a");
+        assert!(matches!(spec2.body, BodySpec::None));
+
+        // 结构化体（multipart）不被脚本文本覆盖
+        let mut spec3 = RequestSpec {
+            body: BodySpec::Multipart { fields: Vec::new() },
+            ..Default::default()
+        };
+        ScriptRequestData {
+            body: "ignored".to_string(),
+            ..Default::default()
+        }
+        .apply_to_spec(&mut spec3, "http://example.com/a");
+        assert!(matches!(spec3.body, BodySpec::Multipart { .. }));
     }
 
     #[tokio::test]
