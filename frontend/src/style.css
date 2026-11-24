@@ -1884,6 +1884,15 @@ body.dragging-dnd {
   cursor: grabbing;
   user-select: none;
 }
+/* ---- 拖拽准备态（指针已按下、可能还没产生拖动）----
+   标记由拖动容器自己加（`data-drag-lock`，见 utils/sortable.ts 的 bindDragGuards）：
+   容器内一切文字禁选，但不禁用指针事件——点击 / 拖动都照常进行。
+   作用域限定在容器内，不会影响侧边栏、编辑器等其它区域。 */
+[data-drag-lock],
+[data-drag-lock] * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
 /* ---- 溢出 Tooltip 气泡（指令动态注入 body，需全局定义） ---- */
 .miyo-overflow-tip {
   position: fixed;

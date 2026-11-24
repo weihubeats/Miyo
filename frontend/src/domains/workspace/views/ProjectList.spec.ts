@@ -67,10 +67,12 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({ startDragging: vi.fn(), onMove: vi.fn() }),
 }))
 
-// 拖拽排序本身不是本 spec 的断言面——mock 掉拖拽工具（全局光标态 + 动画常量）。
+// 拖拽排序本身不是本 spec 的断言面——mock 掉拖拽工具（全局光标态 + 动画常量 +
+// 禁选 guard）；guard 自身的「按下禁选 / 单击补发」由 utils/sortable.spec.ts 覆盖。
 vi.mock('@/utils/sortable.ts', () => ({
   beginDragCursor: vi.fn(),
   endDragCursor: vi.fn(),
+  bindDragGuards: vi.fn(() => vi.fn()),
   REORDER_ANIMATION_MS: 150,
   REORDER_EASING: 'cubic-bezier(0.2, 0, 0, 1)',
 }))

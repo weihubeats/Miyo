@@ -15,6 +15,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   beginDragCursor,
+  bindDragGuards,
   endDragCursor,
   REORDER_ANIMATION_MS,
   REORDER_EASING,
@@ -411,6 +412,8 @@ const dragEnabled = computed(
 
 const groupsEl = ref<HTMLElement | null>(null)
 const sortables: Sortable[] = []
+/** 拖拽 guard 的解绑函数（实例销毁时一并调用，摘掉监听与禁选标记）。 */
+const dragGuards = new Map<Sortable, () => void>()
 const savingOrder = ref(false)
 
 /** 拖拽结束后的短暂窗口内抑制卡片 click（防止拖完被带进项目）。 */
@@ -453,13 +456,20 @@ function onCardOpen(p: Project): void {
   void enter(p)
 }
 
+/** 销毁一个 Sortable 实例连同它的拖拽 guard（解绑监听 + 摘掉禁选标记）。 */
+function destroySortable(instance: Sortable): void {
+  dragGuards.get(instance)?.()
+  dragGuards.delete(instance)
+  instance.destroy()
+}
+
 /** 每个团队组一个 Sortable 实例（组内换位，组间由分组结构天然隔离）。 */
 function initSortables(): void {
   const grids = groupsEl.value?.querySelectorAll<HTMLElement>('.team-grid') ?? []
   // 清理已卸载的旧容器（分组/搜索变化会重建 DOM）
   for (let i = sortables.length - 1; i >= 0; i--) {
     if (!sortables[i]!.el.isConnected) {
-      sortables[i]!.destroy()
+      destroySortable(sortables[i]!)
       sortables.splice(i, 1)
     }
   }
@@ -475,11 +485,10 @@ function initSortables(): void {
       existing.option('disabled', false)
       continue
     }
-    sortables.push(
-      // 与接口树（EndpointTree）同一套换位手感：插入式让位——拖过邻居时邻居
-      // 实时平滑挪开、原位留半透明落位槽，松手嵌进去；不再用 swap 交换模式
-      // （两卡对调 + 浮层旋转放大会让整片网格一起晃）。
-      Sortable.create(grid, {
+    // 与接口树（EndpointTree）同一套换位手感：插入式让位——拖过邻居时邻居
+    // 实时平滑挪开、原位留半透明落位槽，松手嵌进去；不再用 swap 交换模式
+    // （两卡对调 + 浮层旋转放大会让整片网格一起晃）。
+    const instance = Sortable.create(grid, {
         animation: REORDER_ANIMATION_MS,
         easing: REORDER_EASING,
         forceFallback: true,
@@ -494,13 +503,17 @@ function initSortables(): void {
         preventOnFilter: true,
         onMove: (evt) =>
           !evt.related?.closest('button, a, input, select, textarea, [data-no-drag]'),
+        // 拖动越阈值后才挂全局抓取光标（按下阶段的禁选由 guard 在捕获期处理）
         onStart: () => beginDragCursor(),
         onEnd: () => {
           endDragCursor()
           void onDragEnd()
         },
-      }),
-    )
+    })
+    // 按下即禁选：否则 WKWebView 会把「按下点 → 指针」划成选区，整页文字反白；
+    // 纯点击时 guard 补发 click，卡片照常进入项目。
+    dragGuards.set(instance, bindDragGuards(instance, { container: grid }))
+    sortables.push(instance)
   }
 }
 
@@ -510,7 +523,7 @@ onMounted(() => nextTick(initSortables))
 watch([grouped, dragEnabled], () => nextTick(initSortables))
 
 onBeforeUnmount(() => {
-  for (const s of sortables) s.destroy()
+  for (const s of sortables) destroySortable(s)
   sortables.length = 0
   // 拖到一半切视图时 Sortable 不会补发 onEnd，这里兜底摘掉全局抓取光标
   endDragCursor()

@@ -95,6 +95,7 @@ import type { MenuItem } from '@/components/ui/Menu.vue'
 import type { Endpoint, Folder } from '@/types/miyoApi.d'
 import { errorText } from '@/utils/errorText'
 import {
+  bindDragGuards,
   beginDragCursor,
   endDragCursor,
   REORDER_ANIMATION_MS,
@@ -320,11 +321,13 @@ watch(
 // 跨文件夹移动仍走原有交互（右键 / 批量「移动到」菜单）。
 const listEl = ref<HTMLElement | null>(null)
 let listSortable: Sortable | null = null
+/** 按下即禁选 + 纯点击补发 click（user-select:none 下 WebKit 不产 click，见 utils/sortable）。 */
+let unbindDragGuard: (() => void) | null = null
 
 function initListSortable(): void {
   const el = listEl.value
   if (!el || listSortable) return
-  listSortable = Sortable.create(el, {
+  const instance = Sortable.create(el, {
     // 项目卡拖动复刻的就是这里的手感：两处共用同一组动画常量，避免调参走散
     animation: REORDER_ANIMATION_MS,
     easing: REORDER_EASING,
@@ -361,6 +364,9 @@ function initListSortable(): void {
       void applyListOrder(ordered)
     },
   })
+  listSortable = instance
+  // 行内没有可点的按钮（都已 filter 掉），这里只需按下即禁选，单击由 guard 补发
+  unbindDragGuard = bindDragGuards(instance, { container: el })
 }
 
 /** 把 DOM 顺序写回 store（同文件夹内重排）。 */
@@ -378,6 +384,8 @@ onMounted(() => {
   void nextTick(initListSortable)
 })
 onBeforeUnmount(() => {
+  unbindDragGuard?.()
+  unbindDragGuard = null
   listSortable?.destroy()
   listSortable = null
   endDragCursor()
