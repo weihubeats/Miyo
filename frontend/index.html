@@ -60,6 +60,175 @@
   <body>
     <div id="app"></div>
     <script>
+      // 兼容较老 WebView2 / WebKit 内核 + 启动前故障兜底（规避白屏/黑屏无反馈）：
+      // 1) 为依赖（如 CodeMirror）补齐 Object.hasOwn / Array.prototype.at；
+      // 2) 在 ES module 求值与 Vue 挂载前捕获 error / unhandledrejection 与启动超时，
+      //    挂载成功后由 main.ts 调用 __MIYO_BOOT__.done() 交棒给 App.vue。
+      (function () {
+        if (typeof Object.hasOwn !== 'function') {
+          Object.hasOwn = function (obj, prop) {
+            return Object.prototype.hasOwnProperty.call(Object(obj), prop);
+          };
+        }
+        if (typeof Array.prototype.at !== 'function') {
+          Array.prototype.at = function (idx) {
+            var len = this.length >>> 0;
+            var k = idx >= 0 ? idx : len + idx;
+            return k >= 0 && k < len ? this[k] : undefined;
+          };
+        }
+
+        var errors = [];
+        var rendered = false;
+        var timer = null;
+
+        function formatErr(err) {
+          if (!err) return 'Unknown error';
+          if (typeof err === 'string') return err;
+          if (err.stack) return String(err.stack);
+          if (err.message) return String(err.message);
+          try {
+            return JSON.stringify(err);
+          } catch (e) {
+            return String(err);
+          }
+        }
+
+        function renderFallback(timeoutReason) {
+          if (boot.mounted || rendered) return;
+          var app = document.getElementById('app');
+          if (!app) return;
+          if (app.childNodes && app.childNodes.length > 0 && !timeoutReason) return;
+          rendered = true;
+
+          var isLight = document.documentElement.getAttribute('data-theme') === 'light';
+          var isZh = (navigator.language || '').toLowerCase().indexOf('zh') === 0;
+          var bg = isLight ? '#f5f6f8' : '#141418';
+          var cardBg = isLight ? '#ffffff' : '#1b1b22';
+          var border = isLight ? '#d4d6de' : '#2e303d';
+          var text = isLight ? '#18181b' : '#eceef4';
+          var muted = isLight ? '#52525b' : '#9ca3af';
+          var codeBg = isLight ? '#f4f4f5' : '#0f0f13';
+
+          app.innerHTML = '';
+          var wrap = document.createElement('div');
+          wrap.setAttribute(
+            'style',
+            'min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;background:' +
+              bg +
+              ';color:' +
+              text +
+              ';font-family:Segoe UI,Microsoft YaHei,PingFang SC,sans-serif;'
+          );
+
+          var card = document.createElement('div');
+          card.setAttribute(
+            'style',
+            'max-width:640px;width:100%;padding:20px 24px;border-radius:10px;background:' +
+              cardBg +
+              ';border:1px solid ' +
+              border +
+              ';box-sizing:border-box;'
+          );
+
+          var title = document.createElement('h2');
+          title.setAttribute('style', 'margin:0 0 8px 0;font-size:16px;font-weight:600;');
+          title.textContent = isZh ? 'Miyo 启动异常' : 'Miyo failed to start';
+
+          var desc = document.createElement('p');
+          desc.setAttribute('style', 'margin:0 0 12px 0;font-size:13px;line-height:1.6;color:' + muted + ';');
+          desc.textContent = isZh
+            ? '前端未能正常初始化（可能由旧版 WebView2 运行时或图形兼容问题引起）。可尝试重新加载，或将以下诊断信息反馈给开发者。'
+            : 'The frontend failed to initialize (this may be caused by an outdated WebView2 runtime or graphics compatibility issue). You can reload or share the diagnostics below.';
+
+          var pre = document.createElement('pre');
+          pre.setAttribute(
+            'style',
+            'margin:0 0 14px 0;padding:12px;border-radius:6px;background:' +
+              codeBg +
+              ';border:1px solid ' +
+              border +
+              ';font-family:Consolas,monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto;'
+          );
+          var detailLines = [
+            'UA: ' + navigator.userAgent,
+            'URL: ' + location.href
+          ];
+          if (timeoutReason) detailLines.push('State: ' + timeoutReason);
+          for (var i = 0; i < errors.length; i++) {
+            detailLines.push('[Error ' + (i + 1) + '] ' + errors[i]);
+          }
+          pre.textContent = detailLines.join('\n');
+
+          var actions = document.createElement('div');
+          actions.setAttribute('style', 'display:flex;gap:8px;');
+          var reloadBtn = document.createElement('button');
+          reloadBtn.type = 'button';
+          reloadBtn.textContent = isZh ? '重新加载' : 'Reload';
+          reloadBtn.setAttribute(
+            'style',
+            'padding:6px 14px;border-radius:6px;border:1px solid ' +
+              border +
+              ';background:#6366f1;color:#ffffff;font-size:13px;cursor:pointer;'
+          );
+          reloadBtn.onclick = function () {
+            location.reload();
+          };
+          actions.appendChild(reloadBtn);
+
+          card.appendChild(title);
+          card.appendChild(desc);
+          card.appendChild(pre);
+          card.appendChild(actions);
+          wrap.appendChild(card);
+          app.appendChild(wrap);
+        }
+
+        function onPreMountError(e) {
+          var msg = e && (e.error || e.message) ? formatErr(e.error || e.message) : 'Script error';
+          if (e && e.filename) msg += ' (' + e.filename + ':' + e.lineno + ':' + e.colno + ')';
+          errors.push(msg);
+          renderFallback(null);
+        }
+
+        function onPreMountRejection(e) {
+          errors.push('UnhandledRejection: ' + formatErr(e && e.reason));
+          renderFallback(null);
+        }
+
+        var boot = {
+          mounted: false,
+          fail: function (err) {
+            errors.push(formatErr(err));
+            renderFallback(null);
+          },
+          done: function () {
+            boot.mounted = true;
+            if (timer) {
+              clearTimeout(timer);
+              timer = null;
+            }
+            window.removeEventListener('error', onPreMountError);
+            window.removeEventListener('unhandledrejection', onPreMountRejection);
+          }
+        };
+
+        window.__MIYO_BOOT__ = boot;
+        window.addEventListener('error', onPreMountError);
+        window.addEventListener('unhandledrejection', onPreMountRejection);
+        timer = setTimeout(function () {
+          if (!boot.mounted) {
+            renderFallback('Bootstrap did not complete within 10s');
+          }
+        }, 10000);
+      })();
+    </script>
+    <script nomodule>
+      if (window.__MIYO_BOOT__) {
+        window.__MIYO_BOOT__.fail('ES modules are not supported by this WebView runtime.');
+      }
+    </script>
+    <script>
       // 浏览器截图/验收辅助（dev-only）：?miyo-e2e=1 时加载 public 下的 IPC
       // 数据桩（固定 fixture），让界面脱离 Tauri 后端也能渲染。生产构建不会
       // 带查询参数，本分支永不激活；桩文件也从未被应用代码引用。

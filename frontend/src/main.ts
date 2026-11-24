@@ -46,16 +46,23 @@ useThemeStore(pinia).init()
 void bootstrap()
 
 async function bootstrap(): Promise<void> {
-  // 等启动语言字典就绪再挂载：首帧即完整文案，不回落另一语言。
-  // （模块顶层 await 会撞 es2020 构建目标，故放这里。）
-  await useLocaleStore(pinia).init()
-  // 插件系统引导：拉取已安装插件并激活启用项（异步，不阻塞首屏挂载；
-  // 激活完成前导航区不含插件项——按需加载，未启用插件零字节拉取）。
-  void usePluginManager(pinia).boot()
-  createApp(App)
-    .use(pinia)
-    .use(router)
-    .directive('tooltip-overflow', tooltipOverflow)
-    .directive('focus-end', focusEnd)
-    .mount('#app')
+  const boot = (window as unknown as { __MIYO_BOOT__?: { done?: () => void; fail?: (err: unknown) => void } }).__MIYO_BOOT__
+  try {
+    // 等启动语言字典就绪再挂载：首帧即完整文案，不回落另一语言。
+    // （模块顶层 await 会撞 es2020 构建目标，故放这里。）
+    await useLocaleStore(pinia).init()
+    // 插件系统引导：拉取已安装插件并激活启用项（异步，不阻塞首屏挂载；
+    // 激活完成前导航区不含插件项——按需加载，未启用插件零字节拉取）。
+    void usePluginManager(pinia).boot()
+    createApp(App)
+      .use(pinia)
+      .use(router)
+      .directive('tooltip-overflow', tooltipOverflow)
+      .directive('focus-end', focusEnd)
+      .mount('#app')
+    boot?.done?.()
+  } catch (err) {
+    console.error('[miyo.bootstrap]', err)
+    boot?.fail?.(err)
+  }
 }
