@@ -253,13 +253,15 @@ pub async fn execute_request(
         if !post_code.trim().is_empty() {
             let summary = match run_post_response_script(
                 state.inner(),
-                args.method,
-                &url,
-                &spec,
+                PostScriptRequest {
+                    method: args.method,
+                    url: &url,
+                    spec: &spec,
+                    vars: &runtime_vars,
+                    locals: &script_locals,
+                },
                 &resp,
                 post_code,
-                &runtime_vars,
-                &script_locals,
             )
             .await
             {
@@ -350,17 +352,31 @@ pub async fn execute_request(
     result
 }
 
+/// Post-response 脚本的请求上下文（字段多，打包传参避免超参数上限）。
+struct PostScriptRequest<'a> {
+    method: HttpMethod,
+    url: &'a str,
+    spec: &'a RequestSpec,
+    /// 本次运行变量表（环境/项目/全局 + Pre-request 脚本写入项）。
+    vars: &'a VariableMap,
+    /// Pre-request 阶段的 `pm.variables` 局部变量（仅本次运行可见）。
+    locals: &'a VariableMap,
+}
+
 /// Post-response 脚本执行：返回断言与 console 输出（执行失败由调用方记入 summary）。
 async fn run_post_response_script(
     state: &AppState,
-    method: HttpMethod,
-    url: &str,
-    spec: &RequestSpec,
+    req: PostScriptRequest<'_>,
     resp: &HttpResponseData,
     code: String,
-    vars: &VariableMap,
-    locals: &VariableMap,
 ) -> CommandResult<(Vec<ScriptTestOutcome>, Vec<String>)> {
+    let PostScriptRequest {
+        method,
+        url,
+        spec,
+        vars,
+        locals,
+    } = req;
     let sandbox = state.script_sandbox()?;
     let snapshot = miyo_http::script_sandbox::ScriptRequestData::from_spec(method, url, spec);
     let response = miyo_http::script_sandbox::ScriptResponseData::from_response(resp);
