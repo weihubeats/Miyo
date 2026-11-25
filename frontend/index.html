@@ -94,12 +94,31 @@
           }
         }
 
-        function renderFallback(timeoutReason) {
+        /**
+         * 渲染启动异常兜底页。也由「运行时能力探测」在核心 JS 语法不受支持时调用：
+         * 那种情况下 main.ts / style.css 根本跑不起来，页面只剩窗口底色 = 用户说的
+         * 黑屏（issue #192：Win Server 2016 + 旧 WebView2）。
+         *
+         * 注意两点踩坑：
+         * 1) 只用 inline style，不依赖任何外部样式表（style.css 此时可能未加载）；
+         * 2) 不用 flex 居中（Chromium 90 之前带前缀），改用 margin:auto + 固定宽度。
+         */
+        function renderFallback(timeoutReason, detail) {
           if (boot.mounted || rendered) return;
           var app = document.getElementById('app');
           if (!app) return;
-          if (app.childNodes && app.childNodes.length > 0 && !timeoutReason) return;
+          if (app.childNodes && app.childNodes.length > 0 && !timeoutReason && !detail) return;
           rendered = true;
+
+          var diag = collectDiagnostics(detail);
+
+          // 同步落到 console：即使本页没画出来（背景色被强制 / 字体渲染异常），
+          // WebView2 用户数据目录里的日志文件与 Console 里也能看到原因。
+          try {
+            console.error('[miyo.boot-fallback]', timeoutReason || detail || 'error', diag);
+          } catch (e) {
+            /* console 不可用时忽略 */
+          }
 
           var isLight = document.documentElement.getAttribute('data-theme') === 'light';
           var isZh = (navigator.language || '').toLowerCase().indexOf('zh') === 0;
@@ -114,7 +133,7 @@
           var wrap = document.createElement('div');
           wrap.setAttribute(
             'style',
-            'min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;background:' +
+            'position:fixed;top:0;left:0;right:0;bottom:0;overflow:auto;padding:24px;box-sizing:border-box;background:' +
               bg +
               ';color:' +
               text +
@@ -124,7 +143,7 @@
           var card = document.createElement('div');
           card.setAttribute(
             'style',
-            'max-width:640px;width:100%;padding:20px 24px;border-radius:10px;background:' +
+            'width:640px;max-width:100%;margin:auto;padding:20px 24px;border-radius:10px;background:' +
               cardBg +
               ';border:1px solid ' +
               border +
@@ -138,8 +157,10 @@
           var desc = document.createElement('p');
           desc.setAttribute('style', 'margin:0 0 12px 0;font-size:13px;line-height:1.6;color:' + muted + ';');
           desc.textContent = isZh
-            ? '前端未能正常初始化（可能由旧版 WebView2 运行时或图形兼容问题引起）。可尝试重新加载，或将以下诊断信息反馈给开发者。'
-            : 'The frontend failed to initialize (this may be caused by an outdated WebView2 runtime or graphics compatibility issue). You can reload or share the diagnostics below.';
+            ? '前端未能正常初始化。最常见原因是系统里的 WebView2 运行时过旧（Windows Server 2016 / Windows 8.1 / 早期 Win10 自带的是 IE 内核）。' +
+              '修复方法：安装「Microsoft Edge WebView2 Runtime」常青版后重启 Miyo。下方诊断信息可直接反馈给开发者。'
+            : 'The frontend failed to initialize. The usual cause is an outdated WebView2 runtime (Windows Server 2016, Windows 8.1 and early Windows 10 ship the old IE engine). ' +
+              'Fix: install the evergreen Microsoft Edge WebView2 Runtime, then restart Miyo. The diagnostics below can be shared with the developer.';
 
           var pre = document.createElement('pre');
           pre.setAttribute(
@@ -148,33 +169,57 @@
               codeBg +
               ';border:1px solid ' +
               border +
-              ';font-family:Consolas,monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto;'
+              ';font-family:Consolas,monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:320px;overflow:auto;'
           );
-          var detailLines = [
-            'UA: ' + navigator.userAgent,
-            'URL: ' + location.href
-          ];
-          if (timeoutReason) detailLines.push('State: ' + timeoutReason);
-          for (var i = 0; i < errors.length; i++) {
-            detailLines.push('[Error ' + (i + 1) + '] ' + errors[i]);
-          }
+          var detailLines = ['Reason: ' + (timeoutReason || detail || 'error')];
+          for (var i = 0; i < diag.length; i++) detailLines.push(diag[i]);
+          for (var j = 0; j < errors.length; j++) detailLines.push('[Error ' + (j + 1) + '] ' + errors[j]);
           pre.textContent = detailLines.join('\n');
 
           var actions = document.createElement('div');
-          actions.setAttribute('style', 'display:flex;gap:8px;');
-          var reloadBtn = document.createElement('button');
-          reloadBtn.type = 'button';
-          reloadBtn.textContent = isZh ? '重新加载' : 'Reload';
-          reloadBtn.setAttribute(
-            'style',
-            'padding:6px 14px;border-radius:6px;border:1px solid ' +
-              border +
-              ';background:#6366f1;color:#ffffff;font-size:13px;cursor:pointer;'
-          );
-          reloadBtn.onclick = function () {
+          actions.setAttribute('style', 'display:flex;gap:8px;flex-wrap:wrap;');
+          function addButton(label, primary, onClick) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = label;
+            btn.setAttribute(
+              'style',
+              'padding:6px 14px;border-radius:6px;border:1px solid ' +
+                border +
+                ';background:' +
+                (primary ? '#6366f1' : 'transparent') +
+                ';color:' +
+                (primary ? '#ffffff' : text) +
+                ';font-size:13px;cursor:pointer;'
+            );
+            btn.onclick = onClick;
+            actions.appendChild(btn);
+            return btn;
+          }
+
+          addButton(isZh ? '重新加载' : 'Reload', true, function () {
             location.reload();
-          };
-          actions.appendChild(reloadBtn);
+          });
+          // 探测环境常把完整的 WebView2 版本放在 navigator.userAgent 里；
+          // 单独一行便于用户复制。无效点击时无副作用。
+          addButton(isZh ? '复制诊断信息' : 'Copy diagnostics', false, function () {
+            var dump = detailLines.join('\n');
+            try {
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(dump);
+                return;
+              }
+            } catch (e) {
+              /* 退回选中文本 */
+            }
+            var sel = window.getSelection && window.getSelection();
+            if (sel) {
+              var range = document.createRange();
+              range.selectNodeContents(pre);
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
+          });
 
           card.appendChild(title);
           card.appendChild(desc);
@@ -184,23 +229,43 @@
           app.appendChild(wrap);
         }
 
+        /** 诊断行：UA / URL / 内核版本；WebView2 不可用（IE 内核）时也能正常工作。 */
+        function collectDiagnostics(detail) {
+          var lines = [];
+          try {
+            lines.push('UA: ' + navigator.userAgent);
+            lines.push('Platform: ' + (navigator.platform || '-') + ' / ' + (navigator.language || '-'));
+            lines.push('URL: ' + location.href);
+            lines.push('Title: ' + document.title + ' | Referrer: ' + (document.referrer || '-'));
+            // 关键能力探测：WebView2（Chromium）有 Promise；IE 内核没有。
+            // 内联脚本按 ES5 写，IE 里也能跑到这里并把结论写出来。
+            lines.push('Features: Promise=' + (typeof Promise) + ' Symbol=' + (typeof Symbol) +
+              ' fetch=' + (typeof fetch) + ' class=' + (function () { try { eval('class X{}'); return 'yes'; } catch (e) { return 'no'; } })() +
+              ' module=' + (!!(window.HTMLScriptElement && 'noModule' in document.createElement('script'))));
+          } catch (e) {
+            lines.push('Diagnostics failed: ' + formatErr(e));
+          }
+          if (detail) lines.push('Detail: ' + detail);
+          return lines;
+        }
+
         function onPreMountError(e) {
           var msg = e && (e.error || e.message) ? formatErr(e.error || e.message) : 'Script error';
           if (e && e.filename) msg += ' (' + e.filename + ':' + e.lineno + ':' + e.colno + ')';
           errors.push(msg);
-          renderFallback(null);
+          renderFallback(null, 'uncaught error');
         }
 
         function onPreMountRejection(e) {
           errors.push('UnhandledRejection: ' + formatErr(e && e.reason));
-          renderFallback(null);
+          renderFallback(null, 'unhandled rejection');
         }
 
         var boot = {
           mounted: false,
           fail: function (err) {
             errors.push(formatErr(err));
-            renderFallback(null);
+            renderFallback(null, 'bootstrap failed');
           },
           done: function () {
             boot.mounted = true;
@@ -221,6 +286,23 @@
             renderFallback('Bootstrap did not complete within 10s');
           }
         }, 10000);
+
+        // 运行时能力探测（issue #192）：打包产物与 style.css 都按 es2020 / chrome87
+        // 编译（用了可选链、class 等语法）。系统里只有 IE 内核（WebView2 运行时未安装 /
+        // 被服务器策略禁用）时，module 脚本与 `<script nomodule>` 双双不执行，
+        // 页面永远停在窗口底色 = 黑屏、无任何提示。ES5 写的这段探测能跑到，
+        // 于是把「真实原因」直接渲染出来，用户不必打开开发者工具。
+        try {
+          var supportsCoreJs = typeof Promise === 'function' && typeof Symbol === 'function';
+          if (!supportsCoreJs) {
+            renderFallback(
+              'WebView2 runtime missing or unavailable (IE engine detected)',
+              'Promise/Symbol 不存在：当前内核为旧版 IE，请安装 Microsoft Edge WebView2 Runtime'
+            );
+          }
+        } catch (probeError) {
+          renderFallback('Runtime probe failed', String(probeError));
+        }
       })();
     </script>
     <script nomodule>

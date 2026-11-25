@@ -61,8 +61,26 @@ async function bootstrap(): Promise<void> {
       .directive('focus-end', focusEnd)
       .mount('#app')
     boot?.done?.()
+    reportFrontendReady()
   } catch (err) {
     console.error('[miyo.bootstrap]', err)
     boot?.fail?.(err)
   }
+}
+
+/**
+ * 告知壳层「界面已真正挂载」：壳侧首帧看门狗超过 8 秒收不到这个事件就当黑屏，
+ * 弹原生框给出 WebView2 / 硬件加速 / 日志路径三条指引（前端黑屏时用户点不到设置）。
+ * 事件名与 `frontend/src-tauri/src/main.rs` 的常量保持一致；浏览器预览无 IPC 时静默跳过。
+ */
+function reportFrontendReady(): void {
+  const internals = (
+    window as unknown as {
+      __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> }
+    }
+  ).__TAURI_INTERNALS__
+  if (!internals?.invoke) return
+  void internals.invoke('plugin:event|emit', { event: 'miyo:frontend-ready', payload: null }).catch(() => {
+    // 壳层未注册监听（旧版后端 / 纯前端调试）：不影响启动
+  })
 }

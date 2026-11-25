@@ -82,6 +82,103 @@ fn init_tracing() {
         .with_ansi(false)
         .with_writer(writer)
         .try_init();
+    // 启动环境记一行进文件：issue #192 只能靠用户回传日志定位，
+    // 而 Windows 的 release 包是 windows_subsystem="windows"（没有控制台），
+    // 不写进日志文件就什么都拿不到。
+    tracing::info!(
+        os = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+        version = env!("CARGO_PKG_VERSION"),
+        webview2 = %webview2_summary(),
+        log_dir = %dir.display(),
+        "miyo startup"
+    );
+}
+
+/// WebView2 运行时概况（仅 Windows 有意义；其余平台返回 `n/a`）。
+///
+/// wry 走 `CreateCoreWebView2Environment` 直接加载已安装的运行时，
+/// **不读** `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`。系统里只有 IE 内核时，
+/// 前端只会渲染出空白页面——先把「运行时到底装了没有、装在哪」写进日志。
+#[cfg(target_os = "windows")]
+fn webview2_summary() -> String {
+    let version = tauri::webview_version().unwrap_or_else(|e| format!("unavailable: {e}"));
+    let mut sources = Vec::new();
+    // 官方文档给的探测键：装过 WebView2 的机器上必有一个（HKLM 机器级 / HKCU 用户级）
+    for (hive, key) in [
+        (
+            "HKLM/32",
+            r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        ),
+        (
+            "HKLM/64",
+            r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        ),
+        (
+            "HKCU",
+            r"Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        ),
+    ] {
+        let installed = win_reg_value(hive, key, "pv").or_else(|| win_reg_value(hive, key, "name"));
+        match installed {
+            Some(v) => sources.push(format!("{hive}={v}")),
+            None => sources.push(format!("{hive}=(absent)")),
+        }
+    }
+    format!("version={version}; registry={}", sources.join(" "))
+}
+
+/// 读取字符串型注册表值（仅 Windows 编译）。`hive_key` 形如 `HKLM/64`。
+#[cfg(target_os = "windows")]
+fn win_reg_value(hive_key: &str, subkey: &str, name: &str) -> Option<String> {
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
+        KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY, REG_SZ,
+    };
+    let (root, flags) = match hive_key {
+        "HKCU" => (HKEY_CURRENT_USER, KEY_READ),
+        "HKLM/32" => (HKEY_LOCAL_MACHINE, KEY_READ | KEY_WOW64_32KEY),
+        _ => (HKEY_LOCAL_MACHINE, KEY_READ | KEY_WOW64_64KEY),
+    };
+    let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+    let sub = wide(subkey);
+    let value_name = wide(name);
+    let mut key = std::mem::MaybeUninit::uninit();
+    // SAFETY: 字符串均为 NUL 结尾的 UTF-16；key 只在 RegOpenKeyExW 返回 0 时使用。
+    let opened = unsafe { RegOpenKeyExW(root, sub.as_ptr(), 0, flags, key.as_mut_ptr()) };
+    if opened != 0 {
+        return None;
+    }
+    // SAFETY: opened == 0，句柄有效。
+    let key = unsafe { key.assume_init() };
+    let mut buf = [0u16; 512];
+    let mut len = (buf.len() * std::mem::size_of::<u16>()) as u32;
+    let mut kind = 0u32;
+    // SAFETY: buf 与 len 指向同一块可写内存，长度按字节给出。
+    let queried = unsafe {
+        RegQueryValueExW(
+            key,
+            value_name.as_ptr(),
+            std::ptr::null_mut(),
+            &mut kind,
+            buf.as_mut_ptr() as *mut u8,
+            &mut len,
+        )
+    };
+    // SAFETY: key 来自成功的 RegOpenKeyExW。
+    unsafe { RegCloseKey(key) };
+    if queried != 0 || kind != REG_SZ {
+        return None;
+    }
+    let chars = (len as usize / std::mem::size_of::<u16>()).min(buf.len());
+    let text: String = String::from_utf16_lossy(&buf[..chars]);
+    Some(text.trim_end_matches('\0').to_string())
+}
+
+/// 非 Windows 平台的占位实现。
+#[cfg(not(target_os = "windows"))]
+fn webview2_summary() -> String {
+    "n/a".to_string()
 }
 
 /// Java Attach 工具 jar 候选目录（按序取第一个就绪的）：

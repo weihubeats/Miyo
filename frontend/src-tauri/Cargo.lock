@@ -3101,7 +3101,9 @@ dependencies = [
 name = "miyo"
 version = "0.0.64"
 dependencies = [
+ "miyo-storage",
  "miyo-tauri",
+ "rfd 0.18.0",
  "serde",
  "serde_json",
  "tauri",

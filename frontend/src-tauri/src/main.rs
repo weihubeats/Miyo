@@ -4,14 +4,36 @@
 //! `miyo://about` 事件以打开自定义关于弹窗）/「Hide Miyo」/「Quit Miyo」，
 //! 另保留 Edit / View / Window 标准菜单（撤消/重做/剪切/复制/粘贴/全屏/最小化等）。
 //! Windows 下隐藏原生装饰（标题栏 + 菜单栏），由前端自绘顶栏 + WindowControls 承担。
+//!
+//! ## Windows 黑屏兜底（issue #192）
+//!
+//! 后端起来、窗口显示，但前端一个像素都画不出来时，用户只能看到窗口底色。
+//! 常见两因：系统只有 IE 内核（WebView2 运行时未装/被策略禁用）、旧版显卡驱动上
+//! WebView2 的 GPU 合成挂掉。首帧超过 8 秒未完成时按序给出可操作的出口——
+//! 二进制上不能弹网页弹窗，这里只做「不让用户干瞪眼」的最小干预：
+//! 1. 启动时探测注册表里的 WebView2 运行时，缺失即以原生错误框告知；
+//! 2. 页面加载完成 8 秒仍未收到前端 `miyo:frontend-ready` 时，弹原生框给出
+//!    「安装 WebView2 / 关闭硬件加速 / 日志目录」三条可操作指引（不自动重载——
+//!    窗口里可能已有用户数据在途，重载有副作用）。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{Emitter, Manager};
+
+use tauri::{Emitter, Listener, Manager};
 
 const ABOUT_EVENT: &str = "miyo://about";
+
+/// 前端首帧就绪事件（`main.ts` 挂载成功后广播）。
+const FRONTEND_READY_EVENT: &str = "miyo:frontend-ready";
+
+/// 页面加载完成后等待前端就绪的上限：超过即认为前端没渲染出来。
+const FRONTEND_READY_TIMEOUT_SECS: u64 = 8;
+
+/// 前端是否已就绪（`miyo:frontend-ready` 到达后置 true）。
+static FRONTEND_READY: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "macos")]
 fn build_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
@@ -126,6 +148,65 @@ mod windows_compat {
     }
 }
 
+/// Windows：系统缺 WebView2 运行时（只有 IE 内核）时，前端必然画不出来。
+/// 启动时先探一次注册表，缺失直接给原生错误框——比让用户对着黑窗猜有用。
+#[cfg(target_os = "windows")]
+fn warn_if_webview2_missing() {
+    // tauri::webview_version() 走已安装的运行时；取不到版本即视为缺失/不可用
+    if let Ok(version) = tauri::webview_version() {
+        tracing::info!(webview_version = %version, "webview runtime detected");
+        return;
+    }
+    tracing::error!("WebView2 runtime not detected; the window will stay blank");
+    let msg = "未检测到 Microsoft Edge WebView2 运行时，界面无法绘制（窗口会一片空白/黑屏）。\n\n\
+               请安装「Microsoft Edge WebView2 Runtime」常青版后重新打开 Miyo：\n\
+               https://developer.microsoft.com/microsoft-edge/webview2/\n\n\
+               安装过程中企业策略可能拦截 WebView2 安装（Windows Server 场景常见），\
+               需要管理员在组策略中允许后重试。";
+    let _ = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title("Miyo 缺少 WebView2 运行时")
+        .set_description(msg)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+}
+
+/// 首帧看门狗：页面加载完成 8 秒后仍没有 `miyo:frontend-ready`，说明前端没渲染出来。
+/// 给原生错误框（带日志路径与三条可操作建议），并写日志——这类问题用户往往
+/// 连「设置」都点不到，日志路径必须由程序自己告诉用户。
+fn spawn_first_frame_watchdog(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(FRONTEND_READY_TIMEOUT_SECS));
+        if FRONTEND_READY.load(Ordering::SeqCst) {
+            return;
+        }
+        let log_dir = miyo_storage::db::log_dir();
+        tracing::error!(
+            log_dir = %log_dir.display(),
+            "frontend did not report ready within {}s (blank window)",
+            FRONTEND_READY_TIMEOUT_SECS
+        );
+        let msg = format!(
+            "界面在 {} 秒内没有完成加载，窗口可能是空白/黑屏。\n\n\
+             1) 安装或修复 Microsoft Edge WebView2 Runtime：\n\
+             https://developer.microsoft.com/microsoft-edge/webview2/\n\
+             2) 若系统较旧或使用远程桌面/虚拟显卡，可尝试关闭硬件加速：\n\
+             创建名为 MIYO_WEBVIEW_SOFTWARE 的环境变量，值设为 1，然后重新打开 Miyo。\n\
+             3) 仍无法使用请把以下目录里的日志发给开发者：\n\n{}\n\n\
+             窗口不会退出，可能仍可继续操作。",
+            FRONTEND_READY_TIMEOUT_SECS,
+            log_dir.display()
+        );
+        let _ = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Warning)
+            .set_title("Miyo 界面加载超时")
+            .set_description(&msg)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+        let _ = app.emit("miyo://frontend-timeout", ());
+    });
+}
+
 fn main() {
     // 排除 VISIBLE 与 DECORATIONS：由 main.rs 显式控制装饰与展示时机，
     // 防止异常退出残存 visible:false 或旧版 decorated:true 覆写启动状态。
@@ -146,6 +227,11 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // 前端就绪信号（main.ts 挂载后广播）：看门狗据此判定「真的画出来了没有」
+            app.listen_any(FRONTEND_READY_EVENT, |_event| {
+                FRONTEND_READY.store(true, Ordering::SeqCst);
+                tracing::info!("frontend ready");
+            });
             // 原生菜单仅 macOS：Windows/Linux 下菜单栏渲染在标题栏里，
             // 与应用自绘顶栏割裂；Windows 走无边框窗口 + 前端 WindowControls。
             #[cfg(target_os = "macos")]
@@ -169,6 +255,7 @@ fn main() {
 
                 #[cfg(target_os = "windows")]
                 {
+                    warn_if_webview2_missing();
                     let compat = windows_compat::detect();
                     tracing::info!(
                         os = %format!("{}.{}.{}", compat.os_major, compat.os_minor, compat.os_build),
@@ -200,6 +287,7 @@ fn main() {
                 if win.is_minimized().unwrap_or(false) {
                     let _ = win.unminimize();
                 }
+                spawn_first_frame_watchdog(app.handle().clone());
                 // 窗口以 visible:false 创建：装饰与状态恢复完成后再显示，
                 // 避免 Windows 启动时闪现原生标题栏。
                 let _ = win.show();
@@ -208,11 +296,15 @@ fn main() {
             Ok(())
         })
         .on_page_load(|webview, payload| {
+            // 前端就绪由 main.ts 广播；每次重新加载前先复位
             if webview.label() == "main" {
                 let phase = match payload.event() {
                     tauri::webview::PageLoadEvent::Started => "started",
                     tauri::webview::PageLoadEvent::Finished => "finished",
                 };
+                if phase == "started" {
+                    FRONTEND_READY.store(false, Ordering::SeqCst);
+                }
                 tracing::info!(phase, url = %payload.url(), "main webview page load");
             }
         })
