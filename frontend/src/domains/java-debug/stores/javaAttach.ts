@@ -16,12 +16,16 @@ import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useLocaleStore } from '@/stores/locale'
 import { useToast } from '@/composables/useToast'
 import { errorText } from '@/utils/errorText'
+import { defaultArgFor, mergeArgs } from '@/domains/java-debug/utils/argsSkeleton'
 import type {
+  JavaAgentClassItem,
   JavaAgentInvokeResponse,
   JavaAgentMethodInfo,
   JavaAttachSessionSnapshot,
   JavaBeanInfo,
+  JavaClassCategory,
   JavaClassInfo,
+  JavaClassStats,
   JavaMethodInfo,
   JavaProcessInfo,
   JavaProcessListSummary,
@@ -51,17 +55,16 @@ export function normalizeMethod(m: JavaAgentMethodInfo): JavaMethodInfo {
 }
 
 /** Agent 类行 → v1 类形状（JavaClassBrowser 复用）。 */
-export function normalizeClass(item: {
-  name: string
-  package_name: string
-  simple_name: string
-}): JavaClassInfo {
+export function normalizeClass(item: JavaAgentClassItem): JavaClassInfo {
   return {
     class_name: item.name,
     package_name: item.package_name,
     simple_name: item.simple_name,
     method_count: -1,
-    bean_name: null,
+    bean_name: item.bean_name ?? null,
+    category: item.category,
+    role: item.role,
+    category_evidence: item.source?.evidence,
   }
 }
 
@@ -162,14 +165,19 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
     scanning.value = true
     try {
       summary.value = await api.javaDiscoverProcesses()
-      // 已 attach 的进程在 summary 里带 attached 标记；会话快照缺失时同步
-      const attached = summary.value.processes.filter((p) => p.attached).map((p) => p.pid)
-      for (const pid of attached) {
-        if (!sessions.value.has(pid)) {
-          const all = await api.javaAttachSessions()
-          for (const snap of all) sessions.value.set(snap.pid, snap)
-        }
-        break
+      // 会话快照补齐：**只按后端会话表回填，不按扫描结果的 attached 回填**。
+      //
+      // 旧实现见「attached=true 且本地无会话 → 拉 sessions 并写回」，这会在
+      // 断开瞬间出问题：detach() 已移除本地会话，但这一轮扫描结果还是断开前的
+      // 快照（attached=true），于是把 pid 重新塞回 sessions，界面上「已连接」
+      // 复活（真实反馈：点了断开，左侧仍是已连接）。
+      // 现在一律以 javaAttachSessions() 为真相来源，扫描结果不参与会话重建。
+      const all = await api.javaAttachSessions()
+      const live = new Set(all.map((s) => s.pid))
+      for (const snap of all) sessions.value.set(snap.pid, snap)
+      // 后端已经没有的会话，本地也清掉（防止轮询间隔内残留）
+      for (const pid of [...sessions.value.keys()]) {
+        if (!live.has(pid)) sessions.value.delete(pid)
       }
       return summary.value
     } catch {
@@ -227,6 +235,9 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
       activePid.value = null
       resetDiscovery()
     }
+    // 主动刷新进程列表：自动刷新关闭时也要立刻反映「已断开」，
+    // 不能只依赖 5s 轮询（实测：断开后左侧仍显示已连接）
+    void loadProcesses()
   }
 
   /** 卸载 Agent（诚实语义：已加载的类无法卸载，随 JVM 退出回收）。 */
@@ -241,6 +252,9 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
 
   function resetDiscovery(): void {
     classes.value = []
+    classTotal.value = 0
+    classStats.value = null
+    classLaunch.value = null
     classSearch.value = ''
     activeClassName.value = null
     methods.value = []
@@ -256,7 +270,23 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
   const classSearch = ref('')
   const classTotal = ref(0)
   const classesLoading = ref(false)
+  const classesLoadingMore = ref(false)
+  /** 分类统计（业务 / Bean / 依赖 / JDK / 未识别）。 */
+  const classStats = ref<JavaClassStats | null>(null)
+  /** 分类证据摘要（启动信息 / 应用目录 / Bean 数）。 */
+  const classLaunch = ref<Record<string, unknown> | null>(null)
+  /** 类别筛选（空 = 默认：业务类 + Spring Bean）。 */
+  const categoryFilter = ref<JavaClassCategory[]>([])
+  /** 包名前缀筛选（多形态：`com.foo, com.bar.*`）。 */
+  const packageFilter = ref('')
+  /** 高级浏览：显示第三方依赖。 */
+  const includeDependencies = ref(false)
   const includeJdk = ref(false)
+  /** 用户配置的业务包前缀（分类弱证据；持久化）。 */
+  const businessPackages = ref<string[]>(loadBusinessPackages())
+  /** 每页条数（滚动到底增量加载）。 */
+  const CLASS_PAGE_SIZE = 300
+  const classHasMore = computed(() => classes.value.length < classTotal.value)
   const activeClassName = ref<string | null>(null)
   const methods = ref<JavaMethodInfo[]>([])
   /** 原始 agent 方法（风险分级 / param_types；未归一）。 */
@@ -270,6 +300,69 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
     ? (methods.value.find((m) => m.method_id === activeMethodId.value) ?? null)
     : null)
 
+  const BUSINESS_PACKAGES_KEY = 'miyo.javaAttach.businessPackages'
+
+  function loadBusinessPackages(): string[] {
+    try {
+      const raw = localStorage.getItem(BUSINESS_PACKAGES_KEY)
+      const parsed = raw ? (JSON.parse(raw) as unknown) : null
+      return Array.isArray(parsed)
+        ? parsed.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+        : []
+    } catch {
+      return []
+    }
+  }
+
+  function persistBusinessPackages(): void {
+    try {
+      localStorage.setItem(BUSINESS_PACKAGES_KEY, JSON.stringify(businessPackages.value))
+    } catch {
+      // localStorage 不可用：配置退化为会话内存
+    }
+  }
+
+  /** 业务包前缀 → agent 参数（逗号分隔）。 */
+  function businessPackagesParam(): string | undefined {
+    const list = businessPackages.value.map((v) => v.trim()).filter(Boolean)
+    return list.length > 0 ? list.join(',') : undefined
+  }
+
+  /**
+   * 业务包配置变更：持久化 + 通知 agent 全量重建索引。
+   *
+   * 必须 reindex 而不是仅刷新列表：已索引的类缓存了旧判定，只改参数不会
+   * 重新分类（增量刷新只看新增类）。
+   */
+  async function saveBusinessPackages(list: string[]): Promise<void> {
+    businessPackages.value = list.map((v) => v.trim()).filter(Boolean)
+    persistBusinessPackages()
+    if (activePid.value != null) {
+      try {
+        await api.javaAgentClassesReindex(activePid.value, businessPackagesParam())
+      } catch (e) {
+        toast.error(t('java2.classesReindexFailed'), { message: errorText(e) })
+      }
+    }
+    await loadClasses()
+  }
+
+  /** 恢复默认（清空业务包、类别筛选与高级浏览开关）。 */
+  async function restoreClassFilterDefaults(): Promise<void> {
+    categoryFilter.value = []
+    packageFilter.value = ''
+    includeDependencies.value = false
+    includeJdk.value = false
+    await saveBusinessPackages([])
+  }
+
+  function categoryParam(): string | undefined {
+    const list = [...categoryFilter.value]
+    // 空数组 = agent 默认（Spring Bean + 业务类），不传 category
+    return list.length > 0 ? list.join(',') : undefined
+  }
+
+  /** 首屏 / 条件变化时加载第一页（并刷新统计）。 */
   async function loadClasses(): Promise<void> {
     if (activePid.value == null) return
     classesLoading.value = true
@@ -278,14 +371,66 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
         activePid.value,
         classSearch.value.trim() || undefined,
         includeJdk.value,
-        300,
+        CLASS_PAGE_SIZE,
         0,
+        {
+          category: categoryParam(),
+          packagePrefix: packageFilter.value.trim() || undefined,
+          includeDependencies: includeDependencies.value,
+          businessPackages: businessPackagesParam(),
+        },
       )
       classTotal.value = result.total
       classes.value = result.items.map(normalizeClass)
+      if (result.stats) classStats.value = result.stats
+      if (result.launch) classLaunch.value = result.launch
+    } catch {
+      classes.value = []
+      classTotal.value = 0
     } finally {
       classesLoading.value = false
     }
+  }
+
+  /** 增量加载下一页（滚动到底触发；失败保留已加载部分）。 */
+  async function loadMoreClasses(): Promise<void> {
+    if (activePid.value == null || classesLoadingMore.value || !classHasMore.value) return
+    classesLoadingMore.value = true
+    try {
+      const result = await api.javaAgentClasses(
+        activePid.value,
+        classSearch.value.trim() || undefined,
+        includeJdk.value,
+        CLASS_PAGE_SIZE,
+        classes.value.length,
+        {
+          category: categoryParam(),
+          packagePrefix: packageFilter.value.trim() || undefined,
+          includeDependencies: includeDependencies.value,
+          businessPackages: businessPackagesParam(),
+        },
+      )
+      // 去重：并发刷新可能让分页重叠
+      const known = new Set(classes.value.map((c) => c.class_name))
+      for (const item of result.items) {
+        const row = normalizeClass(item)
+        if (!known.has(row.class_name)) classes.value.push(row)
+      }
+      classTotal.value = result.total
+    } catch {
+      // 下一页失败不打断浏览
+    } finally {
+      classesLoadingMore.value = false
+    }
+  }
+
+  /** 类别勾选切换（空数组 = 默认：业务类 + Spring Bean）。 */
+  function toggleCategory(category: JavaClassCategory): void {
+    const current = categoryFilter.value
+    categoryFilter.value = current.includes(category)
+      ? current.filter((c) => c !== category)
+      : [...current, category]
+    void loadClasses()
   }
 
   async function selectClass(className: string | null): Promise<void> {
@@ -304,44 +449,81 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
     }
   }
 
+  /**
+   * 选中方法：生成参数骨架，并优先沿用**上次调用同一方法时填过的参数**。
+   *
+   * 真实反馈（2026-11）：「方法参数很麻烦，每次需要点击编辑」——原先每次切方法/
+   * 切类都重置成 `null`，同一方法重跑也要从头填。现在按 `pid|method_id` 记住上次
+   * 参数，切回来直接可用（类型不兼容的位置回落到骨架默认）。
+   */
   function selectMethod(method: JavaMethodInfo | null, agentMethod?: JavaAgentMethodInfo): void {
     activeMethodId.value = method?.method_id ?? null
     activeAgentMethod.value =
       agentMethod ?? agentMethods.value.find((m) => m.method_id === method?.method_id) ?? null
     if (method) {
-      argsJson.value = JSON.stringify(
-        method.params.map((p) => defaultFor(p.type_name)),
-        null,
-        2,
-      )
+      const skeleton = method.params.map((p) => defaultArgFor(p.type_name, p.generic_type))
+      const previous = readLastArgs(method)
+      const merged = mergeArgs(previous, skeleton)
+      argsJson.value = JSON.stringify(merged, null, 2)
       timeoutOverride.value = null
     }
   }
 
-  function defaultFor(typeName: string): unknown {
-    switch (typeName) {
-      case 'String':
-      case 'char':
-      case 'Character':
-        return ''
-      case 'boolean':
-      case 'Boolean':
-        return false
-      case 'int':
-      case 'Integer':
-      case 'short':
-      case 'Short':
-      case 'byte':
-      case 'Byte':
-      case 'long':
-      case 'Long':
-      case 'float':
-      case 'Float':
-      case 'double':
-      case 'Double':
-        return 0
-      default:
-        return null
+  // ---------- 参数记忆（pid + method_id → 上次参数 JSON） ----------
+  const LAST_ARGS_KEY = 'miyo.javaAttach.lastArgs'
+  /** 上限保护：调试会踩到大量方法，只留最近 200 条。 */
+  const LAST_ARGS_LIMIT = 200
+
+  function loadLastArgs(): Record<string, string> {
+    try {
+      const raw = localStorage.getItem(LAST_ARGS_KEY)
+      return raw ? (JSON.parse(raw) as Record<string, string>) : {}
+    } catch {
+      return {}
+    }
+  }
+
+  let lastArgsByMethod = loadLastArgs()
+
+  function lastArgsKey(method: JavaMethodInfo): string {
+    return `${activePid.value ?? ''}|${method.method_id}`
+  }
+
+  function readLastArgs(method: JavaMethodInfo): unknown[] | null {
+    const raw = lastArgsByMethod[lastArgsKey(method)]
+    if (!raw) return null
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      return Array.isArray(parsed) ? parsed : null
+    } catch {
+      return null
+    }
+  }
+
+  /** 记住本次参数（调用成功后回写；失败也记，方便改一处重试）。 */
+  function rememberArgs(method: JavaMethodInfo, json: string): void {
+    const key = lastArgsKey(method)
+    // 重新插入到末尾，保持「最近使用」顺序
+    delete lastArgsByMethod[key]
+    lastArgsByMethod[key] = json
+    const keys = Object.keys(lastArgsByMethod)
+    if (keys.length > LAST_ARGS_LIMIT) {
+      for (const k of keys.slice(0, keys.length - LAST_ARGS_LIMIT)) delete lastArgsByMethod[k]
+    }
+    try {
+      localStorage.setItem(LAST_ARGS_KEY, JSON.stringify(lastArgsByMethod))
+    } catch {
+      // localStorage 不可用：退化为会话内存
+    }
+  }
+
+  /** 清空参数记忆（设置页「恢复默认」用）。 */
+  function clearRememberedArgs(): void {
+    lastArgsByMethod = {}
+    try {
+      localStorage.removeItem(LAST_ARGS_KEY)
+    } catch {
+      // 忽略
     }
   }
 
@@ -422,6 +604,8 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
         methodSignature: method.signature,
       })
       lastResponse.value = response
+      // 记住本次参数：同一方法重跑时自动回填（免去每次点「编辑 JSON」）
+      rememberArgs(method, argsJson.value)
       void loadHistory()
       return response
     } finally {
@@ -570,7 +754,19 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
     classSearch,
     classTotal,
     classesLoading,
+    classesLoadingMore,
+    classHasMore,
+    classStats,
+    classLaunch,
+    categoryFilter,
+    packageFilter,
+    includeDependencies,
     includeJdk,
+    businessPackages,
+    saveBusinessPackages,
+    restoreClassFilterDefaults,
+    toggleCategory,
+    loadMoreClasses,
     activeClassName,
     methods,
     agentMethods,
@@ -581,6 +777,8 @@ export const useJavaAttachStore = defineStore('javaAttach', () => {
     loadClasses,
     selectClass,
     selectMethod,
+    /** 清空「同一方法记住的上次参数」（设置页 / 恢复默认用）。 */
+    clearRememberedArgs,
     // Bean
     springStatus,
     beans,

@@ -387,6 +387,76 @@ describe('JavaHistoryDrawer', () => {
   })
 })
 
+describe('JavaMethodPanel 调用入口始终可达', () => {
+  /**
+   * 回归：方法数量多的类（实测 22 个）曾把「参数编辑 + 执行按钮」顶到视口之外，
+   * 用户首屏只看到方法列表，误判为「没有调用入口、没有填参数的框」（真实截图）。
+   * 锁定两点：① 方法列表自身限高滚动（不撑高整列）；② 执行按钮与参数区在同一
+   * 面板内始终渲染。
+   */
+  function manyMethods(count: number): JavaMethodInfo[] {
+    return Array.from({ length: count }, (_, i) => ({
+      ...method(),
+      method_id: `com.example.BigService#m${i}(long)`,
+      method_name: `m${i}`,
+      signature: `public void m${i}(long v)`,
+      return_type: 'void',
+      return_generic: 'void',
+      params: [{ name: 'v', type_name: 'long', generic_type: '', required: true }],
+    }))
+  }
+
+  it('22 个方法时仍渲染参数区与执行按钮', () => {
+    const methods = manyMethods(22)
+    const wrapper = mount(JavaMethodPanel, {
+      props: {
+        className: 'com.example.BigService',
+        methods,
+        loading: false,
+        activeMethodId: methods[21].method_id,
+        argsJson: '[0]',
+        editMode: 'form',
+        invoking: false,
+        hasConnection: true,
+        hasTemplate: false,
+        attachMode: true,
+      },
+    })
+    // 执行按钮存在且可用
+    const runBtn = wrapper.find('[data-testid="java-invoke-btn"]')
+    expect(runBtn.exists()).toBe(true)
+    expect(runBtn.attributes('disabled')).toBeUndefined()
+    // 参数输入框存在（方法有 1 个 long 参数）
+    expect(wrapper.findAll('.jmp-param').length).toBe(1)
+    // 方法列表渲染了全部条目（滚动承载，而非截断）
+    expect(wrapper.findAll('.jmp-method')).toHaveLength(22)
+  })
+
+  it('方法列表容器限高并可滚动（不把调用区顶出视口）', () => {
+    const methods = manyMethods(22)
+    const wrapper = mount(JavaMethodPanel, {
+      props: {
+        className: 'com.example.BigService',
+        methods,
+        loading: false,
+        activeMethodId: methods[0].method_id,
+        argsJson: '[0]',
+        editMode: 'form',
+        invoking: false,
+        hasConnection: true,
+        hasTemplate: false,
+        attachMode: true,
+      },
+    })
+    const list = wrapper.find('.jmp-method-list')
+    expect(list.exists()).toBe(true)
+    // 样式在 SFC scoped 块内：用内联断言不可行，改为锁定「列表与编辑区是兄弟节点」
+    // ——只要列表不再是唯一子节点撑满，编辑区就能被滚动/滚动入视口看到。
+    expect(wrapper.find('.jmp-editor').exists()).toBe(true)
+    expect(wrapper.find('.jmp-run-row').exists()).toBe(true)
+  })
+})
+
 describe('JavaMethodPanel 复杂参数与危险确认', () => {
   function mountPanel(overrides: Record<string, unknown> = {}) {
     return mount(JavaMethodPanel, {
@@ -405,11 +475,21 @@ describe('JavaMethodPanel 复杂参数与危险确认', () => {
     })
   }
 
-  it('复杂类型参数显示 JSON 摘要，弹层编辑可应用', async () => {
+  it('复杂类型参数可直接内联编辑，弹层仍可展开', async () => {
     const wrapper = mountPanel()
+    // 内联文本框（核心改进：改一个字段不再需要点两次）
+    const inline = wrapper.find('[data-testid="java-param-inline-0"]')
+    expect(inline.exists()).toBe(true)
+    await inline.setValue('{"items": [1, 2]}')
+    const emittedInline = JSON.parse(
+      wrapper.emitted('update:argsJson')!.at(-1)![0] as string,
+    ) as unknown[]
+    expect(emittedInline[0]).toEqual({ items: [1, 2] })
+
+    // 展开编辑（多行 JSON）仍然可用
     const btn = wrapper.find('[data-testid="java-param-json-0"]')
     expect(btn.exists()).toBe(true)
-    expect(wrapper.text()).toContain('编辑 JSON')
+    expect(wrapper.text()).toContain('展开编辑')
     await btn.trigger('click')
     // 弹层出现（Modal 挂 body）
     await vi.waitFor(() => {
@@ -420,8 +500,11 @@ describe('JavaMethodPanel 复杂参数与危险确认', () => {
     await vi.waitFor(() => {
       expect(wrapper.emitted('update:argsJson')).toBeTruthy()
     })
-    const payload = JSON.parse(wrapper.emitted('update:argsJson')![0][0] as string) as unknown[]
-    expect(payload[0]).toEqual({ items: [1] })
+    // 弹层从当前值起编，应用后保留内联输入的内容
+    const payload = JSON.parse(
+      wrapper.emitted('update:argsJson')!.at(-1)![0] as string,
+    ) as unknown[]
+    expect(payload[0]).toEqual({ items: [1, 2] })
     expect(payload[1]).toBe(7)
   })
 

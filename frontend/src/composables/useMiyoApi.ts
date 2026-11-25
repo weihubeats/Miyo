@@ -29,7 +29,8 @@ import type {
   AiMessageView,
   AuthSpec,
   AgentStatusInfo,
-  JavaAgentClassItem,
+  JavaClassListResponse,
+  JavaClassStats,
   JavaAgentInvokeResponse,
   JavaAgentMethodInfo,
   JavaAttachSessionSnapshot,
@@ -1260,8 +1261,42 @@ export function useMiyoApi() {
     includeJdk?: boolean,
     limit?: number,
     offset?: number,
-  ): Promise<{ total: number; returned: number; offset: number; items: JavaAgentClassItem[] }> {
-    return quiet('java_agent_classes', { pid, search, includeJdk, limit, offset })
+    options?: {
+      category?: string
+      packagePrefix?: string
+      includeDependencies?: boolean
+      businessPackages?: string
+    },
+  ): Promise<JavaClassListResponse> {
+    return quiet<JavaClassListResponse>('java_agent_classes', {
+      pid,
+      search,
+      includeJdk,
+      limit,
+      offset,
+      category: options?.category,
+      packagePrefix: options?.packagePrefix,
+      includeDependencies: options?.includeDependencies,
+      businessPackages: options?.businessPackages,
+    })
+  },
+  /** 类分类统计（业务 / Bean / 依赖 / JDK / 未识别 + 分类证据）。 */
+  javaAgentClassesStats(
+    pid: number,
+    businessPackages?: string,
+  ): Promise<{
+    stats: JavaClassStats
+    launch: Record<string, unknown>
+    loaded_class_count: number
+  }> {
+    return quiet('java_agent_classes_stats', { pid, businessPackages })
+  },
+  /** 全量重建类索引（业务包前缀变更后让分类按新配置重算）。 */
+  javaAgentClassesReindex(
+    pid: number,
+    businessPackages?: string,
+  ): Promise<{ refresh: Record<string, number>; stats: JavaClassStats }> {
+    return quiet('java_agent_classes_reindex', { pid, businessPackages })
   },
   /** 类详情。 */
   javaAgentClassDetail(pid: number, className: string): Promise<Record<string, unknown>> {
@@ -1288,7 +1323,16 @@ export function useMiyoApi() {
   ): Promise<{ context_id: string; context_class: string; total: number; returned: number; items: JavaBeanInfo[] }> {
     return quiet('java_agent_beans', { pid, search, contextId, limit })
   },
-  /** Agent 方法调用（历史 / 审计与 v1 同链路）。 */
+  /** Agent 方法调用（历史 / 审计与 v1 同链路）。
+   *
+   *  `args` 的字段名用**驼峰**：Rust 侧 `JavaAgentInvokeArgs` 带
+   *  `#[serde(rename_all = "camelCase")]`（命令层的 rename_all 只作用于顶层
+   *  参数，不下渗结构体字段）。曾因结构体缺该属性，调用直接报
+   *  `missing field 'method_id'`。
+   *
+   *  `instance` 里的 Bean 名按 agent 协议写 `bean_name`（`InvocationEngine` 读的是
+   *  snake_case），这里同时接受 `beanName` 并在发送前归一。
+   */
   javaAgentInvoke(
     pid: number,
     args: {
@@ -1297,12 +1341,19 @@ export function useMiyoApi() {
       method: string
       paramTypes?: string[]
       arguments: unknown
-      instance?: { kind: 'static' | 'bean' | 'new'; beanName?: string; consent?: boolean }
+      instance?: { kind: 'static' | 'bean' | 'new'; beanName?: string; bean_name?: string; consent?: boolean }
       timeoutMs?: number
       methodSignature?: string
     },
   ): Promise<JavaAgentInvokeResponse> {
-    return run(() => call<JavaAgentInvokeResponse>('java_agent_invoke', { pid, args }))
+    // instance.bean_name：agent 侧按 snake_case 读取；前端两种写法都接受
+    const instance = args.instance
+      ? {
+          ...args.instance,
+          bean_name: args.instance.bean_name ?? args.instance.beanName,
+        }
+      : undefined
+    return run(() => call<JavaAgentInvokeResponse>('java_agent_invoke', { pid, args: { ...args, instance } }))
   },
   /** 取消在途调用（协作式中断）。 */
   javaAgentCancel(pid: number, invocationId: string): Promise<Record<string, unknown>> {

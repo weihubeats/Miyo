@@ -11,7 +11,7 @@ import StatusBadge, { type StatusTone } from '@/components/ui/StatusBadge.vue'
 import { useLocaleStore } from '@/stores/locale'
 import type { JavaProcessInfo, JavaProcessListSummary } from '@/types/miyoApi'
 
-defineProps<{
+const props = defineProps<{
   summary: JavaProcessListSummary | null
   processes: JavaProcessInfo[]
   loading: boolean
@@ -53,13 +53,29 @@ function submitManualPid(): void {
 }
 
 function statusTone(p: JavaProcessInfo): StatusTone {
-  if (p.attached) return 'ok'
+  if (isAttached(p)) return 'ok'
   if (p.attachable) return 'wait'
   return 'fail'
 }
 
+/**
+ * 进程的「已连接」判定：**会话表是唯一真相来源**。
+ *
+ * 实测缺陷（2026-11）：断开 agent 后左侧仍显示「已连接」。原因有两层：
+ * 1. 这里只读 `p.attached`——它来自后端进程扫描快照，断开后要等下一轮 5s
+ *    轮询才变（自动刷新关闭时永远不变）；
+ * 2. 简单加 `|| p.attached` 兜底同样错：断开瞬间会话表已空、快照仍是旧值，
+ *    OR 会把旧的 true 带回来。
+ *
+ * `attachedPids` 由 store 的会话表派生，`detach()` 返回即更新，因此它是唯一
+ * 判据；扫描快照的 `attached` 不参与（它只是同一事实的滞后副本）。
+ */
+function isAttached(p: JavaProcessInfo): boolean {
+  return props.attachedPids.includes(p.pid)
+}
+
 function statusLabel(p: JavaProcessInfo): string {
-  if (p.attached) return t('java2.procAttached')
+  if (isAttached(p)) return t('java2.procAttached')
   if (p.attachable) return t('java2.procAttachable')
   return t('java2.procBlocked')
 }
@@ -151,7 +167,9 @@ function kindLabel(p: JavaProcessInfo): string {
         <div v-if="p.attach_block_reason" class="jpp-block-reason">
           {{ p.attach_block_reason }}
         </div>
-        <div v-if="!p.attached && p.attachable" class="jpp-item-actions">
+        <!-- 断开后要立刻恢复「连接」按钮：判定同样走 isAttached，
+             否则要点一次才消失、再点一次才又出现（实测反馈） -->
+        <div v-if="!isAttached(p) && p.attachable" class="jpp-item-actions">
           <button
             type="button"
             class="miyo-btn miyo-btn-sm miyo-btn-primary"

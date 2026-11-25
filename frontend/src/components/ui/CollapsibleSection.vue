@@ -17,8 +17,14 @@ const props = withDefaults(
     count?: number
     /** 非受控时的初始展开态。 */
     defaultOpen?: boolean
-    /** 受控展开态（v-model:open）。 */
-    open?: boolean
+    /**
+     * 受控展开态（v-model:open）。
+     *
+     * 必须带 `| undefined`：纯 `boolean` 会被编译成 Boolean prop + `default: false`，
+     * 未传时 `props.open` 变成 `false` 而不是 `undefined`，`?? innerOpen.value`
+     * 的受控/非受控判别就失效（分区永远折叠、点不开）。
+     */
+    open?: boolean | undefined
     /** 紧凑模式（抽屉内嵌小分区）。 */
     dense?: boolean
   }>(),

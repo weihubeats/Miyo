@@ -4,9 +4,9 @@
   "version": "0.0.66",
   "identifier": "com.miyo.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "bash ../scripts/ensure-java-jars.sh && npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "bash ../scripts/ensure-java-jars.sh && npm run build",
     "frontendDist": "../dist"
   },
   "app": {

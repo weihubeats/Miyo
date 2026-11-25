@@ -9,7 +9,7 @@
  * 弹层。执行前做基本校验（JSON 合法 + 必填基本类型非空）；方法名命中
  * 危险关键词（delete / clear / drop 等）时二次确认。
  */
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Icon from '@/components/ui/Icon.vue'
 import JsonCodeMirror from '@/components/ui/JsonCodeMirror.vue'
@@ -50,6 +50,8 @@ const emit = defineEmits<{
   useTemplate: []
 }>()
 const timeoutValue = ref<number | null>(null)
+/** 参数编辑区锚点：选中方法后滚进视线（方法多时用户看不到调用入口）。 */
+const editorRef = ref<HTMLElement | null>(null)
 
 /** attach 实例解析选项（实例方法才有意义；static 方法固定 static）。 */
 const instanceOptions = computed<SegmentOption[]>(() => [
@@ -95,6 +97,13 @@ const modeOptions = computed<SegmentOption[]>(() => [
 /** JSON 解析状态（模式切换 / 校验共用）。 */
 const parseError = ref('')
 const formValues = ref<unknown[]>([])
+/**
+ * 复杂参数的内联草稿 / 错误（必须定义在 `watch(immediate: true)` **之前**：
+ * 该 watch 在 setup 期就会跑，晚定义会命中 TDZ
+ * 「Cannot access 'complexDrafts' before initialization」）。
+ */
+const complexDrafts = ref<Record<number, string>>({})
+const complexErrors = ref<Record<number, string>>({})
 
 /** argsJson → 表单值（JSON 模式切回表单时同步）。 */
 watch(
@@ -105,6 +114,9 @@ watch(
       const parsed = JSON.parse(json || '[]') as unknown[]
       if (Array.isArray(parsed)) {
         formValues.value = parsed
+        // 外部换了参数（切方法 / 重跑回填）：丢弃内联草稿，下次从新值重新渲染
+        complexDrafts.value = {}
+        complexErrors.value = {}
         parseError.value = ''
       }
     } catch (e) {
@@ -112,6 +124,31 @@ watch(
     }
   },
   { immediate: true },
+)
+
+/** 方法切换：清空复杂参数的草稿 / 错误（否则沿用上一个方法的输入框文本）。 */
+watch(
+  () => props.activeMethodId,
+  () => {
+    complexDrafts.value = {}
+    complexErrors.value = {}
+  },
+)
+
+/**
+ * 选中方法后把参数编辑区滚进视线。
+ *
+ * 方法数量多的类（实测 22 个），方法列表占满中间列，参数框与「执行」按钮在
+ * 视口之外，用户会以为「没有调用入口」（真实截图）。列表已限高，这里再做一次
+ * 平滑滚动兜底；`prefers-reduced-motion` 交给全局样式处理。
+ */
+watch(
+  () => props.activeMethodId,
+  async (id) => {
+    if (!id) return
+    await nextTick()
+    editorRef.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  },
 )
 
 /** 表单值 → argsJson（输入即回写）。 */
@@ -251,10 +288,51 @@ function applyJsonEdit(): void {
   }
 }
 
-/** 复杂参数摘要（单行预览，点开弹层编辑完整 JSON）。 */
-function complexPreview(value: unknown): string {
-  const text = JSON.stringify(value ?? null)
-  return text.length > 48 ? `${text.slice(0, 48)}…` : text
+// ---------- 复杂参数：内联直接编辑 ----------
+/**
+ * 内联文本 → 值。合法 JSON 立即生效；非法时保留原文并标记（不阻塞继续输入）。
+ *
+ * 之前复杂参数只有「摘要 + 编辑 JSON 弹层」，改一个字段要两次点击 + 一次确认；
+ * 真实反馈：「方法参数很麻烦，每次需要点击编辑」。现在文本框可直改，
+ * 弹层退化为「多行展开」入口。
+ */
+
+function complexDraft(index: number): string {
+  if (index in complexDrafts.value) return complexDrafts.value[index]
+  const value = formValues.value[index]
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value ?? null)
+  } catch {
+    return ''
+  }
+}
+
+function onComplexInput(index: number, event: Event): void {
+  const raw = (event.target as HTMLInputElement).value
+  complexDrafts.value[index] = raw
+  if (raw.trim() === '') {
+    // 空 = 显式 null（与后端「可选参数」语义一致）
+    formValues.value[index] = null
+    delete complexErrors.value[index]
+    onFormInput()
+    return
+  }
+  try {
+    formValues.value[index] = JSON.parse(raw)
+    delete complexErrors.value[index]
+    onFormInput()
+  } catch {
+    complexErrors.value[index] = t('java.paramJsonInvalidShort')
+  }
+}
+
+/** 复杂参数占位提示：直接给出可粘贴的骨架。 */
+function complexPlaceholder(p: JavaParamInfo): string {
+  const type = (p.generic_type || p.type_name || '').toLowerCase()
+  if (type.includes('map')) return '{"key": "value"}'
+  if (type.includes('list') || type.includes('set') || type.includes('[]')) return '["a", "b"]'
+  return '{"field": "value"}'
 }
 
 // ---------- 危险方法名二次确认 ----------
@@ -329,7 +407,7 @@ function onRunClick(): void {
       </div>
 
       <template v-if="activeMethod">
-        <div class="jmp-editor">
+        <div ref="editorRef" class="jmp-editor">
           <div class="jmp-editor-head">
             <span class="jmp-section-title">{{ t('java.argsTitle') }}</span>
             <span class="jmp-head-actions">
@@ -377,16 +455,29 @@ function onRunClick(): void {
                 <span class="jmp-param-type">{{ p.generic_type || p.type_name }}</span>
                 <span v-if="p.required" class="jmp-param-req">{{ t('java.requiredBadge') }}</span>
               </span>
-              <!-- 复杂类型：JSON 摘要 + 弹层编辑 -->
+              <!-- 复杂类型：可**直接编辑**的 JSON 文本框（原先只有摘要 + 弹层，
+                   每次改参数都要先点「编辑 JSON」，真实反馈的高频摩擦点） -->
               <div v-if="isComplexParam(p)" class="jmp-param-complex">
-                <code class="jmp-complex-preview">{{ complexPreview(formValues[i]) }}</code>
+                <input
+                  class="miyo-input jmp-complex-input"
+                  :class="{ invalid: !!complexErrors[i] }"
+                  type="text"
+                  :value="complexDraft(i)"
+                  :placeholder="complexPlaceholder(p)"
+                  :aria-label="p.name"
+                  :data-testid="`java-param-inline-${i}`"
+                  spellcheck="false"
+                  @input="onComplexInput(i, $event)"
+                  @keydown.enter.prevent="onRunClick"
+                />
                 <button
                   type="button"
                   class="miyo-btn jmp-mini-btn"
                   :data-testid="`java-param-json-${i}`"
+                  :title="t('java.paramEditJsonHint')"
                   @click="openJsonEditor(i)"
                 >
-                  {{ t('java.paramEditJson') }}
+                  {{ t('java.paramExpand') }}
                 </button>
               </div>
               <label v-else class="jmp-param-control">
@@ -569,6 +660,14 @@ function onRunClick(): void {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /*
+   * 方法多时列表自身滚动，而不是把「参数编辑 + 执行按钮」顶到视口外。
+   * 实证：22 个方法的类，列表撑满中间列后，用户在首屏看不到参数框与「执行」
+   * 按钮，误判为「没有调用入口」（真实用户截图）。上限按方法条目约 5.5 行折算。
+   */
+  max-height: 38vh;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 .jmp-method {
   display: flex;
@@ -687,15 +786,14 @@ function onRunClick(): void {
   padding: 5px 8px;
   background: var(--bg-elevated);
 }
-.jmp-complex-preview {
+.jmp-complex-input {
   flex: 1;
   min-width: 0;
   font-family: var(--font-mono, monospace);
   font-size: var(--fs-xxs);
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.jmp-complex-input.invalid {
+  border-color: var(--danger, #ef4444);
 }
 .jmp-danger {
   border: 1px solid var(--danger, #ef4444);

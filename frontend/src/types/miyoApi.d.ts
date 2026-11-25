@@ -1372,6 +1372,10 @@ export interface JavaClassInfo {
   simple_name: string
   method_count: number
   bean_name?: string | null
+  /** attach 模式带分类；runtime（SDK 白名单）模式恒为 undefined。 */
+  category?: JavaClassCategory
+  role?: JavaClassRole
+  category_evidence?: string
 }
 
 /** 方法参数。 */
@@ -1481,6 +1485,25 @@ export interface JavaProcessListSummary {
 }
 
 /** Agent 类行（原始形状；store 归一为 JavaClassInfo 后进组件）。 */
+/** 类分类（agent 侧多维度判定：codeSource / 启动信息 / Bean 角色）。 */
+export type JavaClassCategory =
+  | 'application'
+  | 'spring_bean'
+  | 'dependency'
+  | 'jdk_internal'
+  | 'generated'
+  | 'unknown'
+
+/** 业务子类型（仅 application / spring_bean 有意义）。 */
+export type JavaClassRole =
+  | 'controller'
+  | 'service'
+  | 'manager'
+  | 'repository'
+  | 'dto'
+  | 'config'
+  | 'other'
+
 export interface JavaAgentClassItem {
   name: string
   package_name: string
@@ -1489,6 +1512,41 @@ export interface JavaAgentClassItem {
   array: boolean
   synthetic: boolean
   loader: { id: string; name: string; identity: number }
+  /** 分类结果（旧 agent / runtime 模式可能缺失）。 */
+  category?: JavaClassCategory
+  role?: JavaClassRole
+  /** Spring Bean 名（该类是某个 Bean 的实现类时）。 */
+  bean_name?: string | null
+  /** 代码来源（「为什么这样归类」）。 */
+  source?: {
+    kind: string
+    location: string | null
+    label: string
+    evidence: string
+  } | null
+}
+
+/** 分类统计（业务 / Bean / 依赖 / JDK / 未识别 + 角色分布）。 */
+export interface JavaClassStats {
+  total: number
+  loaded_class_count: number
+  by_category: Record<string, number>
+  by_role: Record<string, number>
+  generation: number
+  indexed_at: number
+}
+
+/** 类清单响应（分页 + 统计 + 启动信息证据）。 */
+export interface JavaClassListResponse {
+  total: number
+  returned: number
+  offset: number
+  items: JavaAgentClassItem[]
+  categories?: string[]
+  stats?: JavaClassStats
+  incremental?: boolean
+  refresh?: Record<string, number>
+  launch?: Record<string, unknown>
 }
 
 /** Agent 握手信息。 */

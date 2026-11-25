@@ -210,9 +210,25 @@ function selectBean(bean: import('@/types/miyoApi').JavaBeanInfo): void {
 }
 
 async function attachRun(): Promise<void> {
-  const response = await attachStore.invoke()
-  if (response && response.status !== 'success') {
-    toast.warning(t('java.invokeFailedToast'))
+  try {
+    const response = await attachStore.invoke()
+    if (!response) return
+    if (response.status === 'success') {
+      toast.success(t('java.invokeSuccessToast'), {
+        message: t('java.invokeSuccessMeta', {
+          duration: String(response.duration_ms ?? 0),
+          instance: response.instance_kind ?? '',
+        }),
+      })
+    } else if (response.status === 'timeout') {
+      toast.warning(t('java.invokeTimeoutToast'))
+    } else {
+      toast.warning(t('java.invokeFailedToast'))
+    }
+  } catch (e) {
+    // 链路级失败（权限 / 未连接 / 参数非法）必须弹出来：
+    // 原先 attachRun 不 catch，rejection 只在 console 里，界面毫无反馈。
+    toast.error(t('java.invokeErrorToast'), { message: errorText(e), duration: 6000 })
   }
 }
 
@@ -228,6 +244,21 @@ async function attachCancel(): Promise<void> {
 /** 类搜索 → 服务端过滤（Agent classes.list search）+ 本地浏览器过滤叠加。 */
 function onAttachClassSearch(term: string): void {
   attachStore.classSearch = term
+  void attachStore.loadClasses()
+}
+
+function onAttachPackageFilter(value: string): void {
+  attachStore.packageFilter = value
+  void attachStore.loadClasses()
+}
+
+function onAttachIncludeDependencies(value: boolean): void {
+  attachStore.includeDependencies = value
+  void attachStore.loadClasses()
+}
+
+function onAttachIncludeJdk(value: boolean): void {
+  attachStore.includeJdk = value
   void attachStore.loadClasses()
 }
 
@@ -650,9 +681,25 @@ const modeOptions = computed(() => [
                 :search="attachStore.classSearch"
                 :recent="[]"
                 :is-favorite="attachStore.isFavorite"
+                :categorized="true"
+                :stats="attachStore.classStats"
+                :has-more="attachStore.classHasMore"
+                :loading-more="attachStore.classesLoadingMore"
+                :selected-categories="attachStore.categoryFilter"
+                :package-filter="attachStore.packageFilter"
+                :include-dependencies="attachStore.includeDependencies"
+                :include-jdk="attachStore.includeJdk"
+                :business-packages="attachStore.businessPackages"
                 @update:search="onAttachClassSearch"
                 @select="attachStore.selectClass($event)"
                 @toggle-favorite="attachStore.toggleFavorite($event)"
+                @update:package-filter="onAttachPackageFilter"
+                @toggle-category="attachStore.toggleCategory($event)"
+                @update:include-dependencies="onAttachIncludeDependencies"
+                @update:include-jdk="onAttachIncludeJdk"
+                @load-more="attachStore.loadMoreClasses()"
+                @save-business-packages="attachStore.saveBusinessPackages($event)"
+                @restore-defaults="attachStore.restoreClassFilterDefaults()"
               />
             </template>
             <template #second>
@@ -679,6 +726,22 @@ const modeOptions = computed(() => [
               />
             </template>
           </SplitPanes>
+          <!--
+            结果区（attach 分支原先缺失）：点击「执行」后 only 有中列的 Spinner
+            闪一下，返回值 / 异常 / 耗时没有任何落点，用户视角等于「点了没反应」
+            而方法确实执行了（真实反馈）。与 runtime 分支保持同一组件。
+          -->
+          <div class="jdv-attach-result">
+            <JavaResultPanel
+              :response="attachStore.lastResponse"
+              :started-at="attachStore.lastStartedAt"
+              :args-json="attachStore.argsJson"
+              :params="attachStore.activeMethod?.params ?? []"
+              :invoking="attachStore.invoking"
+              :history="attachStore.history.slice(0, 10)"
+              @rerun="rerunFromPanel"
+            />
+          </div>
         </template>
       </SplitPanes>
     </div>
@@ -895,5 +958,15 @@ const modeOptions = computed(() => [
 .jdv-body > :deep(.split-panes) {
   flex: 1;
   min-width: 0;
+}
+/* attach 中列右侧的结果区：与 runtime 分支同宽高，独立滚动 */
+.jdv-attach-result {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  border-left: 1px solid var(--border);
+  overflow: hidden;
 }
 </style>
