@@ -100,6 +100,11 @@ hex = "0.4"
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }
 
+# Windows 专有：启动时读注册表探测 WebView2 运行时（issue #192 黑屏兜底）。
+# 只有 Windows 目标才会编译 lib.rs 里的 win_reg_value；其它平台不拉这个依赖。
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Registry"] }
+
 # dev 构建瘦身：行号表级调试信息（backtrace 仍带行号；lldb 变量检查降级）。
 # 依赖与测试二进制体积约降 60%——target/ 的最大增长源（deps 15G 实测）。
 # 需要完整变量调试时临时改回 debug = true 并重编。
