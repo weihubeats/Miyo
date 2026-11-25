@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import io.miyo.agent.inspect.ClassInspector;
+import io.miyo.agent.inspect.ClassInspector.SpringBeanEvidence;
 import io.miyo.agent.invoke.InstanceResolver;
 import io.miyo.agent.invoke.InvocationEngine;
 import io.miyo.agent.ipc.IpcException;
@@ -79,8 +80,33 @@ public final class AgentMain {
 
         // 核心组件装配（失败 = 初始化失败，写诊断文件）
         try {
-            inspector = new ClassInspector(inst);
-            discovery = new ContextDiscovery(inspector);
+            ClassInspector classInspector = new ClassInspector(inst);
+            ContextDiscovery contextDiscovery = new ContextDiscovery(classInspector);
+            // 类发现 ↔ Spring：分类器需要 ROLE_APPLICATION Bean 实现类清单作为
+            // 「业务类」证据（只读 BeanDefinition，绝不实例化 Bean）
+            classInspector.setSpringBeanSource(new ClassInspector.SpringBeanSource() {
+                @Override
+                public java.util.Set<String> applicationBeanClasses() {
+                    return contextDiscovery.applicationBeanClasses();
+                }
+
+                @Override
+                public SpringBeanEvidence springBeanEvidence() {
+                    return contextDiscovery.beanEvidence().toInspectorEvidence();
+                }
+
+                @Override
+                public java.util.Map<String, String> beanNamesByClass() {
+                    return contextDiscovery.beanNamesByClass();
+                }
+
+                @Override
+                public boolean springPresent() {
+                    return contextDiscovery.springPresent();
+                }
+            });
+            inspector = classInspector;
+            discovery = contextDiscovery;
             engine = new InvocationEngine(
                     inspector,
                     new InstanceResolver(discovery, false),

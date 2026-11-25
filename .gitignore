@@ -21,6 +21,7 @@ java/miyo-java-agent/target/
 java/miyo-attach-launcher/target/
 java/examples/plain-app/build/
 java/examples/spring-boot-demo/target/
+java/examples/spring-boot2-demo/target/
 java/dist/
 
 

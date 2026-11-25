@@ -63,7 +63,42 @@ public final class InstanceResolver {
             return new Resolved(null, KIND_STATIC, null);
         }
         if (KIND_BEAN.equals(kind)) {
-            return resolveBean(targetClass, beanName);
+            // 自动降级：先当 Bean 取，取不到再建临时实例。
+            //
+            // 前端实例策略 `auto` 对非静态方法一律发 `bean`，而目标类未必是 Bean
+            // （工具类 / 未注册实现 / 静态持有型服务）。严格要求「必须先切到 new」
+            // 会让最常见的调用直接报 `[not_found] Bean 不存在或无法解析`
+            // （真实用户调用 `isDebtFullyCleared` 踩到）。这里按「Bean 优先」降级，
+            // 既保住 Spring 场景拿到真实单例，又让普通类开箱可用。
+            //
+            // 安全边界不变：只有**无参构造**才降级；构造器副作用与 `new` 一致，
+            // 但既然拿不到 Bean 就只剩这条路，且失败信息会明确说明走了降级。
+            Resolved fromBean = resolveBeanOrNull(targetClass, beanName);
+            if (fromBean != null) {
+                return fromBean;
+            }
+            // 降级同样要过 consent 闸：构造器会执行，副作用与显式 new 等价。
+            // 不在这里放宽，否则 `bean` 就成了一条绕过用户确认的副作用通道。
+            if (!consent && !allowNewInstanceWithoutConsent) {
+                throw new io.miyo.agent.ipc.IpcException(
+                        io.miyo.agent.ipc.Protocol.ERR_NOT_FOUND,
+                        "未找到该类的 Spring Bean（" + targetClass.getName() + "）。"
+                                + "降级为新建临时实例需要执行构造器（可能有副作用），"
+                                + "请在参数区把「实例」切为「新建临时实例」并确认后重试；"
+                                + "静态方法请切为「静态调用」。");
+            }
+            Resolved created;
+            try {
+                created = newInstance(targetClass);
+            } catch (io.miyo.agent.ipc.IpcException e) {
+                // 无无参构造：把「不是 Bean」这个根因说清楚，而不是只报构造器缺失
+                throw new io.miyo.agent.ipc.IpcException(
+                        io.miyo.agent.ipc.Protocol.ERR_NOT_FOUND,
+                        "未找到该类的 Spring Bean，且无法新建实例（" + e.getMessage() + "）。"
+                                + "若是静态方法请切为「静态调用」。");
+            }
+            return new Resolved(created.instance, KIND_NEW,
+                    beanName == null ? null : beanName);
         }
         if (KIND_NEW.equals(kind)) {
             if (!consent && !allowNewInstanceWithoutConsent) {
@@ -87,11 +122,35 @@ public final class InstanceResolver {
         }
         Object bean = handle.getBean(beanName, targetClass);
         if (bean == null) {
+            // 按类型取不到时给出可执行的下一步：这类类常见于「业务类但不是 Bean」
+            //（工具类 / 静态持有 / 未注册的 service 实现），只能用 new 或 static。
+            String hint = beanName != null && !beanName.isEmpty()
+                    ? "Bean「" + beanName + "」不存在"
+                    : "未找到类型为 " + targetClass.getName() + " 的 Bean";
             throw new io.miyo.agent.ipc.IpcException(
                     io.miyo.agent.ipc.Protocol.ERR_NOT_FOUND,
-                    "Bean 不存在或无法解析：" + (beanName != null ? beanName : targetClass.getName()));
+                    hint + "。若该类不是 Spring Bean（或 Bean 名不同），"
+                            + "请在参数区把「实例」切为「新建临时实例」后重试；"
+                            + "静态方法请切为「静态调用」。");
         }
         return new Resolved(bean, KIND_BEAN, beanName);
+    }
+
+    /**
+     * 取 Bean，取不到返回 null（供 `bean` 策略降级）。
+     *
+     * 上下文本身不可用（未捕获 / 无 Spring）时不降级——那属于环境问题，
+     * 建临时实例也未必有意义，交给调用方按原错误上报。
+     */
+    private Resolved resolveBeanOrNull(Class<?> targetClass, String beanName) throws Exception {
+        io.miyo.agent.spring.ContextDiscovery.ContextHandle handle = discovery.activeContext();
+        if (handle == null) {
+            throw new io.miyo.agent.ipc.IpcException(
+                    io.miyo.agent.ipc.Protocol.ERR_UNSUPPORTED,
+                    discovery.unavailableReason());
+        }
+        Object bean = handle.getBean(beanName, targetClass);
+        return bean == null ? null : new Resolved(bean, KIND_BEAN, beanName);
     }
 
     /** 新建临时实例（无参构造；构造器抛错原样上抛为 failed）。 */

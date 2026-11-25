@@ -87,4 +87,15 @@ public final class SpringCapture {
         captureCount = 0;
         state = "disabled";
     }
+
+    /**
+     * 清空已捕获的上下文（测试用，跨包可见）。
+     *
+     * 捕获表是**进程级静态状态**，单测里多个用例共用 JVM；不清空会让
+     * 前一个用例注册的假上下文被后一个用例命中（实证：`beanWithoutName`
+     * 拿到别的用例的实例）。
+     */
+    public static void resetForTests() {
+        reset();
+    }
 }
