@@ -218,6 +218,9 @@ const COMMANDS: &[&str] = &[
     "java_agent_status",
     "java_agent_spring_status",
     "java_agent_classes",
+    // 类分类（业务代码优先）：统计与全量重建索引——业务包前缀变更后前端会调用
+    "java_agent_classes_stats",
+    "java_agent_classes_reindex",
     "java_agent_class_detail",
     "java_agent_methods",
     "java_agent_beans",

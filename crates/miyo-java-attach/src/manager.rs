@@ -106,6 +106,10 @@ impl AttachManager {
                 agent_jar: candidate.join(AGENT_JAR_NAME),
             };
             if tools.ready() {
+                // 打出最终选中的目录：jar 优先级错位（例如 dev 模式命中旧缓存副本）
+                // 表现为「重编无用、界面还是旧行为」，没有这行日志只能靠排查进程
+                // 打开的 fd 才能发现（实证过）。
+                tracing::debug!("attach 使用 jar 目录：{}", candidate.display());
                 return Ok(tools);
             }
         }
@@ -590,6 +594,42 @@ mod tests {
         let err = check_session_limit(MAX_ATTACH_SESSIONS).unwrap_err();
         assert!(err.user_message().contains("上限"), "{err}");
         assert!(check_session_limit(MAX_ATTACH_SESSIONS + 1).is_err());
+    }
+
+    /// `resolve_tools` 取**第一个就绪**的候选目录：候选顺序即优先级真相。
+    ///
+    /// 回归背景（实证）：dev 模式曾把数据目录缓存（`Miyo-dev/java`，某次下载的
+    /// 旧副本）排在仓库构建产物之前，导致 `scripts/build_java_debug.sh` 重编多少
+    /// 次都无效——attach 永远拿到旧 jar，界面回退扁平列表并显示数组类。
+    #[test]
+    fn resolve_tools_prefers_first_ready_candidate() {
+        let tmp = std::env::temp_dir().join(format!("miyo-resolve-{}", std::process::id()));
+        let stale = tmp.join("stale");
+        let fresh = tmp.join("fresh");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::create_dir_all(&fresh).unwrap();
+        // stale 一份旧 jar（内容无关，只要存在）——代表缓存副本
+        std::fs::write(stale.join(LAUNCHER_JAR_NAME), b"old").unwrap();
+        std::fs::write(stale.join(AGENT_JAR_NAME), b"old").unwrap();
+        // fresh 为构建产物
+        std::fs::write(fresh.join(LAUNCHER_JAR_NAME), b"new").unwrap();
+        std::fs::write(fresh.join(AGENT_JAR_NAME), b"new").unwrap();
+
+        // 顺序：fresh 在前 → 命中 fresh（修复后的候选顺序）
+        let manager = AttachManager::new(vec![fresh.clone(), stale.clone()], tmp.join("data"));
+        let picked = manager.resolve_tools().unwrap();
+        assert_eq!(picked.agent_jar, fresh.join(AGENT_JAR_NAME));
+
+        // 顺序：stale 在前 → 命中 stale（记录「顺序决定优先级」这一事实）
+        let manager = AttachManager::new(vec![stale.clone(), fresh.clone()], tmp.join("data"));
+        let picked = manager.resolve_tools().unwrap();
+        assert_eq!(picked.agent_jar, stale.join(AGENT_JAR_NAME));
+
+        // 全缺 → Err（错误信息带搜索目录）
+        let manager = AttachManager::new(vec![tmp.join("missing")], tmp.join("data"));
+        assert!(manager.resolve_tools().is_err());
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// mock Agent IPC：握手成功；`answer_ping=false` 时对 ping 不回包

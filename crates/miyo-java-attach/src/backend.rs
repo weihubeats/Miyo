@@ -30,13 +30,14 @@ pub enum AgentOp {
     Ping,
     Status,
     SpringStatus,
-    Classes {
-        search: Option<String>,
-        include: Option<String>,
-        exclude: Option<String>,
-        include_jdk: bool,
-        limit: u32,
-        offset: u32,
+    Classes(ClassesQuery),
+    /// 类分类统计（业务 / Bean / 依赖 / JDK / 未识别计数 + 启动信息证据）。
+    ClassesStats {
+        business_packages: Option<String>,
+    },
+    /// 全量重建类索引（业务包配置变化后）。
+    ClassesReindex {
+        business_packages: Option<String>,
     },
     ClassDetail {
         class: String,
@@ -59,6 +60,66 @@ pub enum AgentOp {
     Stop,
 }
 
+/// 类清单查询参数（`classes.list`）。
+///
+/// 分类维度（与 Java agent 的 `ClassInspector.ListQuery` 一一对应）：
+/// category / package_prefix / include_dependencies / include_jdk，兼容老字段
+/// include / exclude。全部字段可选——缺省即 agent 侧默认（Spring Bean + 业务类）。
+#[derive(Debug, Clone, Default)]
+pub struct ClassesQuery {
+    pub search: Option<String>,
+    pub include: Option<String>,
+    pub exclude: Option<String>,
+    /// 类别筛选（wire 名：application / spring_bean / dependency / jdk_internal /
+    /// generated / unknown），逗号分隔。
+    pub category: Option<String>,
+    /// 包名前缀（`com.example,com.foo.*`）。
+    pub package_prefix: Option<String>,
+    pub include_dependencies: bool,
+    pub include_jdk: bool,
+    pub limit: u32,
+    pub offset: u32,
+    /// 用户配置的业务包前缀（分类弱证据；由前端持久化后透传）。
+    pub business_packages: Option<String>,
+    /// 是否刷新索引（默认 true = 增量；false 只读缓存）。
+    pub refresh_index: bool,
+}
+
+impl ClassesQuery {
+    /// 前端只传 pid 时的默认查询（业务类 + Spring Bean，首页 200 条）。
+    pub fn new() -> Self {
+        Self {
+            limit: 200,
+            refresh_index: true,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn to_params(&self) -> Value {
+        let mut map = serde_json::Map::new();
+        let mut put = |key: &str, value: Option<&str>| {
+            if let Some(text) = value {
+                map.insert(key.to_string(), Value::String(text.to_string()));
+            }
+        };
+        put("search", self.search.as_deref());
+        put("include", self.include.as_deref());
+        put("exclude", self.exclude.as_deref());
+        put("category", self.category.as_deref());
+        put("package_prefix", self.package_prefix.as_deref());
+        put("business_packages", self.business_packages.as_deref());
+        map.insert(
+            "include_dependencies".into(),
+            Value::Bool(self.include_dependencies),
+        );
+        map.insert("include_jdk".into(), Value::Bool(self.include_jdk));
+        map.insert("refresh_index".into(), Value::Bool(self.refresh_index));
+        map.insert("limit".into(), Value::from(self.limit));
+        map.insert("offset".into(), Value::from(self.offset));
+        Value::Object(map)
+    }
+}
+
 impl AgentOp {
     /// sidecar 侧 method 名（bin dispatch 分支名）。
     fn method(&self) -> &'static str {
@@ -66,7 +127,9 @@ impl AgentOp {
             AgentOp::Ping => "client.ping",
             AgentOp::Status => "client.status",
             AgentOp::SpringStatus => "client.spring_status",
-            AgentOp::Classes { .. } => "client.classes",
+            AgentOp::Classes(_) => "client.classes",
+            AgentOp::ClassesStats { .. } => "client.classes_stats",
+            AgentOp::ClassesReindex { .. } => "client.classes_reindex",
             AgentOp::ClassDetail { .. } => "client.class_detail",
             AgentOp::Methods { .. } => "client.methods",
             AgentOp::Beans { .. } => "client.beans",
@@ -77,37 +140,15 @@ impl AgentOp {
     }
 
     fn params(&self) -> Value {
-        #[derive(serde::Serialize)]
-        struct Classes<'a> {
-            #[serde(skip_serializing_if = "Option::is_none")]
-            search: Option<&'a str>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            include: Option<&'a str>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            exclude: Option<&'a str>,
-            #[serde(rename = "includeJdk")]
-            include_jdk: bool,
-            limit: u32,
-            offset: u32,
-        }
         match self {
             AgentOp::Ping | AgentOp::Status | AgentOp::SpringStatus => Value::Null,
-            AgentOp::Classes {
-                search,
-                include,
-                exclude,
-                include_jdk,
-                limit,
-                offset,
-            } => serde_json::to_value(Classes {
-                search: search.as_deref(),
-                include: include.as_deref(),
-                exclude: exclude.as_deref(),
-                include_jdk: *include_jdk,
-                limit: *limit,
-                offset: *offset,
-            })
-            .unwrap_or(Value::Null),
+            AgentOp::Classes(query) => query.to_params(),
+            AgentOp::ClassesStats { business_packages } => serde_json::json!({
+                "package_prefix": business_packages,
+            }),
+            AgentOp::ClassesReindex { business_packages } => serde_json::json!({
+                "package_prefix": business_packages,
+            }),
             AgentOp::ClassDetail { class } => serde_json::json!({ "class": class }),
             AgentOp::Methods { class } => serde_json::json!({ "class": class }),
             AgentOp::Beans {
@@ -378,22 +419,16 @@ async fn local_client_call(
             .spring_status()
             .await
             .map_err(miyo_core::AppError::from),
-        AgentOp::Classes {
-            search,
-            include,
-            exclude,
-            include_jdk,
-            limit,
-            offset,
-        } => client
-            .classes(
-                search.as_deref(),
-                include.as_deref(),
-                exclude.as_deref(),
-                include_jdk,
-                limit,
-                offset,
-            )
+        AgentOp::Classes(query) => client
+            .classes(&query)
+            .await
+            .map_err(miyo_core::AppError::from),
+        AgentOp::ClassesStats { business_packages } => client
+            .classes_stats(business_packages.as_deref())
+            .await
+            .map_err(miyo_core::AppError::from),
+        AgentOp::ClassesReindex { business_packages } => client
+            .classes_reindex(business_packages.as_deref())
             .await
             .map_err(miyo_core::AppError::from),
         AgentOp::ClassDetail { class } => client

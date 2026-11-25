@@ -219,6 +219,8 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-java-agent-status`
 - `allow-java-agent-spring-status`
 - `allow-java-agent-classes`
+- `allow-java-agent-classes-stats`
+- `allow-java-agent-classes-reindex`
 - `allow-java-agent-class-detail`
 - `allow-java-agent-methods`
 - `allow-java-agent-beans`
@@ -2638,6 +2640,58 @@ Enables the java_agent_classes command without any pre-configured scope.
 <td>
 
 Denies the java_agent_classes command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-agent-classes-reindex`
+
+</td>
+<td>
+
+Enables the java_agent_classes_reindex command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-agent-classes-reindex`
+
+</td>
+<td>
+
+Denies the java_agent_classes_reindex command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-java-agent-classes-stats`
+
+</td>
+<td>
+
+Enables the java_agent_classes_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-java-agent-classes-stats`
+
+</td>
+<td>
+
+Denies the java_agent_classes_stats command without any pre-configured scope.
 
 </td>
 </tr>

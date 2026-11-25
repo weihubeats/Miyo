@@ -21,7 +21,7 @@ use crate::error::{CommandError, CommandErrorCode, CommandResult};
 use crate::state::AppState;
 
 use crate::commands::java_gate::ensure_java_permission;
-use miyo_java_attach::backend::AgentOp;
+use miyo_java_attach::backend::{AgentOp, ClassesQuery};
 
 /// 高危动作审计（attach / unload / invoke）。
 async fn audit(db: &sqlx::SqlitePool, message: &str) {
@@ -185,8 +185,13 @@ pub async fn java_agent_spring_status(
         .map_err(CommandError::from)
 }
 
-/// 已加载类清单（过滤 / 搜索 / 分页；JDK 内部类默认排除）。
+/// 已加载类清单（分类 / 包前缀 / 搜索 / 分页）。
+///
+/// 默认只返回「业务类 + Spring Bean」：依赖与 JDK 需要显式
+/// `includeDependencies` / `includeJdk` 才出现（分类由 agent 侧按 codeSource /
+/// 启动信息 / Bean 角色判定，不靠包名黑名单）。
 #[tauri::command(rename_all = "camelCase")]
+#[allow(clippy::too_many_arguments)]
 pub async fn java_agent_classes(
     state: State<'_, AppState>,
     pid: i64,
@@ -194,19 +199,62 @@ pub async fn java_agent_classes(
     include_jdk: Option<bool>,
     limit: Option<u32>,
     offset: Option<u32>,
+    category: Option<String>,
+    package_prefix: Option<String>,
+    include_dependencies: Option<bool>,
+    business_packages: Option<String>,
+) -> CommandResult<serde_json::Value> {
+    ensure_java_permission(&state.db, "java.class.inspect").await?;
+    let mut query = ClassesQuery::new();
+    query.search = search;
+    query.category = category;
+    query.package_prefix = package_prefix;
+    query.include_dependencies = include_dependencies.unwrap_or(false);
+    query.include_jdk = include_jdk.unwrap_or(false);
+    query.business_packages = business_packages;
+    query.limit = limit.unwrap_or(200);
+    query.offset = offset.unwrap_or(0);
+    state
+        .java_backend
+        .agent_call(pid, AgentOp::Classes(query))
+        .await
+        .map_err(CommandError::from)
+}
+
+/// 类分类统计（业务 / Bean / 依赖 / JDK / 未识别计数 + 分类证据摘要）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn java_agent_classes_stats(
+    state: State<'_, AppState>,
+    pid: i64,
+    business_packages: Option<String>,
 ) -> CommandResult<serde_json::Value> {
     ensure_java_permission(&state.db, "java.class.inspect").await?;
     state
         .java_backend
         .agent_call(
             pid,
-            AgentOp::Classes {
-                search,
-                include: None,
-                exclude: None,
-                include_jdk: include_jdk.unwrap_or(false),
-                limit: limit.unwrap_or(200),
-                offset: offset.unwrap_or(0),
+            AgentOp::ClassesStats {
+                business_packages: business_packages.filter(|s| !s.trim().is_empty()),
+            },
+        )
+        .await
+        .map_err(CommandError::from)
+}
+
+/// 全量重建类索引（用户修改业务包前缀后，让分类按新配置重算）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn java_agent_classes_reindex(
+    state: State<'_, AppState>,
+    pid: i64,
+    business_packages: Option<String>,
+) -> CommandResult<serde_json::Value> {
+    ensure_java_permission(&state.db, "java.class.inspect").await?;
+    state
+        .java_backend
+        .agent_call(
+            pid,
+            AgentOp::ClassesReindex {
+                business_packages: business_packages.filter(|s| !s.trim().is_empty()),
             },
         )
         .await
@@ -272,16 +320,28 @@ pub async fn java_agent_beans(
 // ---------------------------------------------------------------------------
 
 /// attach 调用入参。
+///
+/// 字段用 camelCase 反序列化：前端 `useMiyoApi.javaAgentInvoke` 传的是
+/// `methodId` / `paramTypes` / `timeoutMs`，而命令上的
+/// `#[tauri::command(rename_all = "camelCase")]` **只作用于顶层命令参数**
+/// （`pid`、`args`），不会下渗到结构体字段。缺这行时 serde 只认
+/// `method_id`，前端调用直接报
+/// `invalid args 'args' for command 'java_agent_invoke': missing field 'method_id'`
+/// （真实用户调用 `isDebtFullyCleared` 时踩到）。
+///
+/// 同时保留 snake_case 别名：历史回放 / 外部脚本可能按协议原文传参。
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JavaAgentInvokeArgs {
     /// 方法稳定标识 `Class#method(Types)`（历史 / 重放键）。
+    #[serde(alias = "method_id")]
     pub method_id: String,
     /// 目标类全限定名。
     pub class: String,
     /// 方法名。
     pub method: String,
     /// 擦除参数类型表（重载定位；缺省要求方法名唯一）。
-    #[serde(default)]
+    #[serde(default, alias = "param_types")]
     pub param_types: Vec<String>,
     /// 位置参数（JSON 数组）。
     #[serde(default)]
@@ -290,9 +350,10 @@ pub struct JavaAgentInvokeArgs {
     #[serde(default)]
     pub instance: serde_json::Value,
     /// 调用超时毫秒。
+    #[serde(alias = "timeout_ms")]
     pub timeout_ms: Option<u64>,
     /// 人类可读签名（历史快照）。
-    #[serde(default)]
+    #[serde(default, alias = "method_signature")]
     pub method_signature: Option<String>,
 }
 
@@ -448,6 +509,76 @@ pub fn invocation_status_of(status: &str) -> InvocationStatus {
 pub async fn shutdown_attach_on_exit(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         state.java_attach.shutdown_all().await;
+    }
+}
+
+#[cfg(test)]
+mod invoke_args_tests {
+    use super::JavaAgentInvokeArgs;
+
+    /// 前端 `useMiyoApi.javaAgentInvoke` 传的是驼峰字段。
+    ///
+    /// 回归（真实用户调用 `isDebtFullyCleared` 报
+    /// `invalid args 'args' for command 'java_agent_invoke': missing field 'method_id'`）：
+    /// 命令上的 `#[tauri::command(rename_all = "camelCase")]` 只作用于顶层命令
+    /// 参数，不会下渗到结构体字段；结构体本身缺 `rename_all` 时 serde 只认
+    /// snake_case。
+    #[test]
+    fn deserializes_camel_case_payload_from_frontend() {
+        let json = serde_json::json!({
+            "methodId": "com.redotpay.CardTransactionBillService#isDebtFullyCleared(long)",
+            "class": "com.redotpay.CardTransactionBillService",
+            "method": "isDebtFullyCleared",
+            "paramTypes": ["long"],
+            "arguments": [1],
+            "instance": { "kind": "bean" },
+            "timeoutMs": 30000,
+            "methodSignature": "boolean isDebtFullyCleared(Long)"
+        });
+        let args: JavaAgentInvokeArgs = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            args.method_id,
+            "com.redotpay.CardTransactionBillService#isDebtFullyCleared(long)"
+        );
+        assert_eq!(args.param_types, vec!["long".to_string()]);
+        assert_eq!(args.timeout_ms, Some(30000));
+        assert_eq!(
+            args.method_signature.as_deref(),
+            Some("boolean isDebtFullyCleared(Long)")
+        );
+    }
+
+    /// 兼容协议原文（snake_case）：历史回放 / 外部脚本可能直接传 `method_id`。
+    #[test]
+    fn deserializes_snake_case_payload_for_replay() {
+        let json = serde_json::json!({
+            "method_id": "a.B#m()",
+            "class": "a.B",
+            "method": "m",
+            "param_types": [],
+            "arguments": [],
+            "timeout_ms": 5000
+        });
+        let args: JavaAgentInvokeArgs = serde_json::from_value(json).unwrap();
+        assert_eq!(args.method_id, "a.B#m()");
+        assert_eq!(args.timeout_ms, Some(5000));
+    }
+
+    /// 缺 `method_id` 仍应报错（不能因为兼容而放宽必填项）。
+    #[test]
+    fn still_requires_method_id() {
+        let json = serde_json::json!({
+            "class": "a.B",
+            "method": "m"
+        });
+        let err = serde_json::from_value::<JavaAgentInvokeArgs>(json).unwrap_err();
+        // rename_all 生效后 serde 报的是规范名（methodId）；snake_case 是 alias，
+        // 不在错误信息里。两种命名都算通过。
+        let msg = err.to_string();
+        assert!(
+            msg.contains("methodId") || msg.contains("method_id"),
+            "{msg}"
+        );
     }
 }
 

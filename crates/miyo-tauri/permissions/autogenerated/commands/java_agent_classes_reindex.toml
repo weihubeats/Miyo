@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-java-agent-classes-reindex"
+description = "Enables the java_agent_classes_reindex command without any pre-configured scope."
+commands.allow = ["java_agent_classes_reindex"]
+
+[[permission]]
+identifier = "deny-java-agent-classes-reindex"
+description = "Denies the java_agent_classes_reindex command without any pre-configured scope."
+commands.deny = ["java_agent_classes_reindex"]

@@ -191,10 +191,29 @@ fn webview2_summary() -> String {
 #[cfg(feature = "java")]
 fn java_attach_jar_candidates(app: &tauri::AppHandle) -> Vec<std::path::PathBuf> {
     let mut candidates = Vec::new();
-    // 0. 组件自动下载落地目录（市场远程获取的 jar 优先于随包资源——
-    //    远程版本可能比安装包携带的更新）
+    // dev 回退（优先级最高）：CARGO_MANIFEST_DIR 在编译期已知（miyo-tauri/src → 仓库根 java/dist）。
+    //
+    // 必须排在自动下载缓存之前：dev 模式下数据目录是 `Miyo-dev`，其中的 jar 是**某次
+    // 下载/解压留下的副本**。旧实现把缓存排第一，于是 `scripts/build_java_debug.sh`
+    // 重编多少次都无效——attach 永远拿到缓存里那份旧 jar（实证：TARGET 进程
+    // `/Miyo-dev/java/miyo-java-agent.jar` 停在数月前的 347KB，缺 ClassClassifier /
+    // ClassIndex，界面回退到扁平列表并显示数组类）。
+    //
+    // `option_env!` 仅在编译期有 CARGO_MANIFEST_DIR 时存在：官方安装包（CI 构建）
+    // 同样有该变量，但指向构建机的路径，运行期通常不存在 → `ready()` 探测失败，
+    // 自然落到随包资源/缓存，行为不变。
+    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
+        candidates.push(
+            std::path::PathBuf::from(manifest_dir)
+                .join("..")
+                .join("..")
+                .join("java")
+                .join("dist"),
+        );
+    }
+    // 1. 组件自动下载落地目录（市场远程获取的 jar；远程版本可能比安装包携带的更新）
     candidates.push(miyo_storage::db::data_dir().join("java"));
-    // bundle.resources 条目是 `resources/java/*`，Resource 根下完整相对路径
+    // 2. bundle.resources 条目是 `resources/java/*`，Resource 根下完整相对路径
     // 为 `resources/java`（macOS 安装包实证：Contents/Resources/resources/java/）。
     if let Ok(res_dir) = app
         .path()
@@ -208,16 +227,6 @@ fn java_attach_jar_candidates(app: &tauri::AppHandle) -> Vec<std::path::PathBuf>
         .resolve("java", tauri::path::BaseDirectory::Resource)
     {
         candidates.push(res_dir);
-    }
-    // dev 回退：CARGO_MANIFEST_DIR 在编译期已知（miyo-tauri/src → 仓库根 java/dist）
-    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
-        candidates.push(
-            std::path::PathBuf::from(manifest_dir)
-                .join("..")
-                .join("..")
-                .join("java")
-                .join("dist"),
-        );
     }
     candidates
 }
@@ -500,6 +509,8 @@ pub mod plugin {
                 commands::java_agent_status,
                 commands::java_agent_spring_status,
                 commands::java_agent_classes,
+                commands::java_agent_classes_stats,
+                commands::java_agent_classes_reindex,
                 commands::java_agent_class_detail,
                 commands::java_agent_methods,
                 commands::java_agent_beans,

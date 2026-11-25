@@ -115,7 +115,10 @@ async fn attach_full_flow() {
     // 3) 类发现（JDK 内部类默认排除；com.example 命中）
     let client = manager.client(pid).await.unwrap();
     let classes = client
-        .classes(Some("com.example"), None, None, false, 200, 0)
+        .classes(&miyo_java_attach::ClassesQuery {
+            search: Some("com.example".into()),
+            ..miyo_java_attach::ClassesQuery::new()
+        })
         .await
         .unwrap();
     let names: Vec<String> = classes["items"]

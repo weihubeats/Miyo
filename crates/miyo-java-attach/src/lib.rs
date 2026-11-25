@@ -49,6 +49,7 @@ pub mod process;
 /// sidecar 分发模式下 Supervisor 会话的插件 id（与内置插件 id 一致）。
 pub const JAVA_DEBUG_SIDECAR_PLUGIN_ID: &str = "com.miyo.java-debug";
 
+pub use backend::ClassesQuery;
 pub use client::{AgentClient, AgentClientError};
 pub use jdk::{JdkToolchain, ToolchainRegistry};
 pub use launcher::{LauncherRunner, LauncherToolPaths};

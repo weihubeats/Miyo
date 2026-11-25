@@ -160,26 +160,41 @@ impl AgentClient {
         self.request("status", serde_json::json!({}), 10_000).await
     }
 
+    /// 类清单（分类 / 包前缀 / 搜索 / 分页）。
+    ///
+    /// 参数对象经 `ClassesQuery::to_params` 序列化：全部字段带默认值，
+    /// 老调用方（只传 include_jdk）语义不变。
     pub async fn classes(
         &self,
-        search: Option<&str>,
-        include: Option<&str>,
-        exclude: Option<&str>,
-        include_jdk: bool,
-        limit: u32,
-        offset: u32,
+        query: &crate::backend::ClassesQuery,
+    ) -> Result<Value, AgentClientError> {
+        self.request("classes.list", query.to_params(), DEFAULT_TIMEOUT_MS)
+            .await
+    }
+
+    /// 类分类统计（不重跑全量扫描：agent 侧走索引缓存）。
+    pub async fn classes_stats(
+        &self,
+        business_packages: Option<&str>,
     ) -> Result<Value, AgentClientError> {
         self.request(
-            "classes.list",
-            serde_json::json!({
-                "search": search.unwrap_or(""),
-                "include": include.unwrap_or(""),
-                "exclude": exclude.unwrap_or(""),
-                "include_jdk": include_jdk,
-                "limit": limit,
-                "offset": offset,
-            }),
+            "classes.stats",
+            serde_json::json!({ "package_prefix": business_packages.unwrap_or("") }),
             DEFAULT_TIMEOUT_MS,
+        )
+        .await
+    }
+
+    /// 全量重建类索引（用户改业务包 / 点「重新扫描」）。
+    pub async fn classes_reindex(
+        &self,
+        business_packages: Option<&str>,
+    ) -> Result<Value, AgentClientError> {
+        self.request(
+            "classes.reindex",
+            serde_json::json!({ "package_prefix": business_packages.unwrap_or("") }),
+            // 全量重建是 O(类数) 的重操作：给 60s 余量
+            60_000,
         )
         .await
     }

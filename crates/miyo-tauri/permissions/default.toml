@@ -221,6 +221,8 @@ permissions = [
     "allow-java-agent-status",
     "allow-java-agent-spring-status",
     "allow-java-agent-classes",
+    "allow-java-agent-classes-stats",
+    "allow-java-agent-classes-reindex",
     "allow-java-agent-class-detail",
     "allow-java-agent-methods",
     "allow-java-agent-beans",

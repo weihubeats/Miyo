@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use miyo_java_attach::backend::ClassesQuery;
 use miyo_java_attach::{AttachManager, AttachOptions};
 use miyo_sidecar::protocol::{
     read_frame, write_frame, SidecarErrorBody, SidecarFrame, SIDECAR_PROTOCOL_VERSION,
@@ -228,17 +229,21 @@ async fn dispatch(manager: &Arc<AttachManager>, frame: &SidecarFrame) -> Result<
             .client(pid(&params)?)
             .await
             .map_err(e2s)?
-            .classes(
-                opt_str(&params, "search").as_deref(),
-                opt_str(&params, "include").as_deref(),
-                opt_str(&params, "exclude").as_deref(),
-                params
-                    .get("includeJdk")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                params.get("limit").and_then(Value::as_u64).unwrap_or(50) as u32,
-                params.get("offset").and_then(Value::as_u64).unwrap_or(0) as u32,
-            )
+            .classes(&classes_query(&params))
+            .await
+            .map_err(e2s),
+        "client.classes_stats" => manager
+            .client(pid(&params)?)
+            .await
+            .map_err(e2s)?
+            .classes_stats(opt_str(&params, "businessPackages").as_deref())
+            .await
+            .map_err(e2s),
+        "client.classes_reindex" => manager
+            .client(pid(&params)?)
+            .await
+            .map_err(e2s)?
+            .classes_reindex(opt_str(&params, "businessPackages").as_deref())
             .await
             .map_err(e2s),
         "client.class_detail" => manager
@@ -303,6 +308,41 @@ fn e2s(err: impl std::fmt::Display) -> String {
 
 fn opt_str(params: &Value, key: &str) -> Option<String> {
     params.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+/// `client.classes` 参数 → ClassesQuery（camelCase 与 snake_case 都接受，
+/// 宿主 Local 路径经 serde 序列化出 snake_case，前端调试直连时常用 camelCase）。
+fn classes_query(params: &Value) -> ClassesQuery {
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
+    fn pick(params: &Value, snake: &str, camel: &str) -> Option<String> {
+        opt_str(params, snake)
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| opt_str(params, camel).filter(|s| !s.trim().is_empty()))
+    }
+    fn flag(params: &Value, snake: &str, camel: &str) -> bool {
+        params
+            .get(snake)
+            .or_else(|| params.get(camel))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+    ClassesQuery {
+        search: pick(params, "search", "search"),
+        include: pick(params, "include", "include"),
+        exclude: pick(params, "exclude", "exclude"),
+        category: pick(params, "category", "category"),
+        package_prefix: pick(params, "package_prefix", "packagePrefix"),
+        include_dependencies: flag(params, "include_dependencies", "includeDependencies"),
+        include_jdk: flag(params, "include_jdk", "includeJdk"),
+        limit: params.get("limit").and_then(Value::as_u64).unwrap_or(200) as u32,
+        offset: params.get("offset").and_then(Value::as_u64).unwrap_or(0) as u32,
+        business_packages: pick(params, "business_packages", "businessPackages"),
+        refresh_index: params
+            .get("refresh_index")
+            .or_else(|| params.get("refreshIndex"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    }
 }
 
 fn req_str(params: &Value, key: &str) -> Result<String, String> {

@@ -150,11 +150,8 @@ pub async fn execute_request(
     let mut spec = args.spec.clone();
     if !pre_code.trim().is_empty() {
         let sandbox = state.script_sandbox()?;
-        let snapshot = miyo_http::script_sandbox::ScriptRequestData::from_spec(
-            args.method,
-            &args.url,
-            &spec,
-        );
+        let snapshot =
+            miyo_http::script_sandbox::ScriptRequestData::from_spec(args.method, &args.url, &spec);
         match sandbox
             .run(miyo_http::script_sandbox::ScriptInput {
                 code: pre_code,

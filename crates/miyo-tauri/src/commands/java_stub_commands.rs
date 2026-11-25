@@ -32,6 +32,8 @@ java_stub_commands!(
     java_agent_status,
     java_agent_spring_status,
     java_agent_classes,
+    java_agent_classes_stats,
+    java_agent_classes_reindex,
     java_agent_class_detail,
     java_agent_methods,
     java_agent_beans,
