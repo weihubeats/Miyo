@@ -109,6 +109,7 @@ permissions = [
     "allow-log-files",
     "allow-log-tail",
     "allow-log-dir-path",
+    "allow-render-heartbeat",
     "allow-get-log-retention-days",
     "allow-set-log-retention-days",
     "allow-grpc-list-services",

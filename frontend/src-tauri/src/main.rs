@@ -8,13 +8,15 @@
 //! ## Windows 黑屏兜底（issue #192）
 //!
 //! 后端起来、窗口显示，但前端一个像素都画不出来时，用户只能看到窗口底色。
-//! 常见两因：系统只有 IE 内核（WebView2 运行时未装/被策略禁用）、旧版显卡驱动上
-//! WebView2 的 GPU 合成挂掉。首帧超过 8 秒未完成时按序给出可操作的出口——
-//! 二进制上不能弹网页弹窗，这里只做「不让用户干瞪眼」的最小干预：
+//! 常见三因：系统只有 IE 内核（WebView2 运行时未装/被策略禁用）、旧版显卡驱动上
+//! WebView2 的 GPU 合成挂掉、以及**渲染进程活着但合成器输出永不呈现**
+//! （Server 版 + 虚拟机实测）。按序给出可操作的出口——二进制上不能弹网页弹窗，
+//! 这里只做「不让用户干瞪眼」的最小干预：
 //! 1. 启动时探测注册表里的 WebView2 运行时，缺失即以原生错误框告知；
 //! 2. 页面加载完成 8 秒仍未收到前端 `miyo:frontend-ready` 时，弹原生框给出
 //!    「安装 WebView2 / 关闭硬件加速 / 日志目录」三条可操作指引（不自动重载——
-//!    窗口里可能已有用户数据在途，重载有副作用）。
+//!    窗口里可能已有用户数据在途，重载有副作用）；
+//! 3. **就绪了也不算画出来了**：渲染会话监控 + 心跳停滞检测（见 [`shell_guard`]）。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -23,6 +25,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 
 use tauri::{Emitter, Listener, Manager};
+
+mod shell_guard;
 
 const ABOUT_EVENT: &str = "miyo://about";
 
@@ -207,6 +211,68 @@ fn spawn_first_frame_watchdog(app: tauri::AppHandle) {
     });
 }
 
+/// 无界面导出数据库：`Miyo.exe --miyo-export-db=<路径>`。
+///
+/// 黑屏时窗口点不到任何按钮，这是唯一「把数据救出来」的出口。导出后在原生框里
+/// 告知成功/失败与路径（Release 包没有控制台，日志文件用户也可能找不到）。
+fn export_db_if_requested(app: &tauri::AppHandle) {
+    let Some(dest) = parse_export_db_arg() else {
+        return;
+    };
+    let outcome = match app.try_state::<miyo_tauri::state::AppState>() {
+        Some(state) => {
+            miyo_tauri::commands::export_database_without_ui(&state.db, std::path::Path::new(&dest))
+        }
+        None => Err(miyo_tauri::CommandError::with_code(
+            miyo_tauri::error::CommandErrorCode::Internal,
+            "数据库未初始化".to_string(),
+        )),
+    };
+    match &outcome {
+        Ok(()) => tracing::info!(dest = %dest, "database exported without UI"),
+        Err(err) => tracing::error!(dest = %dest, error = %err, "database export failed"),
+    }
+    let (level, title, msg) = match &outcome {
+        Ok(()) => (
+            rfd::MessageLevel::Info,
+            "数据导出完成",
+            format!("已将当前数据导出到：\n{dest}\n\n现在可以关闭 Miyo。"),
+        ),
+        Err(err) => (
+            rfd::MessageLevel::Error,
+            "数据导出失败",
+            format!("导出到 {dest} 失败：\n{err}"),
+        ),
+    };
+    let _ = rfd::MessageDialog::new()
+        .set_level(level)
+        .set_title(title)
+        .set_description(&msg)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+}
+
+/// 解析 `--miyo-export-db=<路径>`（同时接受 `--miyo-export-db <路径>`）。
+fn parse_export_db_arg() -> Option<String> {
+    const FLAG: &str = "--miyo-export-db";
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if let Some(value) = arg.strip_prefix(FLAG) {
+            let value = value.strip_prefix('=').unwrap_or(value);
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+            // 空格分隔形式：取下一个参数
+            if let Some(next) = args.next() {
+                if !next.is_empty() {
+                    return Some(next);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn main() {
     // 排除 VISIBLE 与 DECORATIONS：由 main.rs 显式控制装饰与展示时机，
     // 防止异常退出残存 visible:false 或旧版 decorated:true 覆写启动状态。
@@ -288,6 +354,8 @@ fn main() {
                     let _ = win.unminimize();
                 }
                 spawn_first_frame_watchdog(app.handle().clone());
+                // 渲染活性守卫：就绪事件按时到达也不代表画面在刷新（issue #192 复盘）
+                shell_guard::install(app.handle());
                 // 窗口以 visible:false 创建：装饰与状态恢复完成后再显示，
                 // 避免 Windows 启动时闪现原生标题栏。
                 let _ = win.show();
@@ -324,6 +392,11 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building Miyo")
         .run(|app, event| {
+            // 无界面导出（issue #192）：窗口点不动时仍能把数据捞出来。
+            // 放在 Ready 之后：此时插件 setup 已完成、数据库已初始化并跑完迁移。
+            if matches!(event, tauri::RunEvent::Ready) {
+                export_db_if_requested(app);
+            }
             // 应用退出：停 Agent 控制面——先取消全部在途异步运行（给后台任务
             // 落库窗口），再清端口文件（避免残留失效的 agent-port）。
             // 同时清理 Java Attach：尽力 agent.stop（停目标 JVM 内 IPC 服务 +

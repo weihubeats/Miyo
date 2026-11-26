@@ -548,6 +548,7 @@ pub mod plugin {
                 commands::log_files,
                 commands::log_tail,
                 commands::log_dir_path,
+                commands::render_heartbeat,
                 commands::get_log_retention_days,
                 commands::set_log_retention_days,
                 commands::cancel_load_test,

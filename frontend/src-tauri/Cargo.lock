@@ -3101,6 +3101,7 @@ dependencies = [
 name = "miyo"
 version = "0.0.66"
 dependencies = [
+ "chrono",
  "miyo-storage",
  "miyo-tauri",
  "rfd 0.18.0",
@@ -3114,6 +3115,8 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "tracing",
+ "webview2-com",
+ "windows-core",
  "windows-sys 0.59.0",
  "windows-version",
 ]

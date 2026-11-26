@@ -62,6 +62,7 @@ async function bootstrap(): Promise<void> {
       .mount('#app')
     boot?.done?.()
     reportFrontendReady()
+    startRenderHeartbeat()
   } catch (err) {
     console.error('[miyo.bootstrap]', err)
     boot?.fail?.(err)
@@ -84,3 +85,36 @@ function reportFrontendReady(): void {
     // 壳层未注册监听（旧版后端 / 纯前端调试）：不影响启动
   })
 }
+
+/**
+ * 渲染心跳：`requestAnimationFrame` 每跑一帧就通知壳层一次（节流到约 1 秒）。
+ *
+ * 壳侧（`frontend/src-tauri/src/shell_guard.rs`）据此判断画面是否还在刷新。
+ * 存在的意义：有些环境下页面加载成功、`frontend-ready` 准时到达，但
+ * 合成器输出永不呈现到窗口——用户看到的是全黑，而「就绪」信号无法区分。
+ * rAF 停止 = 帧不再被提交 = 画面冻结，这是唯一可靠的判断依据。
+ *
+ * 浏览器预览无 IPC 时静默跳过；`prefers-reduced-motion` 下 rAF 仍在跑，不受影响。
+ */
+function startRenderHeartbeat(): void {
+  const internals = (
+    window as unknown as {
+      __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> }
+    }
+  ).__TAURI_INTERNALS__
+  if (!internals?.invoke) return
+  const send = internals.invoke
+  let last = 0
+  const tick = (now: number): void => {
+    if (now - last >= HEARTBEAT_INTERVAL_MS) {
+      last = now
+      // 不等结果、不处理错误：心跳丢失本身由壳侧超时判定，这里重试无意义。
+      void send('render_heartbeat').catch(() => {})
+    }
+    requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+}
+
+/** 心跳节流间隔：壳侧看门狗按秒级判定停滞，1 秒一次足够且开销可忽略。 */
+const HEARTBEAT_INTERVAL_MS = 1000

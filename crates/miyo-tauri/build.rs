@@ -125,6 +125,7 @@ const COMMANDS: &[&str] = &[
     "log_files",
     "log_tail",
     "log_dir_path",
+    "render_heartbeat",
     "get_log_retention_days",
     "set_log_retention_days",
     "test_collection",

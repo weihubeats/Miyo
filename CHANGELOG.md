@@ -2,6 +2,26 @@
 
 版本变化速览（完整提交记录见 `git log`，发版流程见 `docs/RELEASE.md`）。
 
+## Unreleased（黑屏诊断，issue #192 复盘）
+
+修复：
+
+- 渲染活性守卫（`frontend/src-tauri/src/shell_guard.rs`）：页面加载成功、
+  `frontend-ready` 准时到达但合成器输出永不呈现时（Windows Server + 虚拟机实测），
+  旧兜底完全失效。现在前端在 `requestAnimationFrame` 里周期心跳
+  （`render_heartbeat`），壳侧检测到计数停滞 15s 即按
+  「强制重绘 → 软件合成重载 → 原生提示 + 诊断落盘」三级降级
+- WebView2 渲染进程监控：挂 `ICoreWebView2_2::ProcessFailed`，
+  把渲染进程退出 / 无响应 / 浏览器进程退出连同 reason / exit code / 进程描述
+  写进日志（此前完全无记录，只能靠用户偶然杀掉进程才看得见现象）
+
+功能：
+
+- `Miyo.exe --miyo-export-db=<路径>`：无界面导出当前数据库（`VACUUM INTO`
+  一致性快照），窗口点不动时仍能把数据救出来，完成后弹原生框确认路径
+- 判定画面冻结时写 `blank-screen-<时间>.txt` 到日志目录，含平台 / WebView2 版本 /
+  心跳计数 / 降级阶段与三条自救步骤，用户可整目录打包反馈
+
 ## Unreleased（性能与功能优化合集）
 
 > 以下条目为 0.0.13–0.0.25 期间陆续合入的累计清单，正式归档见各版本段。

@@ -108,6 +108,7 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-log-files`
 - `allow-log-tail`
 - `allow-log-dir-path`
+- `allow-render-heartbeat`
 - `allow-get-log-retention-days`
 - `allow-set-log-retention-days`
 - `allow-grpc-list-services`
@@ -5006,6 +5007,32 @@ Enables the rename_test_case_folder command without any pre-configured scope.
 <td>
 
 Denies the rename_test_case_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-render-heartbeat`
+
+</td>
+<td>
+
+Enables the render_heartbeat command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-render-heartbeat`
+
+</td>
+<td>
+
+Denies the render_heartbeat command without any pre-configured scope.
 
 </td>
 </tr>
