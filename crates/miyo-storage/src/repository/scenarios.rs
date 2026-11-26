@@ -14,6 +14,9 @@ struct ScenarioRow {
     name: String,
     description: String,
     category: String,
+    folder_id: Option<String>,
+    tags_json: String,
+    favorite: bool,
     sort_order: i64,
     steps_json: String,
     script: Option<String>,
@@ -60,6 +63,14 @@ impl ScenarioRow {
             name: self.name,
             description: self.description,
             category: self.category,
+            folder_id: self
+                .folder_id
+                .as_deref()
+                .map(super::rows::parse_uuid)
+                .transpose()?,
+            // 标签：旧数据 / 手改库容错（非法 JSON 视为空）。
+            tags: serde_json::from_str(&self.tags_json).unwrap_or_default(),
+            favorite: self.favorite,
             sort_order: self.sort_order,
             steps,
             // 空串归一为未自定义。
@@ -77,12 +88,12 @@ impl ScenarioRow {
 }
 
 const SCENARIO_COLUMNS: &str =
-    "id, project_id, name, description, category, sort_order, steps_json, script, setup_json, teardown_json, data_sets_json, created_at, updated_at";
+    "id, project_id, name, description, category, folder_id, tags_json, favorite, sort_order, steps_json, script, setup_json, teardown_json, data_sets_json, created_at, updated_at";
 
-/// 列出项目的全部场景（编排序 → 名称序）。
+/// 列出项目的全部场景（收藏置顶 → 编排序 → 名称序）。
 pub async fn list_scenarios(db: &SqlitePool, project_id: Uuid) -> Result<Vec<Scenario>> {
     let rows: Vec<ScenarioRow> = sqlx::query_as(&format!(
-        "SELECT {SCENARIO_COLUMNS} FROM scenarios WHERE project_id = ? ORDER BY sort_order ASC, name ASC"
+        "SELECT {SCENARIO_COLUMNS} FROM scenarios WHERE project_id = ? ORDER BY favorite DESC, sort_order ASC, name ASC"
     ))
     .bind(project_id.to_string())
     .fetch_all(db)
@@ -116,13 +127,18 @@ pub async fn save_scenario(db: &SqlitePool, scenario: &Scenario) -> Result<()> {
     .map_err(|e| AppError::Validation(format!("teardown 步骤序列化失败：{e}")))?;
     let data_sets_json = serde_json::to_string(&scenario.data_sets)
         .map_err(|e| AppError::Validation(format!("数据集序列化失败：{e}")))?;
+    let tags_json = serde_json::to_string(&scenario.tags)
+        .map_err(|e| AppError::Validation(format!("标签序列化失败：{e}")))?;
     sqlx::query(
-        "INSERT INTO scenarios (id, project_id, name, description, category, sort_order, steps_json, script, setup_json, teardown_json, data_sets_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO scenarios (id, project_id, name, description, category, folder_id, tags_json, favorite, sort_order, steps_json, script, setup_json, teardown_json, data_sets_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            description = excluded.description,
            category = excluded.category,
+           folder_id = excluded.folder_id,
+           tags_json = excluded.tags_json,
+           favorite = excluded.favorite,
            sort_order = excluded.sort_order,
            steps_json = excluded.steps_json,
            script = excluded.script,
@@ -136,6 +152,9 @@ pub async fn save_scenario(db: &SqlitePool, scenario: &Scenario) -> Result<()> {
     .bind(&scenario.name)
     .bind(&scenario.description)
     .bind(&scenario.category)
+    .bind(scenario.folder_id.map(|f| f.to_string()))
+    .bind(&tags_json)
+    .bind(scenario.favorite)
     .bind(scenario.sort_order)
     .bind(&steps_json)
     .bind(scenario.script.as_deref().filter(|s| !s.trim().is_empty()))
@@ -184,16 +203,33 @@ pub async fn save_scenarios_bulk(
     for scenario in scenarios {
         let steps_json = serde_json::to_string(&scenario.steps)
             .map_err(|e| AppError::Validation(format!("场景步骤序列化失败：{e}")))?;
+        let setup_json = serde_json::to_string(&scenario.setup)
+            .map_err(|e| AppError::Validation(format!("setup 步骤序列化失败：{e}")))?;
+        let teardown_json = serde_json::to_string(&serde_json::json!({
+            "enabled": scenario.teardown_enabled,
+            "steps": scenario.teardown,
+        }))
+        .map_err(|e| AppError::Validation(format!("teardown 步骤序列化失败：{e}")))?;
+        let data_sets_json = serde_json::to_string(&scenario.data_sets)
+            .map_err(|e| AppError::Validation(format!("数据集序列化失败：{e}")))?;
+        let tags_json = serde_json::to_string(&scenario.tags)
+            .map_err(|e| AppError::Validation(format!("标签序列化失败：{e}")))?;
         sqlx::query(
-            "INSERT INTO scenarios (id, project_id, name, description, category, sort_order, steps_json, script, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO scenarios (id, project_id, name, description, category, folder_id, tags_json, favorite, sort_order, steps_json, script, setup_json, teardown_json, data_sets_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                description = excluded.description,
                category = excluded.category,
+               folder_id = excluded.folder_id,
+               tags_json = excluded.tags_json,
+               favorite = excluded.favorite,
                sort_order = excluded.sort_order,
                steps_json = excluded.steps_json,
                script = excluded.script,
+               setup_json = excluded.setup_json,
+               teardown_json = excluded.teardown_json,
+               data_sets_json = excluded.data_sets_json,
                updated_at = excluded.updated_at",
         )
         .bind(scenario.id.to_string())
@@ -201,15 +237,71 @@ pub async fn save_scenarios_bulk(
         .bind(&scenario.name)
         .bind(&scenario.description)
         .bind(&scenario.category)
+        .bind(scenario.folder_id.map(|f| f.to_string()))
+        .bind(&tags_json)
+        .bind(scenario.favorite)
         .bind(scenario.sort_order)
         .bind(&steps_json)
         .bind(scenario.script.as_deref().filter(|s| !s.trim().is_empty()))
+        .bind(&setup_json)
+        .bind(&teardown_json)
+        .bind(&data_sets_json)
         .bind(scenario.created_at.to_rfc3339())
         .bind(scenario.updated_at.to_rfc3339())
         .execute(&mut *conn)
         .await.map_err(db_err)? ;
     }
     Ok(())
+}
+
+/// 场景执行后累计全量计数（运行历史修剪到最近 N 条，计数不能靠聚合）。
+///
+/// `ok` = 主步骤无失败且未取消；`cancelled` 的取消运行只计「执行次数」，
+/// 不计成功也不计失败（与历史行的成败口径一致）。
+pub async fn bump_scenario_run_stats(
+    db: &SqlitePool,
+    scenario_id: Uuid,
+    ok: bool,
+    cancelled: bool,
+) -> Result<()> {
+    let ok_inc = i64::from(ok);
+    let fail_inc = i64::from(!ok && !cancelled);
+    sqlx::query(
+        "UPDATE scenarios SET run_count = run_count + 1,
+                ok_run_count = ok_run_count + ?, fail_run_count = fail_run_count + ?
+         WHERE id = ?",
+    )
+    .bind(ok_inc)
+    .bind(fail_inc)
+    .bind(scenario_id.to_string())
+    .execute(db)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// 场景全量执行计数（场景库列表一次性取，避免逐场景查询）。
+#[derive(Debug, sqlx::FromRow)]
+pub struct ScenarioRunStat {
+    pub scenario_id: String,
+    pub run_count: i64,
+    pub ok_run_count: i64,
+    pub fail_run_count: i64,
+}
+
+pub async fn list_scenario_run_stats(
+    db: &SqlitePool,
+    project_id: Uuid,
+) -> Result<Vec<ScenarioRunStat>> {
+    let rows: Vec<ScenarioRunStat> = sqlx::query_as(
+        "SELECT id AS scenario_id, run_count, ok_run_count, fail_run_count
+         FROM scenarios WHERE project_id = ?",
+    )
+    .bind(project_id.to_string())
+    .fetch_all(db)
+    .await
+    .map_err(db_err)?;
+    Ok(rows)
 }
 
 #[cfg(test)]
@@ -239,6 +331,9 @@ mod tests {
                 ..Default::default()
             }],
             script: None,
+            folder_id: None,
+            tags: Vec::new(),
+            favorite: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

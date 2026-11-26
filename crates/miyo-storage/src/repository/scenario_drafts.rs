@@ -206,6 +206,9 @@ mod tests {
             teardown: vec![],
             teardown_enabled: true,
             data_sets: vec![],
+            folder_id: None,
+            tags: Vec::new(),
+            favorite: false,
             created_at: now,
             updated_at: now,
         };

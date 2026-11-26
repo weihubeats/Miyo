@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use chrono::Utc;
 use miyo_core::model::{
     Endpoint, Environment, EnvironmentVariable, Folder, GlobalParam, MockRule, Project, ProtoFile,
-    RequestExample, ResponseExample, Scenario, Team,
+    RequestExample, ResponseExample, Scenario, ScenarioFolder, Team,
 };
 use miyo_core::AppError;
 use serde::{Deserialize, Serialize};
@@ -48,14 +48,18 @@ pub struct BackupFile {
     /// 恢复时 steps 内的 endpoint_id 随接口重映射。
     #[serde(default)]
     pub scenarios: Vec<Scenario>,
+    /// 场景业务目录（v6 起；旧备份缺失按空处理，场景 folder_id 置空）。
+    #[serde(default)]
+    pub scenario_folders: Vec<ScenarioFolder>,
 }
 
 /// 备份格式标识。
 pub const FORMAT: &str = "miyo-project-backup";
 /// 品牌更名前的格式标识：解析时同样接受，旧备份文件可继续导入恢复。
 pub const LEGACY_FORMAT: &str = "rustfox-project-backup";
-/// 当前 schema 版本（v5：补齐 scenarios；v4 团队 / v1-v3 环境形状照旧升级）。
-pub const SCHEMA_VERSION: u32 = 5;
+/// 当前 schema 版本（v6：补齐场景业务目录；v5 scenarios / v4 团队 /
+/// v1-v3 环境形状照旧升级）。
+pub const SCHEMA_VERSION: u32 = 6;
 
 impl BackupFile {
     pub fn serialize(&self) -> Result<String, AppError> {
@@ -195,6 +199,8 @@ pub struct BackupInput<'a> {
     pub team: &'a Option<Team>,
     /// 集成测试场景（v5）。
     pub scenarios: &'a [Scenario],
+    /// 场景业务目录（v6）。
+    pub scenario_folders: &'a [ScenarioFolder],
 }
 
 pub fn build_backup(input: &BackupInput) -> BackupFile {
@@ -215,6 +221,7 @@ pub fn build_backup(input: &BackupInput) -> BackupFile {
         global_params: input.global_params.to_vec(),
         team: input.team.clone(),
         scenarios: input.scenarios.to_vec(),
+        scenario_folders: input.scenario_folders.to_vec(),
     }
 }
 
@@ -230,6 +237,7 @@ pub struct Restored {
     pub request_examples: Vec<RequestExample>,
     pub proto_files: Vec<ProtoFile>,
     pub scenarios: Vec<Scenario>,
+    pub scenario_folders: Vec<ScenarioFolder>,
 }
 
 /// 恢复：全量重映射 UUID（新项目）。返回值与 `build_backup` 顺序对应。
@@ -308,6 +316,21 @@ pub fn restore_backup(file: &BackupFile) -> Restored {
         });
     }
 
+    // 场景业务目录：新 id 归新项目；父级引用两遍处理（父级可能在映射表后出现）。
+    let mut scenario_folders: Vec<ScenarioFolder> = Vec::with_capacity(file.scenario_folders.len());
+    for f in &file.scenario_folders {
+        let new_id = Uuid::new_v4();
+        map.insert(f.id, new_id);
+        scenario_folders.push(ScenarioFolder {
+            id: new_id,
+            project_id: new_project_id,
+            ..f.clone()
+        });
+    }
+    for f in &mut scenario_folders {
+        f.parent_id = f.parent_id.and_then(|p| map.get(&p).copied());
+    }
+
     // 场景：新 id 归新项目；步骤是接口引用式，endpoint_id 随接口 id 映射表
     // 重映射（备份内含全部接口，正常必然命中；手工编辑的残缺备份兜底 nil，
     // 与 mock_rules 的兜底口径一致）。
@@ -329,6 +352,8 @@ pub fn restore_backup(file: &BackupFile) -> Restored {
         scenarios.push(Scenario {
             id: new_id,
             project_id: new_project_id,
+            // 所属目录随目录 id 映射表重映射（旧备份 / 残缺备份 → 未分类）。
+            folder_id: s.folder_id.and_then(|f| map.get(&f).copied()),
             steps: new_steps,
             ..s.clone()
         });
@@ -347,6 +372,7 @@ pub fn restore_backup(file: &BackupFile) -> Restored {
         request_examples,
         proto_files,
         scenarios,
+        scenario_folders,
     }
 }
 
@@ -355,7 +381,7 @@ mod tests {
     use super::*;
     use miyo_core::model::{
         BodySpec, EndpointStatus, EnvironmentVariable, HttpMethod, KeyValue, RequestSpec,
-        ScenarioStep,
+        ScenarioFolder, ScenarioStep,
     };
     fn sample_data() -> BackupFile {
         let project = Project {
@@ -462,6 +488,15 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
+        let scenario_folder = ScenarioFolder {
+            id: Uuid::new_v4(),
+            project_id: project.id,
+            parent_id: None,
+            name: "业务目录".into(),
+            sort_order: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
         let scenario = Scenario {
             setup: Vec::new(),
             teardown: Vec::new(),
@@ -490,6 +525,9 @@ mod tests {
                 },
             ],
             script: Some("const steps = [];".into()),
+            folder_id: Some(scenario_folder.id),
+            tags: Vec::new(),
+            favorite: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -507,6 +545,7 @@ mod tests {
             global_params: &[],
             team: &None,
             scenarios: &[scenario],
+            scenario_folders: &[scenario_folder],
         })
     }
 
@@ -685,6 +724,12 @@ mod tests {
         assert_eq!(sc.steps[1].endpoint_id, Some(Uuid::nil()));
         assert_eq!(sc.steps[0].extract, data.scenarios[0].steps[0].extract);
         assert_eq!(sc.script, data.scenarios[0].script);
+        // 业务目录：新 id 归新项目，场景 folder_id 随目录映射表重映射。
+        assert_eq!(restored.scenario_folders.len(), 1);
+        let sf = &restored.scenario_folders[0];
+        assert_eq!(sf.project_id, restored.project.id);
+        assert_ne!(sf.id, data.scenario_folders[0].id);
+        assert_eq!(sc.folder_id, Some(sf.id));
         // 无交叉引用残留
         let old_ids: Vec<Uuid> = data.endpoints.iter().map(|e| e.id).collect();
         for new_ep in &restored.endpoints {

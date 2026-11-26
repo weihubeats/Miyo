@@ -26,6 +26,7 @@ import type { RequestHistory } from '@/types/generated/RequestHistory';
 import type { RequestSnapshot } from '@/types/generated/RequestSnapshot';
 import type { RequestSpec } from '@/types/generated/RequestSpec';
 import type { ResponseExample } from '@/types/generated/ResponseExample';
+import type { ScenarioFolder } from '@/types/generated/ScenarioFolder';
 import type { ScenarioRunSummary } from '@/types/generated/ScenarioRunSummary';
 import type { ScriptRunSummary } from '@/types/generated/ScriptRunSummary';
 import type { StepRetry } from '@/types/generated/StepRetry';
@@ -44,6 +45,7 @@ export type { RequestHistory };
 export type { RequestSnapshot };
 export type { RequestSpec };
 export type { ResponseExample };
+export type { ScenarioFolder };
 export type { ScenarioRunSummary };
 export type { ScriptRunSummary };
 export type { StepRetry };
@@ -1171,6 +1173,12 @@ export interface Scenario {
   description: string
   /** 分类标签（场景库过滤；空 = 未分类）。 */
   category: string
+  /** 所属业务目录（缺省 = 未分类）。 */
+  folder_id?: string | null
+  /** 标签（场景库过滤 / 批量打标用）。 */
+  tags?: string[]
+  /** 收藏标记（列表置顶）。 */
+  favorite?: boolean
   sort_order: number
   steps: ScenarioStep[]
   /** 自定义脚本（脚本视图编辑后持久化）；缺省 = 未自定义，视图实时由 steps 生成。 */
@@ -1238,6 +1246,20 @@ export interface ScenarioInlineRequest {
 /** 场景库列表项（Rust `ScenarioLibraryItem`；场景字段平铺 + 最近运行摘要）。 */
 export interface ScenarioLibraryItem extends Scenario {
   last_run?: ScenarioRunSummary | null
+  /** 全量执行次数 / 成功次数 / 失败次数（运行历史会修剪，计数由后端累计）。 */
+  run_count?: number
+  ok_run_count?: number
+  fail_run_count?: number
+}
+
+/** 删除场景目录时的场景处理策略：仅空目录 / 场景移到未分类 / 连同场景删除。 */
+export type ScenarioFolderDeleteMode = 'empty' | 'keep' | 'cascade'
+
+/** 目录删除结果（Rust `FolderDeleteOutcome`）。 */
+export interface ScenarioFolderDeleteOutcome {
+  deletedFolders: number
+  movedScenarios: number
+  deletedScenarios: number
 }
 
 // TestCase 同上：assertions / extractors 是 miyo-test 方言 JSON 透传，

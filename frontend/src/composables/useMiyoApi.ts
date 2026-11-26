@@ -97,6 +97,9 @@ import type {
   ResponseExample,
   Scenario,
   ScenarioLibraryItem,
+  ScenarioFolder,
+  ScenarioFolderDeleteMode,
+  ScenarioFolderDeleteOutcome,
   StepCondition,
   StepLoop,
   ScenarioRunResult,
@@ -463,6 +466,48 @@ export function useMiyoApi() {
     run(() => call<Scenario>('save_scenario', { scenario }))
 
   const deleteScenario = (id: string) => run(() => call<void>('delete_scenario', { id }))
+
+  // ---------- 场景业务目录（多级文件夹）----------
+  const listScenarioFolders = (projectId: string) =>
+    run(() => call<ScenarioFolder[]>('list_scenario_folders', { projectId }))
+
+  const saveScenarioFolder = (folder: ScenarioFolder) =>
+    run(() => call<ScenarioFolder>('save_scenario_folder', { folder }))
+
+  /** 删除目录：mode = empty（仅空目录）/ keep（场景移到未分类）/ cascade（连场景删除）。 */
+  const deleteScenarioFolder = (id: string, mode: ScenarioFolderDeleteMode) =>
+    run(() => call<ScenarioFolderDeleteOutcome>('delete_scenario_folder', { id, mode }))
+
+  /** 移动目录（parentId 为 null = 根级；sortOrder 缺省追加到目标同级末尾）。 */
+  const moveScenarioFolder = (id: string, parentId: string | null, sortOrder?: number | null) =>
+    run(() =>
+      call<ScenarioFolder>('move_scenario_folder', {
+        id,
+        parentId,
+        sortOrder: sortOrder ?? null,
+      }),
+    )
+
+  const reorderScenarioFolders = (projectId: string, ids: string[]) =>
+    run(() => call<void>('reorder_scenario_folders', { projectId, ids }))
+
+  /** 批量移动场景到目录（folderId 为 null = 未分类）。 */
+  const moveScenarios = (ids: string[], folderId: string | null) =>
+    run(() => call<number>('move_scenarios', { ids, folderId }))
+
+  /** 批量追加标签（去重合并，不覆盖已有标签）。 */
+  const addScenarioTags = (ids: string[], tags: string[]) =>
+    run(() => call<number>('add_scenario_tags', { ids, tags }))
+
+  const setScenariosFavorite = (ids: string[], favorite: boolean) =>
+    run(() => call<number>('set_scenarios_favorite', { ids, favorite }))
+
+  const deleteScenarios = (ids: string[]) =>
+    run(() => call<number>('delete_scenarios', { ids }))
+
+  /** 同级场景重排（拖拽后按可见顺序写回 sort_order）。 */
+  const reorderScenarios = (ids: string[]) =>
+    run(() => call<void>('reorder_scenarios', { ids }))
 
   const runScenario = (args: {
     steps: {
@@ -1001,6 +1046,16 @@ export function useMiyoApi() {
     listScenarioSummaries,
     saveScenario,
     deleteScenario,
+    listScenarioFolders,
+    saveScenarioFolder,
+    deleteScenarioFolder,
+    moveScenarioFolder,
+    reorderScenarioFolders,
+    moveScenarios,
+    addScenarioTags,
+    setScenariosFavorite,
+    deleteScenarios,
+    reorderScenarios,
     runScenario,
     runScenarioMatrix,
     exportScenarioReport,

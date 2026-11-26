@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-save-scenario-folder"
+description = "Enables the save_scenario_folder command without any pre-configured scope."
+commands.allow = ["save_scenario_folder"]
+
+[[permission]]
+identifier = "deny-save-scenario-folder"
+description = "Denies the save_scenario_folder command without any pre-configured scope."
+commands.deny = ["save_scenario_folder"]

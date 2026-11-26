@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
-use miyo_core::model::{Endpoint, HttpMethod, Scenario, ScenarioRun};
+use miyo_core::model::{Endpoint, HttpMethod, Scenario, ScenarioFolder, ScenarioRun};
 use miyo_core::VariableMap;
 use miyo_storage::repository as repo;
+use miyo_storage::repository::FolderDeleteMode;
 use miyo_sync::redact::{is_sensitive_key, PLACEHOLDER};
 use miyo_test::runner::{ScenarioOptions, ScenarioProgress, ScenarioStepInput};
 
@@ -107,6 +108,238 @@ pub async fn save_scenario(
 #[tauri::command(rename_all = "camelCase")]
 pub async fn delete_scenario(state: State<'_, AppState>, id: Uuid) -> CommandResult<()> {
     Ok(repo::delete_scenario(&state.db, id).await?)
+}
+
+// ---------- 业务目录（多级文件夹） ----------
+
+/// 目录名长度上限（字符数；与接口文件夹一致的宽松上限）。
+const SCENARIO_FOLDER_NAME_MAX: usize = 120;
+
+fn validate_folder_name(name: &str) -> CommandResult<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(CommandError::validation("目录名称不能为空"));
+    }
+    if name.chars().count() > SCENARIO_FOLDER_NAME_MAX {
+        return Err(CommandError::validation(format!(
+            "目录名称不能超过 {SCENARIO_FOLDER_NAME_MAX} 个字符"
+        )));
+    }
+    Ok(name.to_string())
+}
+
+/// 校验父目录：存在、同项目、不构成环（自身或自身后代）。
+async fn validate_folder_parent(
+    state: &State<'_, AppState>,
+    project_id: Uuid,
+    folder_id: Option<Uuid>,
+    parent_id: Uuid,
+) -> CommandResult<()> {
+    if Some(parent_id) == folder_id {
+        return Err(CommandError::validation("目录不能作为自己的子目录"));
+    }
+    let parent = repo::get_scenario_folder(&state.db, parent_id).await?;
+    if parent.project_id != project_id {
+        return Err(CommandError::validation("父目录不属于当前项目"));
+    }
+    if let Some(id) = folder_id {
+        if repo::is_folder_in_subtree(&state.db, id, parent_id).await? {
+            return Err(CommandError::validation("不能把目录移动到自己的子目录下"));
+        }
+    }
+    Ok(())
+}
+
+/// 列出项目的全部业务目录（排序 → 名称序）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_scenario_folders(
+    state: State<'_, AppState>,
+    project_id: Uuid,
+) -> CommandResult<Vec<ScenarioFolder>> {
+    Ok(repo::list_scenario_folders(&state.db, project_id).await?)
+}
+
+/// 新建 / 保存目录（整体覆盖写；同级重名与环校验在写库前完成）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn save_scenario_folder(
+    state: State<'_, AppState>,
+    mut folder: ScenarioFolder,
+) -> CommandResult<ScenarioFolder> {
+    folder.name = validate_folder_name(&folder.name)?;
+    repo::get_project(&state.db, folder.project_id).await?;
+    if let Some(parent_id) = folder.parent_id {
+        validate_folder_parent(&state, folder.project_id, Some(folder.id), parent_id).await?;
+    }
+    if repo::scenario_folder_name_taken(
+        &state.db,
+        folder.project_id,
+        folder.parent_id,
+        &folder.name,
+        Some(folder.id),
+    )
+    .await?
+    {
+        return Err(CommandError::validation(format!(
+            "同级已存在目录「{}」",
+            folder.name
+        )));
+    }
+    // 已存在则保留原 created_at（前端复制对象时可能带入错误时间）。
+    match repo::get_scenario_folder(&state.db, folder.id).await {
+        Ok(existing) => {
+            if existing.project_id != folder.project_id {
+                return Err(CommandError::validation("目录不属于当前项目"));
+            }
+            folder.created_at = existing.created_at;
+        }
+        Err(_) => {}
+    }
+    folder.updated_at = chrono::Utc::now();
+    repo::save_scenario_folder(&state.db, &folder).await?;
+    Ok(folder)
+}
+
+/// 删除目录：`mode` = empty（仅空目录）/ keep（场景移到未分类）/ cascade（连场景删除）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn delete_scenario_folder(
+    state: State<'_, AppState>,
+    id: Uuid,
+    mode: String,
+) -> CommandResult<repo::FolderDeleteOutcome> {
+    let mode = match mode.as_str() {
+        "empty" => FolderDeleteMode::Empty,
+        "keep" => FolderDeleteMode::KeepScenarios,
+        "cascade" => FolderDeleteMode::Cascade,
+        other => {
+            return Err(CommandError::validation(format!(
+                "未知的目录删除策略：{other}"
+            )))
+        }
+    };
+    Ok(repo::delete_scenario_folder(&state.db, id, mode).await?)
+}
+
+/// 移动目录（防环：目标父级不得是自身或自身后代）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn move_scenario_folder(
+    state: State<'_, AppState>,
+    id: Uuid,
+    parent_id: Option<Uuid>,
+    sort_order: Option<i64>,
+) -> CommandResult<ScenarioFolder> {
+    let folder = repo::get_scenario_folder(&state.db, id).await?;
+    if let Some(pid) = parent_id {
+        validate_folder_parent(&state, folder.project_id, Some(id), pid).await?;
+    }
+    if repo::scenario_folder_name_taken(
+        &state.db,
+        folder.project_id,
+        parent_id,
+        &folder.name,
+        Some(id),
+    )
+    .await?
+    {
+        return Err(CommandError::validation(format!(
+            "目标目录下已存在同名目录「{}」",
+            folder.name
+        )));
+    }
+    Ok(repo::move_scenario_folder(&state.db, id, parent_id, sort_order).await?)
+}
+
+/// 同级目录重排（拖拽落点后按可见顺序写回 sort_order）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn reorder_scenario_folders(
+    state: State<'_, AppState>,
+    project_id: Uuid,
+    ids: Vec<Uuid>,
+) -> CommandResult<()> {
+    if !ids.is_empty() {
+        let all = repo::list_scenario_folders(&state.db, project_id).await?;
+        let owned: std::collections::HashSet<Uuid> = all.into_iter().map(|f| f.id).collect();
+        if ids.iter().any(|id| !owned.contains(id)) {
+            return Err(CommandError::validation("存在不属于当前项目的目录"));
+        }
+    }
+    Ok(repo::reorder_scenario_folders(&state.db, &ids).await?)
+}
+
+/// 批量移动场景到目录（`folder_id` 为 None = 未分类）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn move_scenarios(
+    state: State<'_, AppState>,
+    ids: Vec<Uuid>,
+    folder_id: Option<Uuid>,
+) -> CommandResult<i64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let project_ids = repo::scenario_project_ids(&state.db, &ids).await?;
+    if project_ids.len() > 1 {
+        return Err(CommandError::validation("不能跨项目批量移动场景"));
+    }
+    if let (Some(pid), Some(fid)) = (project_ids.first(), folder_id) {
+        let folder = repo::get_scenario_folder(&state.db, fid).await?;
+        if folder.project_id != *pid {
+            return Err(CommandError::validation("目标目录不属于场景所在项目"));
+        }
+    }
+    Ok(repo::move_scenarios(&state.db, &ids, folder_id).await?)
+}
+
+/// 批量追加标签（去重合并，不覆盖已有标签）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn add_scenario_tags(
+    state: State<'_, AppState>,
+    ids: Vec<Uuid>,
+    tags: Vec<String>,
+) -> CommandResult<i64> {
+    let mut cleaned: Vec<String> = Vec::new();
+    for tag in tags {
+        let tag = tag.trim().to_string();
+        if tag.is_empty() || cleaned.iter().any(|t| t.eq_ignore_ascii_case(&tag)) {
+            continue;
+        }
+        if tag.chars().count() > 40 {
+            return Err(CommandError::validation(format!(
+                "标签「{tag}」超过 40 个字符"
+            )));
+        }
+        cleaned.push(tag);
+    }
+    if cleaned.is_empty() {
+        return Err(CommandError::validation("请至少输入一个标签"));
+    }
+    Ok(repo::add_scenario_tags(&state.db, &ids, &cleaned).await?)
+}
+
+/// 批量设置收藏标记。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn set_scenarios_favorite(
+    state: State<'_, AppState>,
+    ids: Vec<Uuid>,
+    favorite: bool,
+) -> CommandResult<i64> {
+    Ok(repo::set_scenarios_favorite(&state.db, &ids, favorite).await?)
+}
+
+/// 批量删除场景（运行历史一并清理，单事务）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn delete_scenarios(
+    state: State<'_, AppState>,
+    ids: Vec<Uuid>,
+) -> CommandResult<i64> {
+    Ok(repo::delete_scenarios(&state.db, &ids).await?)
+}
+
+/// 同级场景重排（拖拽落点后按可见顺序写回 sort_order）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn reorder_scenarios(
+    state: State<'_, AppState>,
+    ids: Vec<Uuid>,
+) -> CommandResult<()> {
+    Ok(repo::reorder_scenarios(&state.db, &ids).await?)
 }
 
 /// 场景运行入参步骤（前端物化：endpoint 用当前配置，url 保留 {{}} 模板）。
@@ -1008,6 +1241,10 @@ pub struct ScenarioLibraryItem {
     #[serde(flatten)]
     pub scenario: Scenario,
     pub last_run: Option<ScenarioRunSummary>,
+    /// 全量执行次数 / 成功次数 / 失败次数（历史会修剪，计数由列累计）。
+    pub run_count: i64,
+    pub ok_run_count: i64,
+    pub fail_run_count: i64,
 }
 
 /// 列出项目的场景库条目（编排序 → 名称序；每项带最近一次运行摘要）。
@@ -1020,6 +1257,16 @@ pub async fn list_scenario_summaries(
     // 一次 SQL 批量取每场景最近一次运行摘要（替代逐场景 N+1 全量 JSON 查询）。
     let latest: HashMap<Uuid, repo::ScenarioRunSummaryRow> =
         repo::latest_run_summaries_for_project(&state.db, project_id)
+            .await?
+            .into_iter()
+            .filter_map(|r| {
+                let sid = Uuid::parse_str(&r.scenario_id).ok()?;
+                Some((sid, r))
+            })
+            .collect();
+    // 全量执行计数（历史修剪到最近 N 条，不能从 runs 聚合）。
+    let stats: HashMap<Uuid, repo::ScenarioRunStat> =
+        repo::list_scenario_run_stats(&state.db, project_id)
             .await?
             .into_iter()
             .filter_map(|r| {
@@ -1043,7 +1290,13 @@ pub async fn list_scenario_summaries(
                 cancelled: r.cancelled,
                 stopped_on_failure: r.stopped_on_failure,
             });
-            ScenarioLibraryItem { scenario, last_run }
+            ScenarioLibraryItem {
+                run_count: stats.get(&scenario.id).map(|s| s.run_count).unwrap_or(0),
+                ok_run_count: stats.get(&scenario.id).map(|s| s.ok_run_count).unwrap_or(0),
+                fail_run_count: stats.get(&scenario.id).map(|s| s.fail_run_count).unwrap_or(0),
+                scenario,
+                last_run,
+            }
         })
         .collect();
     Ok(items)
@@ -1215,6 +1468,13 @@ async fn persist_scenario_run(
         meta_json: Some(meta.to_string()),
     };
     repo::save_scenario_run(&state.db, &record).await?;
+    // 全量执行计数（历史会修剪，计数在场景行累计；失败计数不含取消）。
+    let run_ok = fail_count == 0 && !result.cancelled;
+    if let Err(e) =
+        repo::bump_scenario_run_stats(&state.db, scenario_id, run_ok, result.cancelled).await
+    {
+        tracing::warn!("[persist_scenario_run] 累计执行计数失败：{e}");
+    }
     repo::prune_scenario_runs(&state.db, scenario_id, repo::SCENARIO_RUN_KEEP).await?;
     Ok(())
 }

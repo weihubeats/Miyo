@@ -62,6 +62,16 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-list-recent-scenario-runs`
 - `allow-project-scenario-run-stats`
 - `allow-list-scenario-summaries`
+- `allow-list-scenario-folders`
+- `allow-save-scenario-folder`
+- `allow-delete-scenario-folder`
+- `allow-move-scenario-folder`
+- `allow-reorder-scenario-folders`
+- `allow-move-scenarios`
+- `allow-add-scenario-tags`
+- `allow-set-scenarios-favorite`
+- `allow-delete-scenarios`
+- `allow-reorder-scenarios`
 - `allow-delete-scenario-run`
 - `allow-clear-scenario-runs`
 - `allow-get-scenario-run`
@@ -252,6 +262,32 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`miyo-tauri:allow-add-scenario-tags`
+
+</td>
+<td>
+
+Enables the add_scenario_tags command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-add-scenario-tags`
+
+</td>
+<td>
+
+Denies the add_scenario_tags command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>
@@ -1426,6 +1462,32 @@ Denies the delete_scenario command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-delete-scenario-folder`
+
+</td>
+<td>
+
+Enables the delete_scenario_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-delete-scenario-folder`
+
+</td>
+<td>
+
+Denies the delete_scenario_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-delete-scenario-run`
 
 </td>
@@ -1445,6 +1507,32 @@ Enables the delete_scenario_run command without any pre-configured scope.
 <td>
 
 Denies the delete_scenario_run command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-delete-scenarios`
+
+</td>
+<td>
+
+Enables the delete_scenarios command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-delete-scenarios`
+
+</td>
+<td>
+
+Denies the delete_scenarios command without any pre-configured scope.
 
 </td>
 </tr>
@@ -3532,6 +3620,32 @@ Denies the list_request_histories command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-list-scenario-folders`
+
+</td>
+<td>
+
+Enables the list_scenario_folders command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-scenario-folders`
+
+</td>
+<td>
+
+Denies the list_scenario_folders command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-list-scenario-runs`
 
 </td>
@@ -3993,6 +4107,58 @@ Enables the move_project_to_team command without any pre-configured scope.
 <td>
 
 Denies the move_project_to_team command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-move-scenario-folder`
+
+</td>
+<td>
+
+Enables the move_scenario_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-move-scenario-folder`
+
+</td>
+<td>
+
+Denies the move_scenario_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-move-scenarios`
+
+</td>
+<td>
+
+Enables the move_scenarios command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-move-scenarios`
+
+</td>
+<td>
+
+Denies the move_scenarios command without any pre-configured scope.
 
 </td>
 </tr>
@@ -5040,6 +5206,58 @@ Denies the render_heartbeat command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-reorder-scenario-folders`
+
+</td>
+<td>
+
+Enables the reorder_scenario_folders command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-reorder-scenario-folders`
+
+</td>
+<td>
+
+Denies the reorder_scenario_folders command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-reorder-scenarios`
+
+</td>
+<td>
+
+Enables the reorder_scenarios command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-reorder-scenarios`
+
+</td>
+<td>
+
+Denies the reorder_scenarios command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-reorder-test-cases`
 
 </td>
@@ -5430,6 +5648,32 @@ Denies the save_scenario command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-save-scenario-folder`
+
+</td>
+<td>
+
+Enables the save_scenario_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-save-scenario-folder`
+
+</td>
+<td>
+
+Denies the save_scenario_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-save-test-case`
 
 </td>
@@ -5761,6 +6005,32 @@ Enables the set_mcp_tool_enabled command without any pre-configured scope.
 <td>
 
 Denies the set_mcp_tool_enabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-set-scenarios-favorite`
+
+</td>
+<td>
+
+Enables the set_scenarios_favorite command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-set-scenarios-favorite`
+
+</td>
+<td>
+
+Denies the set_scenarios_favorite command without any pre-configured scope.
 
 </td>
 </tr>

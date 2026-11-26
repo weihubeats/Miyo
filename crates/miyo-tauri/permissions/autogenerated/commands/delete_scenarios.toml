@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-delete-scenarios"
+description = "Enables the delete_scenarios command without any pre-configured scope."
+commands.allow = ["delete_scenarios"]
+
+[[permission]]
+identifier = "deny-delete-scenarios"
+description = "Denies the delete_scenarios command without any pre-configured scope."
+commands.deny = ["delete_scenarios"]

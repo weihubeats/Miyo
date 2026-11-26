@@ -825,6 +825,9 @@ mod tests {
                 ..Default::default()
             }],
             script: Some("fetch(url, {headers:{authorization: 'Bearer ' + REAL_TOKEN}})".into()),
+            folder_id: None,
+            tags: Vec::new(),
+            favorite: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }];

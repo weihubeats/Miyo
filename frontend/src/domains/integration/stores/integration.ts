@@ -17,7 +17,7 @@ import { ref, type Ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useWorkspaceStore } from '@/stores/workspace'
-import type { Project, ScenarioLibraryItem } from '@/types/miyoApi.d'
+import type { Project, ScenarioFolder, ScenarioLibraryItem } from '@/types/miyoApi.d'
 
 /** 场景库列表视图状态（搜索 / 筛选 / 排序 / 滚动位置）。
  *  进编辑器再返回不丢（useGoBack 导航规范场景 A 的落实——状态由本 store
@@ -27,7 +27,15 @@ export interface ScenarioLibraryViewState {
   /** null = 全部分类；'' = 未分类；其余 = 具体分类名。 */
   categoryFilter: string | null
   statusFilter: 'all' | 'ok' | 'fail' | 'none'
-  sortBy: 'default' | 'name' | 'recent'
+  sortBy: 'default' | 'name' | 'recent' | 'updated'
+  /** 左侧目录树选中项（null = 全部目录；'' = 未分类；其余 = 目录 id）。 */
+  folderFilter: string | null
+  /** 筛选「仅收藏」。 */
+  favoritesOnly: boolean
+  /** 列表 / 卡片视图（默认紧凑列表）。 */
+  viewMode: 'list' | 'card'
+  /** 展开的目录 id（树展开状态随 store 跨路由存活）。 */
+  expandedFolders: string[]
   /** 离开列表时的滚动位置（scrollTop）；projectIdAtScroll 记录归属——
    *  换项目后不恢复旧项目的滚动位置（列表内容已换）。 */
   scrollTop: number
@@ -64,6 +72,7 @@ export const useIntegrationStore = defineStore('integration', () => {
     if (projectId.value === id) return
     projectId.value = id
     activeScenarioId.value = null
+    selectedScenarioIds.value = []
   }
 
   // ---------- 场景库缓存 ----------
@@ -77,9 +86,51 @@ export const useIntegrationStore = defineStore('integration', () => {
     categoryFilter: null,
     statusFilter: 'all',
     sortBy: 'default',
+    folderFilter: null,
+    favoritesOnly: false,
+    viewMode: 'list',
+    expandedFolders: [],
     scrollTop: 0,
     projectIdAtScroll: null,
   })
+
+  // ---------- 业务目录 ----------
+  const folders = ref<ScenarioFolder[]>([]) as Ref<ScenarioFolder[]>
+  /** 批量选择（列表多选；离开列表 / 切项目清空）。 */
+  const selectedScenarioIds = ref<string[]>([])
+
+  /** 加载业务目录（与场景库并行；静默刷新不清空）。 */
+  let folderSeq = 0
+  async function loadFolders(silent = false): Promise<void> {
+    const pid = projectId.value
+    if (!pid) {
+      folderSeq++
+      folders.value = []
+      return
+    }
+    const seq = ++folderSeq
+    try {
+      const list = await api.listScenarioFolders(pid)
+      if (seq !== folderSeq || projectId.value !== pid) return
+      folders.value = list
+    } catch {
+      if (seq !== folderSeq || projectId.value !== pid) return
+      if (!silent) folders.value = []
+    }
+  }
+
+  /** 场景库 + 目录一起刷新（新建 / 移动 / 删除后统一入口）。 */
+  async function refreshLibrary(): Promise<void> {
+    await Promise.all([loadLibrary(true), loadFolders(true)])
+  }
+
+  function selectScenarios(ids: string[]): void {
+    selectedScenarioIds.value = ids
+  }
+
+  function clearSelection(): void {
+    selectedScenarioIds.value = []
+  }
 
   /**
    * 加载场景库。`silent` = 后台刷新（已有缓存时不清空，列表不闪骨架）。
@@ -145,6 +196,7 @@ export const useIntegrationStore = defineStore('integration', () => {
   function forgetScenario(id: string): void {
     if (activeScenarioId.value === id) activeScenarioId.value = null
     libraryItems.value = libraryItems.value.filter((s) => s.id !== id)
+    selectedScenarioIds.value = selectedScenarioIds.value.filter((x) => x !== id)
   }
 
   return {
@@ -154,6 +206,8 @@ export const useIntegrationStore = defineStore('integration', () => {
     libraryLoaded,
     libraryLoading,
     libraryView,
+    folders,
+    selectedScenarioIds,
     activeScenarioId,
     pendingRunId,
     openScenarioRun,
@@ -161,6 +215,10 @@ export const useIntegrationStore = defineStore('integration', () => {
     ensureProjectContext,
     setProject,
     loadLibrary,
+    loadFolders,
+    refreshLibrary,
+    selectScenarios,
+    clearSelection,
     openScenario,
     backToLibrary,
     forgetScenario,

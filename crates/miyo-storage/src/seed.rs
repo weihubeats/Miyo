@@ -1467,6 +1467,9 @@ pm.test('确实打到了改写后的地址', () => {
             },
         ],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: now,
         updated_at: now,
     };
@@ -1652,6 +1655,9 @@ pm.test('确实打到了改写后的地址', () => {
             },
         ],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: now,
         updated_at: now,
     };
@@ -1697,6 +1703,9 @@ pm.test('确实打到了改写后的地址', () => {
             },
         ],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: now,
         updated_at: now,
     };
@@ -1750,6 +1759,9 @@ pm.test('确实打到了改写后的地址', () => {
             },
         ],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: now,
         updated_at: now,
     };
@@ -1805,6 +1817,9 @@ pm.test('确实打到了改写后的地址', () => {
             },
         ],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: now,
         updated_at: now,
     };
@@ -1897,6 +1912,9 @@ pm.test('确实打到了改写后的地址', () => {
             },
         ],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: now,
         updated_at: now,
     };
@@ -1956,6 +1974,9 @@ pm.test('确实打到了改写后的地址', () => {
             },
         ],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: now,
         updated_at: now,
     };

@@ -1105,6 +1105,9 @@ async fn scenario_run_history_roundtrip_and_prune() {
         sort_order: 0,
         steps: vec![],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
@@ -1164,6 +1167,9 @@ async fn list_scenario_run_summaries_matches_details() {
         sort_order: 0,
         steps: vec![],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
@@ -1212,6 +1218,9 @@ async fn latest_run_summaries_for_project_one_row_per_scenario() {
             sort_order: 0,
             steps: vec![],
             script: None,
+            folder_id: None,
+            tags: Vec::new(),
+            favorite: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1232,6 +1241,9 @@ async fn latest_run_summaries_for_project_one_row_per_scenario() {
         sort_order: 0,
         steps: vec![],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
@@ -1322,6 +1334,9 @@ async fn project_recent_runs_and_stats() {
         sort_order: 0,
         steps: vec![],
         script: None,
+        folder_id: None,
+        tags: Vec::new(),
+        favorite: false,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };

@@ -12,7 +12,19 @@ export type Scenario = { id: string, project_id: string, name: string, descripti
 /**
  * 分类标签（场景库过滤用；空 = 未分类）。
  */
-category: string, sort_order: number, steps: Array<ScenarioStep>, 
+category: string, 
+/**
+ * 所属业务目录（None = 未分类）。
+ */
+folder_id?: string | null, 
+/**
+ * 标签（场景库过滤 / 批量打标用；空 = 无标签）。
+ */
+tags: Array<string>, 
+/**
+ * 收藏标记（场景库列表置顶）。
+ */
+favorite: boolean, sort_order: number, steps: Array<ScenarioStep>, 
 /**
  * 自定义脚本（脚本视图编辑后的持久化版本）；None / 空 = 未自定义，
  * 脚本视图实时由 steps 生成。手动步骤始终是执行真源。

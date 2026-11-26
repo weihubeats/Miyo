@@ -136,13 +136,15 @@ onMounted(async () => {
   // 跨路由返回不重拉整库：已有缓存时静默刷新（导航规范场景 A——
   // 返回恢复搜索/筛选/滚动，数据仅后台更新）。
   void store.loadLibrary(!store.libraryLoaded)
+  void store.loadFolders(!store.folders.length)
 })
 
-// 项目切换（含首次解析完成）→ 刷新场景库；跨路由返回时已加载则静默刷新。
+// 项目切换（含首次解析完成）→ 刷新场景库 + 业务目录；跨路由返回时已加载则静默刷新。
 watch(
   () => store.projectId,
   () => {
     void store.loadLibrary(!store.libraryLoaded)
+    void store.loadFolders(true)
   },
 )
 </script>

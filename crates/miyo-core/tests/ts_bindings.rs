@@ -14,8 +14,8 @@ use std::path::PathBuf;
 use miyo_core::model::{
     Endpoint, Environment, EnvironmentVariable, Folder, GlobalParam, GraphQLResponse,
     MockRequestLog, MockRule, Project, ProtoFile, RequestExample, RequestHistory, RequestSpec,
-    ResponseExample, Scenario, ScenarioRun, ScenarioStep, SeqCounter, SyncRemote, Team, TestCase,
-    TestCaseRun, TestCaseRunSummary, TestRun, WsMessageRecord,
+    ResponseExample, Scenario, ScenarioFolder, ScenarioRun, ScenarioStep, SeqCounter, SyncRemote,
+    Team, TestCase, TestCaseRun, TestCaseRunSummary, TestRun, WsMessageRecord,
 };
 use ts_rs::TS;
 
@@ -42,6 +42,7 @@ fn export_bindings() {
     TestCaseRunSummary::export_all(&cfg).unwrap();
     TestRun::export_all(&cfg).unwrap();
     Scenario::export_all(&cfg).unwrap();
+    ScenarioFolder::export_all(&cfg).unwrap();
     ScenarioStep::export_all(&cfg).unwrap();
     ScenarioRun::export_all(&cfg).unwrap();
     Environment::export_all(&cfg).unwrap();

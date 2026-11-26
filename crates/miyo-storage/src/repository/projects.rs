@@ -290,6 +290,7 @@ pub async fn delete_project_children(
         // 运行历史在场景之前删（scenario_runs → scenarios 外键，先子后父）。
         "scenario_runs",
         "scenarios",
+        "scenario_folders",
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE project_id = ?"))
             .bind(&pid)
@@ -406,6 +407,9 @@ mod tests {
                     sort_order: 0,
                     steps: Vec::new(),
                     script: None,
+                    folder_id: None,
+                    tags: Vec::new(),
+                    favorite: false,
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
                 },
@@ -531,6 +535,9 @@ mod tests {
             sort_order: 0,
             steps: Vec::new(),
             script: None,
+            folder_id: None,
+            tags: Vec::new(),
+            favorite: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

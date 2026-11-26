@@ -2086,6 +2086,9 @@ mod tests {
                 ..Default::default()
             }],
             script: None,
+            folder_id: None,
+            tags: Vec::new(),
+            favorite: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2318,6 +2321,9 @@ mod tests {
                 ..Default::default()
             }],
             script: None,
+            folder_id: None,
+            tags: Vec::new(),
+            favorite: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

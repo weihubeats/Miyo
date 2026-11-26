@@ -44,6 +44,7 @@ pub async fn backup_export(
         settings,
         proto_files,
         scenarios,
+        scenario_folders,
     ) = tokio::join!(
         repo::get_project(&state.db, project_id),
         repo::list_folders(&state.db, project_id),
@@ -55,6 +56,7 @@ pub async fn backup_export(
         repo::get_settings(&state.db, BACKUP_SETTING_KEYS),
         repo::list_proto_files(&state.db, project_id),
         repo::list_scenarios(&state.db, project_id),
+        repo::list_scenario_folders(&state.db, project_id),
     );
     let project = project?;
     let folders = folders?;
@@ -66,6 +68,7 @@ pub async fn backup_export(
     let settings = settings?;
     let proto_files = proto_files?;
     let scenarios = scenarios?;
+    let scenario_folders = scenario_folders?;
 
     // 批量一次查询（去 N+1：E 个接口原来 2E 次查询 + 2E 次 JSON 反序列化）。
     let active_ids: Vec<Uuid> = endpoints
@@ -108,6 +111,7 @@ pub async fn backup_export(
         global_params: &global_params,
         team: &team,
         scenarios: &scenarios,
+        scenario_folders: &scenario_folders,
     });
     // 敏感项统计：跑一遍 sync 推送同款脱敏（只取计数不替换产物）——备份本体
     // 必须明文可恢复，但要让用户知道「这份 JSON 里有几把钥匙」。
@@ -152,6 +156,8 @@ pub async fn backup_restore(
         repo::save_response_examples_bulk(tx.as_mut(), &restored.response_examples).await?;
         repo::save_request_examples_bulk(tx.as_mut(), &restored.request_examples).await?;
         repo::save_proto_files_bulk(tx.as_mut(), &restored.proto_files).await?;
+        // 目录先于场景写入（scenarios.folder_id 外键引用）。
+        repo::save_scenario_folders_bulk(tx.as_mut(), &restored.scenario_folders).await?;
         repo::save_scenarios_bulk(tx.as_mut(), &restored.scenarios).await?;
         Ok(())
     }
@@ -190,6 +196,7 @@ pub async fn backup_restore(
         "request_examples": restored.request_examples.len(),
         "proto_files": restored.proto_files.len(),
         "scenarios": restored.scenarios.len(),
+        "scenario_folders": restored.scenario_folders.len(),
         "settings_applied": globals.settings_applied,
         "settings_skipped": globals.settings_skipped,
         "global_variables_merged": globals.global_variables_merged,

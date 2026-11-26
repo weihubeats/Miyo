@@ -1081,6 +1081,15 @@ pub struct Scenario {
     /// 分类标签（场景库过滤用；空 = 未分类）。
     #[serde(default)]
     pub category: String,
+    /// 所属业务目录（None = 未分类）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_id: Option<Uuid>,
+    /// 标签（场景库过滤 / 批量打标用；空 = 无标签）。
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// 收藏标记（场景库列表置顶）。
+    #[serde(default)]
+    pub favorite: bool,
     #[serde(default)]
     pub sort_order: i64,
     #[serde(default)]
@@ -1172,6 +1181,22 @@ pub struct Project {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Folder {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub parent_id: Option<Uuid>,
+    pub name: String,
+    pub sort_order: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 集成测试业务目录（多级文件夹）。
+///
+/// 与接口 Folder 结构同形但独立成表：接口树与场景目录的组织方式互不影响，
+/// 删除场景目录不应波及接口，反之亦然。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ScenarioFolder {
     pub id: Uuid,
     pub project_id: Uuid,
     pub parent_id: Option<Uuid>,

@@ -37,6 +37,21 @@ vi.mock('@/composables/useMiyoApi.ts', () => ({
     ]),
     listScenarioSummaries: (...args: Parameters<typeof listScenarioSummariesMock>) =>
       listScenarioSummariesMock(...args),
+    listScenarioFolders: vi.fn(async (pid: string) =>
+      pid === 'p-1'
+        ? [
+            {
+              id: 'f-1',
+              project_id: 'p-1',
+              parent_id: null,
+              name: '电商业务',
+              sort_order: 0,
+              created_at: '',
+              updated_at: '',
+            },
+          ]
+        : [],
+    ),
   }),
 }))
 
@@ -68,6 +83,24 @@ describe('integration store', () => {
     expect(store.activeScenarioId).toBe('sc-1')
     store.setProject('p-2')
     expect(store.activeScenarioId).toBeNull()
+  })
+
+  it('业务目录加载 / 切换项目清批量选择', async () => {
+    const store = useIntegrationStore()
+    await store.ensureProjectContext()
+    store.setProject('p-1')
+    await store.loadFolders()
+    expect(store.folders).toHaveLength(1)
+    expect(store.folders[0].name).toBe('电商业务')
+
+    store.selectScenarios(['sc-1', 'sc-2'])
+    expect(store.selectedScenarioIds).toEqual(['sc-1', 'sc-2'])
+    store.clearSelection()
+    expect(store.selectedScenarioIds).toEqual([])
+
+    store.selectScenarios(['sc-1'])
+    store.setProject('p-2') // 切项目：选择清空（避免跨项目批量操作）
+    expect(store.selectedScenarioIds).toEqual([])
   })
 
   it('forgetScenario 清编辑态并从列表移除', async () => {

@@ -260,6 +260,7 @@ async fn assemble_snapshot(
         settings,
         proto_files,
         scenarios,
+        scenario_folders,
     ) = tokio::join!(
         repo::get_project(&state.db, project_id),
         repo::list_folders(&state.db, project_id),
@@ -271,15 +272,17 @@ async fn assemble_snapshot(
         repo::get_settings(&state.db, BACKUP_SETTING_KEYS),
         repo::list_proto_files(&state.db, project_id),
         repo::list_scenarios(&state.db, project_id),
+        repo::list_scenario_folders(&state.db, project_id),
     );
     let (project, folders, endpoints, environments, mock_rules) =
         (project?, folders?, endpoints?, environments?, mock_rules?);
-    let (global_variables, global_params, settings, proto_files, scenarios) = (
+    let (global_variables, global_params, settings, proto_files, scenarios, scenario_folders) = (
         global_variables?,
         global_params?,
         settings?,
         proto_files?,
         scenarios?,
+        scenario_folders?,
     );
 
     let active_ids: Vec<Uuid> = endpoints
@@ -321,6 +324,7 @@ async fn assemble_snapshot(
         global_params: &global_params,
         team: &team,
         scenarios: &scenarios,
+        scenario_folders: &scenario_folders,
     }))
 }
 
@@ -377,6 +381,14 @@ async fn apply_snapshot(
         }
         list
     };
+    // 场景业务目录：同步覆盖保留目录 id（场景 folder_id 引用不重映射）。
+    let scenario_folders: Vec<_> = {
+        let mut list: Vec<_> = snapshot.scenario_folders.clone();
+        for f in &mut list {
+            f.project_id = project_id;
+        }
+        list
+    };
     // 场景步骤是接口引用式：同步覆盖保留接口 id，endpoint_id 无需重映射。
     let scenarios: Vec<_> = {
         let mut list: Vec<_> = snapshot.scenarios.clone();
@@ -396,6 +408,8 @@ async fn apply_snapshot(
     repo::save_response_examples_bulk(tx.as_mut(), &snapshot.response_examples).await?;
     repo::save_request_examples_bulk(tx.as_mut(), &snapshot.request_examples).await?;
     repo::save_proto_files_bulk(tx.as_mut(), &snapshot.proto_files).await?;
+    // 目录先于场景写入（scenarios.folder_id 外键引用）。
+    repo::save_scenario_folders_bulk(tx.as_mut(), &scenario_folders).await?;
     repo::save_scenarios_bulk(tx.as_mut(), &scenarios).await?;
 
     tx.commit().await.map_err(miyo_storage::db_err)?;
