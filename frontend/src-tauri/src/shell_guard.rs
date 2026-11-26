@@ -128,9 +128,23 @@ fn install_render_session_monitor(app: &AppHandle) {
                 ICoreWebView2ProcessFailedEventArgs2, ICoreWebView2_2,
                 COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
                 COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE,
+                COREWEBVIEW2_PROCESS_FAILED_REASON_UNEXPECTED,
             };
             use webview2_com::ProcessFailedEventHandler;
             use windows_core::Interface;
+
+            /// 把 WebView2 返回的 `PWSTR` 转成 Rust 字符串并释放 COM 内存。
+            ///
+            /// SAFETY: 只接受由 WebView2/COM 分配的 `PWSTR`（可用 CoTaskMemFree 释放）；
+            /// 空指针返回空串。
+            unsafe fn pwstr_to_string(raw: windows_core::PWSTR) -> String {
+                if raw.is_null() {
+                    return String::new();
+                }
+                let text = raw.to_string().unwrap_or_default();
+                windows_sys::Win32::System::Com::CoTaskMemFree(raw.0 as *const core::ffi::c_void);
+                text
+            }
 
             // SAFETY: 回调只在 WebView2 消息循环内触发，闭包捕获的均为 Send 值。
             let core = match unsafe {
@@ -154,22 +168,32 @@ fn install_render_session_monitor(app: &AppHandle) {
             let handler = ProcessFailedEventHandler::create(Box::new(move |_sender, args| {
                 // 只关心「退出」与「无响应」两类；其余（如 GPU 进程退出）交给 Chromium 自恢复。
                 let Some(args) = args else { return Ok(()) };
-                let kind = unsafe { args.ProcessFailedKind() }
-                    .unwrap_or_else(|_| COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED);
-                let detail = unsafe {
-                    args.cast::<ICoreWebView2ProcessFailedEventArgs2>()
-                        .ok()
-                        .map(|args2| {
-                            let reason = args2.Reason().ok();
-                            let exit = args2.ExitCode().ok();
-                            let desc = args2
-                                .ProcessDescription()
-                                .ok()
-                                .map(|s| s.to_string())
-                                .unwrap_or_default();
-                            format!("reason={reason:?} exit={exit:?} desc={desc}")
-                        })
-                        .unwrap_or_default()
+                // 这些接口都是 `&mut out` 出参形态（webview2-com 0.39），
+                // 不是返回值——按返回值调用会在 Windows 上直接编译失败。
+                let kind = {
+                    let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
+                    // SAFETY: kind 是栈上的可写出参，生命周期覆盖调用。
+                    if unsafe { args.ProcessFailedKind(&mut kind) }.is_err() {
+                        kind = COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
+                    }
+                    kind
+                };
+                let detail = {
+                    // SAFETY: 出参均为栈上可写值；PWSTR 由 CoTaskMemFree 释放。
+                    unsafe {
+                        args.cast::<ICoreWebView2ProcessFailedEventArgs2>()
+                            .map(|args2| {
+                                let mut reason = COREWEBVIEW2_PROCESS_FAILED_REASON_UNEXPECTED;
+                                let mut exit = -1i32;
+                                let mut desc = windows_core::PWSTR::null();
+                                let _ = args2.Reason(&mut reason);
+                                let _ = args2.ExitCode(&mut exit);
+                                let _ = args2.ProcessDescription(&mut desc);
+                                let desc = pwstr_to_string(desc);
+                                format!("reason={reason:?} exit={exit} desc={desc}")
+                            })
+                            .unwrap_or_default()
+                    }
                 };
                 tracing::error!(
                     kind = kind.0,

@@ -37,6 +37,33 @@ jobs:
       - name: Check TS bindings drift (miyo-core)
         run: git diff --exit-code -- frontend/src/types/generated
 
+  # 桌面壳（frontend/src-tauri）是独立 workspace，且 Windows 专属代码在
+  # macOS/Linux 上整片跳过编译（`#[cfg(target_os = "windows")]`）。v0.0.65/v0.0.67
+  # 两次都是发版时才在 Package (windows) 里炸出编译错误——这里提前挡一道。
+  desktop-shell-windows:
+    name: Desktop shell compile (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: shell-windows
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # tauri-build 依赖前端产物与资源清单，先装依赖并构建 dist
+      - name: Build frontend assets
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Clippy (desktop shell, windows cfg)
+        working-directory: frontend/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
   # 插件平台 crate 三平台测试（miyo-plugin / miyo-sidecar / miyo-storage）：
   # Sidecar 进程管理与签名校验是平台相关代码，单平台测试易漏检
   plugin-crates:

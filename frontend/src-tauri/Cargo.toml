@@ -38,7 +38,10 @@ rfd = "0.18"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-version = "0.1"
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Com",
+] }
 # 渲染进程存活监控（issue #192）：ProcessFailed 回调注册在 ICoreWebView2_2 上。
 # 版本与 wry 传递依赖的保持一致，避免同 crate 两份实例导致接口 cast 失败。
 webview2-com = "0.39"
