@@ -60,6 +60,14 @@ jobs:
         run: |
           npm ci
           npm run build
+      # tauri-build 在编译期校验 bundle.externalBin / bundle.resources，
+      # 缺文件时 build 脚本直接失败（与 Linux 壳 job 同一套预置步骤）。
+      - name: Ensure miyo-mcp sidecar (bundle.externalBin)
+        shell: bash
+        run: bash scripts/ensure-mcp-bin.sh
+      - name: Ensure Java Debug attach jars (bundle.resources)
+        shell: bash
+        run: bash scripts/ensure-java-jars.sh
       - name: Clippy (desktop shell, windows cfg)
         working-directory: frontend/src-tauri
         run: cargo clippy --all-targets -- -D warnings
