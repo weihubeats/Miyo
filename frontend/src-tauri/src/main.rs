@@ -401,7 +401,14 @@ fn main() {
             // 落库窗口），再清端口文件（避免残留失效的 agent-port）。
             // 同时清理 Java Attach：尽力 agent.stop（停目标 JVM 内 IPC 服务 +
             // 清 infoFile）并移除全部会话；目标 JVM 本身不受影响。
-            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                // 渲染守卫重建主窗时会先销毁旧窗：主窗是唯一窗口时这会触发
+                // 「无窗口 → 退出」，重建还没完成应用就先退了。此时拦下退出，
+                // 也不要执行下面的关停清理（那是真正的退出才该做的事）。
+                if shell_guard::is_rebuilding_window() {
+                    api.prevent_exit();
+                    return;
+                }
                 tauri::async_runtime::block_on(miyo_tauri::commands::agent::shutdown_on_exit(app));
                 tauri::async_runtime::block_on(
                     miyo_tauri::commands::java_attach::shutdown_attach_on_exit(app),

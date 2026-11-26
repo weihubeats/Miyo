@@ -109,7 +109,10 @@ function startRenderHeartbeat(): void {
     if (now - last >= HEARTBEAT_INTERVAL_MS) {
       last = now
       // 不等结果、不处理错误：心跳丢失本身由壳侧超时判定，这里重试无意义。
-      void send('render_heartbeat').catch(() => {})
+      // 必须带插件命名空间：miyo 的所有命令都注册在插件 invoke_handler 里
+      // （`plugin:miyo|render_heartbeat`）。裸命令名会被壳侧判为未知命令而拒绝，
+      // 心跳计数恒为 0 —— 渲染守卫随即误判「画面冻结」并弹窗（v0.0.68 实测）。
+      void send('plugin:miyo|render_heartbeat').catch(() => {})
     }
     requestAnimationFrame(tick)
   }

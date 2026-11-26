@@ -268,10 +268,9 @@ export function createPluginSession(view: PluginView, host: PluginHostBridge): P
   // ---- per-plugin 文件数据目录（Rust 懒创建；卸载「不保留数据」时删除） ----
   const paths = {
     async data() {
-      return invoke<{ root: string; data: string; cache: string; tmp: string }>(
-        'plugin_dir_get',
-        { id: view.manifest.id },
-      )
+      return callIpc<{ root: string; data: string; cache: string; tmp: string }>('plugin_dir_get', {
+        id: view.manifest.id,
+      })
     },
   }
 

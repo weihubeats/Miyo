@@ -32,6 +32,34 @@
 - WebView2 渲染进程监控：挂 `ICoreWebView2_2::ProcessFailed`，
   把渲染进程退出 / 无响应 / 浏览器进程退出连同 reason / exit code / 进程描述
   写进日志（此前完全无记录，只能靠用户偶然杀掉进程才看得见现象）
+- 误报修复（macOS 实测）：窗口切到后台 / 被遮挡 / 最小化时系统会暂停
+  `requestAnimationFrame`，心跳归零被当成「画面冻结」，正常使用中突然弹
+  「界面无法刷新」。判定前现在先确认窗口在前台（可见 / 未最小化 / 有焦点），
+  不满足只重新起算；心跳从未上报（计数恒为 0）单独归因，不再触发无效重建
+- **根因修复**：心跳调用漏了插件命名空间（`invoke('render_heartbeat')`，
+  而命令注册在 `plugin:miyo|` 下），Promise 被 `.catch` 吞掉、计数恒为 0，
+  守卫从启动起就必然误判。改为 `plugin:miyo|render_heartbeat`；
+  同类问题 `plugins/sdk.ts` 的 `ctx.paths.data()`（`plugin_dir_get`）一并修正
+- 新增门禁 `pluginInvokePattern.spec.ts`：以 Rust 侧 `build.rs` 的命令清单为
+  唯一真源扫描前端源码，裸命令名必须经 API 层封装（`call` / `quiet` /
+  `callIpc` / `callWithSession`）或带 `plugin:miyo|` 前缀，否则测试失败
+- 重建窗口修复：`close()` 只是投递 `CloseRequested`，webview 条目要等
+  `Destroyed` 派回事件循环才移除，紧接着建同 label 必撞
+  `a webview with label main already exists`。改为 `destroy()` + 轮询等 label
+  释放，并在重建期间拦下「最后一个窗口销毁 → 退出应用」；该路径收紧为
+  Windows 专属（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 只对 WebView2 生效，
+  其它平台重建只会丢表单与滚动位置）
+- 诊断文案按平台分流：macOS / Linux 不再给 Windows Server 的 `dism` 指引，
+  改为「切焦点 / 重启进程 / 命令行导出」，诊断文件另附判定时的窗口状态
+- 重建窗口修复：`close()` 只是投递 `CloseRequested`，webview 条目要等
+  `Destroyed` 派回事件循环才移除，紧接着建同 label 必撞
+  `a webview with label main already exists`。改为 `destroy()` + 轮询等 label
+  释放，并在重建期间拦下「最后一个窗口销毁 → 退出应用」；该路径收紧为
+  Windows 专属（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 只对 WebView2 生效，
+  其它平台重建只会丢表单与滚动位置）
+- 诊断文案按平台分流：macOS / Linux 不再给 Windows Server 的 `dism` 指引，
+  改为「切焦点 / 重启进程 / 命令行导出」，诊断文件另附判定时的窗口状态
+
 功能：
 
 - `Miyo.exe --miyo-export-db=<路径>`：无界面导出当前数据库（`VACUUM INTO`

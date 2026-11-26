@@ -22,6 +22,21 @@
 //!    按 [重绘 → 软件合成重载 → 原生提示] 三级降级；
 //! 3. **诊断落盘**：判定冻结时写 `blank-screen-<时间>.txt`（日志目录），
 //!    用户点不动 UI 也能把文件发出来。
+//!
+//! ## 两个实证踩过的坑（v0.0.6x 修复）
+//!
+//! **坑一：rAF 在窗口不前台时会停。** macOS 的 WKWebView（以及被遮挡 / 最小化的
+//! 其它平台）在窗口不可见、失去焦点时直接停掉 `requestAnimationFrame`——心跳计数
+//! 归零，看门狗把它当成「画面冻结」，于是正常使用的应用突然弹「界面无法刷新」。
+//! 判定前必须确认窗口真的在前台（可见 / 未最小化 / 有焦点），否则只重新起算。
+//!
+//! **坑二：`close()` 之后不能立刻用同 label 建窗。** `close()` 只是投递
+//! `CloseRequested`；窗口管理器里的 webview 条目要等运行时把 `Destroyed` 事件
+//! 派回事件循环才移除。紧接着 `build()` 同 label 必撞
+//! `a webview with label main already exists`（用户实测报错）。
+//! 重建路径改为 `destroy()` + 轮询等 label 释放，且只在 Windows 生效
+//! （`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 是 WebView2 专属，其它平台重建
+//! 只会丢表单与滚动位置）。
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
@@ -47,7 +62,36 @@ static RECOVERY_STAGE: AtomicU8 = AtomicU8::new(0);
 static UNRESPONSIVE_SINCE: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 
 /// 是否已经用软件合成重建过一次窗口（只允许一次，避免无限闪窗）。
+/// 仅在 Windows 有意义（软件合成重建是 WebView2 专属路径）。
+#[cfg(target_os = "windows")]
 static SOFTWARE_RETRY_DONE: AtomicBool = AtomicBool::new(false);
+
+/// 是否正在重建主窗（此时旧窗销毁会触发 ExitRequested，必须拦下）。
+static REBUILDING_WINDOW: AtomicBool = AtomicBool::new(false);
+
+/// 主窗是否正在重建中（供 `main.rs` 的 ExitRequested 分支判断）。
+pub fn is_rebuilding_window() -> bool {
+    REBUILDING_WINDOW.load(Ordering::SeqCst)
+}
+
+/// 重建期间的 RAII 置位：进入作用域置 true，离开（含提前 return / panic）复位。
+#[cfg(target_os = "windows")]
+struct RebuildGuard;
+
+#[cfg(target_os = "windows")]
+impl RebuildGuard {
+    fn new() -> Self {
+        REBUILDING_WINDOW.store(true, Ordering::SeqCst);
+        Self
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for RebuildGuard {
+    fn drop(&mut self) {
+        REBUILDING_WINDOW.store(false, Ordering::SeqCst);
+    }
+}
 
 /// 是否已经写过一次诊断文件（一次进程只写一份，避免刷目录）。
 static REPORTED: AtomicBool = AtomicBool::new(false);
@@ -78,6 +122,19 @@ impl Stage {
 
 fn stage() -> Stage {
     Stage::from_u8(RECOVERY_STAGE.load(Ordering::SeqCst))
+}
+
+/// 二级重建的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// 非 Windows 上只有 `Unavailable` 会被构造（重建是 WebView2 专属路径）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+enum RebuildOutcome {
+    /// 已用软件合成参数重建成功，心跳纪元重新起算。
+    Rebuilt,
+    /// 当前平台没有这条路径（非 Windows）。
+    Unavailable,
+    /// 尝试过但失败，提示已在内部给出。
+    GaveUp,
 }
 
 /// 推进到下一级（CAS，多线程下只生效一次）。返回是否由本线程完成推进。
@@ -246,10 +303,39 @@ fn spawn_heartbeat_watchdog(app: AppHandle) {
 
         let mut last_count = miyo_tauri::commands::render_heartbeat_count();
         let mut last_change = Instant::now();
+        let mut logged_first_beat = last_count > 0;
+        if logged_first_beat {
+            tracing::info!(count = last_count, "render guard: heartbeat running");
+        }
         loop {
             std::thread::sleep(Duration::from_millis(HEARTBEAT_POLL_MS));
+
+            // 窗口没了（重建中 / 已销毁）：本线程的结论不再可信，直接退出。
+            let Some(win) = app.get_webview_window("main") else {
+                tracing::warn!("render guard: main window gone, watchdog stopped");
+                return;
+            };
+
+            // 窗口不在前台时不判冻结：系统会主动暂停 rAF，心跳归零是正常行为。
+            // 只重新起算，等用户切回窗口后再继续判断。查询失败按「在前台」处理：
+            // 宁可多判一次，也不要让守卫静默失效。
+            let observable = is_window_observable(
+                win.is_visible().unwrap_or(true),
+                win.is_minimized().unwrap_or(false),
+                win.is_focused().unwrap_or(true),
+            );
+            if !observable {
+                last_count = miyo_tauri::commands::render_heartbeat_count();
+                last_change = Instant::now();
+                continue;
+            }
+
             let count = miyo_tauri::commands::render_heartbeat_count();
             if count != last_count {
+                if !logged_first_beat {
+                    logged_first_beat = true;
+                    tracing::info!(count, "render guard: heartbeat running");
+                }
                 last_count = count;
                 last_change = Instant::now();
                 continue;
@@ -266,6 +352,18 @@ fn spawn_heartbeat_watchdog(app: AppHandle) {
                 continue;
             }
 
+            // 心跳一次都没来（计数恒为 0）：更可能是前端没起来 / IPC 被权限拦住，
+            // 不是合成器冻结——重建窗口对这类故障无效，直接进三级提示。
+            if count == 0 {
+                tracing::error!(
+                    stalled_secs = last_change.elapsed().as_secs(),
+                    "render guard: heartbeat never reported (frontend or IPC unavailable)"
+                );
+                advance_to(Stage::Reported);
+                report_and_notify(&app, "前端心跳从未上报（可能未挂载或 IPC 调用被拒）");
+                return;
+            }
+
             tracing::error!(
                 stalled_secs = last_change.elapsed().as_secs(),
                 heartbeat = count,
@@ -280,9 +378,18 @@ fn spawn_heartbeat_watchdog(app: AppHandle) {
                 }
                 Stage::Repainted => {
                     advance_to(Stage::ReloadedSoftware);
-                    reload_with_software_compositing(&app);
-                    // 重载后重新起算，给新会话一个完整的宽限窗口。
-                    last_change = Instant::now();
+                    match reload_with_software_compositing(&app) {
+                        // 重建后重新起算，给新会话一个完整的宽限窗口。
+                        RebuildOutcome::Rebuilt => last_change = Instant::now(),
+                        // 本平台没有软件合成重建路径：直接进三级，别再多等一轮。
+                        RebuildOutcome::Unavailable => {
+                            advance_to(Stage::Reported);
+                            report_and_notify(&app, "画面连续多个心跳周期没有刷新（渲染已冻结）");
+                            return;
+                        }
+                        // 重建失败：提示已在内部给出，不再重复弹框。
+                        RebuildOutcome::GaveUp => return,
+                    }
                 }
                 Stage::ReloadedSoftware | Stage::Reported => {
                     advance_to(Stage::Reported);
@@ -316,18 +423,29 @@ fn repaint(app: &AppHandle) {
     tracing::info!("render guard: forced repaint");
 }
 
-/// 二级：用软件合成参数**重建**主窗并重载页面。
+/// 二级：用软件合成参数**重建**主窗并重载页面（仅 Windows）。
 ///
 /// 为什么必须重建窗口：`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 只在创建
 /// WebView2 实例时读取，`location.reload()` 复用同一实例 → 参数不生效（实测设计缺陷）。
 /// 同时不同浏览器参数的 WebView2 不能共用同一个 `data_directory`，
 /// 因此这里换一个独立目录，避免新建实例直接失败。
 ///
+/// 为什么只限 Windows：这个开关是 WebView2 专属，macOS 的 WKWebView / Linux 的
+/// WebKitGTK 根本没有对应参数——重建除了丢表单与滚动位置毫无收益，还要冒
+/// 「同 label 建窗失败」的风险（用户实测撞过）。
+///
 /// 代价：丢失当前滚动位置与在途表单。此时画面已经冻结 15 秒，
 /// 用户本来就什么都点不到，重建是唯一可能恢复的路。
-fn reload_with_software_compositing(app: &AppHandle) {
+#[cfg(not(target_os = "windows"))]
+fn reload_with_software_compositing(_app: &AppHandle) -> RebuildOutcome {
+    tracing::warn!("render guard: software rebuild is windows-only, skipped");
+    RebuildOutcome::Unavailable
+}
+
+#[cfg(target_os = "windows")]
+fn reload_with_software_compositing(app: &AppHandle) -> RebuildOutcome {
     let Some(old) = app.get_webview_window("main") else {
-        return;
+        return RebuildOutcome::GaveUp;
     };
     if !SOFTWARE_RETRY_DONE.swap(true, Ordering::SeqCst) {
         tracing::warn!("render guard: rebuilding window with software compositing");
@@ -335,7 +453,7 @@ fn reload_with_software_compositing(app: &AppHandle) {
         // 已经重建过一次仍然冻结：不再循环重建（会无限闪窗），直接进三级。
         tracing::error!("render guard: software rebuild did not help");
         report_and_notify(app, "软件合成重建后画面仍未刷新");
-        return;
+        return RebuildOutcome::GaveUp;
     }
 
     let Some(config) = app
@@ -346,7 +464,7 @@ fn reload_with_software_compositing(app: &AppHandle) {
         .find(|w| w.label == "main")
         .cloned()
     else {
-        return;
+        return RebuildOutcome::GaveUp;
     };
 
     // 旧窗口的尺寸/位置要带过去，否则用户会觉得应用「跳回默认大小」。
@@ -354,9 +472,26 @@ fn reload_with_software_compositing(app: &AppHandle) {
     let pos = old.outer_position().ok();
     let was_fullscreen = old.is_fullscreen().unwrap_or(false);
 
-    // 先关旧窗：同一 label 不能并存两个窗口。
-    if let Err(err) = old.close() {
-        tracing::warn!(error = %err, "render guard: closing frozen window failed");
+    // 销毁期间旧窗的 `Destroyed` 会触发 ExitRequested（主窗是唯一窗口时
+    // 直接退出应用），必须由 main.rs 拦住；守卫在作用域结束时自动解除。
+    let _rebuild_guard = RebuildGuard::new();
+
+    // 不能用 close()：它只投递 `CloseRequested`，webview 条目要等运行时把
+    // `Destroyed` 派回事件循环才移除——紧接着 build 同 label 必撞
+    // 「a webview with label `main` already exists」（用户实测）。
+    if let Err(err) = old.destroy() {
+        tracing::warn!(error = %err, "render guard: destroying frozen window failed");
+    }
+
+    // 等 label 真正释放（Destroyed 异步投递，通常几十毫秒）。
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.get_webview_window("main").is_some() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if app.get_webview_window("main").is_some() {
+        tracing::error!("render guard: window still registered after destroy, rebuild skipped");
+        report_and_notify(app, "旧窗口销毁超时，未能重建");
+        return RebuildOutcome::GaveUp;
     }
 
     let result = (|| -> tauri::Result<()> {
@@ -390,24 +525,68 @@ fn reload_with_software_compositing(app: &AppHandle) {
             crate::FRONTEND_READY.store(false, Ordering::SeqCst);
             *UNRESPONSIVE_SINCE.lock().unwrap() = None;
             tracing::info!("render guard: window rebuilt with software compositing");
+            RebuildOutcome::Rebuilt
         }
         Err(err) => {
             tracing::error!(error = %err, "render guard: software rebuild failed");
             report_and_notify(app, &format!("软件合成重建窗口失败：{err}"));
+            RebuildOutcome::GaveUp
         }
+    }
+}
+
+/// 按平台给出「不依赖窗口」的出口清单。
+///
+/// 之前的文案把 Windows Server 的 dism 指令抄给了所有平台，macOS 用户看到
+/// 「开启桌面体验功能」只会更困惑（实测反馈）。
+fn platform_hints() -> String {
+    let export = if cfg!(target_os = "windows") {
+        "Miyo.exe --miyo-export-db=<导出路径.db>"
+    } else {
+        "Miyo --miyo-export-db=<导出路径.db>"
+    };
+    if cfg!(target_os = "windows") {
+        format!(
+            "1) Windows Server 开启「桌面体验」(DesktopExperience) 后重启：\n\
+                dism /online /enable-feature /featurename=ServerMediaFoundation /all /norestart\n\
+                dism /online /enable-feature /featurename=DesktopExperience /all /norestart\n\
+             2) 启动前设置环境变量 MIYO_WEBVIEW_SOFTWARE=1（强制软件渲染）\n\
+             3) 窗口点不动时导出数据：\n    {export}"
+        )
+    } else {
+        format!(
+            "1) 先切换窗口焦点（最小化再还原 / 切到别的应用再切回）看画面是否恢复；\n\
+             2) 退出并重新打开 Miyo（确认没有残留进程：活动监视器里结束同名进程）；\n\
+             3) 窗口点不动时导出数据：\n    {export}"
+        )
     }
 }
 
 /// 三级：落盘诊断 + 原生提示框。
 ///
 /// 此时 UI 已经确认点不动，提示里必须给**不依赖窗口**的出口：
-/// 日志文件路径、`--miyo-export-db` 命令行、以及 Server 版「桌面体验」开关。
+/// 日志文件路径与 `--miyo-export-db` 命令行；平台专属的恢复建议见
+/// [`platform_hints`]。
 fn report_and_notify(app: &AppHandle, reason: &str) {
     let log_dir = miyo_storage::db::log_dir();
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
     let webview = tauri::webview_version().unwrap_or_else(|e| format!("unavailable: {e}"));
     let heartbeat = miyo_tauri::commands::render_heartbeat_count();
+    // 判定时的窗口状态：区分「真冻结」与「窗口本来就不在前台」的关键证据。
+    let window_state = app
+        .get_webview_window("main")
+        .map(|w| {
+            format!(
+                "visible={:?} minimized={:?} focused={:?}",
+                w.is_visible(),
+                w.is_minimized(),
+                w.is_focused()
+            )
+        })
+        .unwrap_or_else(|| "main window missing".to_string());
+
+    let hints = platform_hints();
 
     let body = format!(
         "Miyo 渲染冻结诊断\n\
@@ -415,18 +594,12 @@ fn report_and_notify(app: &AppHandle, reason: &str) {
          时间: {time}\n\
          原因: {reason}\n\
          平台: {os}/{arch}\n\
-         WebView2: {webview}\n\
+         WebView: {webview}\n\
          心跳计数: {heartbeat}\n\
+         窗口状态: {window_state}\n\
          降级阶段: {stage:?}\n\
          日志目录: {log_dir}\n\n\
-         可尝试:\n\
-         1. Windows Server 开启「桌面体验」(DesktopExperience) 功能后重启：\n\
-            dism /online /enable-feature /featurename:ServerMediaFoundation /all /norestart\n\
-            dism /online /enable-feature /featurename:DesktopExperience /all /norestart\n\
-         2. 启动前设置环境变量 MIYO_WEBVIEW_SOFTWARE=1（强制软件渲染）\n\
-         3. 窗口点不动时导出数据（命令行）：\n\
-            Miyo.exe --miyo-export-db=<导出路径.db>\n\
-         4. 把整个日志目录打包反馈：{log_dir}\n",
+         可尝试:\n{hints}",
         time = chrono::Local::now().to_rfc3339(),
         stage = stage(),
         log_dir = log_dir.display(),
@@ -449,11 +622,7 @@ fn report_and_notify(app: &AppHandle, reason: &str) {
         "界面无法正常刷新（窗口可能一片空白/黑）。程序仍可运行，但画面可能不更新。\n\n\
          原因：{reason}\n\n\
          {report_hint}日志目录：\n{}\n\n\
-         请依次尝试：\n\
-         1) Windows Server 开启「桌面体验」功能后重启服务器（虚拟机 + Server 版最常见的原因）；\n\
-         2) 设置环境变量 MIYO_WEBVIEW_SOFTWARE=1 后重新打开 Miyo；\n\
-         3) 若需先导出数据（窗口点不动也能用）：\n\
-            Miyo.exe --miyo-export-db=导出路径.db\n\n\
+         请依次尝试：\n{hints}\n\
          把日志目录整体打包发给开发者，可以精确定位。",
         log_dir.display()
     );
@@ -465,4 +634,46 @@ fn report_and_notify(app: &AppHandle, reason: &str) {
         .set_buttons(rfd::MessageButtons::Ok)
         .show();
     let _ = app.emit("miyo://render-stalled", ());
+}
+
+/// 只有窗口真在前台时，心跳停滞才说明「画面冻结」。
+///
+/// - macOS 的 WKWebView 在窗口被遮挡 / 失焦 / 最小化时直接停掉
+///   `requestAnimationFrame`（实测：正常使用中切到别的应用，20 秒后误报）；
+/// - Windows Chromium 在最小化时同样降频。
+///
+/// 这些停顿与渲染故障无关，必须先排除，否则用户会莫名收到「界面无法刷新」。
+fn is_window_observable(visible: bool, minimized: bool, focused: bool) -> bool {
+    visible && !minimized && focused
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merely_unfocused_window_is_not_judged() {
+        assert!(
+            is_window_observable(true, false, true),
+            "前台窗口应正常判定"
+        );
+        assert!(
+            !is_window_observable(true, false, false),
+            "切到别的应用：rAF 被系统暂停，心跳归零不是冻结"
+        );
+        assert!(!is_window_observable(false, false, true), "隐藏窗口同理");
+        assert!(!is_window_observable(true, true, false), "最小化同理");
+    }
+
+    #[test]
+    fn stage_only_advances_forward_once() {
+        // 三级降级是单向的：重复调用不能回退（否则会无限重建 / 重复弹框）。
+        RECOVERY_STAGE.store(Stage::None as u8, Ordering::SeqCst);
+        assert!(advance_to(Stage::Repainted));
+        assert!(!advance_to(Stage::Repainted));
+        assert!(advance_to(Stage::ReloadedSoftware));
+        assert!(!advance_to(Stage::Repainted));
+        assert_eq!(stage(), Stage::ReloadedSoftware);
+        RECOVERY_STAGE.store(Stage::None as u8, Ordering::SeqCst);
+    }
 }
