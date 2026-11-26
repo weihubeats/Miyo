@@ -185,14 +185,12 @@ pub async fn save_scenario_folder(
         )));
     }
     // 已存在则保留原 created_at（前端复制对象时可能带入错误时间）。
-    match repo::get_scenario_folder(&state.db, folder.id).await {
-        Ok(existing) => {
-            if existing.project_id != folder.project_id {
-                return Err(CommandError::validation("目录不属于当前项目"));
-            }
-            folder.created_at = existing.created_at;
+    // 查不到（新目录）时保持前端传入的时间即可。
+    if let Ok(existing) = repo::get_scenario_folder(&state.db, folder.id).await {
+        if existing.project_id != folder.project_id {
+            return Err(CommandError::validation("目录不属于当前项目"));
         }
-        Err(_) => {}
+        folder.created_at = existing.created_at;
     }
     folder.updated_at = chrono::Utc::now();
     repo::save_scenario_folder(&state.db, &folder).await?;
@@ -326,19 +324,13 @@ pub async fn set_scenarios_favorite(
 
 /// 批量删除场景（运行历史一并清理，单事务）。
 #[tauri::command(rename_all = "camelCase")]
-pub async fn delete_scenarios(
-    state: State<'_, AppState>,
-    ids: Vec<Uuid>,
-) -> CommandResult<i64> {
+pub async fn delete_scenarios(state: State<'_, AppState>, ids: Vec<Uuid>) -> CommandResult<i64> {
     Ok(repo::delete_scenarios(&state.db, &ids).await?)
 }
 
 /// 同级场景重排（拖拽落点后按可见顺序写回 sort_order）。
 #[tauri::command(rename_all = "camelCase")]
-pub async fn reorder_scenarios(
-    state: State<'_, AppState>,
-    ids: Vec<Uuid>,
-) -> CommandResult<()> {
+pub async fn reorder_scenarios(state: State<'_, AppState>, ids: Vec<Uuid>) -> CommandResult<()> {
     Ok(repo::reorder_scenarios(&state.db, &ids).await?)
 }
 
@@ -1293,7 +1285,10 @@ pub async fn list_scenario_summaries(
             ScenarioLibraryItem {
                 run_count: stats.get(&scenario.id).map(|s| s.run_count).unwrap_or(0),
                 ok_run_count: stats.get(&scenario.id).map(|s| s.ok_run_count).unwrap_or(0),
-                fail_run_count: stats.get(&scenario.id).map(|s| s.fail_run_count).unwrap_or(0),
+                fail_run_count: stats
+                    .get(&scenario.id)
+                    .map(|s| s.fail_run_count)
+                    .unwrap_or(0),
                 scenario,
                 last_run,
             }
