@@ -126,8 +126,10 @@ fn stage() -> Stage {
 
 /// 二级重建的结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// 非 Windows 上只有 `Unavailable` 会被构造（重建是 WebView2 专属路径）。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+// 平台分流后每个变体只在一边被构造：Windows 走 `Rebuilt` / `GaveUp`，
+// 其它平台只返回 `Unavailable`。CI 的 clippy 带 `-D warnings`，
+// 单边 cfg_attr 会在另一边触发 dead_code，故整枚举显式放行。
+#[allow(dead_code)]
 enum RebuildOutcome {
     /// 已用软件合成参数重建成功，心跳纪元重新起算。
     Rebuilt,
