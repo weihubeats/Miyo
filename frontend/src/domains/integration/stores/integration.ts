@@ -80,6 +80,9 @@ export const useIntegrationStore = defineStore('integration', () => {
   const libraryItems = ref<ScenarioLibraryItem[]>([]) as Ref<ScenarioLibraryItem[]>
   const libraryLoaded = ref(false)
   const libraryLoading = ref(false)
+  /** 列表态页签：场景库 / 测试套件（返回列表时保持离开前的页签）。 */
+  const listTab = ref<'library' | 'suites'>('library')
+
   /** 列表视图状态（搜索 / 筛选 / 排序 / 滚动位置；随 store 跨路由存活）。 */
   const libraryView = ref<ScenarioLibraryViewState>({
     search: '',
@@ -205,6 +208,7 @@ export const useIntegrationStore = defineStore('integration', () => {
     libraryItems,
     libraryLoaded,
     libraryLoading,
+    listTab,
     libraryView,
     folders,
     selectedScenarioIds,

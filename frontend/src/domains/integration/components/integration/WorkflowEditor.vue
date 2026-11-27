@@ -13,7 +13,7 @@
  * 接口引用（endpoint_id，配置跟随接口）。运行统一物化为 BuiltRunStep。
  */
 import { type Ref, computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import Sortable from 'sortablejs'
 import { useLocaleStore } from '@/stores/locale'
@@ -36,21 +36,23 @@ import { applyPolicy, detectPolicy, OVERRIDE_POLICIES, type OverridePolicy } fro
 import { applyStepOverrides, applyUrlOverride } from '@/utils/stepOverrides'
 import { envColorClass, mergedVariableMap } from '@/utils/environment'
 import { applyPathVars } from '@/utils/pathVariables'
-import { methodBadgeTone } from '@/utils/methodTone'
 import { formatDateTime } from '@/utils/dateTime'
 import { generateScenarioScript, type ScriptAuth, type ScriptStep } from '@/utils/scenarioScript'
 import { EXPORT_PLACEHOLDER, isSensitiveKeyName, redactJsonText, redactUrlQuery } from '@/utils/exportRedact'
 import { parseScenarioScript, ScriptParseError } from '@/utils/scenarioScriptParse'
 import { copyText } from '@/utils/clipboard'
 import CustomSelect from '@/components/ui/CustomSelect.vue'
-import SegmentedControl, { type SegmentOption } from '@/components/ui/SegmentedControl.vue'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import Menu, { type MenuItem } from '@/components/ui/Menu.vue'
 import Modal from '@/components/ui/Modal.vue'
-import Popconfirm from '@/components/ui/Popconfirm.vue'
 import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
 import SplitPanes from '@/components/ui/SplitPanes.vue'
+import ScenarioWorkbenchHeader from '@/domains/integration/components/integration/ScenarioWorkbenchHeader.vue'
+import type { NavCrumb } from '@/domains/integration/components/integration/IntegrationNavBar.vue'
+import ScenarioStepCard from '@/domains/integration/components/integration/ScenarioStepCard.vue'
+import ScenarioPreflight from '@/domains/integration/components/integration/ScenarioPreflight.vue'
+import { folderPath } from '@/domains/integration/utils/folderTree'
 const JsonCodeMirror = lazyComponent(() => import('@/components/ui/JsonCodeMirror.vue'))
 import ScenarioRunReport from '@/domains/integration/components/scenario/scenario/ScenarioRunReport.vue'
 import ScenarioVarsPanel from '@/domains/integration/components/scenario/scenario/ScenarioVarsPanel.vue'
@@ -74,7 +76,13 @@ import type { EditorAssertion, EditorExtract, EditorStep } from '@/domains/integ
 import { useScenarioValidation } from '@/domains/integration/composables/useScenarioValidation'
 import { errorText } from '@/utils/errorText'
 
-const props = defineProps<{ scenarioId: string }>()
+const props = defineProps<{
+  scenarioId: string
+  /** 返回目标文案（默认返回测试场景；从批次进入为返回批次详情）。 */
+  backLabel?: string
+  /** 面包屑祖先层级（不含「集成测试」与当前场景名）。 */
+  parentCrumbs?: { label: string }[]
+}>()
 const emit = defineEmits<{ (e: 'back'): void }>()
 
 const router = useRouter()
@@ -156,21 +164,184 @@ watch(draftSnapshot, () => {
   saveError.value = false
 })
 
-// ---------- 顶栏保存状态（saved / dirty / saving / failed） ----------
-const saveStateText = computed(() => {
-  if (saving.value) return t('integration.saveStateSaving')
-  if (saveError.value) return t('integration.saveStateFailed')
-  if (dirty.value) return t('integration.saveStateDirty')
-  return t('integration.saveStateSaved')
-})
-const saveStateClass = computed(() => {
-  if (saving.value) return 'saving'
-  if (saveError.value) return 'failed'
-  if (dirty.value) return 'dirty'
-  return 'saved'
+const scenarioRef = computed(() => (scenario.value ? { id: scenario.value.id, name: scenario.value.name } : null))
+
+/** 所属目录路径（导航栏展示；未分类为空）。 */
+const folderName = computed(() =>
+  scenario.value?.folder_id ? folderPath(store.folders, scenario.value.folder_id) : '',
+)
+
+/** 执行结果页的返回先回场景详情（层级：场景详情 → 执行详情）。 */
+const effectiveBackLabel = computed(() => {
+  if (props.backLabel) return props.backLabel
+  return viewMode.value === 'result'
+    ? t('integration.navBackScenario')
+    : t('integration.navBackScenarios')
 })
 
-const scenarioRef = computed(() => (scenario.value ? { id: scenario.value.id, name: scenario.value.name } : null))
+/** 返回按钮：结果页 → 编辑页；其余走脏数据确认后回列表 / 批次。 */
+function onNavBack(): void {
+  if (viewMode.value === 'result' && !props.backLabel) {
+    viewMode.value = 'manual'
+    return
+  }
+  requestBack()
+}
+
+/** 统一导航层级：集成测试 / 目录… /（批次来源）/ 当前场景名（输入框承载）。 */
+const navCrumbs = computed<NavCrumb[]>(() => {
+  // 默认（直接打开场景）：根节点可点 = 回场景列表；
+  // 批次来源：根节点不可点，避免绕过「返回批次详情」的层级语义。
+  const out: NavCrumb[] = props.parentCrumbs?.length
+    ? [{ label: t('integration.title') }]
+    : [{ label: t('integration.title'), onClick: requestBack }]
+  if (props.parentCrumbs?.length) {
+    out.push(...props.parentCrumbs)
+  } else if (folderName.value) {
+    for (const part of folderName.value.split(' / ')) out.push({ label: part })
+  }
+  return out
+})
+
+/** 主视图切换（全局导航栏中部页签）。 */
+function switchView(key: string): void {
+  if (key === 'manual' || key === 'script' || key === 'result') viewMode.value = key
+}
+
+// ---------- 步骤折叠 / 批量选择（纯视图状态，不落库） ----------
+const collapsedSteps = ref<Set<string>>(new Set())
+function toggleStepCollapsed(key: string): void {
+  const next = new Set(collapsedSteps.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  collapsedSteps.value = next
+}
+
+const checkedSteps = ref<Set<string>>(new Set())
+const allStepsChecked = computed(
+  () => steps.value.length > 0 && steps.value.every((s) => checkedSteps.value.has(s.key)),
+)
+function toggleStepChecked(key: string, checked: boolean): void {
+  const next = new Set(checkedSteps.value)
+  if (checked) next.add(key)
+  else next.delete(key)
+  checkedSteps.value = next
+}
+function toggleCheckAll(): void {
+  checkedSteps.value = allStepsChecked.value
+    ? new Set()
+    : new Set(steps.value.map((s) => s.key))
+}
+function clearCheckedSteps(): void {
+  checkedSteps.value = new Set()
+}
+function batchSetEnabled(enabled: boolean): void {
+  for (const s of steps.value) {
+    if (checkedSteps.value.has(s.key)) s.enabled = enabled
+  }
+}
+function batchDuplicateSteps(): void {
+  const copies: EditorStep[] = []
+  for (const s of steps.value) {
+    if (!checkedSteps.value.has(s.key)) continue
+    const copy: EditorStep = JSON.parse(JSON.stringify(s))
+    copy.key = newStepKey()
+    copies.push(copy)
+  }
+  if (!copies.length) return
+  steps.value.push(...copies)
+  clearCheckedSteps()
+  selectStep(copies[copies.length - 1]!)
+}
+function batchRemoveSteps(): void {
+  const removed = new Set(checkedSteps.value)
+  if (!removed.size) return
+  steps.value = steps.value.filter((s) => !removed.has(s.key))
+  if (selectedKey.value && removed.has(selectedKey.value)) selectedKey.value = null
+  clearCheckedSteps()
+}
+
+/** 校验问题定位到变量时，变量面板自动展开并过滤该名称。 */
+const varFocus = ref<string | null>(null)
+
+// ---------- 校验警告忽略（会话内，不落库） ----------
+const ignoredWarnings = ref<Set<string>>(new Set())
+function ignoreWarning(key: string): void {
+  const next = new Set(ignoredWarnings.value)
+  next.add(key)
+  ignoredWarnings.value = next
+}
+
+// ---------- 顶栏更多菜单 / 添加步骤菜单 / 结果定位 ----------
+function openMoreMenu(e: MouseEvent): void {
+  menuContext.value = 'more'
+  const items: MenuItem[] = [
+    { key: 'panel-history', label: t('integration.moreHistory'), icon: 'history' },
+    {
+      key: 'compare',
+      label: t('integration.moreCompare'),
+      icon: 'layout-grid',
+      disabled: !run.runHistory.value.length,
+    },
+    { key: 'export-script', label: t('integration.moreExport'), icon: 'download' },
+    { key: 'fullscreen', label: editorFullscreen ? t('integration.moreExitFullscreen') : t('integration.moreFullscreen'), icon: 'maximize-2' },
+  ]
+  menuRef.value?.openAt(e.currentTarget as HTMLElement, items)
+}
+
+function openAddStepMenu(e: MouseEvent): void {
+  menuContext.value = 'add-step'
+  menuRef.value?.openAt(e.currentTarget as HTMLElement, [
+    { key: 'request', label: t('integration.addRequestStep'), icon: 'plus' },
+    {
+      key: 'endpoint',
+      label: t('integration.addRefStep'),
+      icon: 'file-plus',
+      disabled: !workspace.endpoints.length,
+    },
+    { key: 'condition', label: t('integration.addConditionStep'), icon: 'zap', dividerBefore: true },
+    { key: 'loop', label: t('integration.addLoopStep'), icon: 'refresh' },
+    { key: 'wait', label: t('integration.addWaitStep'), icon: 'clock' },
+    { key: 'script-view', label: t('integration.viewScript'), icon: 'code', dividerBefore: true },
+  ])
+}
+
+/** 从「添加步骤」菜单打开接口选择（复用现有 add-endpoint 上下文）。 */
+function openEndpointMenuFromMenu(): void {
+  const btn = document.querySelector<HTMLElement>('[data-add-step-btn]')
+  if (btn) openEndpointMenu(btn)
+}
+
+/** 从步骤卡片跳到执行结果并定位该步。 */
+const resultFocusStep = ref<number | null>(null)
+function openStepResult(pos: number): void {
+  resultFocusStep.value = pos
+  viewMode.value = 'result'
+}
+
+// ---------- 辅助面板折叠（小窗口可收起） ----------
+// 首次进入时按窗口宽度决定：窄窗口默认收起右侧辅助面板，优先保证步骤可读。
+const inspectorCollapsed = ref(typeof window !== 'undefined' && window.innerWidth < 900)
+function toggleInspector(): void {
+  inspectorCollapsed.value = !inspectorCollapsed.value
+}
+
+// ---------- 快捷键（不覆盖系统快捷键：仅组合键 + 阻止默认） ----------
+function onGlobalKeydown(e: KeyboardEvent): void {
+  if (!(e.metaKey || e.ctrlKey)) return
+  const key = e.key.toLowerCase()
+  if (key === 's') {
+    e.preventDefault()
+    if (!saving.value) void save()
+  } else if (e.key === 'Enter') {
+    // 弹窗打开时不触发运行（避免在确认框背后启动执行）。
+    if (confirmRunOpen.value || confirmBackOpen.value || varsFillOpen.value || compareOpen.value || historyPanelOpen.value) {
+      return
+    }
+    e.preventDefault()
+    onRunClick()
+  }
+}
 
 // ---------- 返回列表（脏数据确认） ----------
 const confirmBackOpen = ref(false)
@@ -187,6 +358,14 @@ function requestBack(): void {
   if (dirty.value) confirmBackOpen.value = true
   else emit('back')
 }
+
+// 路由级离开保护（侧边栏 / 其他入口切走）：有未保存修改先弹确认。
+onBeforeRouteLeave(() => {
+  if (saving.value) return false
+  if (!dirty.value) return true
+  confirmBackOpen.value = true
+  return false
+})
 
 /** 保存并返回：保存失败不返回（弹窗保留，用户可改选放弃 / 留下继续编辑）。 */
 async function saveAndBack(): Promise<void> {
@@ -381,7 +560,8 @@ function coerceExpected(raw: string): unknown {
 }
 
 // ---------- 步骤增删改 ----------
-function addInlineStep(): void {
+/** 添加内联步骤；可带预置控制项（条件 / 循环 / 等待：菜单「添加步骤」用）。 */
+function addInlineStep(preset?: Partial<Pick<EditorStep, 'condition' | 'loop' | 'waitMs'>>): void {
   steps.value.push({
     key: newStepKey(),
     enabled: true,
@@ -391,9 +571,9 @@ function addInlineStep(): void {
     inline: emptyInline(),
     extract: [],
     assertions: [{ name: '', type: 'status', path: '', op: 'eq', expected: '200' }],
-    condition: null,
-    loop: null,
-    waitMs: null,
+    condition: preset?.condition ?? null,
+    loop: preset?.loop ?? null,
+    waitMs: preset?.waitMs ?? null,
     parallel: false,
     overrides: null,
     retry: null,
@@ -625,11 +805,6 @@ function loopBadgeTitle(l: StepLoop): string {
     ? t('integration.loopCountTitle', { n: l.count ?? 1 })
     : t('integration.loopWhileTitle', { n: l.max_loops ?? 10 })
 }
-function conditionBadgeTitle(c: StepCondition): string {
-  const target = c.source === 'prevStatus' ? t('integration.condSourcePrevStatus') : `{{${c.name ?? ''}}}`
-  const v = c.value == null ? '' : String(c.value)
-  return `${target} ${c.op} ${v}`.trim()
-}
 
 /** 写操作方法（副作用提示）。 */
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -663,13 +838,6 @@ const {
  * uninitialized variable」。
  */
 const validateOpen = ref(false)
-watch(
-  errorCount,
-  (n, prev) => {
-    if (n > 0 && !prev) validateOpen.value = true
-  },
-  { immediate: true },
-)
 
 /** 校验项 → 定位：切到编排视图、选中步骤、切到对应页签、滚动到视口。 */
 function gotoIssue(issue: ValidateIssue): void {
@@ -683,6 +851,7 @@ function gotoIssue(issue: ValidateIssue): void {
   selectStep(s)
   const field: ValidateField = issue.field === 'general' ? 'request' : issue.field
   if (detailTabs.some((x) => x.key === field)) detailTab.value = field
+  varFocus.value = issue.subject ?? null
   void nextTick(() => {
     const el = stepsEl.value?.querySelector(`[data-step-key="${s.key}"]`)
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
@@ -1048,11 +1217,13 @@ onBeforeUnmount(() => {
   sortInstance = null
   if (elapsedTimer != null) window.clearInterval(elapsedTimer)
   window.removeEventListener('resize', syncDetailMax)
+  window.removeEventListener('keydown', onGlobalKeydown)
 })
 
 onMounted(() => {
   syncDetailMax()
   window.addEventListener('resize', syncDetailMax)
+  window.addEventListener('keydown', onGlobalKeydown)
 })
 
 // ---------- 拖拽排序（SortableJS，与旧 ScenarioEditor 同款收口） ----------
@@ -1087,17 +1258,13 @@ onMounted(() => {
 
 // ---------- 脚本视图 ----------
 const viewMode = ref<'manual' | 'script' | 'result'>('manual')
-const VIEW_OPTIONS = computed<SegmentOption[]>(() => {
-  const base: SegmentOption[] = [
-    { value: 'manual', label: t('integration.viewManual') },
-    { value: 'script', label: t('integration.viewScript') },
-  ]
-  // 有运行结果时才出现「执行结果」视图（运行完成自动切换 / 历史直达）。
-  if (run.runResult.value || run.runIsHistory.value) {
-    base.push({ value: 'result', label: t('integration.viewResult') })
-  }
-  return base
-})
+
+/** 全局导航栏中部页签：编辑 / 脚本 / 执行结果（结果页常驻，空态给运行入口）。 */
+const workbenchTabs = computed<TabItem[]>(() => [
+  { key: 'manual', label: t('integration.tabEdit') },
+  { key: 'script', label: t('integration.viewScript') },
+  { key: 'result', label: t('integration.viewResult') },
+])
 
 /** 运行完成自动进入结果视图（实时进度仍在 Dock；结果视图是完整复盘）。 */
 watch(
@@ -1453,6 +1620,13 @@ function openStepMenu(e: MouseEvent, s: EditorStep): void {
     { key: 'run-only', label: t('integration.runSingleStep'), icon: 'send' as const },
     { key: 'dup', label: t('integration.stepDuplicate'), icon: 'copy' as const },
   ]
+  if (run.stepTone(idx)) {
+    items.push({
+      key: 'view-result',
+      label: t('integration.stepViewResult'),
+      icon: 'list' as const,
+    })
+  }
   // 引用式步骤可转内联（复制接口当前配置为步骤私有请求）。
   if (s.kind === 'ref' && endpointOf(s)) {
     items.push({ key: 'to-inline', label: t('integration.toInline'), icon: 'pencil' as const })
@@ -1463,10 +1637,26 @@ function openStepMenu(e: MouseEvent, s: EditorStep): void {
 }
 
 const pendingMenuStep = ref<{ step: EditorStep; idx: number } | null>(null)
-/** 当前打开的菜单：'step' = 步骤行内；'add-endpoint' = 从接口添加；'history' = 运行历史。 */
-const menuContext = ref<'step' | 'add-endpoint' | 'history'>('step')
+/** 当前打开的菜单：'step' 行内 / 'add-endpoint' 引用接口 / 'add-step' 添加步骤 / 'history' 运行历史 / 'more' 顶栏更多。 */
+const menuContext = ref<'step' | 'add-endpoint' | 'add-step' | 'history' | 'more'>('step')
 
 function onMenuSelect(item: MenuItem): void {
+  if (menuContext.value === 'more') {
+    if (item.key === 'panel-history') historyPanelOpen.value = true
+    else if (item.key === 'compare') compareOpen.value = true
+    else if (item.key === 'export-script') exportScript()
+    else if (item.key === 'fullscreen') toggleEditorFullscreen()
+    return
+  }
+  if (menuContext.value === 'add-step') {
+    if (item.key === 'request') addInlineStep()
+    else if (item.key === 'endpoint') openEndpointMenuFromMenu()
+    else if (item.key === 'condition') addInlineStep({ condition: { source: 'var', name: '', op: 'exists', value: null } })
+    else if (item.key === 'loop') addInlineStep({ loop: { mode: 'count', count: 3 } })
+    else if (item.key === 'wait') addInlineStep({ waitMs: 1000 })
+    else if (item.key === 'script-view') switchView('script')
+    return
+  }
   if (menuContext.value === 'history') {
     // 运行历史项（key = runId）：回读详情并进入结果视图。
     void onHistorySelect(item)
@@ -1485,6 +1675,7 @@ function onMenuSelect(item: MenuItem): void {
   else if (item.key === 'del') removeStep(target.step)
   else if (item.key === 'run-from') requestRunFrom(target.idx, false)
   else if (item.key === 'run-only') requestRunFrom(target.idx, true)
+  else if (item.key === 'view-result') openStepResult(target.idx)
 }
 
 // ---------- 定位 ----------
@@ -1820,62 +2011,24 @@ function stepTimeoutOf(s: EditorStep): number | null {
       </template>
     </Modal>
 
-    <!-- ===== 顶栏 ===== -->
-    <header class="wf-topbar">
-      <!-- 非全屏态不放返回钮：页面顶栏（IntegrationView → PageHeader）已提供
-           编辑器态面包屑入口，双返回堆叠已收口；全屏态顶栏不可见，保留退出钮 -->
-      <IconButton
-        v-if="editorFullscreen"
-        name="minimize-2"
-        :size="14"
-        :title="t('response.exitFullscreen')"
-        @click="toggleEditorFullscreen"
-      />
-      <!-- 场景名 / 分类：内联编辑标题形态（IDE 惯例）——默认无边框呈现为
-           标题文字，hover 显编辑底色 + 铅笔提示，聚焦才出现输入边界 -->
-      <div class="wf-name-wrap">
-        <input v-model="name" class="wf-name" type="text" :placeholder="t('integration.editorNamePh')" spellcheck="false" />
-        <Icon name="pencil" :size="11" class="wf-name-pen" aria-hidden="true" />
-      </div>
-      <div class="wf-cat-wrap">
-        <input v-model="category" class="wf-category" type="text" :placeholder="t('integration.categoryLabel')" spellcheck="false" />
-      </div>
-      <SegmentedControl v-model="viewMode" :options="VIEW_OPTIONS" size="sm" />
-      <span class="wf-save-state" :class="saveStateClass" :title="saveStateText">
-        <span class="wf-save-dot"></span>{{ saveStateText }}
-      </span>
-      <div class="wf-topbar-spacer"></div>
-      <CustomSelect
-        class="wf-strategy"
-        :model-value="String(run.execStrategy.value)"
-        :options="run.STRATEGY_OPTIONS.value"
-        size="sm"
-        :pop-min-width="150"
-        @update:model-value="(v) => (run.execStrategy.value = String(v ?? 'stop'))"
-      />
-      <IconButton name="history" :size="14" :title="t('integration.history')" :disabled="!run.runHistory.value.length" @click.stop="run.openHistoryMenu($event)" />
-      <IconButton name="list" :size="14" :title="t('integration.histPanelBtn')" :disabled="!run.runHistory.value.length" @click="historyPanelOpen = true" />
-      <IconButton name="layout-grid" :size="14" :title="t('integration.compare')" :disabled="!run.runHistory.value.length" @click="compareOpen = true" />
-      <IconButton name="download" :size="14" :title="t('integration.exportScript')" @click="exportScript" />
-      <IconButton
-        :name="editorFullscreen ? 'minimize-2' : 'maximize-2'"
-        :size="14"
-        :title="editorFullscreen ? t('response.exitFullscreen') : t('response.fullscreen')"
-        @click="toggleEditorFullscreen"
-      />
-      <button class="miyo-btn miyo-btn-sm" type="button" :disabled="saving" @click="save">
-        <Icon name="save" :size="12" /> {{ t('integration.save') }}
-      </button>
-      <button
-        class="miyo-btn miyo-btn-sm"
-        :class="run.running.value ? 'miyo-btn-danger-solid' : 'miyo-btn-primary'"
-        type="button"
-        @click="onRunClick"
-      >
-        <Icon :name="run.running.value ? 'stop' : 'play'" :size="12" />
-        {{ run.running.value ? t('integration.stop') : t('integration.run') }}
-      </button>
-    </header>
+    <!-- ===== 第一层：全局导航栏 ===== -->
+    <ScenarioWorkbenchHeader
+      :name="name"
+      :back-label="effectiveBackLabel"
+      :crumbs="navCrumbs"
+      :tab="viewMode"
+      :tabs="workbenchTabs"
+      :dirty="dirty"
+      :saving="saving"
+      :save-error="saveError"
+      :running="run.running.value"
+      @update:name="name = $event"
+      @update:tab="switchView"
+      @back="onNavBack"
+      @save="save"
+      @run="onRunClick"
+      @more="openMoreMenu"
+    />
 
     <!-- 运行进度条：只在运行中显示，避免常驻占位造成布局跳动 -->
     <div v-if="run.running.value" class="wf-progress">
@@ -1883,20 +2036,31 @@ function stepTimeoutOf(s: EditorStep): number | null {
       <span class="wf-progress-text">{{ run.progress.value }} / {{ run.progressPercent.value }}%</span>
     </div>
 
-    <!-- ===== 执行结果视图（独立模式；数据为落库快照） ===== -->
-    <RunResultView
-      v-if="viewMode === 'result' && run.runResult.value"
-      :scenario-name="name.trim() || t('integration.newName')"
-      :run-id="run.runId.value"
-      :running="run.running.value"
-      :started-at="run.currentRunStartedAt.value"
-      :finished-at="run.currentRunAt.value"
-      :result="run.runResult.value"
-      :var-chain="varChain"
-      @back="viewMode = 'manual'"
-      @rerun="onRunClick"
-      @export="exportRunReport"
-    />
+    <!-- ===== 第三层：执行结果（独立页签；数据为落库快照） ===== -->
+    <div v-if="viewMode === 'result'" class="wf-result-wrap">
+      <RunResultView
+        v-if="run.runResult.value"
+        :scenario-name="name.trim() || t('integration.newName')"
+        :run-id="run.runId.value"
+        :running="run.running.value"
+        :started-at="run.currentRunStartedAt.value"
+        :finished-at="run.currentRunAt.value"
+        :result="run.runResult.value"
+        :var-chain="varChain"
+        :focus-step-index="resultFocusStep"
+        @back="viewMode = 'manual'"
+        @rerun="onRunClick"
+        @export="exportRunReport"
+      />
+      <div v-else class="wf-result-empty">
+        <Icon name="list" :size="22" />
+        <p class="wf-result-empty-title">{{ t('integration.resultEmpty') }}</p>
+        <p class="wf-result-empty-hint">{{ t('integration.resultEmptyHint') }}</p>
+        <button class="miyo-btn miyo-btn-sm miyo-btn-primary" type="button" @click="onRunClick">
+          <Icon name="play" :size="12" /> {{ t('integration.run') }}
+        </button>
+      </div>
+    </div>
 
     <!-- ===== 脚本视图 ===== -->
     <div v-if="viewMode === 'script'" class="wf-script">
@@ -1932,6 +2096,7 @@ function stepTimeoutOf(s: EditorStep): number | null {
         width-on="second"
         :min="320"
         :max="detailMaxWidth"
+        :second-hidden="inspectorCollapsed"
         @reset="detailWidth = 420"
       >
         <template #first>
@@ -1940,17 +2105,42 @@ function stepTimeoutOf(s: EditorStep): number | null {
           <span class="wf-flow-title">{{ t('integration.libTitle') }}</span>
           <span class="wf-flow-count">{{ t('integration.libSteps', { n: steps.length }) }}</span>
           <div class="wf-flow-spacer"></div>
-          <button class="miyo-btn miyo-btn-sm" type="button" @click="addInlineStep">
-            <Icon name="plus" :size="12" /> {{ t('integration.addStep') }}
-          </button>
+          <CustomSelect
+            class="wf-strategy"
+            :model-value="String(run.execStrategy.value)"
+            :options="run.STRATEGY_OPTIONS.value"
+            size="sm"
+            :pop-min-width="150"
+            @update:model-value="(v) => (run.execStrategy.value = String(v ?? 'stop'))"
+          />
+          <label class="wf-select-all" :title="t('integration.batchSelectAll')">
+            <input
+              type="checkbox"
+              :checked="allStepsChecked"
+              :disabled="!steps.length"
+              @change="toggleCheckAll"
+            >
+          </label>
           <button
             class="miyo-btn miyo-btn-sm"
             type="button"
-            :disabled="!workspace.endpoints.length"
-            @click="(e) => openEndpointMenu(e.currentTarget as HTMLElement)"
+            data-add-step-btn
+            @click="openAddStepMenu($event)"
           >
-            <Icon name="file-plus" :size="12" /> {{ t('integration.addFromEndpoint') }}
+            <Icon name="plus" :size="12" /> {{ t('integration.addStep') }}
           </button>
+          <IconButton
+            name="list"
+            :size="13"
+            :title="t('integration.overviewBtn')"
+            @click="selectStep(null)"
+          />
+          <IconButton
+            name="panel-left-close"
+            :size="13"
+            :title="inspectorCollapsed ? t('integration.inspectorExpand') : t('integration.inspectorCollapse')"
+            @click="toggleInspector"
+          />
           <IconButton
             name="minimize-2"
             :size="13"
@@ -1959,49 +2149,47 @@ function stepTimeoutOf(s: EditorStep): number | null {
           />
         </div>
 
-        <!-- 运行前校验面板：有阻断才自动展开；可收起，面板内可「仍然运行」 -->
-        <div v-if="issues.length" class="wf-validate" :class="{ collapsed: !validateOpen }">
-          <button class="wf-validate-head" type="button" @click="validateOpen = !validateOpen">
-            <Icon name="chevron-right" :size="12" class="wf-validate-caret" />
-            <span class="wf-validate-title">{{ t('integration.validateTitle') }}</span>
-            <span v-if="errorCount" class="wf-validate-tag error">{{ t('integration.validateErrors', { n: errorCount }) }}</span>
-            <span v-if="warnCount" class="wf-validate-tag warn">{{ t('integration.validateWarnings', { n: warnCount }) }}</span>
-            <div class="wf-validate-spacer"></div>
-            <span v-if="!validateOpen" class="wf-validate-hint">{{ t('integration.validateExpand') }}</span>
+        <!-- 批量操作条：勾选步骤后出现（启用 / 禁用 / 复制 / 删除） -->
+        <div v-if="checkedSteps.size" class="wf-batchbar">
+          <span class="wf-batchbar-count">{{ t('integration.batchSelected', { n: checkedSteps.size }) }}</span>
+          <button class="miyo-btn miyo-btn-sm" type="button" @click="batchSetEnabled(true)">
+            {{ t('integration.batchEnable') }}
           </button>
-          <ul v-if="validateOpen" class="wf-validate-list">
-            <li
-              v-for="(is, k) in issues"
-              :key="k"
-              class="wf-validate-item"
-              :class="is.severity"
-              role="button"
-              tabindex="0"
-              @click="gotoIssue(is)"
-              @keydown.enter="gotoIssue(is)"
-            >
-              <span class="wf-validate-sev">{{ is.severity === 'error' ? '!' : '·' }}</span>
-              <span class="wf-validate-where">
-                {{ is.stepIndex >= 0 ? t('integration.validateStepAt', { n: is.stepIndex + 1 }) : t('integration.validateScene') }}
-              </span>
-              <span class="wf-validate-msg">{{ t(is.message, is.detail ?? {}) }}</span>
-              <span class="wf-validate-go">{{ t('integration.validateGoto') }}</span>
-            </li>
-          </ul>
-          <div v-if="validateOpen && errorCount" class="wf-validate-foot">
-            <span class="wf-validate-foot-hint">{{ t('integration.validateForceHint') }}</span>
-            <button class="miyo-btn miyo-btn-sm" type="button" @click="forceRun">
-              {{ t('integration.validateForceRun') }}
-            </button>
-          </div>
+          <button class="miyo-btn miyo-btn-sm" type="button" @click="batchSetEnabled(false)">
+            {{ t('integration.batchDisable') }}
+          </button>
+          <button class="miyo-btn miyo-btn-sm" type="button" @click="batchDuplicateSteps">
+            {{ t('integration.batchDuplicate') }}
+          </button>
+          <button class="miyo-btn miyo-btn-sm" type="button" @click="batchRemoveSteps">
+            {{ t('integration.batchDelete') }}
+          </button>
+          <button class="miyo-btn miyo-btn-sm" type="button" @click="clearCheckedSteps">
+            {{ t('integration.batchClear') }}
+          </button>
         </div>
 
+        <!-- 运行前校验：默认只显示阻断 / 警告计数，点击展开明细 -->
+        <ScenarioPreflight
+          :issues="issues"
+          :error-count="errorCount"
+          :warn-count="warnCount"
+          :ignored="ignoredWarnings"
+          :open="validateOpen"
+          @update:open="validateOpen = $event"
+          @locate="gotoIssue"
+          @ignore="ignoreWarning"
+          @force-run="forceRun"
+        />
+
         <div ref="stepsEl" class="wf-steps">
-          <!-- 入口连线：链路起点 -->
-          <div v-if="steps.length" class="wf-edge wf-edge-entry">
-            <span class="wf-edge-dot"></span>
-            <span class="wf-edge-label">{{ t('integration.flowStart') }}</span>
+          <!-- 开始节点 -->
+          <div class="wf-flow-node wf-node-start">
+            <span class="wf-node-dot"></span>
+            <span class="wf-node-label">{{ t('integration.startNode') }}</span>
+            <span class="wf-node-line"></span>
           </div>
+
           <div
             v-for="(s, i) in steps"
             :key="s.key"
@@ -2042,90 +2230,52 @@ function stepTimeoutOf(s: EditorStep): number | null {
               </span>
             </div>
 
-            <div
-              class="wf-step"
-              :class="{
-                selected: selectedKey === s.key,
-                disabled: !s.enabled,
-                invalid: stepIssues(i).some((x) => x.severity === 'error'),
-                failed: run.stepTone(i) === 'fail',
-                batch: s.parallel,
-              }"
-              role="button"
-              tabindex="0"
-              @click="selectStep(s)"
-              @keydown.enter="selectStep(s)"
-            >
-            <span class="wf-drag" :title="t('integration.addStep')" aria-hidden="true">⋮⋮</span>
-            <span class="wf-step-index num">{{ i + 1 }}</span>
-            <span class="wf-step-method" :class="methodBadgeTone(stepMethod(s))">{{ stepMethod(s) }}</span>
-            <div class="wf-step-main">
-              <span class="wf-step-name" :title="stepTitle(s)">{{ stepTitle(s) }}</span>
-              <span class="wf-step-path" :title="stepPath(s)">{{ stepPath(s) }}</span>
-            </div>
-            <span v-if="isWriteStep(s)" class="wf-step-side" :title="t('integration.sideEffectWarn')">
-              {{ t('integration.sideEffectWarn') }}
-            </span>
-            <span
-              v-if="run.stepTone(i)"
-              class="wf-step-tone"
-              :class="`tone-${run.stepTone(i)}`"
-            >{{ t(run.STEP_TONE_TEXT[run.stepTone(i) as NonNullable<ReturnType<typeof run.stepTone>>]) }}</span>
-            <span
-              v-if="run.stepTone(i) === 'run' && flightElapsed(run.runStepIndexes.value.indexOf(i))"
-              class="wf-step-elapsed num"
-            >{{ flightElapsed(run.runStepIndexes.value.indexOf(i)) }}</span>
-            <span class="wf-step-badges">
-              <span v-if="s.loop" class="wf-badge wf-badge-accent" :title="loopBadgeTitle(s.loop)">
-                {{ t('integration.loopBadge', { n: loopBadgeCount(s.loop) }) }}
-              </span>
-              <span v-if="s.condition" class="wf-badge" :title="conditionBadgeTitle(s.condition)">
-                {{ t('integration.conditionBadge') }}
-              </span>
-              <span v-if="s.parallel" class="wf-badge" :title="t('integration.parallelBadge')">
-                {{ t('integration.parallelBadge') }}
-              </span>
-              <span v-if="(s.waitMs ?? 0) > 0" class="wf-badge" :title="t('integration.waitBadge', { n: s.waitMs ?? 0 })">
-                {{ t('integration.waitBadge', { n: s.waitMs ?? 0 }) }}
-              </span>
-              <span v-if="s.extract.length" class="wf-badge">{{ t('scenario.stepExtractBadge', { n: s.extract.length }) }}</span>
-              <span v-if="s.assertions.length" class="wf-badge">{{ t('scenario.stepAssertBadge', { n: s.assertions.length }) }}</span>
-            </span>
-            <span class="wf-step-actions" @click.stop>
-              <button
-                class="wf-act"
-                type="button"
-                :class="{ off: !s.enabled }"
-                :title="t('integration.stepEnabledHint')"
-                @click="s.enabled = !s.enabled"
-              >
-                <Icon :name="s.enabled ? 'eye' : 'eye-off'" :size="12" />
-              </button>
-              <button class="wf-act" type="button" :title="t('integration.stepDuplicate')" @click="duplicateStep(s)">
-                <Icon name="copy" :size="12" />
-              </button>
-              <button class="wf-act" type="button" :title="t('workspace.moreTools')" @click="openStepMenu($event, s)">
-                <Icon name="more-horizontal" :size="12" />
-              </button>
-              <Popconfirm
-                :title="t('integration.stepDelete')"
-                :confirm-text="t('common.delete')"
-                @confirm="removeStep(s)"
-              >
-                <button class="wf-act" type="button" :title="t('integration.stepDelete')" @click.stop>
-                  <Icon name="trash" :size="12" />
-                </button>
-              </Popconfirm>
-            </span>
-            <span v-if="stepIssues(i).length" class="wf-step-issue" :class="{ err: stepIssues(i).some((x) => x.severity === 'error') }" :title="stepIssues(i).map((x) => t(x.message, x.detail ?? {})).join('\n')">
-              {{ stepIssues(i).length }}
-            </span>
+            <ScenarioStepCard
+              :index="i"
+              :method="stepMethod(s)"
+              :title="stepTitle(s)"
+              :path="stepPath(s)"
+              :tone="run.stepTone(i)"
+              :tone-text="run.stepTone(i) ? t(run.STEP_TONE_TEXT[run.stepTone(i) as NonNullable<ReturnType<typeof run.stepTone>>]) : ''"
+              :duration="run.stepResult(i)?.duration_ms ?? null"
+              :http-status="run.stepResult(i)?.status ?? null"
+              :write="isWriteStep(s)"
+              :enabled="s.enabled"
+              :selected="selectedKey === s.key"
+              :checked="checkedSteps.has(s.key)"
+              :has-error="stepIssues(i).some((x) => x.severity === 'error')"
+              :issue-count="stepIssues(i).length"
+              :collapsed="collapsedSteps.has(s.key)"
+              :elapsed="run.stepTone(i) === 'run' ? flightElapsed(run.runStepIndexes.value.indexOf(i)) : ''"
+              :loop-label="s.loop ? t('integration.loopBadge', { n: loopBadgeCount(s.loop) }) : ''"
+              :condition-on="!!s.condition"
+              :parallel="s.parallel"
+              :wait-ms="s.waitMs"
+              :extract-count="s.extract.length"
+              :assert-count="s.assertions.length"
+              :can-view-result="run.stepTone(i) !== null"
+              @select="selectStep(s)"
+              @toggle-enabled="s.enabled = !s.enabled"
+              @duplicate="duplicateStep(s)"
+              @menu="openStepMenu($event, s)"
+              @remove="removeStep(s)"
+              @toggle-collapse="toggleStepCollapsed(s.key)"
+              @toggle-check="(checked: boolean) => toggleStepChecked(s.key, checked)"
+              @view-result="openStepResult(i)"
+            />
           </div>
+
+          <!-- 结束节点 -->
+          <div class="wf-flow-node wf-node-end">
+            <span class="wf-node-line"></span>
+            <span class="wf-node-dot"></span>
+            <span class="wf-node-label">{{ t('integration.endNode') }}</span>
           </div>
+
           <div v-if="!steps.length" class="wf-steps-empty">
             <Icon name="beaker" :size="20" />
             <p>{{ t('integration.libEmptyDesc') }}</p>
-            <button class="miyo-btn miyo-btn-sm" type="button" @click="addInlineStep">
+            <button class="miyo-btn miyo-btn-sm" type="button" @click="addInlineStep()">
               <Icon name="plus" :size="12" /> {{ t('integration.addInline') }}
             </button>
           </div>
@@ -2485,6 +2635,7 @@ function stepTimeoutOf(s: EditorStep): number | null {
               v-show="detailTab === 'vars'"
               :chain="varChain"
               :runtime-vars="run.runResult.value?.variables ?? null"
+              :highlight="varFocus"
               @locate="locateStep"
             />
 
@@ -2681,7 +2832,7 @@ function stepTimeoutOf(s: EditorStep): number | null {
           </div>
 
           <div class="wf-overview-actions">
-            <button class="miyo-btn miyo-btn-sm" type="button" @click="addInlineStep">
+            <button class="miyo-btn miyo-btn-sm" type="button" @click="addInlineStep()">
               <Icon name="plus" :size="12" /> {{ t('integration.addStep') }}
             </button>
             <button class="miyo-btn miyo-btn-sm" type="button" :disabled="!workspace.endpoints.length" @click="(e) => openEndpointMenu(e.currentTarget as HTMLElement)">
@@ -2720,109 +2871,6 @@ function stepTimeoutOf(s: EditorStep): number | null {
   border: none;
   border-radius: 0;
   box-shadow: none;
-}
-
-/* ---- 顶栏 ---- */
-.wf-topbar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-}
-
-/* 场景名 / 分类：内联编辑标题（无边框呈现，hover 显编辑底，聚焦出输入边界；
-   box-shadow 内描边不改变布局高度，避免顶栏跳动） */
-.wf-name-wrap,
-.wf-cat-wrap {
-  position: relative;
-  flex: none;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  border-radius: var(--radius-md);
-  transition: background var(--dur) var(--ease);
-}
-
-.wf-name-wrap {
-  width: 280px;
-  max-width: 30vw;
-}
-
-.wf-cat-wrap {
-  width: 140px;
-  max-width: 18vw;
-}
-
-.wf-name-wrap:hover,
-.wf-cat-wrap:hover {
-  background: var(--bg-hover);
-}
-
-.wf-name-wrap:focus-within,
-.wf-cat-wrap:focus-within {
-  background: var(--bg-card);
-  box-shadow: inset 0 0 0 1px var(--border-strong);
-}
-
-.wf-name {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  padding: 0 26px 0 10px;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 铅笔提示只 hover 可见（聚焦后即是编辑态，不再提示） */
-.wf-name-pen {
-  position: absolute;
-  right: 9px;
-  color: var(--text-3);
-  opacity: 0;
-  transition: opacity var(--dur) var(--ease);
-}
-
-.wf-name-wrap:hover .wf-name-pen {
-  opacity: 0.85;
-}
-
-.wf-name-wrap:focus-within .wf-name-pen {
-  opacity: 0;
-}
-
-.wf-name::placeholder,
-.wf-category::placeholder {
-  color: var(--text-3);
-  font-weight: 400;
-}
-
-.wf-category {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  padding: 0 10px;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: var(--fs-xs);
-  color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wf-topbar-spacer {
-  flex: 1;
 }
 
 .wf-strategy {
@@ -3206,61 +3254,6 @@ function stepTimeoutOf(s: EditorStep): number | null {
 
 .wf-validate-item:hover .wf-validate-go {
   opacity: 1;
-}
-
-/* ---- 顶栏保存状态 ---- */
-.wf-save-state {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--fs-xxs);
-  color: var(--text-3);
-  white-space: nowrap;
-}
-
-.wf-save-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--text-3);
-}
-
-.wf-save-state.dirty {
-  color: var(--warning);
-}
-
-.wf-save-state.dirty .wf-save-dot {
-  background: var(--warning);
-}
-
-.wf-save-state.failed {
-  color: var(--danger);
-}
-
-.wf-save-state.failed .wf-save-dot {
-  background: var(--danger);
-}
-
-.wf-save-state.saving .wf-save-dot {
-  background: var(--accent);
-  animation: wf-pulse 1s ease-in-out infinite;
-}
-
-@keyframes wf-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.25;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .wf-save-state.saving .wf-save-dot {
-    animation: none;
-  }
 }
 
 /* ---- 运行进度条 ---- */
@@ -3930,4 +3923,116 @@ function stepTimeoutOf(s: EditorStep): number | null {
 }
 
 /* 窄屏不再硬编码右栏宽：宽度由 SplitPanes 记忆值 + 动态上限（窗口 60%）接管 */
+
+/* ---- 三层结构：开始 / 结束节点、批量条、结果空态 ---- */
+.wf-flow-head {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.wf-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.wf-select-all input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.wf-batchbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--accent-tint);
+}
+
+.wf-batchbar-count {
+  font-size: var(--fs-xxs);
+  font-weight: 600;
+  color: var(--accent);
+  margin-right: 4px;
+}
+
+.wf-flow-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--text-3);
+  font-size: var(--fs-xxs);
+}
+
+.wf-node-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  background: var(--bg-panel);
+  flex: none;
+}
+
+.wf-node-start .wf-node-dot {
+  border-color: var(--success);
+  background: var(--success-tint);
+}
+
+.wf-node-end .wf-node-dot {
+  border-color: var(--text-3);
+  background: var(--bg-hover);
+}
+
+.wf-node-label {
+  flex: none;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.wf-node-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.wf-result-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.wf-result-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-3);
+}
+
+.wf-result-empty-title {
+  margin: 4px 0 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.wf-result-empty-hint {
+  margin: 0 0 8px;
+  max-width: 360px;
+  text-align: center;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
 </style>

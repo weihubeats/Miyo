@@ -105,6 +105,12 @@ import type {
   ScenarioRunResult,
   ScenarioRunSummary,
   ScenarioRunDetail,
+  TestSuiteWithItems,
+  TestSuite,
+  TestSuiteItem,
+  TestRunBatch,
+  TestBatchDetail,
+  RunTestBatchArgs,
   BackupExportDoc,
   SeqCounter,
   ServiceCatalog,
@@ -626,6 +632,60 @@ export function useMiyoApi() {
       }>('project_scenario_run_stats', { projectId }),
     )
 
+  // ---------- 测试套件与批量执行 ----------
+  /** 项目全部套件（含成员；列表页单次 IPC）。 */
+  const listTestSuites = (projectId: string) =>
+    run(() => call<TestSuiteWithItems[]>('list_test_suites', { projectId }))
+
+  /** 保存套件（整体覆盖写：套件字段 + 成员列表）。 */
+  const saveTestSuite = (suite: TestSuite, items: TestSuiteItem[]) =>
+    run(() => call<TestSuiteWithItems>('save_test_suite', { suite, items }))
+
+  const deleteTestSuite = (id: string) =>
+    run(() => call<void>('delete_test_suite', { id }))
+
+  /** 复制套件（新 id / 新成员 id；名称追加「副本」）。 */
+  const duplicateTestSuite = (id: string) =>
+    run(() => call<TestSuiteWithItems>('duplicate_test_suite', { id }))
+
+  /** 套件内重排（按传入 id 顺序写回）。 */
+  const reorderTestSuiteItems = (suiteId: string, ids: string[]) =>
+    run(() => call<void>('reorder_test_suite_items', { suiteId, ids }))
+
+  const setTestSuiteItemEnabled = (itemId: string, enabled: boolean) =>
+    run(() => call<void>('set_test_suite_item_enabled', { itemId, enabled }))
+
+  /** 启动批量执行（三个入口统一走同一批次表；返回最终批次详情）。 */
+  const runTestBatch = (args: RunTestBatchArgs) =>
+    run(() => call<TestBatchDetail>('run_test_batch', { args }))
+
+  /** 恢复执行（暂停 / 中断 / 尚未开始的批次：未完成项重置 pending 后续跑）。 */
+  const resumeTestBatch = (batchId: string) =>
+    run(() => call<TestBatchDetail>('resume_test_batch', { batchId }))
+
+  /** 暂停（只停止调度尚未开始的后续场景；在途场景跑完当前波次）。 */
+  const pauseTestBatch = (batchId: string) =>
+    run(() => call<boolean>('pause_test_batch', { batchId }))
+
+  /** 取消整个批次（在途场景协作式取消；未开始项标记 cancelled）。 */
+  const cancelTestBatch = (batchId: string) =>
+    run(() => call<boolean>('cancel_test_batch', { batchId }))
+
+  /** 项目最近批次列表（新→旧）。 */
+  const listTestBatches = (projectId: string, limit?: number) =>
+    run(() => call<TestRunBatch[]>('list_test_batches', { projectId, limit }))
+
+  /** 批次详情（批次 + 明细）。 */
+  const getTestBatch = (id: string) =>
+    run(() => call<TestBatchDetail | null>('get_test_batch', { id }))
+
+  const deleteTestBatch = (id: string) =>
+    run(() => call<void>('delete_test_batch', { id }))
+
+  /** 启动恢复：把上次进程遗留的未完成批次标记 interrupted（返回标记数量）。 */
+  const recoverTestBatches = () =>
+    run(() => call<number>('recover_test_batches'))
+
   // ---------- 代码生成 ----------
   const codegenRender = (args: {
     lang: CodeLang
@@ -1066,6 +1126,20 @@ export function useMiyoApi() {
     clearScenarioRuns,
     listRecentScenarioRuns,
     projectScenarioRunStats,
+    listTestSuites,
+    saveTestSuite,
+    deleteTestSuite,
+    duplicateTestSuite,
+    reorderTestSuiteItems,
+    setTestSuiteItemEnabled,
+    runTestBatch,
+    resumeTestBatch,
+    pauseTestBatch,
+    cancelTestBatch,
+    listTestBatches,
+    getTestBatch,
+    deleteTestBatch,
+    recoverTestBatches,
     codegenRender,
     listRequestHistories,
     listRecentActivities,

@@ -43,6 +43,8 @@ const props = defineProps<{
   varChain: VarChainEntry[]
   /** 正文 IPC 截断时的按需全文加载器（仅实时运行有）。 */
   fullBodyLoader?: (i: number) => (() => Promise<string | null>) | undefined
+  /** 从步骤列表定位：编辑态主步骤下标（null = 不定位）。 */
+  focusStepIndex?: number | null
 }>()
 
 // 全屏查看运行结果（CSS 覆盖视口；Esc 经 escStack 退出，见 useOverlayFullscreen）
@@ -127,6 +129,23 @@ const timelineGroups = computed(() => {
 const flatRows = computed<ScenarioStepResult[]>(() =>
   timelineGroups.value.flatMap((g) => g.rows),
 )
+
+/** 按编辑态主步骤下标定位执行行（setup/teardown 行不参与映射）。 */
+function selectStep(stepIndex: number): void {
+  const at = flatRows.value.findIndex(
+    (r) => r.phase !== 'setup' && r.phase !== 'teardown' && r.step_index === stepIndex,
+  )
+  if (at >= 0) selectedIndex.value = at
+}
+
+watch(
+  () => props.focusStepIndex,
+  (v) => {
+    if (v != null) selectStep(v)
+  },
+)
+
+defineExpose({ selectStep })
 
 const selected = computed<ScenarioStepResult | null>(() => {
   const rows = flatRows.value

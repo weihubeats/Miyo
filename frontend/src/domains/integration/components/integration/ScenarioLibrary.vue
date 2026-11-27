@@ -17,6 +17,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { useLocaleStore } from '@/stores/locale'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useIntegrationStore } from '@/domains/integration/stores/integration'
+import { useTestSuitesStore } from '@/domains/integration/stores/testSuites'
 import { useMiyoApi } from '@/composables/useMiyoApi'
 import { useToast } from '@/composables/useToast'
 import { useTauriEvent } from '@/composables/useTauriEvent'
@@ -55,6 +56,7 @@ import type {
 
 const t = useLocaleStore().t
 const store = useIntegrationStore()
+const suites = useTestSuitesStore()
 const workspace = useWorkspaceStore()
 const api = useMiyoApi()
 const toast = useToast()
@@ -673,7 +675,11 @@ function batchFavorite(favorite: boolean): void {
   })()
 }
 
-async function batchRun(): Promise<void> {
+/**
+ * 批量执行（勾选场景入口）：统一交给后端批次引擎（串行 / 并行、失败策略、
+ * 暂停 / 取消 / 恢复、批次持久化都在 Rust）。打开运行配置面板后由用户确认。
+ */
+function batchRun(): void {
   // 无启用步骤的场景跳过（空场景不该让整批停下来）。
   const targets = store.libraryItems.filter(
     (s) => selectedIds.value.has(s.id) && (s.steps ?? []).some((st) => st.enabled),
@@ -682,26 +688,12 @@ async function batchRun(): Promise<void> {
     toast.warning(t('scenario.noEnabledSteps'))
     return
   }
-  batchBusy.value = true
-  let ok = 0
-  let fail = 0
-  let stopped = false
-  for (const s of targets) {
-    const passed = await runScenarioNow(s)
-    if (passed) ok += 1
-    else {
-      fail += 1
-      stopped = true
-      toast.warning(t('integration.libBatchRunStop', { name: s.name }))
-      break
-    }
-  }
-  batchBusy.value = false
-  if (!stopped) {
-    toast.success(t('integration.libBatchRunDone', { ok, fail }), { duration: 8000 })
-  }
-  store.clearSelection()
-  await store.refreshLibrary()
+  suites.openRunDialog({ scenario_ids: targets.map((s) => s.id) })
+}
+
+/** 文件夹批量执行入口：目录（含子目录）内全部场景走同一批次表。 */
+function runFolder(folderId: string): void {
+  suites.openRunDialog({ folder_id: folderId })
 }
 
 // ---------- 单场景直接运行（列表快捷执行） ----------
@@ -1011,6 +1003,7 @@ async function onImport(): Promise<void> {
       @create="openCreateFolder"
       @rename="openRenameFolder"
       @remove="openDeleteFolder"
+      @run="runFolder"
       @move-folder="moveFolderTo"
       @drop-scenarios="onDropScenarios"
     />

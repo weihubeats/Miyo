@@ -20,8 +20,10 @@ const props = withDefaults(
     stackBelow?: number
     /** 宽度作用在哪一栏：first=左栏定宽（默认），second=右栏定宽（编辑器详情栏）。 */
     widthOn?: 'first' | 'second'
+    /** 收起次栏（小窗口 / 手动折叠辅助面板）：首栏占满，分割线隐藏。 */
+    secondHidden?: boolean
   }>(),
-  { min: 220, max: 0, stackBelow: 0, widthOn: 'first' },
+  { min: 220, max: 0, stackBelow: 0, widthOn: 'first', secondHidden: false },
 )
 
 const emit = defineEmits<{
@@ -113,12 +115,16 @@ function onDividerKeydown(e: KeyboardEvent): void {
 </script>
 
 <template>
-  <div ref="rootEl" class="sp" :class="[`width-${widthOn}`, { stacked }]">
+  <div
+    ref="rootEl"
+    class="sp"
+    :class="[`width-${widthOn}`, { stacked, 'second-hidden': secondHidden }]"
+  >
     <div class="sp-first" :style="widthOn === 'first' ? firstStyle : undefined">
       <slot name="first" />
     </div>
     <div
-      v-if="!stacked"
+      v-if="!stacked && !secondHidden"
       class="sp-divider"
       role="separator"
       aria-orientation="vertical"
@@ -130,7 +136,11 @@ function onDividerKeydown(e: KeyboardEvent): void {
       @keydown="onDividerKeydown"
       @dblclick="emit('reset')"
     ></div>
-    <div class="sp-second" :style="widthOn === 'second' ? firstStyle : undefined">
+    <div
+      v-if="!secondHidden"
+      class="sp-second"
+      :style="widthOn === 'second' ? firstStyle : undefined"
+    >
       <slot name="second" />
     </div>
   </div>
@@ -165,6 +175,10 @@ function onDividerKeydown(e: KeyboardEvent): void {
   flex: 1;
 }
 .sp:not(.stacked).width-second .sp-first {
+  flex: 1;
+}
+/* 收起次栏：首栏占满（与堆叠态区分，不改变方向） */
+.sp.second-hidden .sp-first {
   flex: 1;
 }
 

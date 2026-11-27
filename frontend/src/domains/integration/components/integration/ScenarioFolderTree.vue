@@ -39,6 +39,7 @@ const emit = defineEmits<{
   create: [parentId: string | null]
   rename: [folder: ScenarioFolder]
   remove: [folder: ScenarioFolder]
+  run: [folderId: string]
   moveFolder: [id: string, parentId: string | null]
   dropScenarios: [folderId: string | null]
 }>()
@@ -182,6 +183,12 @@ function canDropHere(folderId: string): boolean {
         ></span>
         <span class="sft-count">{{ row.node.scenarioCount }}</span>
         <span v-if="hoverId === row.node.folder.id" class="sft-actions">
+          <IconButton
+            name="play"
+            :size="12"
+            :title="t('testSuite.run')"
+            @click.stop="emit('run', row.node.folder.id)"
+          />
           <IconButton
             name="folder-plus"
             :size="12"

@@ -1252,6 +1252,155 @@ export interface ScenarioLibraryItem extends Scenario {
   fail_run_count?: number
 }
 
+// ---------------------------------------------------------------------------
+// 测试套件与批量执行（Test Suite / Test Run Batch）
+// ---------------------------------------------------------------------------
+
+/** 测试套件（Rust `TestSuite`）。只保存场景引用，不复制场景步骤。 */
+export interface TestSuite {
+  id: string
+  project_id: string
+  name: string
+  description: string
+  /** 归属业务目录（复用场景目录树；null / 缺省 = 未分类）。 */
+  folder_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 套件成员：场景引用 + 套件内顺序 + 启用开关。 */
+export interface TestSuiteItem {
+  id: string
+  suite_id: string
+  scenario_id: string
+  sort_order: number
+  enabled: boolean
+}
+
+/** 套件 + 成员（列表页单次 IPC）。 */
+export interface TestSuiteWithItems extends TestSuite {
+  items: TestSuiteItem[]
+}
+
+/** 批量执行模式。 */
+export type TestBatchMode = 'serial' | 'parallel'
+
+/** 失败处理策略。 */
+export type TestFailurePolicy = 'continue' | 'stop' | 'retry' | 'skip_dependents'
+
+/** 批次状态（interrupted = 应用异常退出后的恢复标记，非真实失败）。 */
+export type TestBatchStatus =
+  | 'pending'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+/** 批次明细状态。 */
+export type TestBatchItemStatus =
+  | 'pending'
+  | 'running'
+  | 'passed'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
+  | 'interrupted'
+
+/** 批量执行批次（Rust `TestRunBatch`）。 */
+export interface TestRunBatch {
+  id: string
+  project_id: string
+  /** 来源套件（null = 手动勾选 / 文件夹批量）。 */
+  suite_id?: string | null
+  /** 重跑来源批次（失败重试 / 整批重跑都新建批次，不覆盖历史）。 */
+  parent_batch_id?: string | null
+  environment_id?: string | null
+  status: TestBatchStatus
+  mode: TestBatchMode
+  concurrency: number
+  failure_policy: TestFailurePolicy
+  retry_count: number
+  skip_disabled: boolean
+  total_count: number
+  passed_count: number
+  failed_count: number
+  skipped_count: number
+  cancelled_count: number
+  running_count: number
+  pending_count: number
+  started_at?: string | null
+  finished_at?: string | null
+  duration_ms?: number | null
+  created_at: string
+}
+
+/** 批次明细：单个场景在批次中的执行记录。 */
+export interface TestRunBatchItem {
+  id: string
+  batch_id: string
+  scenario_id: string
+  /** 场景名快照（场景改名 / 删除后报告仍可读）。 */
+  scenario_name: string
+  status: TestBatchItemStatus
+  sort_order: number
+  /** 已执行次数（失败重试策略下 > 1）。 */
+  attempt: number
+  duration_ms?: number | null
+  error_message?: string | null
+  /** 对应的单场景执行记录（scenario_runs.id）。 */
+  execution_record_id?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+}
+
+/** 批次详情（批次 + 明细）。 */
+export interface TestBatchDetail extends TestRunBatch {
+  items: TestRunBatchItem[]
+}
+
+/** 批量执行入参（嵌套结构走 serde 默认 snake_case）。 */
+export interface RunTestBatchArgs {
+  project_id: string
+  /** 套件全量执行入口（与 scenario_ids / folder_id 三选一）。 */
+  suite_id?: string | null
+  /** 手动勾选场景（保持传入顺序）。 */
+  scenario_ids?: string[]
+  /** 文件夹内全部场景执行（含子目录）。 */
+  folder_id?: string | null
+  environment_id?: string | null
+  mode?: TestBatchMode
+  concurrency?: number | null
+  failure_policy?: TestFailurePolicy
+  retry_count?: number | null
+  /** 跳过套件里被禁用的场景（默认 true；跳过项仍出现在报告里）。 */
+  skip_disabled?: boolean
+  /** 重跑来源批次（失败重试 / 整批重跑）。 */
+  parent_batch_id?: string | null
+}
+
+/** 批次进度事件负载（事件 `miyo:test-batch-progress`）。 */
+export interface TestBatchProgressEvent {
+  batch_id: string
+  status: string
+  total: number
+  done: number
+  passed: number
+  failed: number
+  skipped: number
+  cancelled: number
+  running: number
+  /** 当前正在执行的场景（逐项事件里与 item 同时出现）。 */
+  current?: {
+    item_id: string
+    scenario_id: string
+    scenario_name: string
+  } | null
+  /** 状态变化的明细（批次汇总事件为 null）。 */
+  item?: TestRunBatchItem | null
+}
+
 /** 删除场景目录时的场景处理策略：仅空目录 / 场景移到未分类 / 连同场景删除。 */
 export type ScenarioFolderDeleteMode = 'empty' | 'keep' | 'cascade'
 

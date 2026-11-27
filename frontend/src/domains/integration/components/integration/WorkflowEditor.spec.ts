@@ -19,7 +19,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) })
 vi.mock('@tauri-apps/api/path', () => ({ join: vi.fn(async (...p: string[]) => p.join('/')) }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }))
 vi.mock('sortablejs', () => ({ default: { create: vi.fn(() => ({ destroy: vi.fn(), option: vi.fn() })) } }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), onBeforeRouteLeave: vi.fn() }))
 
 const scenario = {
   id: 'sc-1',
@@ -108,7 +108,7 @@ describe('WorkflowEditor：第二轮 UI 层', () => {
     wrapper.unmount()
   })
 
-  it('运行前校验：场景名称为空时展开面板并列出阻断项', async () => {
+  it('运行前校验：默认只显示计数，点击后展开阻断项', async () => {
     const wrapper = await mountEditor()
     // 清空场景名 → 产生阻断项
     const nameInput = wrapper.find('.wf-name')
@@ -117,8 +117,13 @@ describe('WorkflowEditor：第二轮 UI 层', () => {
 
     const panel = wrapper.find('.wf-validate')
     expect(panel.exists()).toBe(true)
-    expect(panel.classes()).not.toContain('collapsed')
+    // 默认折叠：只给阻断 / 警告计数，不占空间
+    expect(panel.classes()).toContain('collapsed')
     expect(wrapper.find('.wf-validate-tag.error').exists()).toBe(true)
+
+    await panel.find('.wf-validate-head').trigger('click')
+    await flushPromises()
+    expect(panel.classes()).not.toContain('collapsed')
     expect(wrapper.text()).toContain('运行前校验')
     wrapper.unmount()
   })
@@ -128,6 +133,8 @@ describe('WorkflowEditor：第二轮 UI 层', () => {
     // 制造一个变量未定义（把「下单」的引用改成不存在的变量）
     const nameInput = wrapper.find('.wf-name')
     await nameInput.setValue('')
+    await flushPromises()
+    await wrapper.find('.wf-validate-head').trigger('click')
     await flushPromises()
 
     const items = wrapper.findAll('.wf-validate-item')
@@ -161,6 +168,70 @@ describe('WorkflowEditor：第二轮 UI 层', () => {
     await saveBtn!.trigger('click')
     await flushPromises()
     expect(api.saveScenario).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('三层结构：返回按钮常驻、开始 / 结束节点、三视图页签', async () => {
+    const wrapper = await mountEditor()
+    expect(wrapper.find('.wf-back').exists()).toBe(true)
+    expect(wrapper.find('.wf-node-start').exists()).toBe(true)
+    expect(wrapper.find('.wf-node-end').exists()).toBe(true)
+
+    const tabs = wrapper.findAll('.wf-view-tabs button')
+    expect(tabs.map((b) => b.text())).toEqual(['编辑', '脚本', '执行结果'])
+
+    // 无结果时执行结果页签给出空态与运行入口
+    await tabs[2]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.wf-result-empty').exists()).toBe(true)
+    await tabs[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.wf-flow').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('执行结果页的返回先回场景详情（层级回退）', async () => {
+    const wrapper = await mountEditor()
+    const tabs = wrapper.findAll('.wf-view-tabs button')
+    await tabs[2]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.wf-result-empty').exists()).toBe(true)
+
+    const back = wrapper.find('.int-nav-back')
+    expect(back.text()).toContain('返回场景详情')
+    await back.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.wf-flow').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('批量操作：勾选步骤后出现操作条，可批量禁用', async () => {
+    const wrapper = await mountEditor()
+    const checks = wrapper.findAll('.wf-step-check')
+    expect(checks.length).toBe(2)
+    await checks[0]!.setValue(true)
+    await flushPromises()
+
+    const bar = wrapper.find('.wf-batchbar')
+    expect(bar.exists()).toBe(true)
+    expect(bar.text()).toContain('已选 1 步')
+    const disable = bar.findAll('button').find((b) => b.text() === '禁用')!
+    await disable.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.wf-step').classes()).toContain('disabled')
+    wrapper.unmount()
+  })
+
+  it('步骤折叠：折叠后隐藏路径，展开后恢复', async () => {
+    const wrapper = await mountEditor()
+    expect(wrapper.find('.wf-step-path').exists()).toBe(true)
+    const firstCard = () => wrapper.findAll('.wf-step')[0]!
+    await firstCard().findAll('.wf-step-actions button')[0]!.trigger('click')
+    await flushPromises()
+    expect(firstCard().find('.wf-step-path').exists()).toBe(false)
+    await firstCard().findAll('.wf-step-actions button')[0]!.trigger('click')
+    await flushPromises()
+    expect(firstCard().find('.wf-step-path').exists()).toBe(true)
     wrapper.unmount()
   })
 

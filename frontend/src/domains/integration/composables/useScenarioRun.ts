@@ -249,6 +249,14 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     return m
   })
 
+  /** 步骤当前结果（卡片耗时 / HTTP 码 / 断言失败原因用；未执行为 null）。 */
+  function stepResult(i: number): ScenarioStepResult | null {
+    const pos = runStepIndexes.value.indexOf(i)
+    if (pos === -1) return null
+    if (running.value) return liveResults.value[pos] ?? null
+    return runResult.value?.results[pos] ?? null
+  }
+
   /** 结果按位对应 runStepIndexes；运行中已完成步按真实结果着色，
    * 在途步「执行中」，未到达的「待执行」。 */
   function stepTone(i: number): StepTone | null {
@@ -875,6 +883,7 @@ export function useScenarioRun(options: UseScenarioRunOptions) {
     execStrategy,
     // 步骤执行状态
     stepTone,
+    stepResult,
     STEP_TONE_TEXT,
     STEP_TONE_ICON,
     resultByStepIndex,

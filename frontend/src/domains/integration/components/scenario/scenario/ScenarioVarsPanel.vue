@@ -13,7 +13,7 @@
  * 数据流不变：链路条目由宿主从启用步骤的真实配置推导（computeVarChain），
  * 本组件只做展示与交互转发，不持有编辑态。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useLocaleStore } from '@/stores/locale'
 import Icon from '@/components/ui/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
@@ -27,6 +27,8 @@ const props = defineProps<{
   chain: VarChainEntry[]
   /** 后端最终变量池（无运行结果为 null）。 */
   runtimeVars: Record<string, string> | null
+  /** 从校验 / 依赖图定位的变量名（自动展开并过滤）。 */
+  highlight?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -46,7 +48,7 @@ const expanded = ref(false)
 
 // ---------- 搜索 + 分类过滤 ----------
 const query = ref('')
-type VarFilter = 'all' | 'linked' | 'external' | 'missing'
+type VarFilter = 'all' | 'linked' | 'external' | 'missing' | 'unused'
 const filter = ref<VarFilter>('all')
 
 const FILTERS = computed<{ value: VarFilter; label: string }[]>(() => [
@@ -54,11 +56,16 @@ const FILTERS = computed<{ value: VarFilter; label: string }[]>(() => [
   { value: 'linked', label: t('scenario.varsFilterLinked') },
   { value: 'external', label: t('scenario.varsFilterExternal') },
   { value: 'missing', label: t('scenario.varsFilterMissing') },
+  { value: 'unused', label: t('scenario.varsFilterUnused') },
 ])
 
 const linkedCount = computed(() => props.chain.filter((v) => !v.missing && !v.external).length)
 const externalCount = computed(() => props.chain.filter((v) => v.external).length)
 const missingCount = computed(() => props.chain.filter((v) => v.missing).length)
+/** 提取后从未被引用的变量（链路定义存在但 usages 为空）。 */
+const unusedCount = computed(
+  () => props.chain.filter((v) => !v.missing && !v.external && v.sources.length > 0 && !v.usages.length).length,
+)
 
 /** 搜索 + 过滤后的条目（名称 / 来源步骤名 / 引用步骤名任一命中）。 */
 const filtered = computed(() => {
@@ -67,6 +74,9 @@ const filtered = computed(() => {
     if (filter.value === 'linked' && (v.missing || v.external)) return false
     if (filter.value === 'external' && !v.external) return false
     if (filter.value === 'missing' && !v.missing) return false
+    if (filter.value === 'unused') {
+      if (v.missing || v.external || !v.sources.length || v.usages.length) return false
+    }
     if (!q) return true
     if (v.name.toLowerCase().includes(q)) return true
     return (
@@ -75,6 +85,18 @@ const filtered = computed(() => {
     )
   })
 })
+
+// 外部定位：展开面板 + 搜索该变量（校验问题点击变量时用）。
+watch(
+  () => props.highlight,
+  (name) => {
+    if (!name) return
+    expanded.value = true
+    filter.value = 'all'
+    query.value = name
+  },
+  { immediate: true },
+)
 
 // ---------- 详情展开（单选 accordion） ----------
 const expandedVar = ref<string | null>(null)
@@ -142,6 +164,9 @@ function varBrief(v: VarChainEntry): string {
         <Icon name="alert-triangle" :size="11" />
         {{ t('scenario.varMissing', { n: missingCount }) }}
       </span>
+      <span v-if="unusedCount" class="se-vars-warn">
+        {{ t('integration.varsUnusedCount', { n: unusedCount }) }}
+      </span>
       <span class="se-vars-caret">
         <Icon :name="expanded ? 'chevrons-down-up' : 'chevrons-up-down'" :size="13" />
       </span>
@@ -164,6 +189,7 @@ function varBrief(v: VarChainEntry): string {
             <span v-if="f.value === 'missing' && missingCount" class="se-filter-badge warn">{{ missingCount }}</span>
             <span v-else-if="f.value === 'external'" class="se-filter-badge">{{ externalCount }}</span>
             <span v-else-if="f.value === 'linked'" class="se-filter-badge">{{ linkedCount }}</span>
+            <span v-else-if="f.value === 'unused' && unusedCount" class="se-filter-badge warn">{{ unusedCount }}</span>
           </button>
         </div>
       </div>
@@ -186,6 +212,7 @@ function varBrief(v: VarChainEntry): string {
             <code class="se-var-chip">{{ varTag(v.name) }}</code>
             <span v-if="v.missing" class="se-var-badge warn">{{ t('scenario.varUndefinedBadge') }}</span>
             <span v-else-if="v.external" class="se-var-badge ext">{{ t('scenario.varExternal') }}</span>
+            <span v-else-if="!v.usages.length" class="se-var-badge warn">{{ t('integration.varsUnused') }}</span>
             <span v-else class="se-var-badge ok">{{ t('scenario.varLinked') }}</span>
             <span class="se-var-brief">{{ varBrief(v) }}</span>
             <span class="se-var-usecount">{{ t('scenario.varUseCount', { n: v.usages.length }) }}</span>

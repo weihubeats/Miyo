@@ -94,17 +94,19 @@ describe('ScenarioFolderTree', () => {
     expect(w.emitted('select')?.at(-1)).toEqual([''])
   })
 
-  it('行内操作：新建子目录 / 重命名 / 删除发出对应事件', async () => {
+  it('行内操作：运行目录 / 新建子目录 / 重命名 / 删除发出对应事件', async () => {
     const w = mountTree()
     const ecomRow = w.findAll('.sft-row').find((r) => r.text().includes('电商业务'))!
     await ecomRow.trigger('mouseenter')
     const actions = ecomRow.findAll('.sft-actions button')
-    expect(actions).toHaveLength(3)
+    expect(actions).toHaveLength(4)
     await actions[0]!.trigger('click')
-    expect(w.emitted('create')?.at(-1)).toEqual(['ecom'])
+    expect(w.emitted('run')?.at(-1)).toEqual(['ecom'])
     await actions[1]!.trigger('click')
-    expect(w.emitted('rename')?.at(-1)?.[0]).toMatchObject({ id: 'ecom' })
+    expect(w.emitted('create')?.at(-1)).toEqual(['ecom'])
     await actions[2]!.trigger('click')
+    expect(w.emitted('rename')?.at(-1)?.[0]).toMatchObject({ id: 'ecom' })
+    await actions[3]!.trigger('click')
     expect(w.emitted('remove')?.at(-1)?.[0]).toMatchObject({ id: 'ecom' })
   })
 
