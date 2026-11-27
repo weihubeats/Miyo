@@ -1035,15 +1035,20 @@ mod tests {
         let _cache = crate::cache::test_lock().lock().unwrap();
         crate::cache::reset_cache();
         block_on(async {
+            let redirect_uri = pick_redirect_uri().await;
             let log = Arc::new(Mutex::new(Vec::new()));
             let (idp_url, _idp) = mock_idp(log.clone()).await;
 
             let mut auth = spec_auth("c-e2e-nopkce", &format!("{idp_url}/token"));
             if let AuthSpec::OAuth2 {
-                auth_url, use_pkce, ..
+                auth_url,
+                use_pkce,
+                redirect_uri: ru,
+                ..
             } = &mut auth
             {
                 *auth_url = format!("{idp_url}/authorize");
+                *ru = redirect_uri.clone();
                 *use_pkce = Some(false);
             }
 
