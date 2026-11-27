@@ -225,6 +225,7 @@ scripts/package-tauri.sh                # package distributables in one step
 | [docs/en/AGENT.md](docs/en/AGENT.md) | AI Agent integration (MCP / HTTP control plane) |
 | [docs/en/MIGRATION.md](docs/en/MIGRATION.md) | Migration from Apifox / Postman |
 | [docs/CLI.md](docs/CLI.md) | Headless CLI test runner (Chinese) |
+| [docs/TEST-SUITES.md](docs/TEST-SUITES.md) | Test suites & batch runs (Chinese) |
 | [CHANGELOG.md](CHANGELOG.md) | Version highlights (Chinese) |
 | [docs/README.md](docs/README.md) | Docs index (Chinese) |
 | [docs/SPEC.md](docs/SPEC.md) | Historical spec, frozen (Chinese) |

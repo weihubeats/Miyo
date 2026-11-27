@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-pause-test-batch"
+description = "Enables the pause_test_batch command without any pre-configured scope."
+commands.allow = ["pause_test_batch"]
+
+[[permission]]
+identifier = "deny-pause-test-batch"
+description = "Denies the pause_test_batch command without any pre-configured scope."
+commands.deny = ["pause_test_batch"]

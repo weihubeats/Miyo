@@ -26,6 +26,7 @@
 | [UPDATER.md](UPDATER.md) | 自动更新说明 |
 | [SMOKE_TEST.md](SMOKE_TEST.md) | 手动验收清单 |
 | [SCENARIO-FOLDERS.md](SCENARIO-FOLDERS.md) | 集成测试场景目录（多级文件夹 / 批量操作 / 删除策略 / 备份同步） |
+| [TEST-SUITES.md](TEST-SUITES.md) | 测试套件与批量执行（执行策略 / 暂停恢复 / 崩溃恢复 / 报告重跑） |
 | [MIRROR_CN.md](MIRROR_CN.md) | 国内镜像说明 |
 | [MILESTONES.md](MILESTONES.md) / [PROGRESS.md](PROGRESS.md) | 里程碑总览 / 开发进度记录 |
 

@@ -114,6 +114,9 @@ pub struct AppState {
     /// 市场远程下载缓存（检视 → 确认两步安装：装的就是检视的那份字节）。
     /// key = 下载 URL；总量超限驱逐最旧。
     pub market_downloads: std::sync::Mutex<Vec<(String, CachedDownload)>>,
+    /// 在途批量执行控制表（batch_id → 取消令牌 + 暂停标志）。
+    /// 批次之间相互隔离；应用重启后由启动恢复标记 interrupted。
+    pub test_batches: crate::commands::test_suites::TestBatchRegistry,
 }
 
 /// 缓存的插件包字节（检视通过后供确认安装使用）。
@@ -230,6 +233,7 @@ impl AppState {
             plugin_sessions: crate::sessions::PluginSessions::new(),
             tasks: miyo_tasks::TaskSupervisor::new(),
             market_downloads: std::sync::Mutex::new(Vec::new()),
+            test_batches: crate::commands::test_suites::TestBatchRegistry::default(),
         }
     }
 

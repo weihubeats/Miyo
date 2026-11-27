@@ -1618,6 +1618,260 @@ pub struct ScenarioRun {
     pub meta_json: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// 测试套件与批量执行（Test Suite / Test Run Batch）
+// ---------------------------------------------------------------------------
+
+/// 测试套件：项目级「场景集合」，只保存场景引用 + 排序 + 启用，
+/// 不复制场景步骤（同一场景可被多个套件引用）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TestSuite {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// 归属业务目录（复用场景目录树；None = 未分类）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 套件成员：场景引用 + 套件内顺序 + 启用开关。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TestSuiteItem {
+    pub id: Uuid,
+    pub suite_id: Uuid,
+    pub scenario_id: Uuid,
+    #[serde(default)]
+    pub sort_order: i64,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// 批次状态（七态；`interrupted` 专指应用异常退出 / 进程被杀后恢复标记，
+/// 与用户主动取消、真实失败严格区分）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum TestBatchStatus {
+    Pending,
+    Running,
+    Paused,
+    Completed,
+    Failed,
+    Cancelled,
+    Interrupted,
+}
+
+impl TestBatchStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TestBatchStatus::Pending => "pending",
+            TestBatchStatus::Running => "running",
+            TestBatchStatus::Paused => "paused",
+            TestBatchStatus::Completed => "completed",
+            TestBatchStatus::Failed => "failed",
+            TestBatchStatus::Cancelled => "cancelled",
+            TestBatchStatus::Interrupted => "interrupted",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "pending" => TestBatchStatus::Pending,
+            "running" => TestBatchStatus::Running,
+            "paused" => TestBatchStatus::Paused,
+            "completed" => TestBatchStatus::Completed,
+            "failed" => TestBatchStatus::Failed,
+            "cancelled" => TestBatchStatus::Cancelled,
+            "interrupted" => TestBatchStatus::Interrupted,
+            _ => return None,
+        })
+    }
+
+    /// 终态（不可再恢复 / 续跑）。
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            TestBatchStatus::Completed
+                | TestBatchStatus::Failed
+                | TestBatchStatus::Cancelled
+                | TestBatchStatus::Interrupted
+        )
+    }
+}
+
+/// 执行模式：串行（默认）/ 并行（受最大并发数约束）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum TestBatchMode {
+    Serial,
+    Parallel,
+}
+
+impl TestBatchMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TestBatchMode::Serial => "serial",
+            TestBatchMode::Parallel => "parallel",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "serial" => TestBatchMode::Serial,
+            "parallel" => TestBatchMode::Parallel,
+            _ => return None,
+        })
+    }
+}
+
+/// 失败处理策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum TestFailurePolicy {
+    /// 失败后继续执行后续场景（默认）。
+    Continue,
+    /// 失败后立即停止，未执行的场景标记 skipped。
+    Stop,
+    /// 失败后按 retry_count 重试，仍失败则继续后续场景。
+    Retry,
+    /// 失败后跳过尚未开始的场景（批次按 completed 收尾，区分于 stop 的 failed）。
+    SkipDependents,
+}
+
+impl TestFailurePolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TestFailurePolicy::Continue => "continue",
+            TestFailurePolicy::Stop => "stop",
+            TestFailurePolicy::Retry => "retry",
+            TestFailurePolicy::SkipDependents => "skip_dependents",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "continue" => TestFailurePolicy::Continue,
+            "stop" => TestFailurePolicy::Stop,
+            "retry" => TestFailurePolicy::Retry,
+            "skip_dependents" => TestFailurePolicy::SkipDependents,
+            _ => return None,
+        })
+    }
+}
+
+/// 批次明细状态（与批次状态分开：明细没有 paused，新增 interrupted）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum TestBatchItemStatus {
+    Pending,
+    Running,
+    Passed,
+    Failed,
+    Skipped,
+    Cancelled,
+    Interrupted,
+}
+
+impl TestBatchItemStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TestBatchItemStatus::Pending => "pending",
+            TestBatchItemStatus::Running => "running",
+            TestBatchItemStatus::Passed => "passed",
+            TestBatchItemStatus::Failed => "failed",
+            TestBatchItemStatus::Skipped => "skipped",
+            TestBatchItemStatus::Cancelled => "cancelled",
+            TestBatchItemStatus::Interrupted => "interrupted",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "pending" => TestBatchItemStatus::Pending,
+            "running" => TestBatchItemStatus::Running,
+            "passed" => TestBatchItemStatus::Passed,
+            "failed" => TestBatchItemStatus::Failed,
+            "skipped" => TestBatchItemStatus::Skipped,
+            "cancelled" => TestBatchItemStatus::Cancelled,
+            "interrupted" => TestBatchItemStatus::Interrupted,
+            _ => return None,
+        })
+    }
+
+    pub fn is_terminal(self) -> bool {
+        !matches!(
+            self,
+            TestBatchItemStatus::Pending | TestBatchItemStatus::Running
+        )
+    }
+}
+
+/// 批量执行批次（一次「运行套件 / 勾选场景 / 文件夹批量」的持久化记录）。
+///
+/// 计数列在每次明细状态变化后重算写回：列表页 / 崩溃恢复不依赖内存态。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TestRunBatch {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    /// 来源套件（None = 手动勾选 / 文件夹批量执行的临时批次）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite_id: Option<Uuid>,
+    /// 重跑来源批次（失败重试 / 整批重跑都会新建批次，不覆盖原记录）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_batch_id: Option<Uuid>,
+    pub environment_id: Option<Uuid>,
+    pub status: TestBatchStatus,
+    pub mode: TestBatchMode,
+    pub concurrency: i64,
+    pub failure_policy: TestFailurePolicy,
+    pub retry_count: i64,
+    pub skip_disabled: bool,
+    pub total_count: i64,
+    pub passed_count: i64,
+    pub failed_count: i64,
+    pub skipped_count: i64,
+    pub cancelled_count: i64,
+    pub running_count: i64,
+    pub pending_count: i64,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub duration_ms: Option<f64>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 批次明细：单个场景在批次中的执行记录。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TestRunBatchItem {
+    pub id: Uuid,
+    pub batch_id: Uuid,
+    pub scenario_id: Uuid,
+    /// 场景名快照（场景改名 / 删除后报告仍可读）。
+    #[serde(default)]
+    pub scenario_name: String,
+    pub status: TestBatchItemStatus,
+    pub sort_order: i64,
+    /// 已执行次数（失败重试策略下 > 1）。
+    #[serde(default)]
+    pub attempt: i64,
+    pub duration_ms: Option<f64>,
+    pub error_message: Option<String>,
+    /// 对应的单场景执行记录（scenario_runs.id）。
+    pub execution_record_id: Option<Uuid>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
 /// 请求历史。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

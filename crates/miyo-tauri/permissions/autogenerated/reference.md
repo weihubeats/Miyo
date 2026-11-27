@@ -74,6 +74,20 @@ Miyo 核心插件的默认权限：允许前端调用全部 miyo 命令
 - `allow-reorder-scenarios`
 - `allow-delete-scenario-run`
 - `allow-clear-scenario-runs`
+- `allow-list-test-suites`
+- `allow-save-test-suite`
+- `allow-delete-test-suite`
+- `allow-duplicate-test-suite`
+- `allow-reorder-test-suite-items`
+- `allow-set-test-suite-item-enabled`
+- `allow-run-test-batch`
+- `allow-resume-test-batch`
+- `allow-pause-test-batch`
+- `allow-cancel-test-batch`
+- `allow-list-test-batches`
+- `allow-get-test-batch`
+- `allow-delete-test-batch`
+- `allow-recover-test-batches`
 - `allow-get-scenario-run`
 - `allow-codegen-render`
 - `allow-cookie-list`
@@ -916,6 +930,32 @@ Denies the cancel_scenario_run command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-cancel-test-batch`
+
+</td>
+<td>
+
+Enables the cancel_test_batch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-cancel-test-batch`
+
+</td>
+<td>
+
+Denies the cancel_test_batch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-cancel-test-collection`
 
 </td>
@@ -1592,6 +1632,32 @@ Denies the delete_team command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-delete-test-batch`
+
+</td>
+<td>
+
+Enables the delete_test_batch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-delete-test-batch`
+
+</td>
+<td>
+
+Denies the delete_test_batch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-delete-test-case`
 
 </td>
@@ -1644,6 +1710,32 @@ Denies the delete_test_case_run command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-delete-test-suite`
+
+</td>
+<td>
+
+Enables the delete_test_suite command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-delete-test-suite`
+
+</td>
+<td>
+
+Denies the delete_test_suite command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-duplicate-endpoint`
 
 </td>
@@ -1663,6 +1755,32 @@ Enables the duplicate_endpoint command without any pre-configured scope.
 <td>
 
 Denies the duplicate_endpoint command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-duplicate-test-suite`
+
+</td>
+<td>
+
+Enables the duplicate_test_suite command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-duplicate-test-suite`
+
+</td>
+<td>
+
+Denies the duplicate_test_suite command without any pre-configured scope.
 
 </td>
 </tr>
@@ -2339,6 +2457,32 @@ Enables the get_sensitive_patterns command without any pre-configured scope.
 <td>
 
 Denies the get_sensitive_patterns command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-get-test-batch`
+
+</td>
+<td>
+
+Enables the get_test_batch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-get-test-batch`
+
+</td>
+<td>
+
+Denies the get_test_batch command without any pre-configured scope.
 
 </td>
 </tr>
@@ -3776,6 +3920,32 @@ Denies the list_teams command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-list-test-batches`
+
+</td>
+<td>
+
+Enables the list_test_batches command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-test-batches`
+
+</td>
+<td>
+
+Denies the list_test_batches command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-list-test-case-runs`
 
 </td>
@@ -3821,6 +3991,32 @@ Enables the list_test_cases command without any pre-configured scope.
 <td>
 
 Denies the list_test_cases command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-list-test-suites`
+
+</td>
+<td>
+
+Enables the list_test_suites command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-list-test-suites`
+
+</td>
+<td>
+
+Denies the list_test_suites command without any pre-configured scope.
 
 </td>
 </tr>
@@ -4263,6 +4459,32 @@ Enables the parse_curl_command command without any pre-configured scope.
 <td>
 
 Denies the parse_curl_command command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-pause-test-batch`
+
+</td>
+<td>
+
+Enables the pause_test_batch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-pause-test-batch`
+
+</td>
+<td>
+
+Denies the pause_test_batch command without any pre-configured scope.
 
 </td>
 </tr>
@@ -5154,6 +5376,32 @@ Denies the read_text_file command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-recover-test-batches`
+
+</td>
+<td>
+
+Enables the recover_test_batches command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-recover-test-batches`
+
+</td>
+<td>
+
+Denies the recover_test_batches command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-rename-test-case-folder`
 
 </td>
@@ -5284,6 +5532,32 @@ Denies the reorder_test_cases command without any pre-configured scope.
 <tr>
 <td>
 
+`miyo-tauri:allow-reorder-test-suite-items`
+
+</td>
+<td>
+
+Enables the reorder_test_suite_items command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-reorder-test-suite-items`
+
+</td>
+<td>
+
+Denies the reorder_test_suite_items command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `miyo-tauri:allow-reset-data-dir`
 
 </td>
@@ -5303,6 +5577,32 @@ Enables the reset_data_dir command without any pre-configured scope.
 <td>
 
 Denies the reset_data_dir command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-resume-test-batch`
+
+</td>
+<td>
+
+Enables the resume_test_batch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-resume-test-batch`
+
+</td>
+<td>
+
+Denies the resume_test_batch command without any pre-configured scope.
 
 </td>
 </tr>
@@ -5355,6 +5655,32 @@ Enables the run_scenario_matrix command without any pre-configured scope.
 <td>
 
 Denies the run_scenario_matrix command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-run-test-batch`
+
+</td>
+<td>
+
+Enables the run_test_batch command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-run-test-batch`
+
+</td>
+<td>
+
+Denies the run_test_batch command without any pre-configured scope.
 
 </td>
 </tr>
@@ -5693,6 +6019,32 @@ Enables the save_test_case command without any pre-configured scope.
 <td>
 
 Denies the save_test_case command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-save-test-suite`
+
+</td>
+<td>
+
+Enables the save_test_suite command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-save-test-suite`
+
+</td>
+<td>
+
+Denies the save_test_suite command without any pre-configured scope.
 
 </td>
 </tr>
@@ -6109,6 +6461,32 @@ Enables the set_test_case_folder command without any pre-configured scope.
 <td>
 
 Denies the set_test_case_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:allow-set-test-suite-item-enabled`
+
+</td>
+<td>
+
+Enables the set_test_suite_item_enabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`miyo-tauri:deny-set-test-suite-item-enabled`
+
+</td>
+<td>
+
+Denies the set_test_suite_item_enabled command without any pre-configured scope.
 
 </td>
 </tr>

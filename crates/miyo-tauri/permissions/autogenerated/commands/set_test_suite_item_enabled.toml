@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-set-test-suite-item-enabled"
+description = "Enables the set_test_suite_item_enabled command without any pre-configured scope."
+commands.allow = ["set_test_suite_item_enabled"]
+
+[[permission]]
+identifier = "deny-set-test-suite-item-enabled"
+description = "Denies the set_test_suite_item_enabled command without any pre-configured scope."
+commands.deny = ["set_test_suite_item_enabled"]

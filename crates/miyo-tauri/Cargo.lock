@@ -3226,6 +3226,7 @@ name = "miyo-test"
 version = "0.0.1"
 dependencies = [
  "chrono",
+ "futures",
  "jsonpath-rust",
  "jsonschema",
  "miyo-core",

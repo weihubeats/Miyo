@@ -2209,6 +2209,7 @@ dependencies = [
  "axum",
  "bytes",
  "chrono",
+ "futures",
  "jsonpath-rust",
  "jsonschema",
  "miyo-core",

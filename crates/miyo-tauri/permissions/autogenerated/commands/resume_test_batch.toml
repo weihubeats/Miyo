@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-resume-test-batch"
+description = "Enables the resume_test_batch command without any pre-configured scope."
+commands.allow = ["resume_test_batch"]
+
+[[permission]]
+identifier = "deny-resume-test-batch"
+description = "Denies the resume_test_batch command without any pre-configured scope."
+commands.deny = ["resume_test_batch"]

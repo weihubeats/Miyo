@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-list-test-batches"
+description = "Enables the list_test_batches command without any pre-configured scope."
+commands.allow = ["list_test_batches"]
+
+[[permission]]
+identifier = "deny-list-test-batches"
+description = "Denies the list_test_batches command without any pre-configured scope."
+commands.deny = ["list_test_batches"]

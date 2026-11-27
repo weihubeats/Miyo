@@ -24,7 +24,7 @@ use crate::state::AppState;
 
 /// Java 步骤执行器注入：内置 Java 调试插件已启用才注入。
 /// 未启用时 runner 对 Java 步骤报「插件未启用」失败，其余步骤照常执行。
-async fn java_hook_for(
+pub(crate) async fn java_hook_for(
     state: &State<'_, AppState>,
 ) -> Option<Arc<miyo_test::runner::JavaInvokeFn>> {
     let enabled = repo::is_plugin_enabled(&state.db, miyo_plugin::JAVA_DEBUG_PLUGIN_ID)
@@ -601,7 +601,7 @@ pub async fn run_scenario(
     // 运行历史落库（fail-open：结果照常返回，历史失败仅告警）。
     if let Some(scenario_id) = args.scenario_id {
         if let Err(e) = persist_scenario_run(
-            &state,
+            &state.db,
             scenario_id,
             args.environment_id,
             args.run_id.as_deref(),
@@ -841,7 +841,7 @@ pub async fn run_scenario_matrix(
             if let Some(scenario_id) = args.scenario_id {
                 let result_ref = &row_result.result;
                 if let Err(e) = persist_scenario_run(
-                    &state,
+                    &state.db,
                     scenario_id,
                     row.environment_id.or(args.environment_id),
                     Some(&row_run_id.to_string()),
@@ -990,7 +990,7 @@ pub async fn run_scenario_matrix(
                 result.results.iter().all(|r| r.ok || r.cancelled) && !result.results.is_empty();
             if let Some(scenario_id) = args.scenario_id {
                 if let Err(e) = persist_scenario_run(
-                    &state,
+                    &state.db,
                     scenario_id,
                     row.environment_id.or(args.environment_id),
                     Some(&row_run_id.to_string()),
@@ -1353,8 +1353,8 @@ pub(crate) fn redact_vars(vars: &HashMap<String, String>) -> HashMap<String, Str
 /// 脱敏，meta_json 存开始时间 / 当时配置快照 / 初始变量（脱敏）/ 策略 /
 /// 预检警告；计数按执行状态；保留最近 N 条。
 #[allow(clippy::too_many_arguments)]
-async fn persist_scenario_run(
-    state: &State<'_, AppState>,
+pub(crate) async fn persist_scenario_run(
+    db: &sqlx::SqlitePool,
     scenario_id: Uuid,
     environment_id: Option<Uuid>,
     run_id: Option<&str>,
@@ -1462,15 +1462,13 @@ async fn persist_scenario_run(
             .map_err(|e| CommandError::validation(format!("变量池序列化失败：{e}")))?,
         meta_json: Some(meta.to_string()),
     };
-    repo::save_scenario_run(&state.db, &record).await?;
+    repo::save_scenario_run(db, &record).await?;
     // 全量执行计数（历史会修剪，计数在场景行累计；失败计数不含取消）。
     let run_ok = fail_count == 0 && !result.cancelled;
-    if let Err(e) =
-        repo::bump_scenario_run_stats(&state.db, scenario_id, run_ok, result.cancelled).await
-    {
+    if let Err(e) = repo::bump_scenario_run_stats(db, scenario_id, run_ok, result.cancelled).await {
         tracing::warn!("[persist_scenario_run] 累计执行计数失败：{e}");
     }
-    repo::prune_scenario_runs(&state.db, scenario_id, repo::SCENARIO_RUN_KEEP).await?;
+    repo::prune_scenario_runs(db, scenario_id, repo::SCENARIO_RUN_KEEP).await?;
     Ok(())
 }
 

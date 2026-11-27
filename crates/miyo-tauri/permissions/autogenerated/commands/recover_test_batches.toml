@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-recover-test-batches"
+description = "Enables the recover_test_batches command without any pre-configured scope."
+commands.allow = ["recover_test_batches"]
+
+[[permission]]
+identifier = "deny-recover-test-batches"
+description = "Denies the recover_test_batches command without any pre-configured scope."
+commands.deny = ["recover_test_batches"]

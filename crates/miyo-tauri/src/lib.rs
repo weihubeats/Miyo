@@ -335,6 +335,13 @@ pub mod plugin {
                     });
                     // 按保留天数清理过期日志（失败仅记日志）
                     commands::log::cleanup_logs_on_startup(&db);
+                    // 启动恢复：上次进程遗留的未完成批量执行标记 interrupted
+                    // （不误报失败；UI 可恢复续跑或重新执行）。
+                    if let Err(e) = tauri::async_runtime::block_on(
+                        miyo_storage::repository::recover_interrupted_batches(&db),
+                    ) {
+                        tracing::warn!("批量执行启动恢复失败（不影响应用使用）：{e}");
+                    }
                     // 恢复持久化的激活项目 / 环境（settings 表，含归属校验）
                     let state = AppState::new(
                         db,
@@ -604,6 +611,20 @@ pub mod plugin {
                 commands::reorder_scenarios,
                 commands::delete_scenario_run,
                 commands::clear_scenario_runs,
+                commands::list_test_suites,
+                commands::save_test_suite,
+                commands::delete_test_suite,
+                commands::duplicate_test_suite,
+                commands::reorder_test_suite_items,
+                commands::set_test_suite_item_enabled,
+                commands::run_test_batch,
+                commands::resume_test_batch,
+                commands::pause_test_batch,
+                commands::cancel_test_batch,
+                commands::list_test_batches,
+                commands::get_test_batch,
+                commands::delete_test_batch,
+                commands::recover_test_batches,
                 commands::get_data_dir,
                 commands::get_default_data_dir,
                 commands::set_data_dir,

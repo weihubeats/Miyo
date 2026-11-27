@@ -42,6 +42,7 @@ pub mod sidecar;
 pub mod sync;
 pub mod team;
 pub mod test_case;
+pub mod test_suites;
 pub mod ws;
 
 pub use agent::*;
@@ -81,4 +82,5 @@ pub use sidecar::*;
 pub use sync::*;
 pub use team::*;
 pub use test_case::*;
+pub use test_suites::*;
 pub use ws::*;

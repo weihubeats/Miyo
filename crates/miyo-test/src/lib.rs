@@ -1,6 +1,7 @@
 //! miyo-test：自动化测试运行器（SPEC §17 / M9）。
 
 pub mod assert;
+pub mod batch;
 pub mod config;
 pub mod extract;
 pub mod load;

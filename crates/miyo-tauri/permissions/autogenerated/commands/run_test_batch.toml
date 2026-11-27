@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-run-test-batch"
+description = "Enables the run_test_batch command without any pre-configured scope."
+commands.allow = ["run_test_batch"]
+
+[[permission]]
+identifier = "deny-run-test-batch"
+description = "Denies the run_test_batch command without any pre-configured scope."
+commands.deny = ["run_test_batch"]

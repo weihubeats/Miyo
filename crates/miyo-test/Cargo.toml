@@ -17,6 +17,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
 tokio-util = "0.7"
+futures = "0.3"
 tracing = { workspace = true }
 regex = { workspace = true }
 jsonpath-rust = { workspace = true }

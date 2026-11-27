@@ -26,6 +26,7 @@ mod teams;
 mod test_case_runs;
 mod test_cases;
 mod test_runs;
+mod test_suites;
 mod ws_messages;
 
 pub use ai_sessions::*;
@@ -53,4 +54,5 @@ pub use teams::*;
 pub use test_case_runs::*;
 pub use test_cases::*;
 pub use test_runs::*;
+pub use test_suites::*;
 pub use ws_messages::*;
