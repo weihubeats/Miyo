@@ -22,6 +22,10 @@ fn export_bindings() {
     miyo_tauri::error::CommandError::export_all(&cfg).unwrap();
     miyo_tauri::commands::request::ExecuteResponse::export_all(&cfg).unwrap();
     miyo_tauri::commands::scenarios::ScenarioLibraryItem::export_all(&cfg).unwrap();
+    // 测试套件 / 批量执行 view DTO（列表、详情、进度事件）。
+    miyo_tauri::commands::test_suites::TestSuiteWithItems::export_all(&cfg).unwrap();
+    miyo_tauri::commands::test_suites::TestBatchDetail::export_all(&cfg).unwrap();
+    miyo_tauri::commands::test_suites::TestBatchProgressEvent::export_all(&cfg).unwrap();
     // 插件系统：PluginView（含 PluginManifest 全套嵌套类型）+ 目录 / 包检视视图。
     miyo_tauri::commands::plugins::PluginView::export_all(&cfg).unwrap();
     miyo_tauri::commands::plugins::PluginCatalogView::export_all(&cfg).unwrap();

@@ -250,6 +250,7 @@ pub struct RunTestBatchArgs {
 
 /// 批次详情（批次 + 明细）。
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TestBatchDetail {
     #[serde(flatten)]
     pub batch: TestRunBatch,
@@ -268,6 +269,7 @@ impl TestBatchDetail {
 
 /// 进度事件（item 有值 = 某项状态变化；否则为批次汇总）。
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TestBatchProgressEvent {
     pub batch_id: String,
     pub status: String,
@@ -284,6 +286,7 @@ pub struct TestBatchProgressEvent {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct BatchCurrentItem {
     pub item_id: String,
     pub scenario_id: String,

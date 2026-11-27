@@ -7,11 +7,27 @@ import type { ScenarioStep } from "./ScenarioStep";
  * 场景库列表项：场景 + 最近一次运行摘要（单次 IPC 供列表页渲染，
  * 免去前端逐场景 N+1 查询——与 dashboard list_project_stats 同思路）。
  */
-export type ScenarioLibraryItem = { last_run: ScenarioRunSummary | null, id: string, project_id: string, name: string, description: string, 
+export type ScenarioLibraryItem = { last_run: ScenarioRunSummary | null, 
+/**
+ * 全量执行次数 / 成功次数 / 失败次数（历史会修剪，计数由列累计）。
+ */
+run_count: number, ok_run_count: number, fail_run_count: number, id: string, project_id: string, name: string, description: string, 
 /**
  * 分类标签（场景库过滤用；空 = 未分类）。
  */
-category: string, sort_order: number, steps: Array<ScenarioStep>, 
+category: string, 
+/**
+ * 所属业务目录（None = 未分类）。
+ */
+folder_id?: string | null, 
+/**
+ * 标签（场景库过滤 / 批量打标用；空 = 无标签）。
+ */
+tags: Array<string>, 
+/**
+ * 收藏标记（场景库列表置顶）。
+ */
+favorite: boolean, sort_order: number, steps: Array<ScenarioStep>, 
 /**
  * 自定义脚本（脚本视图编辑后的持久化版本）；None / 空 = 未自定义，
  * 脚本视图实时由 steps 生成。手动步骤始终是执行真源。
